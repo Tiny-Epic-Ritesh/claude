@@ -212,7 +212,7 @@ own capability and every export is logged with row count and the filter used.
 - [x] Polymorphic owner + Queue entity — `owner_queue_id`, role-based membership, claim/place, assignment falls back to a queue rather than to nobody, 16 tests
 - [x] OWD Private floor + sharing rules — manager chain at any depth, grant-only layers, one role's reach genuinely reduced, 12 tests
 - [x] Approvals engine — all four scopes, generic engine, record locked while pending, self-approval refused, rollback on failure, 23 tests
-- [ ] Automation builder UI
+- [~] Automation builder UI — **backend done** (failure queue, static conflict detection, ambiguous-priority report, retry/resolve). The visual IF/THEN builder screen is the remaining piece.
 - [x] Drop `leads.kyc_status` mirror — derived from the journeys and the eKYC portal; **it had already drifted on 2 of the 6 seeded leads with a journey**, column now dropped
 - [x] Holiday calendars (office + NSE/BSE) — two calendars, half-days, wired into the SLA clock and follow-up scheduling, 20 tests
 - [~] LeadSquared data-quality export → `docs/migration-map.md` — **deferred at the user's request, 22 Aug 2026**
@@ -401,3 +401,34 @@ Two things that made this land:
 Verified by construction rather than by counting: a lead in the same sales org,
 owned outside the supervisor's chain, is **hidden** from them and **visible** to
 an org-scope Admin.
+
+## Notes from approvals and automation health
+
+**Approvals — one engine, four scopes.** The four scopes have nothing in common
+in the business and everything in common as software: a request with a reason, a
+rule for who decides, a record locked while it waits, a decision with a reason,
+an audit trail that survives both outcomes. Written four times those five things
+end up subtly different four times.
+
+Three properties the tests exist to hold:
+- **Self-approval is refused**, whatever capabilities the requester holds. An
+  approval you can grant yourself is a log entry, not a control.
+- **The record is frozen while a decision is pending**, enforced on the write
+  path. If a commission can still be edited while a change to it awaits
+  sign-off, the approver puts their name to a number that has moved.
+- **A failing action rolls the decision back.** An approval recorded against
+  something that did not happen is worse than no approval at all.
+
+**Automation health (non-negotiable 12).** `rules.js` had no `catch` anywhere:
+one action throwing — a dead number, a deleted template — aborted the whole run,
+silently skipping every lead after it, with nothing recording that it happened.
+
+- Each action is now attempted independently and failures land in a queue.
+- Static conflict detection reports pairs of enabled rules that write the same
+  field to different values, and says which priority wins.
+- It deliberately does **not** attempt to prove two condition sets can both be
+  true. That is satisfiability, and a cheap approximation that says "no conflict"
+  when there is one is worse than not checking — so it reports possible overlaps
+  and leaves the judgement to someone who knows the book.
+- Rules sharing a priority are reported separately: ordering is only explicit if
+  it is actually ordered.
