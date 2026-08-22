@@ -1,0 +1,22 @@
+# Credentials. The example file is committed; the filled-in one never is.
+.env
+.env.*
+!.env.example
+
+# Client data. The SQLite database holds real PANs and bank details once this
+# leaves a demo, so it must never reach a repository.
+server/data/
+*.db
+*.db-wal
+*.db-shm
+
+node_modules/
+dist/
+build/
+*.log
+npm-debug.log*
+
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

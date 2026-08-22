@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#81c141" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Material Symbols Rounded, matching the icon vocabulary of the RM
+         Companion dashboard this design follows. -->
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap"
+    />
+    <title>Bonanza CRM</title>
+    <script>
+      /* Apply the stored theme before first paint, so a dark-mode user never
+         sees a white flash while React boots. */
+      (function () {
+        try {
+          var t = localStorage.getItem('bnz_theme');
+          if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+          var org = localStorage.getItem('bnz_org_accent');
+          if (org) {
+            var a = JSON.parse(org);
+            var r = document.documentElement.style;
+            if (a.accent) r.setProperty('--accent', a.accent);
+            if (a.accentDark) r.setProperty('--accent-dark', a.accentDark);
+          }
+        } catch (e) { /* storage unavailable — fall back to the CSS defaults */ }
+      })();
+    </script>
+  </head>
+  <body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body>
+</html>

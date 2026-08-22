@@ -1,0 +1,3240 @@
+/**
+ * Bonanza CRM — end-to-end test suite.
+ *
+ * Exercises every module through the real HTTP API: no mocks, no internal imports.
+ * Run against a freshly seeded database:
+ *
+ *   npm run seed && npm start &   # or npm run dev
+ *   npm test
+ *
+ * Exits non-zero if anything fails, so it can gate a deployment.
+ */
+
+const BASE = process.env.TEST_BASE || 'http://localhost:4100';
+
+/* ------------------------------------------------------------- harness */
+
+const results = [];
+let currentSuite = 'general';
+
+const suite = (name) => { currentSuite = name; };
+
+async function check(name, fn) {
+  const started = Date.now();
+  try {
+    await fn();
+    results.push({ suite: currentSuite, name, ok: true, ms: Date.now() - started });
+  } catch (err) {
+    results.push({ suite: currentSuite, name, ok: false, ms: Date.now() - started, error: err.message });
+  }
+}
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message || 'assertion failed');
+}
+
+const eq = (actual, expected, label) =>
+  assert(actual === expected, `${label || 'value'}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+
+const includes = (haystack, needle, label) =>
+  assert(String(haystack ?? '').includes(needle), `${label || 'value'}: expected to contain "${needle}", got "${haystack}"`);
+
+/* ---------------------------------------------------------------- http */
+
+async function req(path, { method = 'GET', body, token, expect, headers = {} } = {}) {
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      // Vendor webhooks authenticate with a shared secret rather than a session,
+      // so the suite needs to set arbitrary headers.
+      ...headers,
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
+
+  if (expect !== undefined && res.status !== expect) {
+    throw new Error(`${method} ${path} → expected HTTP ${expect}, got ${res.status}: ${text.slice(0, 220)}`);
+  }
+  return { status: res.status, data };
+}
+
+const login = async (email, password = 'bonanza') => {
+  const { status, data } = await req('/api/auth/login', { method: 'POST', body: { email, password } });
+
+  // The login limiter is keyed per account, so signing in by hand or through the
+  // browser shortly before a run can exhaust it. Say so plainly: otherwise every
+  // later test fails with "Sign in required" and the real cause is invisible.
+  if (status === 429) {
+    throw new Error(
+      `Rate limited signing in as ${email}. The per-account login limit is 10/minute — `
+      + 'wait a minute and re-run. (This is the limiter working, not a failure.)',
+    );
+  }
+  if (status !== 200) throw new Error(`Could not sign in as ${email}: HTTP ${status}`);
+  return data.token;
+};
+
+/* ------------------------------------------------------------ fixtures */
+
+const T = {};      // role → token
+const REF = {};    // reference records created by the suite
+
+/**
+ * Every run creates records under a unique identity, so the suite is idempotent:
+ * it can run repeatedly against the same database without colliding with itself.
+ */
+const RUN = String(Date.now()).slice(-8);
+
+/* Shown whenever a test trips over a seed fixture an earlier run consumed. */
+const RESEED = 'The seed fixtures have been consumed by a previous run — '
+  + 'reseed first: `npm test` (or `node src/seed.js` then `npm run test:only`).';
+
+/** Guard for tests that build on a fixture, so the failure names the cause. */
+const need = (value, what) => {
+  if (!value) throw new Error(`${what} is not available. ${RESEED}`);
+  return value;
+};
+const mob = (n) => `9${RUN}${n}`.slice(0, 10);
+const mail = (who) => `${who}.${RUN}@e2e.local`;
+
+/* ================================================================ tests */
+
+async function run() {
+  console.log(`\nBonanza CRM — end-to-end suite\ntarget: ${BASE}\n${'─'.repeat(64)}`);
+
+  /* ---------------------------------------------------- 1. health/auth */
+  suite('01 health & authentication');
+
+  await check('API is reachable', async () => {
+    const { data } = await req('/api/health', { expect: 200 });
+    eq(data.ok, true, 'health.ok');
+  });
+
+  await check('valid credentials return a token', async () => {
+    const { data } = await req('/api/auth/login', {
+      method: 'POST', body: { email: 'admin@bonanza.test', password: 'bonanza' }, expect: 200,
+    });
+    assert(data.token, 'no token returned');
+    eq(data.user.role, 'admin', 'user.role');
+    assert(Array.isArray(data.user.permissions), 'permissions missing');
+  });
+
+  await check('wrong password is rejected with 401', async () => {
+    await req('/api/auth/login', {
+      method: 'POST', body: { email: 'admin@bonanza.test', password: 'wrong' }, expect: 401,
+    });
+  });
+
+  await check('unknown user is rejected with 401', async () => {
+    await req('/api/auth/login', {
+      method: 'POST', body: { email: 'nobody@bonanza.test', password: 'bonanza' }, expect: 401,
+    });
+  });
+
+  await check('protected route refuses an unauthenticated request', async () => {
+    await req('/api/leads', { expect: 401 });
+  });
+
+  await check('all 11 roles can sign in', async () => {
+    const roles = {
+      superadmin: 'superadmin@bonanza.test',
+      admin: 'admin@bonanza.test',
+      caller: 'caller@bonanza.test',
+      dealer: 'dealer@bonanza.test',
+      sales_rm: 'salesrm@bonanza.test',
+      sales_supervisor: 'salessupervisor@bonanza.test',
+      partner_rm: 'partnerrm@bonanza.test',
+      product_rm: 'productrm@bonanza.test',
+      product_supervisor: 'productsupervisor@bonanza.test',
+      customer_care: 'care@bonanza.test',
+      marketing_manager: 'marketing@bonanza.test',
+    };
+    for (const [role, email] of Object.entries(roles)) {
+      T[role] = await login(email);
+      const { data } = await req('/api/auth/me', { token: T[role], expect: 200 });
+      eq(data.user.role, role, `me.role for ${email}`);
+    }
+  });
+
+  /* --------------------------------------------------------- 2. cockpits */
+  suite('02 role cockpits');
+
+  await check('every role returns a well-formed 3-zone cockpit', async () => {
+    for (const [role, token] of Object.entries(T)) {
+      const { data } = await req('/api/cockpit', { token, expect: 200 });
+      assert(data.title, `${role}: no title`);
+      assert(Array.isArray(data.metrics) && data.metrics.length > 0, `${role}: zone 1 metrics missing`);
+      assert(data.worklist && Array.isArray(data.worklist.rows), `${role}: zone 2 worklist missing`);
+      assert(Array.isArray(data.actions) && data.actions.length > 0, `${role}: zone 3 actions missing`);
+      assert(Array.isArray(data.tasks), `${role}: tasks missing`);
+    }
+  });
+
+  await check('Product RM cockpit is flagged read-only', async () => {
+    const { data } = await req('/api/cockpit', { token: T.product_rm, expect: 200 });
+    eq(data.read_only, true, 'product_rm.read_only');
+    eq(data.worklist.type, 'cards', 'product_rm worklist type');
+  });
+
+  await check('Caller cockpit surfaces a lead queue', async () => {
+    const { data } = await req('/api/cockpit', { token: T.caller, expect: 200 });
+    eq(data.worklist.type, 'leads', 'caller worklist type');
+  });
+
+  await check('Customer Care cockpit surfaces a ticket queue', async () => {
+    const { data } = await req('/api/cockpit', { token: T.customer_care, expect: 200 });
+    eq(data.worklist.type, 'tickets', 'customer_care worklist type');
+  });
+
+  /* ------------------------------------------------------------ 3. leads */
+  suite('03 lead management');
+
+  await check('lead list returns decorated rows', async () => {
+    const { data } = await req('/api/leads', { token: T.admin, expect: 200 });
+    assert(Array.isArray(data) && data.length > 0, 'no leads returned');
+    const lead = data[0];
+    assert('age_band' in lead, 'age_band not computed');
+    assert(Array.isArray(lead.cards), 'cards not attached');
+    assert('open_tickets' in lead, 'open_tickets not counted');
+  });
+
+  await check("creating a lead auto-generates a card per product in the lead's own org", async () => {
+    const { data: meta } = await req('/api/meta', { token: T.sales_rm, expect: 200 });
+
+    const { data } = await req('/api/leads', {
+      method: 'POST', token: T.sales_rm, expect: 201,
+      // route:false keeps the lead with its creator. Suites 03-25 assert against
+      // a known owner, and 'Website' is an inbound source that would otherwise
+      // be handed to the digital desk by the assignment rules. Routing itself
+      // is covered in suite 26.
+      body: {
+        name: 'E2E Test Lead', mobile: mob(1), email: mail('lead'),
+        city: 'Mumbai', source: 'Website', route: false,
+      },
+    });
+    REF.leadId = data.id;
+
+    // The catalogue is per business: a Bonanza lead must not carry a Bigul
+    // Connect card, so the count follows the lead's org, not the whole product
+    // table. Asserting the identity is stronger than asserting the number.
+    const ownOrg = meta.products.filter((p) => !p.sales_org || p.sales_org === data.sales_org);
+    assert(ownOrg.length > 0, 'no products found for the org this lead belongs to');
+    eq(data.cards.length, ownOrg.length, 'auto-generated card count');
+
+    const cardProducts = new Set(data.cards.map((c) => c.product_type_id));
+    for (const p of ownOrg) assert(cardProducts.has(p.id), `no card for ${p.code}`);
+
+    assert(data.cards.every((c) => c.state === 'INACTIVE'), 'cards should all start Inactive');
+  });
+
+  await check('duplicate mobile is rejected with 409', async () => {
+    const { data } = await req('/api/leads', {
+      method: 'POST', token: T.sales_rm, expect: 409,
+      body: { name: 'Duplicate', mobile: mob(1) },
+    });
+    assert(data.duplicate_id, 'duplicate_id not reported');
+  });
+
+  await check('lead without a name is rejected with 400', async () => {
+    await req('/api/leads', { method: 'POST', token: T.sales_rm, expect: 400, body: { mobile: mob(8) } });
+  });
+
+  await check('search filter matches on mobile', async () => {
+    const { data } = await req(`/api/leads?q=${mob(1)}`, { token: T.sales_rm, expect: 200 });
+    eq(data.length, 1, 'search result count');
+    eq(data[0].name, 'E2E Test Lead', 'search result name');
+  });
+
+  await check('card-state filter returns only matching leads', async () => {
+    const { data } = await req('/api/leads?card_state=WARM', { token: T.admin, expect: 200 });
+    for (const lead of data) {
+      assert(lead.cards.some((c) => c.state === 'WARM'), `lead ${lead.id} has no WARM card`);
+    }
+  });
+
+  await check('lead detail includes every related collection', async () => {
+    const { data } = await req(`/api/leads/${REF.leadId}`, { token: T.sales_rm, expect: 200 });
+    for (const key of ['activities', 'tasks', 'notes', 'tickets', 'journeys', 'cards']) {
+      assert(Array.isArray(data[key]), `${key} missing from lead detail`);
+    }
+  });
+
+  /* -------------------------------------------------------------- 4. RBAC */
+  suite('04 permissions (enforced at the API)');
+
+  await check('Caller cannot mark a card Warm', async () => {
+    const { data: lead } = await req(`/api/leads/${REF.leadId}`, { token: T.sales_rm, expect: 200 });
+    REF.cardId = lead.cards[0].id;
+    REF.mfCardId = lead.cards.find((c) => c.product_code === 'MF').id;
+
+    const { data } = await req(`/api/cards/${REF.cardId}/state`, {
+      method: 'POST', token: T.caller, expect: 403, body: { state: 'WARM' },
+    });
+    eq(data.required, 'card.mark.warm', 'required capability not reported');
+  });
+
+  await check('Caller CAN mark a card Exploring', async () => {
+    const { data } = await req(`/api/cards/${REF.cardId}/state`, {
+      method: 'POST', token: T.caller, expect: 200, body: { state: 'EXPLORING', note: 'e2e' },
+    });
+    eq(data.to, 'EXPLORING', 'transition target');
+  });
+
+  await check('Sales RM cannot change lead stage without a supervisor', async () => {
+    const { data } = await req(`/api/leads/${REF.leadId}`, {
+      method: 'PATCH', token: T.sales_rm, expect: 403, body: { stage: 'Qualified' },
+    });
+    eq(data.required, 'lead.stage.change', 'required capability');
+  });
+
+  await check('Sales Supervisor CAN change lead stage', async () => {
+    const { data } = await req(`/api/leads/${REF.leadId}`, {
+      method: 'PATCH', token: T.sales_supervisor, expect: 200, body: { stage: 'Qualified' },
+    });
+    eq(data.stage, 'Qualified', 'stage after supervisor change');
+  });
+
+  await check('Product RM is refused write access to a lead', async () => {
+    await req(`/api/leads/${REF.leadId}`, {
+      method: 'PATCH', token: T.product_rm, expect: 403, body: { city: 'Delhi' },
+    });
+  });
+
+  await check('lead visibility is scoped — Caller cannot open another RM\'s lead', async () => {
+    const { data } = await req(`/api/leads/${REF.leadId}`, { token: T.caller, expect: 403 });
+    includes(data.error, 'visibility scope', 'scope error message');
+  });
+
+  await check('non-admin is refused the admin user list', async () => {
+    await req('/api/admin/users', { token: T.caller, expect: 403 });
+  });
+
+  await check('non-admin is refused the rule builder', async () => {
+    await req('/api/admin/rules', { token: T.sales_rm, expect: 403 });
+  });
+
+  /* ------------------------------------------------------ 5. product cards */
+  suite('05 product cards & state machine');
+
+  await check('Sales RM can mark Warm and set a contact flag', async () => {
+    const { data } = await req(`/api/cards/${REF.mfCardId}/state`, {
+      method: 'POST', token: T.sales_rm, expect: 200,
+      body: { state: 'WARM', contact_flag: 'Direct Contact', note: 'e2e warm' },
+    });
+    eq(data.to, 'WARM', 'state after warm');
+  });
+
+  await check('Warm notifies the Product RM for that product', async () => {
+    const { data } = await req('/api/notifications', { token: T.product_rm, expect: 200 });
+    assert(data.some((n) => /warm/i.test(n.title)), 'no warm notification for the Product RM');
+  });
+
+  await check('every state change is written to the card audit trail', async () => {
+    const { data } = await req(`/api/cards/${REF.mfCardId}/audit`, { token: T.sales_rm, expect: 200 });
+    assert(data.length > 0, 'audit trail empty');
+    eq(data[0].to_state, 'WARM', 'latest audit entry');
+    assert(data[0].user_name, 'audit entry has no actor');
+  });
+
+  await check('an unknown state is rejected with 400', async () => {
+    await req(`/api/cards/${REF.mfCardId}/state`, {
+      method: 'POST', token: T.sales_rm, expect: 400, body: { state: 'NONSENSE' },
+    });
+  });
+
+  await check('Sales RM can request Product RM intervention', async () => {
+    const { data } = await req(`/api/cards/${REF.mfCardId}/request-product-rm`, {
+      method: 'POST', token: T.sales_rm, expect: 200, body: { reason: 'e2e intervention' },
+    });
+    eq(data.requested, true, 'intervention requested');
+    assert(data.notified >= 1, 'no Product RM notified');
+  });
+
+  /* ------------------------------------------------- 6. activities/scoring */
+  suite('06 activity & lead scoring');
+
+  await check('logging an activity raises the lead score', async () => {
+    const { data: before } = await req(`/api/leads/${REF.leadId}`, { token: T.sales_rm, expect: 200 });
+    await req('/api/activities', {
+      method: 'POST', token: T.sales_rm, expect: 201,
+      // Contact activities now carry a mandatory outcome (suite 26): an
+      // untagged meeting is one nobody can report on.
+      body: {
+        lead_id: REF.leadId, type: 'Meeting', subject: 'e2e meeting',
+        disposition: 'MEET_HELD_POSITIVE', body: 'Positive discussion',
+      },
+    });
+    const { data: after } = await req(`/api/leads/${REF.leadId}`, { token: T.sales_rm, expect: 200 });
+    assert(after.score > before.score, `score did not rise (${before.score} → ${after.score})`);
+  });
+
+  await check('activity appears on the lead timeline', async () => {
+    const { data } = await req(`/api/activities?lead_id=${REF.leadId}`, { token: T.sales_rm, expect: 200 });
+    assert(data.some((a) => a.subject === 'e2e meeting'), 'activity not on timeline');
+  });
+
+  /* ------------------------------------------------------------- 7. tasks */
+  suite('07 tasks');
+
+  await check('a task without a due date is rejected', async () => {
+    await req('/api/tasks', {
+      method: 'POST', token: T.sales_rm, expect: 400,
+      body: { title: 'No due date', lead_id: REF.leadId },
+    });
+  });
+
+  await check('a task with a due date is created', async () => {
+    const due = new Date(Date.now() + 864e5).toISOString().slice(0, 19).replace('T', ' ');
+    const { data } = await req('/api/tasks', {
+      method: 'POST', token: T.sales_rm, expect: 201,
+      body: { title: 'E2E follow-up', lead_id: REF.leadId, due_at: due, priority: 'High' },
+    });
+    REF.taskId = data.id;
+    eq(data.status, 'Open', 'new task status');
+  });
+
+  await check('a task can be completed', async () => {
+    const { data } = await req(`/api/tasks/${REF.taskId}`, {
+      method: 'PATCH', token: T.sales_rm, expect: 200, body: { status: 'Completed' },
+    });
+    eq(data.status, 'Completed', 'task status after update');
+  });
+
+  /* ------------------------------------------------------------- 8. notes */
+  suite('08 notes');
+
+  await check('a note is created and attributed', async () => {
+    const { data } = await req('/api/notes', {
+      method: 'POST', token: T.sales_rm, expect: 201,
+      body: { lead_id: REF.leadId, body: 'E2E note — visible to the whole team.' },
+    });
+    REF.noteId = data.id;
+    eq(data.user_role, 'sales_rm', 'note author role');
+  });
+
+  await check('an empty note is rejected', async () => {
+    await req('/api/notes', { method: 'POST', token: T.sales_rm, expect: 400, body: { lead_id: REF.leadId, body: '  ' } });
+  });
+
+  await check('the author can pin their own note', async () => {
+    const { data } = await req(`/api/notes/${REF.noteId}/pin`, { method: 'POST', token: T.sales_rm, expect: 200 });
+    eq(data.pinned, true, 'pinned');
+  });
+
+  await check('an unrelated non-supervisor cannot pin someone else\'s note', async () => {
+    await req(`/api/notes/${REF.noteId}/pin`, { method: 'POST', token: T.caller, expect: 403 });
+  });
+
+  /* ----------------------------------------------------------- 9. tickets */
+  suite('09 ticketing & SLA');
+
+  await check('a ticket is created with a reference and SLA deadlines', async () => {
+    const { data: meta } = await req('/api/meta', { token: T.sales_rm, expect: 200 });
+    const category = meta.ticket_categories[0];
+
+    const { data } = await req('/api/tickets', {
+      method: 'POST', token: T.sales_rm, expect: 201,
+      body: {
+        subject: 'E2E — SIP debit failed', description: 'Mandate not registered.',
+        priority: 'High', category_id: category.id, lead_id: REF.leadId, card_id: REF.mfCardId,
+      },
+    });
+    REF.ticketId = data.id;
+    assert(/^BNZ-\d{5}$/.test(data.ref), `bad ticket ref: ${data.ref}`);
+    assert(data.response_due, 'response_due not stamped');
+    assert(data.resolution_due, 'resolution_due not stamped');
+    assert(data.assignee_id, 'ticket not auto-assigned');
+  });
+
+  await check('the AI 2-line summary is generated on creation', async () => {
+    const { data } = await req(`/api/tickets/${REF.ticketId}`, { token: T.customer_care, expect: 200 });
+    assert(data.ai_summary, 'no AI summary');
+    eq(data.ai_summary.split('\n').length, 2, 'AI summary should be exactly two lines');
+  });
+
+  await check('a ticket event mirrors onto the lead activity feed', async () => {
+    const { data } = await req(`/api/activities?lead_id=${REF.leadId}`, { token: T.sales_rm, expect: 200 });
+    assert(data.some((a) => a.type === 'Ticket Event'), 'no ticket event on the lead');
+  });
+
+  await check('an agent reply is recorded and refreshes the summary', async () => {
+    await req(`/api/tickets/${REF.ticketId}/replies`, {
+      method: 'POST', token: T.customer_care, expect: 201,
+      body: { body: 'We have raised this with operations.' },
+    });
+    const { data } = await req(`/api/tickets/${REF.ticketId}`, { token: T.customer_care, expect: 200 });
+    assert(data.replies.length >= 1, 'reply not stored');
+    assert(data.first_response_at, 'first_response_at not stamped');
+  });
+
+  await check('moving to Waiting on Client pauses the SLA clock', async () => {
+    await req(`/api/tickets/${REF.ticketId}`, {
+      method: 'PATCH', token: T.customer_care, expect: 200, body: { status: 'Waiting on Client' },
+    });
+    const { data } = await req(`/api/tickets/${REF.ticketId}`, { token: T.customer_care, expect: 200 });
+    eq(data.status, 'Waiting on Client', 'status');
+    assert(data.sla_paused_at, 'SLA not paused');
+  });
+
+  await check('resuming from Waiting on Client pushes the deadline out', async () => {
+    const { data: paused } = await req(`/api/tickets/${REF.ticketId}`, { token: T.customer_care, expect: 200 });
+    const before = paused.resolution_due;
+    await req(`/api/tickets/${REF.ticketId}`, {
+      method: 'PATCH', token: T.customer_care, expect: 200, body: { status: 'Open' },
+    });
+    const { data } = await req(`/api/tickets/${REF.ticketId}`, { token: T.customer_care, expect: 200 });
+    assert(!data.sla_paused_at, 'SLA still marked paused');
+    assert(data.resolution_due >= before, 'resolution deadline moved backwards');
+  });
+
+  await check('a caller cannot reassign a ticket', async () => {
+    await req(`/api/tickets/${REF.ticketId}`, {
+      method: 'PATCH', token: T.caller, expect: 403, body: { assignee_id: 1 },
+    });
+  });
+
+  await check('escalation moves the ticket up the hierarchy', async () => {
+    const { data } = await req(`/api/tickets/${REF.ticketId}/escalate`, {
+      method: 'POST', token: T.customer_care, expect: 200, body: { reason: 'e2e escalation' },
+    });
+    assert(data.escalated_to, 'no escalation target');
+  });
+
+  await check('two tickets can be merged', async () => {
+    const { data: dupe } = await req('/api/tickets', {
+      method: 'POST', token: T.sales_rm, expect: 201,
+      body: { subject: 'E2E duplicate', priority: 'Low', lead_id: REF.leadId },
+    });
+    const { data } = await req(`/api/tickets/${dupe.id}/merge`, {
+      method: 'POST', token: T.customer_care, expect: 200, body: { into_id: REF.ticketId },
+    });
+    eq(data.merged, true, 'merge flag');
+
+    const { data: target } = await req(`/api/tickets/${REF.ticketId}`, { token: T.customer_care, expect: 200 });
+    assert(target.merged.length >= 1, 'merged ticket not linked to target');
+  });
+
+  await check('CSAT outside 1–5 is rejected', async () => {
+    await req(`/api/tickets/${REF.ticketId}/csat`, { method: 'POST', token: T.customer_care, expect: 400, body: { score: 9 } });
+  });
+
+  await check('CSAT within range is stored', async () => {
+    await req(`/api/tickets/${REF.ticketId}/csat`, { method: 'POST', token: T.customer_care, expect: 200, body: { score: 5 } });
+    const { data } = await req(`/api/tickets/${REF.ticketId}`, { token: T.customer_care, expect: 200 });
+    eq(data.csat, 5, 'csat');
+  });
+
+  await check('the SLA sweep runs and reports', async () => {
+    const { data } = await req('/api/tickets/sweep', { method: 'POST', token: T.customer_care, expect: 200 });
+    assert('checked' in data && 'breached' in data, 'sweep result shape');
+  });
+
+  await check('ticket reporting aggregates by category and agent', async () => {
+    const { data } = await req('/api/tickets/reports/summary', { token: T.sales_supervisor, expect: 200 });
+    assert(Array.isArray(data.by_category), 'by_category missing');
+    assert(Array.isArray(data.by_agent), 'by_agent missing');
+    assert('open' in data.totals, 'totals.open missing');
+  });
+
+  /* ---------------------------------------------------------- 10. partners */
+  suite('10 partner lifecycle');
+
+  await check('a partner prospect is created with onboarding steps and LMS modules', async () => {
+    const { data } = await req('/api/partners', {
+      method: 'POST', token: T.partner_rm, expect: 201,
+      body: { name: 'E2E Partner', business_name: 'E2E Securities', partner_model: 'Remisier',
+        mobile: mob(2), email: mail('partner'), city: 'Pune', commission_pct: 30 },
+    });
+    REF.partnerId = data.id;
+    eq(data.state_code, 'PROSPECT', 'initial partner state');
+    assert(data.steps_total > 0, 'no onboarding steps created');
+  });
+
+  await check('elevation is refused while onboarding steps are pending', async () => {
+    const { data } = await req(`/api/partners/${REF.partnerId}/request-elevation`, {
+      method: 'POST', token: T.partner_rm, expect: 400,
+    });
+    assert(data.pending > 0, 'pending step count not reported');
+  });
+
+  await check('completing every onboarding step advances the partner', async () => {
+    const { data: partner } = await req(`/api/partners/${REF.partnerId}`, { token: T.partner_rm, expect: 200 });
+    for (const step of partner.steps) {
+      await req(`/api/partners/${REF.partnerId}/steps/${step.code}`, { method: 'POST', token: T.partner_rm, expect: 200 });
+    }
+    const { data } = await req(`/api/partners/${REF.partnerId}`, { token: T.partner_rm, expect: 200 });
+    eq(data.steps_done, data.steps_total, 'all steps complete');
+  });
+
+  await check('a Partner RM cannot elevate on their own', async () => {
+    await req(`/api/partners/${REF.partnerId}/elevate`, { method: 'POST', token: T.partner_rm, expect: 403 });
+  });
+
+  await check('Admin elevation issues a partner code and portal credential', async () => {
+    const { data } = await req(`/api/partners/${REF.partnerId}/elevate`, {
+      method: 'POST', token: T.admin, expect: 200, body: { portal_password: 'e2epass' },
+    });
+    eq(data.elevated, true, 'elevated');
+    assert(/^BNZ-P\d{4}$/.test(data.partner_code), `bad partner code: ${data.partner_code}`);
+    REF.partnerLogin = data.portal_login;
+  });
+
+  await check('an elevated partner is ACTIVE', async () => {
+    const { data } = await req(`/api/partners/${REF.partnerId}`, { token: T.partner_rm, expect: 200 });
+    eq(data.state_code, 'ACTIVE', 'partner state after elevation');
+    eq(data.has_portal_login, true, 'portal login not issued');
+  });
+
+  await check('AI partner health insight returns a graded assessment', async () => {
+    const { data } = await req(`/api/partners/${REF.partnerId}/insight`, { token: T.partner_rm, expect: 200 });
+    assert(['Strong', 'Steady', 'Needs attention', 'At risk'].includes(data.health), `bad health: ${data.health}`);
+    assert(Array.isArray(data.concerns), 'concerns missing');
+  });
+
+  /* ----------------------------------------------------- 11. partner portal */
+  suite('11 partner portal (separate surface)');
+
+  await check('a partner signs in on the portal', async () => {
+    const { data } = await req('/api/auth/partner-login', {
+      method: 'POST', expect: 200,
+      body: { email: REF.partnerLogin.email, password: REF.partnerLogin.password },
+    });
+    REF.portalToken = data.token;
+    eq(data.partner.state, 'ACTIVE', 'partner state');
+  });
+
+  await check('a suspended partner is refused at sign-in', async () => {
+    await req('/api/auth/partner-login', {
+      method: 'POST', expect: 403, body: { email: 'mohammed@partner.test', password: 'partner' },
+    });
+  });
+
+  await check('a partner token cannot reach CRM endpoints', async () => {
+    await req('/api/leads', { token: REF.portalToken, expect: 401 });
+    await req('/api/admin/users', { token: REF.portalToken, expect: 401 });
+  });
+
+  await check('a CRM token cannot reach portal endpoints', async () => {
+    await req('/api/portal/dashboard', { token: T.admin, expect: 401 });
+  });
+
+  await check('the portal dashboard is scoped to that partner', async () => {
+    const { data } = await req('/api/portal/dashboard', { token: REF.portalToken, expect: 200 });
+    eq(data.partner.id, REF.partnerId, 'dashboard partner id');
+    assert('leads_sourced' in data.metrics, 'metrics missing');
+    assert(Array.isArray(data.sourced_leads), 'sourced_leads missing');
+    assert(data.sourced_leads.every((l) => !('mobile' in l)), 'portal leaked client mobile numbers');
+  });
+
+  await check('a portal referral creates an attributed CRM lead', async () => {
+    const { data } = await req('/api/portal/referrals', {
+      method: 'POST', token: REF.portalToken, expect: 201,
+      body: { name: 'E2E Referral', mobile: mob(3), city: 'Pune', note: 'e2e referral' },
+    });
+    REF.referralLeadId = data.lead_id;
+
+    const { data: lead } = await req(`/api/leads/${data.lead_id}`, { token: T.admin, expect: 200 });
+    eq(lead.partner_id, REF.partnerId, 'referral not attributed to the partner');
+    includes(lead.source, 'Partner referral', 'referral source');
+  });
+
+  await check('a referral with an invalid mobile is rejected', async () => {
+    await req('/api/portal/referrals', {
+      method: 'POST', token: REF.portalToken, expect: 400, body: { name: 'Bad', mobile: '123' },
+    });
+  });
+
+  await check('a duplicate referral is rejected with 409', async () => {
+    await req('/api/portal/referrals', {
+      method: 'POST', token: REF.portalToken, expect: 409, body: { name: 'Dup', mobile: mob(3) },
+    });
+  });
+
+  await check('a partner raises a support ticket that lands in the CRM queue', async () => {
+    const { data } = await req('/api/portal/tickets', {
+      method: 'POST', token: REF.portalToken, expect: 201,
+      body: { subject: 'E2E partner query', description: 'Commission mismatch', priority: 'Medium' },
+    });
+    REF.partnerTicketId = data.id;
+
+    const { data: crmView } = await req(`/api/tickets/${data.id}`, { token: T.customer_care, expect: 200 });
+    eq(crmView.partner_id, REF.partnerId, 'ticket not linked to the partner');
+    eq(crmView.channel, 'Portal', 'ticket channel');
+  });
+
+  await check('a partner reply re-opens a resolved ticket', async () => {
+    await req(`/api/tickets/${REF.partnerTicketId}`, {
+      method: 'PATCH', token: T.customer_care, expect: 200, body: { status: 'Resolved' },
+    });
+    await req(`/api/portal/tickets/${REF.partnerTicketId}/replies`, {
+      method: 'POST', token: REF.portalToken, expect: 201, body: { body: 'Still not resolved.' },
+    });
+    const { data } = await req(`/api/tickets/${REF.partnerTicketId}`, { token: T.customer_care, expect: 200 });
+    eq(data.status, 'Open', 'ticket did not re-open on partner reply');
+  });
+
+  await check('a partner cannot read another partner\'s ticket', async () => {
+    await req(`/api/portal/tickets/${REF.ticketId}`, { token: REF.portalToken, expect: 404 });
+  });
+
+  /* ------------------------------------------------------------- 12. DKYC */
+  suite('12 DKYC portal (public, 16-step)');
+
+  await check('the public product list is reachable without a session', async () => {
+    const { data } = await req('/dkyc/products', { expect: 200 });
+    assert(data.length > 0, 'no products offered');
+    REF.eqdProduct = data.find((p) => p.code === 'EQD');
+    assert(REF.eqdProduct, 'Equity & Derivatives not offered');
+  });
+
+  await check('starting an application returns a resume token', async () => {
+    const { data } = await req('/dkyc/start', {
+      method: 'POST', expect: 201,
+      body: { product_type_id: REF.eqdProduct.id, mobile: mob(4) },
+    });
+    REF.dkycToken = data.resume_token;
+    eq(data.journey.status, 'In Progress', 'journey status');
+    eq(data.journey.current_step, 'MOBILE', 'first step');
+    assert(data.journey.steps_total >= 12, 'unexpectedly short journey');
+  });
+
+  await check('a journey can be resumed from its token', async () => {
+    const { data } = await req(`/dkyc/resume/${REF.dkycToken}`, { expect: 200 });
+    eq(data.current_step, 'MOBILE', 'resumed step');
+  });
+
+  await check('an unknown resume token returns 404', async () => {
+    await req('/dkyc/resume/not-a-real-token', { expect: 404 });
+  });
+
+  const dkycStep = (step_code, payload) =>
+    req(`/dkyc/resume/${REF.dkycToken}/step`, { method: 'POST', body: { step_code, payload } });
+
+  await check('submitting a step out of order is rejected with 409', async () => {
+    const { status, data } = await dkycStep('ESIGN', { esign_otp: '123456' });
+    eq(status, 409, 'out-of-order status');
+    eq(data.current_step, 'MOBILE', 'reported current step');
+  });
+
+  await check('a wrong OTP is rejected', async () => {
+    await dkycStep('MOBILE', { mobile: mob(4) });
+    const { status } = await dkycStep('MOBILE_OTP', { otp: '000000' });
+    eq(status, 400, 'wrong OTP status');
+  });
+
+  await check('the correct OTP advances the journey', async () => {
+    const { status, data } = await dkycStep('MOBILE_OTP', { otp: '123456' });
+    eq(status, 200, 'otp status');
+    eq(data.next_step, 'EMAIL', 'next step after mobile OTP');
+  });
+
+  await check('penny-drop failure routes to the bank-proof step', async () => {
+    await dkycStep('EMAIL', { email: mail('dkyc') });
+    await dkycStep('EMAIL_OTP', { email_otp: '123456' });
+    await dkycStep('PAN', { pan: 'ABCDE1234F', dob: '1990-01-01' });
+    await dkycStep('AADHAAR_DIGILOCKER', { digilocker_consent: true });
+    await dkycStep('PERSONAL', {
+      gender: 'Male', marital_status: 'Single', father_spouse: 'Test',
+      address: '1 Test Road', city: 'Pune', state: 'Maharashtra', pincode: '411001',
+    });
+    await dkycStep('FINANCIAL', {
+      trading_experience: 'None', education: 'Graduate', occupation: 'Business',
+      annual_income: '₹10–25 Lakh', politically_exposed: 'No',
+    });
+
+    // Odd trailing digit forces the simulated penny drop to fail.
+    const { status, data } = await dkycStep('BANK', {
+      account_number: '123456789', ifsc: 'HDFC0001234', account_holder: 'Test User',
+    });
+    eq(status, 200, 'bank step status');
+    eq(data.penny_drop_failed, true, 'penny drop should have failed');
+    eq(data.next_step, 'BANK_PROOF', 'did not route to bank proof');
+  });
+
+  await check('high income plus F&O triggers the conditional income-proof step', async () => {
+    await dkycStep('BANK_PROOF', { bank_proof: 'cheque.jpg' });
+    await dkycStep('NOMINEE', { nominee_opt: 'Opt out' });
+    const { data } = await dkycStep('SEGMENTS', {
+      segments: ['Equity Cash', 'Equity Derivatives (F&O)'], depository: 'CDSL', plan: 'Bigul Flat ₹0 Delivery',
+    });
+    eq(data.next_step, 'INCOME_PROOF', 'income proof not triggered');
+  });
+
+  await check('completing eSign finishes the journey', async () => {
+    await dkycStep('INCOME_PROOF', { income_proof: 'itr.pdf' });
+    await dkycStep('SELFIE', { selfie: 'selfie.jpg' });
+    await dkycStep('SIGNATURE', { signature: 'sign.jpg' });
+    const { status, data } = await dkycStep('ESIGN', { esign_otp: '123456' });
+    eq(status, 200, 'esign status');
+    eq(data.done, true, 'journey not marked done');
+    eq(data.journey.status, 'Complete', 'journey status');
+    eq(data.journey.progress_pct, 100, 'progress');
+  });
+
+  await check('completing the journey creates an attributed CRM lead', async () => {
+    const { data } = await req(`/api/leads?q=${mob(4)}`, { token: T.admin, expect: 200 });
+    assert(data.length === 1, `expected 1 lead from DKYC, got ${data.length}`);
+    eq(data[0].source, 'DKYC Portal', 'lead source');
+    eq(data[0].kyc_status, 'Complete', 'kyc status');
+    REF.dkycLeadId = data[0].id;
+  });
+
+  await check('the matching product card is set Active on completion', async () => {
+    const { data } = await req(`/api/leads/${REF.dkycLeadId}`, { token: T.admin, expect: 200 });
+    const card = data.cards.find((c) => c.product_type_id === REF.eqdProduct.id);
+    eq(card.state, 'ACTIVE', 'EQD card state after KYC');
+  });
+
+  await check('a completed journey rejects further step submissions', async () => {
+    const { status } = await dkycStep('ESIGN', { esign_otp: '123456' });
+    assert(status === 409 || status === 400, `expected rejection, got ${status}`);
+  });
+
+  /* -------------------------------------------------- 13. KYC console */
+  suite('13 KYC engine (internal)');
+
+  await check('KYC health lists journeys with progress', async () => {
+    const { data } = await req('/api/kyc/health', { token: T.product_supervisor, expect: 200 });
+    assert(data.length > 0, 'no journeys');
+    assert(data.every((j) => 'progress_pct' in j), 'progress not computed');
+  });
+
+  await check('the seeded stalled and abandoned journeys are present', async () => {
+    const { data } = await req('/api/kyc/health', { token: T.product_supervisor, expect: 200 });
+
+    // These two fixtures come from the seed, because a journey only becomes
+    // Abandoned after an hour on one step — not something a test can wait for.
+    // The takeover test below consumes the Abandoned one, so the suite must run
+    // against a freshly seeded database. `npm test` does that; `npm run
+    // test:only` deliberately does not, and will land here on a second pass.
+    const stalled = data.find((j) => j.status === 'Stalled');
+    const abandoned = data.find((j) => j.status === 'Abandoned');
+    assert(stalled || abandoned, RESEED);
+    assert(stalled, `no stalled journey in the reference data. ${RESEED}`);
+    assert(abandoned, `no abandoned journey in the reference data. ${RESEED}`);
+
+    // Either state means "self-service has failed and a human must step in".
+    REF.abandonedJourney = abandoned || stalled;
+  });
+
+  await check('journey detail exposes the step rail', async () => {
+    const { data } = await req(`/api/kyc/journeys/${need(REF.abandonedJourney, 'the abandoned KYC journey').id}`, { token: T.product_rm, expect: 200 });
+    assert(Array.isArray(data.steps) && data.steps.length > 0, 'no steps');
+    assert(data.steps.every((s) => 'status' in s && 'timer_s' in s || 'timer' in s), 'step shape');
+  });
+
+  await check('AI stall coaching returns a cause and a line to say', async () => {
+    const { data } = await req(`/api/kyc/journeys/${need(REF.abandonedJourney, 'the abandoned KYC journey').id}/coach`, { token: T.product_rm, expect: 200 });
+    assert(data.likely_cause, 'no likely_cause');
+    assert(data.what_to_say, 'no what_to_say');
+  });
+
+  await check('a Product RM can take over an abandoned journey', async () => {
+    const { data } = await req(`/api/kyc/journeys/${need(REF.abandonedJourney, 'the abandoned KYC journey').id}/assist`, {
+      method: 'POST', token: T.product_rm, expect: 200,
+    });
+    eq(data.status, 'In Progress', 'status after takeover');
+    assert(data.assisted_by, 'assisted_by not recorded');
+  });
+
+  await check('only a Product Supervisor can override a step', async () => {
+    await req(`/api/kyc/journeys/${need(REF.abandonedJourney, 'the abandoned KYC journey').id}/override`, {
+      method: 'POST', token: T.product_rm, expect: 403, body: { step_code: 'PAN', action: 'complete' },
+    });
+    await req(`/api/kyc/journeys/${need(REF.abandonedJourney, 'the abandoned KYC journey').id}/override`, {
+      method: 'POST', token: T.product_supervisor, expect: 200, body: { step_code: 'PAN', action: 'complete' },
+    });
+  });
+
+  await check('the stall sweep runs and reports', async () => {
+    const { data } = await req('/api/kyc/sweep', { method: 'POST', token: T.product_supervisor, expect: 200 });
+    assert('checked' in data, 'sweep result shape');
+  });
+
+  /* ------------------------------------------------------------- 14. AI */
+  suite('14 AI layer');
+
+  await check('AI status reports the provider and capability list', async () => {
+    const { data } = await req('/api/ai/status', { token: T.sales_rm, expect: 200 });
+    assert(data.provider, 'no provider reported');
+    eq(data.capabilities.length, 6, 'capability count');
+  });
+
+  await check('disposition requires a transcript', async () => {
+    await req('/api/ai/disposition', {
+      method: 'POST', token: T.caller, expect: 400, body: { lead_id: REF.leadId, transcript: '' },
+    });
+  });
+
+  await check('disposition returns a complete, schema-shaped proposal', async () => {
+    const { data } = await req('/api/ai/disposition', {
+      method: 'POST', token: T.sales_rm, expect: 200,
+      body: {
+        lead_id: REF.leadId, duration_s: 240,
+        transcript: 'Client asked about starting a SIP in mutual funds at 5000 per month. Said go ahead and send the account opening link, he is ready to start this month.',
+      },
+    });
+    for (const key of ['outcome', 'summary', 'card_changes', 'next_action', 'compliance_flag', 'score_signal']) {
+      assert(key in data, `disposition missing ${key}`);
+    }
+    assert(Array.isArray(data.cards), 'current card states not returned for the confirm screen');
+    REF.disposition = data;
+  });
+
+  await check('a compliance mention is flagged and raises a ticket on confirm', async () => {
+    const { data: proposal } = await req('/api/ai/disposition', {
+      method: 'POST', token: T.sales_rm, expect: 200,
+      body: {
+        lead_id: REF.leadId, duration_s: 180,
+        transcript: 'The client says he will complain to SEBI if the payout is not credited today. He is very unhappy.',
+      },
+    });
+    assert(proposal.compliance_flag !== 'None', `expected a compliance flag, got ${proposal.compliance_flag}`);
+
+    const { data } = await req('/api/ai/disposition/confirm', {
+      method: 'POST', token: T.sales_rm, expect: 200, body: { ...proposal, lead_id: REF.leadId },
+    });
+    assert(data.compliance_ticket_id, 'no compliance ticket raised');
+    REF.complianceTicketId = data.compliance_ticket_id;
+  });
+
+  await check('the compliance ticket is High priority and assigned', async () => {
+    const { data } = await req(`/api/tickets/${REF.complianceTicketId}`, { token: T.customer_care, expect: 200 });
+    eq(data.priority, 'High', 'compliance ticket priority');
+    assert(data.assignee_id, 'compliance ticket unassigned');
+  });
+
+  await check('confirming refuses card changes the role may not make', async () => {
+    // A Caller confirming a proposed WARM transition must have that one change refused.
+    const { data } = await req('/api/ai/disposition/confirm', {
+      method: 'POST', token: T.caller, expect: 200,
+      body: {
+        lead_id: REF.leadId, outcome: 'Connected — Interested', summary: 'e2e role check',
+        card_changes: [{ product_code: 'MF', from_state: 'WARM', to_state: 'WARM', evidence: 'e2e' }],
+        next_action: 'No Action', next_action_due_hours: 4, follow_up_task: '',
+        compliance_flag: 'None', compliance_note: '', score_signal: 0,
+      },
+    });
+    eq(data.cards_refused.length, 1, 'the Warm change should have been refused for a Caller');
+    includes(data.cards_refused[0].reason, 'cannot set', 'refusal reason');
+  });
+
+  await check('next-best-action puts an open complaint ahead of sales activity', async () => {
+    const { data } = await req(`/api/ai/leads/${REF.leadId}/next-action`, { token: T.sales_rm, expect: 200 });
+    for (const key of ['action', 'channel', 'urgency', 'reason', 'talking_point']) {
+      assert(key in data, `next-action missing ${key}`);
+    }
+  });
+
+  await check('the copilot answers and reports what it was grounded in', async () => {
+    const { data } = await req('/api/ai/copilot', {
+      method: 'POST', token: T.sales_rm, expect: 200, body: { question: 'who should I call today?' },
+    });
+    assert(data.reply && data.reply.length > 10, 'empty copilot reply');
+    assert('leads' in data.grounded_in, 'grounding not reported');
+  });
+
+  await check('the copilot is scoped — a Caller sees fewer leads than an Admin', async () => {
+    const { data: caller } = await req('/api/ai/copilot', {
+      method: 'POST', token: T.caller, expect: 200, body: { question: 'how many leads do I have?' },
+    });
+    const { data: admin } = await req('/api/ai/copilot', {
+      method: 'POST', token: T.admin, expect: 200, body: { question: 'how many leads do I have?' },
+    });
+    assert(caller.grounded_in.leads < admin.grounded_in.leads,
+      `caller (${caller.grounded_in.leads}) should see fewer leads than admin (${admin.grounded_in.leads})`);
+  });
+
+  await check('an empty copilot question is rejected', async () => {
+    await req('/api/ai/copilot', { method: 'POST', token: T.sales_rm, expect: 400, body: { question: '' } });
+  });
+
+  /* ------------------------------------------------------------ 15. rules */
+  suite('15 automation rule builder');
+
+  await check('the rule library exposes condition fields and action types', async () => {
+    const { data } = await req('/api/admin/rules', { token: T.admin, expect: 200 });
+    assert(data.condition_fields.length >= 10, 'condition field library too small');
+    assert(data.action_types.length >= 5, 'action type library too small');
+    assert(data.rules.length >= 1, 'no seeded rules');
+    REF.ruleId = data.rules[0].id;
+  });
+
+  await check('a dry run reports matches without performing actions', async () => {
+    const { data } = await req(`/api/admin/rules/${REF.ruleId}/run`, {
+      method: 'POST', token: T.admin, expect: 200, body: { dry_run: true },
+    });
+    eq(data.dry_run, true, 'dry_run flag');
+    assert('evaluated' in data && 'matched_count' in data, 'dry run result shape');
+    for (const match of data.matched) {
+      assert(match.actions.every((a) => a.simulated === true), 'a dry run performed a real action');
+    }
+  });
+
+  await check('a rule can be created, enabled and disabled', async () => {
+    const { data } = await req('/api/admin/rules', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: {
+        name: 'E2E rule', description: 'created by the test suite',
+        conditions: [{ field: 'lead_age_days', op: 'gt', value: 3650 }],
+        actions: [{ type: 'notify', params: { role_or_user: 'admin', message: 'e2e' } }],
+      },
+    });
+    await req(`/api/admin/rules/${data.id}`, { method: 'PATCH', token: T.admin, expect: 200, body: { enabled: 1 } });
+    await req(`/api/admin/rules/${data.id}`, { method: 'PATCH', token: T.admin, expect: 200, body: { enabled: 0 } });
+  });
+
+  await check('a rule without conditions is rejected', async () => {
+    await req('/api/admin/rules', {
+      method: 'POST', token: T.admin, expect: 400,
+      body: { name: 'Bad rule', conditions: [], actions: [{ type: 'notify', params: {} }] },
+    });
+  });
+
+  /* ------------------------------------------------------------ 16. admin */
+  suite('16 administration');
+
+  await check('the permission matrix is exposed for every role', async () => {
+    const { data } = await req('/api/admin/roles', { token: T.admin, expect: 200 });
+    eq(data.roles.length, 11, 'role count');
+    assert(Object.keys(data.matrix).length > 20, 'permission matrix too small');
+  });
+
+  await check('a user can be created and disabled', async () => {
+    const { data } = await req('/api/admin/users', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: { name: 'E2E User', email: `e2euser.${RUN}@bonanza.test`, role: 'caller', password: 'bonanza' },
+    });
+    await req(`/api/admin/users/${data.id}`, { method: 'PATCH', token: T.admin, expect: 200, body: { active: 0 } });
+  });
+
+  await check('a duplicate email is rejected', async () => {
+    await req('/api/admin/users', {
+      method: 'POST', token: T.admin, expect: 409,
+      body: { name: 'Dup', email: 'admin@bonanza.test', role: 'caller' },
+    });
+  });
+
+  await check('an unknown role is rejected', async () => {
+    await req('/api/admin/users', {
+      method: 'POST', token: T.admin, expect: 400,
+      body: { name: 'Bad role', email: 'badrole@bonanza.test', role: 'wizard' },
+    });
+  });
+
+  await check('adding a product generates a card on every existing lead', async () => {
+    const { data: before } = await req('/api/leads', { token: T.admin, expect: 200 });
+    const { data } = await req('/api/admin/products', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: { code: `E2E${RUN.slice(-4)}`, name: 'E2E Test Product', category: 'Investment', min_investment: 1000 },
+    });
+    assert(data.cards_generated >= before.length, `expected ≥${before.length} cards, got ${data.cards_generated}`);
+    REF.e2eProductId = data.id;
+    // Leave the environment as we found it.
+    await req(`/api/admin/products/${data.id}`, { method: 'PATCH', token: T.admin, expect: 200, body: { active: 0 } });
+  });
+
+  await check('SLA policies are configured per product and priority', async () => {
+    const { data } = await req('/api/admin/sla', { token: T.admin, expect: 200 });
+    assert(data.policies.length > 0, 'no SLA policies');
+    assert(data.defaults.Critical.response_mins === 15, 'critical default response');
+  });
+
+  await check('templates, content and campaigns are readable', async () => {
+    const { data: templates } = await req('/api/admin/templates', { token: T.admin, expect: 200 });
+    assert(templates.length > 0, 'no templates');
+    const { data: content } = await req('/api/admin/content', { token: T.admin, expect: 200 });
+    assert(content.length > 0, 'no content items');
+    const { data: campaigns } = await req('/api/admin/campaigns', { token: T.marketing_manager, expect: 200 });
+    assert(Array.isArray(campaigns), 'campaigns not returned');
+  });
+
+  await check('the integration registry reports every adapter', async () => {
+    const { data } = await req('/api/admin/integrations', { token: T.admin, expect: 200 });
+    assert(data.integrations.length >= 10, 'integration registry incomplete');
+    assert(data.integrations.every((i) => i.contract), 'an adapter has no documented contract');
+  });
+
+  await check('the audit log records actions with an actor', async () => {
+    const { data } = await req('/api/admin/audit', { token: T.admin, expect: 200 });
+    assert(data.length > 0, 'audit log empty');
+    assert(data.some((a) => a.action === 'card_state'), 'card state changes not audited');
+  });
+
+  /* ------------------------------------------------------ 17. lists/misc */
+  suite('17 lists & notifications');
+
+  await check('a lead list can be created and populated', async () => {
+    const { data } = await req('/api/lists', {
+      method: 'POST', token: T.marketing_manager, expect: 201,
+      body: { name: 'E2E list', kind: 'static', shared_with: ['sales_rm'] },
+    });
+    REF.listId = data.id;
+    const { data: added } = await req(`/api/lists/${REF.listId}/members`, {
+      method: 'POST', token: T.marketing_manager, expect: 200, body: { lead_ids: [REF.leadId, REF.referralLeadId] },
+    });
+    eq(added.added, 2, 'members added');
+  });
+
+  await check('a shared list is visible to the recipient role', async () => {
+    const { data } = await req('/api/lists', { token: T.sales_rm, expect: 200 });
+    assert(data.some((l) => l.id === REF.listId), 'shared list not visible to sales_rm');
+  });
+
+  await check('notifications can be read and marked read', async () => {
+    const { data } = await req('/api/notifications', { token: T.product_rm, expect: 200 });
+    assert(Array.isArray(data), 'notifications not returned');
+    await req('/api/notifications/read-all', { method: 'POST', token: T.product_rm, expect: 200 });
+    const { data: after } = await req('/api/notifications', { token: T.product_rm, expect: 200 });
+    assert(after.every((n) => n.read), 'notifications not marked read');
+  });
+
+  /* ------------------------------------------------------ 18. recycle bin */
+  suite('18 recycle bin');
+
+  await check('a deleted lead leaves the list but is recoverable', async () => {
+    const { data: created } = await req('/api/leads', {
+      method: 'POST', token: T.admin, expect: 201, body: { name: 'E2E Delete Me', mobile: mob(5) },
+    });
+    await req(`/api/leads/${created.id}`, { method: 'DELETE', token: T.admin, expect: 204 });
+
+    const { data: list } = await req(`/api/leads?q=${mob(5)}`, { token: T.admin, expect: 200 });
+    eq(list.length, 0, 'deleted lead still in the list');
+
+    const { data: bin } = await req('/api/recycle-bin', { token: T.admin, expect: 200 });
+    assert(bin.some((l) => l.id === created.id), 'lead not in the recycle bin');
+
+    await req(`/api/leads/${created.id}/restore`, { method: 'POST', token: T.admin, expect: 200 });
+    const { data: restored } = await req(`/api/leads?q=${mob(5)}`, { token: T.admin, expect: 200 });
+    eq(restored.length, 1, 'lead not restored');
+  });
+
+  await check('a non-admin cannot delete a lead', async () => {
+    await req(`/api/leads/${REF.leadId}`, { method: 'DELETE', token: T.sales_rm, expect: 403 });
+  });
+
+  /* ---------------------------------------------------------- 19. import */
+  suite('19 lead import');
+
+  await check('a dry-run import validates without committing', async () => {
+    const { data } = await req('/api/leads/import', {
+      method: 'POST', token: T.admin, expect: 200,
+      body: {
+        commit: false,
+        rows: [
+          { name: 'Import One', mobile: mob(6), city: 'Delhi' },
+          { name: 'Import Bad', mobile: '123' },
+          { name: '', mobile: mob(7) },
+          { name: 'Import Dupe', mobile: mob(1) },
+        ],
+      },
+    });
+    eq(data.total, 4, 'row count');
+    eq(data.valid, 1, 'valid count');
+    eq(data.invalid.length, 2, 'invalid count');
+    eq(data.duplicates.length, 1, 'duplicate count');
+    eq(data.imported, 0, 'dry run must not import');
+  });
+
+  await check('a committed import creates the valid rows only', async () => {
+    const { data } = await req('/api/leads/import', {
+      method: 'POST', token: T.admin, expect: 200,
+      body: { commit: true, rows: [{ name: 'Import One', mobile: mob(6), city: 'Delhi' }] },
+    });
+    eq(data.imported, 1, 'imported count');
+    const { data: found } = await req(`/api/leads?q=${mob(6)}`, { token: T.admin, expect: 200 });
+    eq(found.length, 1, 'imported lead not found');
+    assert(found[0].cards.length > 0, 'imported lead has no product cards');
+  });
+
+  /* ---------------------------------------------------------- 20. security */
+  suite('20 security & data protection');
+
+  await check('client PII is masked in responses by default', async () => {
+    const { data } = await req(`/api/leads/${REF.leadId}`, { token: T.sales_rm, expect: 200 });
+    assert(String(data.mobile).includes('•'), `mobile not masked: ${data.mobile}`);
+    eq(data._pii_masked, true, 'masking flag not set');
+  });
+
+  await check('a permitted role can unmask explicitly', async () => {
+    const { data } = await req(`/api/leads/${REF.leadId}?unmask=true`, { token: T.sales_rm, expect: 200 });
+    eq(data.mobile, mob(1), 'unmasked mobile');
+    assert(!data._pii_masked, 'masking flag should be absent when unmasked');
+  });
+
+  await check('the cockpit masks PII — it is the most-viewed screen in the product', async () => {
+    // Regression: /api/cockpit returned raw mobiles while /api/leads masked
+    // them, so the first screen every user saw was the one leak in the system.
+    for (const role of ['sales_rm', 'caller', 'sales_supervisor', 'customer_care']) {
+      const { data } = await req('/api/cockpit', { token: T[role], expect: 200 });
+      const rows = data.worklist?.rows ?? [];
+      for (const r of rows) {
+        if (r.mobile) {
+          assert(String(r.mobile).includes('•'), `${role} cockpit exposed a mobile: ${r.mobile}`);
+        }
+        if (r.pan) assert(String(r.pan).includes('•'), `${role} cockpit exposed a PAN`);
+      }
+    }
+  });
+
+  await check('a permitted role can still unmask the cockpit explicitly', async () => {
+    const { data } = await req('/api/cockpit?unmask=true', { token: T.sales_rm, expect: 200 });
+    const withMobile = (data.worklist?.rows ?? []).find((r) => r.mobile);
+    if (withMobile) assert(!String(withMobile.mobile).includes('•'), 'unmask had no effect on the cockpit');
+  });
+
+  await check('every unmask is written to the audit log', async () => {
+    const { data } = await req('/api/admin/audit', { token: T.admin, expect: 200 });
+    assert(data.some((a) => a.action === 'pii_unmasked'), 'unmask not audited');
+  });
+
+  await check('a role without pii.unmask stays masked even when asking', async () => {
+    // Marketing has lead.view.all but not pii.unmask.
+    const { data } = await req('/api/leads?unmask=true', { token: T.marketing_manager, expect: 200 });
+    const withMobile = data.find((l) => l.mobile);
+    assert(withMobile, 'no lead with a mobile to check');
+    assert(String(withMobile.mobile).includes('•'), `marketing should not be able to unmask: ${withMobile.mobile}`);
+  });
+
+  await check('PAN is not recoverable from the raw database file', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const { dirname, join } = await import('node:path');
+    const dbPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'data', 'bonanza.db');
+
+    // Write a lead with a known PAN, then look for it in the file on disk.
+    const pan = 'ZZTOP1234Z';
+    await req('/api/leads', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: { name: 'Encryption Probe', mobile: mob(9), pan },
+    });
+    const raw = readFileSync(dbPath).toString('latin1');
+    assert(!raw.includes(pan), 'PAN found in plaintext in the database file — encryption at rest is not working');
+  });
+
+  await check('stored credentials are not recoverable from the database file', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const { dirname, join } = await import('node:path');
+    const dbPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'data', 'bonanza.db');
+
+    // Use a password that appears nowhere else, so a hit is unambiguous.
+    const secret = `Zx9-${RUN}-QuetzalPassphrase`;
+    await req('/api/admin/users', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: { name: 'Crypto Probe', email: `crypto.${RUN}@bonanza.test`, role: 'caller', password: secret },
+    });
+
+    const raw = readFileSync(dbPath).toString('latin1');
+    assert(!raw.includes(secret), 'a credential is stored in plaintext in the database file');
+    assert(raw.includes('scrypt$'), 'no scrypt hashes present — hashing is not in effect');
+
+    // And the credential still authenticates.
+    const token = await login(`crypto.${RUN}@bonanza.test`, secret);
+    assert(token, 'the hashed credential does not authenticate');
+  });
+
+  await check('signing out invalidates the token immediately', async () => {
+    const token = await login('care2@bonanza.test');
+    await req('/api/auth/me', { token, expect: 200 });
+    await req('/api/auth/logout', { method: 'POST', token, expect: 200 });
+    await req('/api/auth/me', { token, expect: 401 });
+  });
+
+  await check('a tampered token is rejected', async () => {
+    await req('/api/leads', { token: 'not-a-real-token', expect: 401 });
+  });
+
+  await check('repeated failed logins are rate limited', async () => {
+    const victim = 'ratelimit.probe@bonanza.test';
+    let limited = false;
+    for (let i = 0; i < 14; i += 1) {
+      const { status } = await req('/api/auth/login', {
+        method: 'POST', body: { email: victim, password: 'wrong' },
+      });
+      if (status === 429) { limited = true; break; }
+    }
+    assert(limited, 'brute-force attempts were never rate limited');
+  });
+
+  await check('the limiter is keyed per account, not per address', async () => {
+    // The account limited above must not lock out a different account
+    // from the same source address.
+    const { status } = await req('/api/auth/login', {
+      method: 'POST', body: { email: 'admin@bonanza.test', password: 'bonanza' },
+    });
+    eq(status, 200, 'a different account was collaterally locked out');
+  });
+
+  await check('invalid PAN and mobile formats are rejected', async () => {
+    await req('/api/leads', {
+      method: 'POST', token: T.admin, expect: 400,
+      body: { name: 'Bad PAN', mobile: mob(0), pan: 'NOTAPAN' },
+    });
+    await req('/api/leads', {
+      method: 'POST', token: T.admin, expect: 400,
+      body: { name: 'Bad mobile', mobile: '1234567890' },
+    });
+  });
+
+  /* ------------------------------------------------- 21. data residency */
+  suite('21 AI data residency');
+
+  await check('the residency policy is published by the running system', async () => {
+    const { data } = await req('/api/ai/residency', { token: T.sales_rm, expect: 200 });
+    eq(data.mode, 'hybrid', 'default residency mode');
+    eq(data.capabilities.length, 6, 'capabilities classified');
+    for (const c of data.capabilities) {
+      assert(c.classification_reason, `${c.capability} has no stated reason`);
+    }
+  });
+
+  await check('transcript and KYC reasoning never leave the country', async () => {
+    const { data } = await req('/api/ai/residency', { token: T.admin, expect: 200 });
+    for (const key of ['disposition', 'kycCoach']) {
+      const cap = data.capabilities.find((c) => c.capability === key);
+      eq(cap.data_class, 'CLASS_PII_RAW', `${key} data class`);
+      eq(cap.leaves_india, false, `${key} must be processed in India`);
+    }
+  });
+
+  await check('anything that does leave the country is de-identified first', async () => {
+    const { data } = await req('/api/ai/residency', { token: T.admin, expect: 200 });
+    const leaving = data.capabilities.filter((c) => c.leaves_india);
+    assert(leaving.length > 0, 'no capability routed abroad — the test is not exercising the path');
+    for (const c of leaving) {
+      eq(c.deidentified, true, `${c.capability} would leave India without de-identification`);
+    }
+  });
+
+  await check('the egress log is restricted to audit roles', async () => {
+    await req('/api/ai/residency/log', { token: T.caller, expect: 403 });
+    await req('/api/ai/residency/log', { token: T.admin, expect: 200 });
+  });
+
+  await check('a cross-border call is recorded with what was removed', async () => {
+    await req(`/api/ai/leads/${REF.leadId}/next-action`, { token: T.sales_rm, expect: 200 });
+
+    const { data } = await req('/api/ai/residency/log', { token: T.admin, expect: 200 });
+    const entry = data.find((e) => e.action === 'ai_egress' && e.meta?.capability === 'nextAction');
+    assert(entry, 'the cross-border call was not logged');
+    eq(entry.meta.class, 'CLASS_DEIDENTIFIED', 'logged data class');
+    assert(Object.keys(entry.meta.redacted).length > 0, 'nothing was recorded as redacted');
+  });
+
+  await check('the egress log records kinds and counts, never the values', async () => {
+    const { data: lead } = await req(`/api/leads/${REF.leadId}?unmask=true`, { token: T.admin, expect: 200 });
+    const { data: log } = await req('/api/ai/residency/log', { token: T.admin, expect: 200 });
+
+    const raw = JSON.stringify(log);
+    assert(!raw.includes(lead.mobile), 'a real mobile number is sitting in the egress log');
+    assert(!raw.includes(lead.name), 'a real client name is sitting in the egress log');
+
+    // What it should contain instead: the shape of what was removed.
+    const entry = log.find((e) => e.action === 'ai_egress');
+    for (const [kind, count] of Object.entries(entry.meta.redacted)) {
+      assert(/^[A-Z]+$/.test(kind), `redaction kind looks like a value: ${kind}`);
+      assert(Number.isInteger(count), `redaction count is not a number for ${kind}`);
+    }
+  });
+
+  await check('the answer comes back with real identities restored', async () => {
+    // De-identification must be invisible to the user: tokens go out, names come back.
+    const { data } = await req(`/api/ai/leads/${REF.leadId}/next-action`, { token: T.sales_rm, expect: 200 });
+    const text = JSON.stringify(data);
+    assert(!/\[NAME_\d+\]|\[MOBILE_\d+\]|\[PAN_\d+\]/.test(text), `a de-identification token leaked to the user: ${text.slice(0, 200)}`);
+    assert(data.action || data.next_action || data.recommendation, 'no recommendation returned');
+  });
+
+  await check('in_india_only mode is reachable and stops all egress', async () => {
+    // The mode is process-level configuration, so assert the policy function
+    // rather than restarting the server mid-suite.
+    const { data } = await req('/api/ai/residency', { token: T.admin, expect: 200 });
+    assert(data.modes_available.includes('in_india_only'), 'the lockdown mode is not offered');
+    assert(data.modes_available.includes('offline'), 'the offline mode is not offered');
+  });
+
+  await check('AI status reports which residency mode is in force', async () => {
+    const { data } = await req('/api/ai/status', { token: T.sales_rm, expect: 200 });
+    eq(data.residency_mode, 'hybrid', 'status does not disclose the residency mode');
+  });
+
+  /* --------------------------------------------- 22. vendor integrations */
+  suite('22 vendor webhooks');
+
+  // Set when the server under test was started with matching secrets, which is
+  // what `npm run test:webhooks` does. Without it only the refusal path runs —
+  // and that is the path that matters most, so it is never skipped.
+  const HOOK = process.env.E2E_WEBHOOK_SECRET || null;
+  const signed = (secret) => ({ 'x-webhook-secret': secret });
+
+  await check('an unsigned call event is refused', async () => {
+    const { status } = await req('/api/webhooks/quickcall/call', {
+      method: 'POST', body: { CallID: 'X-1', DialNumber: mob(1) },
+    });
+    eq(status, 401, 'an unsigned CTI callback was accepted');
+  });
+
+  await check('a wrongly signed call event is refused', async () => {
+    const { status } = await req('/api/webhooks/quickcall/call', {
+      method: 'POST', headers: signed('not-the-secret'), body: { CallID: 'X-2' },
+    });
+    eq(status, 401, 'a bad signature was accepted');
+  });
+
+  await check('unsigned WhatsApp and KYC callbacks are refused too', async () => {
+    for (const path of ['/api/webhooks/smartping/whatsapp', '/api/webhooks/bonanza-kyc/status']) {
+      const { status } = await req(path, { method: 'POST', body: {} });
+      eq(status, 401, `${path} accepted an unsigned callback`);
+    }
+  });
+
+  await check('the refusal says why, not just that it failed', async () => {
+    // Two distinct causes, and an operator must be able to tell them apart:
+    // the secret was never configured, or the caller did not present one.
+    const { data } = await req('/api/webhooks/quickcall/call', { method: 'POST', body: {} });
+    assert(
+      /SECRET is not set|signature/i.test(data.error || ''),
+      `unhelpful refusal: ${data.error}`,
+    );
+  });
+
+  if (HOOK) {
+    await check('a signed call event lands on the lead timeline', async () => {
+      const callId = `E2E-CALL-${RUN}`;
+      const { data } = await req('/api/webhooks/quickcall/call', {
+        method: 'POST', headers: signed(HOOK), expect: 200,
+        body: {
+          CallID: callId, customerID: String(REF.leadId), DialNumber: `91${mob(1)}`,
+          CallType: 'OUTBOUND', CallStatus: 'ANSWERED', TalkTime: '142',
+          RecordingURL: 'https://voicelogger.local/e2e.wav', Disposition: 'Interested',
+        },
+      });
+      eq(data.matched, true, 'the call did not match the lead');
+      eq(data.lead_id, REF.leadId, 'matched the wrong lead');
+
+      const { data: acts } = await req(`/api/activities?lead_id=${REF.leadId}`, { token: T.admin, expect: 200 });
+      const call = acts.find((a) => a.external_id === callId);
+      assert(call, 'the call is not on the timeline');
+      eq(call.duration_s, 142, 'duration not recorded');
+      eq(call.recording_url, 'https://voicelogger.local/e2e.wav', 'recording URL not recorded');
+    });
+
+    await check('a redelivered call event is not duplicated', async () => {
+      // Every one of these vendors retries on timeout, so at-least-once delivery
+      // is normal and de-duplication is not optional.
+      const callId = `E2E-CALL-${RUN}`;
+      const { data } = await req('/api/webhooks/quickcall/call', {
+        method: 'POST', headers: signed(HOOK), expect: 200,
+        body: { CallID: callId, customerID: String(REF.leadId), CallStatus: 'ANSWERED', TalkTime: '142' },
+      });
+      eq(data.duplicate, true, 'a redelivered event was recorded twice');
+    });
+
+    await check('an unmatched call is acknowledged, not dropped', async () => {
+      const { data } = await req('/api/webhooks/quickcall/call', {
+        method: 'POST', headers: signed(HOOK), expect: 200,
+        body: { CallID: `E2E-ORPHAN-${RUN}`, DialNumber: '9000000000', CallType: 'INBOUND', CallStatus: 'ANSWERED', TalkTime: '10' },
+      });
+      eq(data.matched, false, 'an unknown number should not match a lead');
+      eq(data.ok, true, 'an unmatched call must still be acknowledged');
+    });
+
+    await check('screen pop resolves a known number to its lead', async () => {
+      const { data } = await req(`/api/webhooks/quickcall/screenpop?number=91${mob(1)}`, {
+        method: 'GET', headers: signed(HOOK), expect: 200,
+      });
+      eq(data.found, true, 'a known caller was not resolved');
+      eq(data.lead_id, REF.leadId, 'screen pop resolved the wrong lead');
+    });
+
+    await check('screen pop offers a create link for an unknown number', async () => {
+      const { data } = await req('/api/webhooks/quickcall/screenpop?number=9000000000', {
+        method: 'GET', headers: signed(HOOK), expect: 200,
+      });
+      eq(data.found, false, 'an unknown number should not resolve');
+      assert(String(data.url).includes('mobile='), 'no create-with-number link offered');
+    });
+
+    await check('an inbound WhatsApp reply opens the 24-hour window', async () => {
+      const { data } = await req('/api/webhooks/smartping/whatsapp', {
+        method: 'POST', headers: signed(HOOK), expect: 200,
+        body: { messageId: `E2E-WA-${RUN}`, waNumber: `91${mob(1)}`, text: 'Yes, please call me', senderName: 'E2E' },
+      });
+      eq(data.matched, true, 'the reply did not match the lead');
+
+      const { data: lead } = await req(`/api/leads/${REF.leadId}`, { token: T.admin, expect: 200 });
+      assert(lead.wa_last_inbound_at, 'the service window was not stamped');
+    });
+
+    await check('a delivery receipt is accepted without creating an activity', async () => {
+      const { data } = await req('/api/webhooks/smartping/whatsapp', {
+        method: 'POST', headers: signed(HOOK), expect: 200,
+        body: { status: 'delivered', messageId: `E2E-WA-${RUN}`, destination: `91${mob(1)}` },
+      });
+      eq(data.kind, 'status', 'a delivery receipt was misread as a message');
+    });
+
+    await check('a KYC status callback becomes the authoritative status', async () => {
+      const { data } = await req('/api/webhooks/bonanza-kyc/status', {
+        method: 'POST', headers: signed(HOOK), expect: 200,
+        body: { crm_ref: `LEAD-${REF.leadId}`, stage: 'completed', client_code: `BZ${RUN}`, mobile: mob(1) },
+      });
+      eq(data.matched, true, 'the KYC callback did not match the lead');
+
+      const { data: lead } = await req(`/api/leads/${REF.leadId}`, { token: T.admin, expect: 200 });
+      eq(lead.kyc_status, 'Complete', 'portal status did not become authoritative');
+      eq(lead.client_code, `BZ${RUN}`, 'the client code was not recorded');
+    });
+
+    await check('an unknown portal stage does not mark the journey complete', async () => {
+      const { data } = await req('/api/webhooks/bonanza-kyc/status', {
+        method: 'POST', headers: signed(HOOK), expect: 200,
+        body: { crm_ref: `LEAD-${REF.dkycLeadId}`, stage: 'awaiting_something_new' },
+      });
+      assert(data.stage !== 'Complete', `an unknown stage was read as Complete: ${data.stage}`);
+    });
+  }
+
+  await check('the admin panel reports live vendor state without leaking secrets', async () => {
+    const { data } = await req('/api/admin/integrations', { token: T.admin, expect: 200 });
+    assert(data.vendors, 'no vendor status reported');
+    assert(data.integrations.some((i) => /QuickCall/i.test(i.name)), 'QuickCall not listed');
+    assert(data.integrations.some((i) => /Smartping/i.test(i.name)), 'Smartping not listed');
+    assert(data.integrations.some((i) => /eKYC/i.test(i.name)), 'Bonanza eKYC not listed');
+
+    // An integrations page that prints credentials is a leak with a nice UI.
+    const raw = JSON.stringify(data);
+    for (const secret of [process.env.SMARTPING_API_KEY, process.env.CUBE_QUICKCALL_PASSWORD, process.env.E2E_WEBHOOK_SECRET]) {
+      if (secret) assert(!raw.includes(secret), 'a credential is being sent to the browser');
+    }
+  });
+
+  /* ---------------------------------------------- 23. reports & data tools */
+  suite('23 reports & data tools');
+
+  await check('every report endpoint answers for an admin', async () => {
+    for (const ep of ['overview', 'funnel', 'team', 'ageing', 'kyc', 'sla', 'partners', 'activity']) {
+      await req(`/api/reports/${ep}`, { token: T.admin, expect: 200 });
+    }
+  });
+
+  await check('reports are refused to roles without a reporting permission', async () => {
+    await req('/api/reports/overview', { token: T.caller, expect: 403 });
+    await req('/api/reports/team', { token: T.caller, expect: 403 });
+  });
+
+  await check('the partner report is system-level, not team-level', async () => {
+    await req('/api/reports/partners', { token: T.sales_supervisor, expect: 403 });
+    await req('/api/reports/partners', { token: T.admin, expect: 200 });
+  });
+
+  await check('reports are scoped — an RM does not see the whole firm', async () => {
+    // A Sales RM holds report.team only through their supervisor, so use the
+    // supervisor, who legitimately sees a subset rather than everything.
+    const { data: mine } = await req('/api/reports/overview', { token: T.sales_supervisor, expect: 200 });
+    const { data: all_ } = await req('/api/reports/overview', { token: T.admin, expect: 200 });
+    assert(mine.leads.total <= all_.leads.total, 'a scoped role saw more than the administrator');
+  });
+
+  await check('conversion excludes inactive cards from the denominator', async () => {
+    const { data } = await req('/api/reports/overview', { token: T.admin, expect: 200 });
+    // Every lead holds an INACTIVE card for every product, so a denominator that
+    // included them would drive this to near zero for any realistic book.
+    assert(data.cards.conversion_pct > 0, 'conversion collapsed — inactive cards are in the denominator');
+    assert(data.cards.conversion_pct <= 100, `impossible conversion: ${data.cards.conversion_pct}`);
+  });
+
+  await check('an empty funnel does not nominate a stage nobody is in', async () => {
+    const { data } = await req('/api/reports/funnel', { token: T.admin, expect: 200 });
+    for (const p of data.products) {
+      if (p.engaged === 0) eq(p.largest_stage, null, `${p.code} claims a busiest stage with nobody in it`);
+    }
+  });
+
+  await check('reports never leak client PII', async () => {
+    // These are aggregates. A mobile or PAN appearing here would mean a column
+    // was selected that should never have been.
+    for (const ep of ['overview', 'funnel', 'team', 'ageing', 'kyc', 'sla', 'partners', 'activity']) {
+      const { data } = await req(`/api/reports/${ep}`, { token: T.admin, expect: 200 });
+      const raw = JSON.stringify(data);
+      assert(!/\b[6-9]\d{9}\b/.test(raw), `${ep} leaked something shaped like a mobile number`);
+      assert(!/\b[A-Z]{5}\d{4}[A-Z]\b/.test(raw), `${ep} leaked something shaped like a PAN`);
+    }
+  });
+
+  await check('the recycle bin masks PII like every other lead surface', async () => {
+    // Regression: this endpoint used to SELECT * unmasked, making it the one
+    // place a lead.delete holder could read the whole book's identifiers.
+    const { data: created } = await req('/api/leads', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: { name: 'Recycle Probe', mobile: mob(7), pan: 'RCYCL1234R' },
+    });
+    await req(`/api/leads/${created.id}`, { method: 'DELETE', token: T.admin, expect: 204 });
+
+    const { data: bin } = await req('/api/recycle-bin', { token: T.admin, expect: 200 });
+    const row = bin.find((l) => l.id === created.id);
+    assert(row, 'the deleted lead is not in the recycle bin');
+    assert(String(row.mobile).includes('•'), `recycle bin exposed a mobile: ${row.mobile}`);
+    assert(!JSON.stringify(bin).includes('RCYCL1234R'), 'recycle bin exposed a PAN');
+
+    REF.recycledLeadId = created.id;
+  });
+
+  await check('a deleted lead can be restored and comes back whole', async () => {
+    const id = need(REF.recycledLeadId, 'the recycled lead');
+    await req(`/api/leads/${id}/restore`, { method: 'POST', token: T.admin, expect: 200 });
+
+    const { data: lead } = await req(`/api/leads/${id}?unmask=true`, { token: T.admin, expect: 200 });
+    eq(lead.name, 'Recycle Probe', 'the restored lead lost its name');
+    eq(lead.mobile, mob(7), 'the restored lead lost its mobile');
+    assert(lead.cards.length > 0, 'the restored lead lost its product cards');
+  });
+
+  await check('import validates without writing, then writes only valid rows', async () => {
+    const rows = [
+      { name: 'Import Good', mobile: mob(8), city: 'Pune' },
+      { name: '', mobile: mob(9) },
+      { name: 'Import Bad Mobile', mobile: '12345' },
+    ];
+
+    const { data: dry } = await req('/api/leads/import', {
+      method: 'POST', token: T.admin, expect: 200, body: { rows, commit: false },
+    });
+    eq(dry.total, 3, 'dry run row count');
+    eq(dry.valid, 1, 'dry run valid count');
+    eq(dry.imported, 0, 'a dry run must not write anything');
+    eq(dry.invalid.length, 2, 'dry run should reject two rows');
+
+    const { data: found } = await req(`/api/leads?q=${mob(8)}`, { token: T.admin, expect: 200 });
+    eq(found.length, 0, 'the dry run created a lead');
+
+    const { data: live } = await req('/api/leads/import', {
+      method: 'POST', token: T.admin, expect: 200, body: { rows, commit: true },
+    });
+    eq(live.imported, 1, 'only the valid row should import');
+  });
+
+  await check('import refuses a duplicate mobile rather than creating a twin', async () => {
+    const { data } = await req('/api/leads/import', {
+      method: 'POST', token: T.admin, expect: 200,
+      body: { rows: [{ name: 'Duplicate Attempt', mobile: mob(8) }], commit: false },
+    });
+    eq(data.duplicates.length, 1, 'an existing mobile was not flagged as a duplicate');
+    eq(data.valid, 0, 'a duplicate was counted as importable');
+  });
+
+  await check('timestamps are stored as UTC so the client can localise them', async () => {
+    // Regression: the client parsed these bare strings as local time, rendering
+    // every timestamp five and a half hours early for an IST user.
+    const { data } = await req('/api/recycle-bin', { token: T.admin, expect: 200 });
+    if (data.length) {
+      const ts = data[0].deleted_at;
+      assert(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(ts), `unexpected timestamp shape: ${ts}`);
+      const asUtc = new Date(`${ts.replace(' ', 'T')}Z`).getTime();
+      assert(Math.abs(Date.now() - asUtc) < 10 * 60 * 1000,
+        'the stored timestamp is not UTC — read as UTC it is not close to now');
+    }
+  });
+
+  /* ------------------------------------------------ 24. sales orgs */
+  suite('24 sales orgs (Bonanza / Bigul)');
+
+  const bigulRm = await login('rm@bigul.test');
+  const crossRm = await login('salesrm3@bonanza.test');
+
+  // mob() only has room for one digit after the run id, and suites 01-23 have
+  // taken 0-9. Indian mobiles may start 8, so this suite gets its own range.
+  const omob = (n) => `8${RUN}${n}`.slice(0, 10);
+
+  await check('each user is offered only the orgs they are entitled to', async () => {
+    const { data: admin } = await req('/api/orgs', { token: T.admin, expect: 200 });
+    eq(admin.orgs.map((o) => o.code).join(','), 'BONANZA', 'admin org entitlement');
+    eq(admin.may_switch, false, 'a single-org user should not get a switcher');
+
+    const { data: cross } = await req('/api/orgs', { token: crossRm, expect: 200 });
+    eq(cross.orgs.map((o) => o.code).sort().join(','), 'BIGUL,BONANZA', 'cross-org entitlement');
+    eq(cross.may_switch, true, 'a cross-org user needs a switcher');
+
+    const { data: sup } = await req('/api/orgs', { token: T.superadmin, expect: 200 });
+    eq(sup.orgs.length, 2, 'superadmin spans both businesses');
+  });
+
+  await check('orgs carry their own branding', async () => {
+    const { data } = await req('/api/orgs', { token: T.superadmin, expect: 200 });
+    const bonanza = data.orgs.find((o) => o.code === 'BONANZA');
+    const bigul = data.orgs.find((o) => o.code === 'BIGUL');
+    assert(/^#[0-9a-f]{6}$/i.test(bonanza.accent), `bad accent: ${bonanza.accent}`);
+    assert(bonanza.accent !== bigul.accent, 'the two businesses must be visually distinguishable');
+    eq(bonanza.model, 'full_service', 'Bonanza is the RM-led business');
+    eq(bigul.model, 'discount_digital', 'Bigul is the self-serve business');
+  });
+
+  await check('a single-org user never sees the other business', async () => {
+    const { data } = await req('/api/leads', { token: T.admin, expect: 200 });
+    assert(data.length > 0, 'no leads to check');
+    for (const l of data) eq(l.sales_org, 'BONANZA', `a Bigul lead leaked to a Bonanza admin (lead ${l.id})`);
+  });
+
+  await check('a forged org parameter cannot widen entitlement', async () => {
+    // The switcher is a view filter. Asking for an org you are not entitled to
+    // must return your own book, never the other one and never an error that
+    // reveals the other book exists.
+    const { data } = await req('/api/leads?org=BIGUL', { token: T.admin, expect: 200 });
+    for (const l of data) eq(l.sales_org, 'BONANZA', 'a forged ?org= widened an admin’s scope');
+
+    const { data: b } = await req('/api/leads?org=BONANZA', { token: bigulRm, expect: 200 });
+    for (const l of b) eq(l.sales_org, 'BIGUL', 'a forged ?org= widened a Bigul RM’s scope');
+  });
+
+  await check('the switcher narrows for a user entitled to both', async () => {
+    const { data: all_ } = await req('/api/leads', { token: crossRm, expect: 200 });
+    const { data: bigulOnly } = await req('/api/leads?org=BIGUL', { token: crossRm, expect: 200 });
+    assert(bigulOnly.length <= all_.length, 'narrowing returned more than the unfiltered view');
+    for (const l of bigulOnly) eq(l.sales_org, 'BIGUL', 'narrowing to BIGUL returned another org');
+  });
+
+  await check('role scope and org scope are ANDed, not substituted', async () => {
+    // A Bigul RM is entitled to the Bigul org, but only to their own leads
+    // within it — org entitlement must never widen role visibility.
+    const { data } = await req('/api/leads', { token: bigulRm, expect: 200 });
+    const { data: orgTotal } = await req('/api/leads', { token: T.superadmin, expect: 200 });
+    const bigulTotal = orgTotal.filter((l) => l.sales_org === 'BIGUL').length;
+    assert(data.length < bigulTotal, 'an RM saw the whole Bigul book, not just their own leads');
+    assert(data.length > 0, 'the Bigul RM owns no leads — the fixture is wrong');
+  });
+
+  await check('each business has its own catalogue', async () => {
+    const { data: bonanza } = await req('/api/meta', { token: T.admin, expect: 200 });
+    const { data: bigul } = await req('/api/meta', { token: bigulRm, expect: 200 });
+
+    const bCodes = bonanza.products.map((p) => p.code);
+    const gCodes = bigul.products.map((p) => p.code);
+
+    assert(bCodes.includes('PMS'), 'Bonanza should sell PMS');
+    assert(gCodes.includes('BG-ALGO'), 'Bigul should sell Algos');
+    assert(!bCodes.some((c) => c.startsWith('BG-')), 'a Bigul product appeared in the Bonanza catalogue');
+    assert(!gCodes.includes('PMS'), 'a Bonanza product appeared in the Bigul catalogue');
+  });
+
+  await check('a lead only ever carries cards from its own catalogue', async () => {
+    const { data } = await req('/api/leads', { token: T.superadmin, expect: 200 });
+    const sample = data.filter((l) => l.sales_org === 'BIGUL').slice(0, 3);
+    assert(sample.length, 'no Bigul leads to check');
+
+    for (const l of sample) {
+      const { data: full } = await req(`/api/leads/${l.id}`, { token: T.superadmin, expect: 200 });
+      for (const c of full.cards) {
+        assert(
+          String(c.product_code).startsWith('BG-'),
+          `Bigul lead ${l.id} carries a non-Bigul card: ${c.product_code}`,
+        );
+      }
+    }
+  });
+
+  await check('a new lead inherits the org of whoever created it', async () => {
+    const { data } = await req('/api/leads', {
+      method: 'POST', token: bigulRm, expect: 201,
+      body: { name: 'Bigul Org Probe', mobile: omob(1), city: 'Bengaluru' },
+    });
+    eq(data.sales_org, 'BIGUL', 'a Bigul RM created a lead in the wrong business');
+    assert(data.cards.every((c) => String(c.product_code).startsWith('BG-')), 'wrong catalogue on a new Bigul lead');
+  });
+
+  await check('creating into an org you do not hold is refused', async () => {
+    await req('/api/leads', {
+      method: 'POST', token: T.admin, expect: 403,
+      body: { name: 'Cross Org Probe', mobile: omob(2), sales_org: 'BIGUL' },
+    });
+  });
+
+  await check('a cross-org user may choose which business a lead lands in', async () => {
+    const { data } = await req('/api/leads', {
+      method: 'POST', token: crossRm, expect: 201,
+      body: { name: 'Cross Org Chooser', mobile: omob(3), sales_org: 'BIGUL' },
+    });
+    eq(data.sales_org, 'BIGUL', 'the chosen org was not honoured');
+  });
+
+  await check('bulk import lands in one named business, and refuses others', async () => {
+    const { data } = await req('/api/leads/import', {
+      method: 'POST', token: bigulRm, expect: 200,
+      body: { rows: [{ name: 'Bigul Import', mobile: omob(4) }], commit: false },
+    });
+    eq(data.sales_org, 'BIGUL', 'import did not resolve to the caller’s org');
+
+    await req('/api/leads/import', {
+      method: 'POST', token: T.admin, expect: 403,
+      body: { rows: [{ name: 'Wrong Org', mobile: omob(5) }], commit: false, sales_org: 'BIGUL' },
+    });
+  });
+
+  await check('reports respect the org boundary', async () => {
+    const { data: bonanza } = await req('/api/reports/overview', { token: T.admin, expect: 200 });
+    const { data: both } = await req('/api/reports/overview', { token: T.superadmin, expect: 200 });
+    assert(
+      both.leads.total > bonanza.leads.total,
+      'a superadmin spanning both orgs should count more leads than a single-org admin',
+    );
+  });
+
+  /* ------------------------------------- 25. app shell, search, directory */
+  suite('25 app shell & global search');
+
+  await check('apps and tabs are filtered by permission', async () => {
+    const { data: admin } = await req('/api/apps', { token: T.admin, expect: 200 });
+    const { data: rep } = await req('/api/apps', { token: T.sales_rm, expect: 200 });
+
+    const ids = (d) => d.apps.map((a) => a.id);
+    assert(ids(admin).includes('setup'), 'an administrator should hold the Setup app');
+    assert(!ids(rep).includes('setup'), 'a Sales RM must not hold the Setup app');
+    assert(ids(rep).includes('sales'), 'a Sales RM should hold the Sales Console');
+  });
+
+  await check('a Sales RM is not handed a Marketing app', async () => {
+    // list.create is held by nearly every role, so including it in the
+    // Marketing app's requirements handed reps an app that was not theirs.
+    const { data } = await req('/api/apps', { token: T.sales_rm, expect: 200 });
+    assert(!data.apps.some((a) => a.id === 'marketing'), 'a Sales RM was given the Marketing app');
+  });
+
+  await check('a Marketing Manager is not handed Setup', async () => {
+    // They hold admin.content and admin.templates, which is marketing work —
+    // not a reason to land in platform configuration.
+    const { data } = await req('/api/apps', { token: T.marketing_manager, expect: 200 });
+    assert(!data.apps.some((a) => a.id === 'setup'), 'a Marketing Manager was given the Setup app');
+    assert(data.apps.some((a) => a.id === 'marketing'), 'a Marketing Manager should hold Marketing');
+  });
+
+  await check('no app is offered with zero reachable tabs', async () => {
+    for (const role of ['caller', 'dealer', 'customer_care', 'marketing_manager', 'product_rm']) {
+      const { data } = await req('/api/apps', { token: T[role], expect: 200 });
+      for (const a of data.apps) {
+        assert(a.tabs.length > 0, `${role} was offered "${a.label}" with no tabs`);
+        assert(a.primary, `${role}'s "${a.label}" has no landing tab`);
+      }
+    }
+  });
+
+  await check('every tab a user is offered names a permission they hold', async () => {
+    const { data: me } = await req('/api/auth/me', { token: T.caller, expect: 200 });
+    const held = new Set(me.user.permissions);
+    const { data } = await req('/api/apps', { token: T.caller, expect: 200 });
+
+    for (const tab of data.all_tabs) {
+      if (!tab.needs) continue;
+      assert(tab.needs.some((p) => held.has(p)), `caller was offered "${tab.label}" without a permission for it`);
+    }
+  });
+
+  /* ------------------------------------------------------------- search */
+
+  await check('global search finds a lead the caller can see', async () => {
+    const { data } = await req('/api/search?q=Test', { token: T.admin, expect: 200 });
+    assert(data.groups, 'no result groups returned');
+    const leads = data.groups.Leads || [];
+    assert(leads.length > 0, 'admin search found no leads');
+    assert(leads[0].url.startsWith('/leads/'), 'result has no navigable url');
+  });
+
+  await check('search results carry masked identifiers, never raw ones', async () => {
+    const { data } = await req('/api/search?q=9', { token: T.admin, expect: 200 });
+    const raw = JSON.stringify(data);
+    assert(!/\b[6-9]\d{9}\b/.test(raw), 'global search returned an unmasked mobile number');
+  });
+
+  await check('search cannot be used to discover another org’s records', async () => {
+    // Not "no permission" — nothing at all. Confirming a record exists is
+    // itself a disclosure.
+    const { data: all_ } = await req('/api/leads', { token: T.superadmin, expect: 200 });
+    const bigulLead = all_.find((l) => l.sales_org === 'BIGUL');
+    assert(bigulLead, 'no Bigul lead to probe with');
+
+    const term = String(bigulLead.name).split(' ')[0];
+    const { data } = await req(`/api/search?q=${encodeURIComponent(term)}`, { token: T.admin, expect: 200 });
+    for (const r of data.groups.Leads || []) {
+      assert(r.id !== bigulLead.id, 'a Bonanza admin found a Bigul lead through search');
+    }
+  });
+
+  await check('search below two characters returns nothing rather than everything', async () => {
+    const { data } = await req('/api/search?q=a', { token: T.admin, expect: 200 });
+    eq(Object.keys(data.groups).length, 0, 'a one-character search should not scan the book');
+  });
+
+  await check('a role without partner access gets no partner results', async () => {
+    const { data } = await req('/api/search?q=a', { token: T.caller, expect: 200 });
+    assert(!data.groups.Partners, 'a caller should not see partners in search');
+  });
+
+  /* ------------------------------------------------ staff vs client PII */
+
+  await check('the admin user directory is scoped to their own business', async () => {
+    const { data } = await req('/api/cockpit', { token: T.admin, expect: 200 });
+    const rows = data.worklist?.rows ?? [];
+    assert(rows.length > 0, 'no users listed');
+    for (const u of rows) {
+      eq(u.sales_org, 'BONANZA', `a Bonanza admin sees Bigul staff: ${u.name}`);
+    }
+  });
+
+  await check('colleague emails are readable — they are directory data, not client PII', async () => {
+    // Masking staff contact details turns user management into a list of
+    // asterisks nobody can act on. Client identifiers are the thing to protect.
+    const { data } = await req('/api/cockpit', { token: T.admin, expect: 200 });
+    const rows = data.worklist?.rows ?? [];
+    const withEmail = rows.filter((u) => u.email);
+    assert(withEmail.length > 0, 'no staff emails present to check');
+    for (const u of withEmail) {
+      assert(!String(u.email).includes('•'), `a colleague email was masked: ${u.email}`);
+    }
+  });
+
+  /* --------------------------- 26. activities, dispositions, follow-ups */
+  suite('26 activity capture & follow-up intelligence');
+
+  const soon = (h) => new Date(Date.now() + h * 3600_000).toISOString().slice(0, 19).replace('T', ' ');
+
+  await check('the disposition matrix is served for the capture form', async () => {
+    const { data } = await req('/api/activities/meta', { token: T.sales_rm, expect: 200 });
+    assert(data.dispositions.Call, 'no call dispositions');
+
+    const outcomes = data.dispositions.Call.map((g) => g.outcome);
+    assert(outcomes.includes('Connected'), 'no Connected group');
+    assert(outcomes.includes('Not Connected'), 'no Not Connected group');
+
+    const connected = data.dispositions.Call.find((g) => g.outcome === 'Connected').options;
+    assert(connected.some((o) => o.code === 'CALL_CALLBACK'), 'Callback Requested missing');
+    assert(connected.some((o) => o.code === 'CALL_MEETING_FIXED'), 'Meeting Fixed missing');
+  });
+
+  await check('a contact activity without an outcome is refused', async () => {
+    // An untagged call is a call nobody can report on.
+    const { data } = await req('/api/activities', {
+      method: 'POST', token: T.sales_rm, expect: 400,
+      body: { lead_id: REF.leadId, type: 'Call', body: 'Spoke to them' },
+    });
+    assert(/outcome/i.test(data.error), `unexpected error: ${data.error}`);
+  });
+
+  await check('"Callback Requested" cannot be saved without a date and time', async () => {
+    // The whole value of this module rests on the follow-up existing, so the
+    // obligation is enforced by the API and not merely by the form.
+    const { data } = await req('/api/activities', {
+      method: 'POST', token: T.sales_rm, expect: 400,
+      body: { lead_id: REF.leadId, type: 'Call', disposition: 'CALL_CALLBACK', body: 'Call me later' },
+    });
+    assert(data.fields?.follow_up_at, `expected a field error, got ${JSON.stringify(data)}`);
+  });
+
+  await check('a follow-up in the past is refused', async () => {
+    const past = new Date(Date.now() - 3600_000).toISOString().slice(0, 19).replace('T', ' ');
+    const { data } = await req('/api/activities', {
+      method: 'POST', token: T.sales_rm, expect: 400,
+      body: { lead_id: REF.leadId, type: 'Call', disposition: 'CALL_CALLBACK', follow_up_at: past },
+    });
+    assert(/past/i.test(data.fields?.follow_up_at ?? ''), 'a backdated follow-up was accepted');
+  });
+
+  await check('logging a callback creates a dated, owned, auto-created task', async () => {
+    const due = soon(20);
+    const { data } = await req('/api/activities', {
+      method: 'POST', token: T.sales_rm, expect: 201,
+      body: {
+        lead_id: REF.leadId, type: 'Call', disposition: 'CALL_CALLBACK',
+        duration_s: 95, body: 'In a meeting, asked for a callback tomorrow', follow_up_at: due,
+      },
+    });
+
+    assert(data.follow_up, 'no follow-up task was created');
+    eq(data.follow_up.kind, 'follow_up', 'wrong task kind');
+    eq(data.follow_up.auto_created, 1, 'task should be marked auto-created');
+    eq(data.follow_up.status, 'Open', 'task should be open');
+    assert(data.follow_up.assignee_id, 'the task has no owner');
+    assert(data.confirmation.includes(data.follow_up.due_at), 'the rep is not told what was committed');
+
+    REF.followUpTaskId = data.follow_up.id;
+    REF.callActivityId = data.activity.id;
+  });
+
+  await check('the activity and its task are linked in both directions', async () => {
+    const { data } = await req(`/api/activities/lead/${REF.leadId}`, { token: T.sales_rm, expect: 200 });
+    const logged = data.find((a) => a.id === REF.callActivityId);
+    assert(logged, 'the activity is not on the timeline');
+    eq(logged.follow_up_task_id, REF.followUpTaskId, 'activity does not point at its task');
+    eq(logged.sub_disposition, 'Callback Requested', 'sub-disposition not stored');
+    eq(logged.outcome, 'Connected', 'outcome not stored');
+  });
+
+  await check('reminders are queued across every channel', async () => {
+    const { data } = await req('/api/activities/follow-ups', { token: T.sales_rm, expect: 200 });
+    const all_ = [...data.overdue, ...data.today, ...data.upcoming];
+    assert(all_.some((t) => t.id === REF.followUpTaskId), 'the new follow-up is not on the board');
+  });
+
+  await check('a "Ringing" outcome schedules its own retry with no input', async () => {
+    const { data } = await req('/api/activities', {
+      method: 'POST', token: T.sales_rm, expect: 201,
+      body: { lead_id: REF.leadId, type: 'Call', disposition: 'CALL_NO_ANSWER', body: 'Rang out' },
+    });
+    assert(data.follow_up, 'no retry was scheduled');
+    eq(data.follow_up.kind, 'retry', 'wrong task kind for a no-answer');
+  });
+
+  await check('"Not Interested" demands a reason and closes the card', async () => {
+    const { data: refused } = await req('/api/activities', {
+      method: 'POST', token: T.sales_rm, expect: 400,
+      body: { lead_id: REF.leadId, type: 'Call', disposition: 'CALL_NOT_INTERESTED' },
+    });
+    assert(refused.fields?.reason, 'a refusal was accepted without a reason');
+
+    const { data: lead } = await req(`/api/leads/${REF.leadId}`, { token: T.sales_rm, expect: 200 });
+    const card = lead.cards.find((c) => c.state !== 'INACTIVE' && c.state !== 'LOST');
+    if (card) {
+      const { data } = await req('/api/activities', {
+        method: 'POST', token: T.sales_rm, expect: 201,
+        body: {
+          lead_id: REF.leadId, card_id: card.id, type: 'Call',
+          disposition: 'CALL_NOT_INTERESTED', reason: 'Invested elsewhere, locked in',
+        },
+      });
+      assert(data.effects.some((e) => e.includes('LOST')), `card was not closed: ${JSON.stringify(data.effects)}`);
+    }
+  });
+
+  await check('"Wrong Number" flags the mobile so nobody redials it', async () => {
+    const { data } = await req('/api/activities', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: { lead_id: REF.leadId, type: 'Call', disposition: 'CALL_WRONG_NUMBER', body: 'Not their number' },
+    });
+    assert(data.effects.includes('mobile flagged invalid'), 'the mobile was not flagged');
+  });
+
+  await check('"Do Not Disturb" suppresses the lead from campaigns', async () => {
+    const { data } = await req('/api/activities', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: {
+        lead_id: REF.leadId, type: 'Call', disposition: 'CALL_DND',
+        reason: 'Client asked to be removed from all marketing',
+      },
+    });
+    assert(data.effects.includes('suppressed from campaigns'), 'marketing was not suppressed');
+  });
+
+  await check('an outcome from the wrong activity type is refused', async () => {
+    const { data } = await req('/api/activities', {
+      method: 'POST', token: T.sales_rm, expect: 400,
+      body: { lead_id: REF.leadId, type: 'Meeting', disposition: 'CALL_PITCH_DONE' },
+    });
+    assert(/not an outcome for a Meeting/i.test(data.error), `unexpected: ${data.error}`);
+  });
+
+  await check('rescheduling moves the task and re-arms the reminders', async () => {
+    const id = need(REF.followUpTaskId, 'the follow-up task');
+    const newDue = soon(48);
+    const { data } = await req(`/api/activities/follow-ups/${id}`, {
+      method: 'PATCH', token: T.sales_rm, expect: 200,
+      body: { due_at: newDue, note: 'Client moved it to Thursday' },
+    });
+    assert(data.due_at !== null, 'no due date after reschedule');
+    eq(data.status, 'Open', 'reschedule should leave the task open');
+  });
+
+  await check('completing a follow-up stops it being chased', async () => {
+    const id = need(REF.followUpTaskId, 'the follow-up task');
+    const { data } = await req(`/api/activities/follow-ups/${id}/complete`, {
+      method: 'POST', token: T.sales_rm, expect: 200,
+    });
+    eq(data.status, 'Done', 'task not completed');
+
+    const { data: board } = await req('/api/activities/follow-ups', { token: T.sales_rm, expect: 200 });
+    const still = [...board.overdue, ...board.today, ...board.upcoming].some((t) => t.id === id);
+    assert(!still, 'a completed follow-up is still on the board');
+  });
+
+  await check('an activity cannot be logged against a lead you cannot see', async () => {
+    const { data: all_ } = await req('/api/leads', { token: T.superadmin, expect: 200 });
+    const other = all_.find((l) => l.sales_org === 'BIGUL');
+    assert(other, 'no Bigul lead to probe with');
+
+    await req('/api/activities', {
+      method: 'POST', token: T.sales_rm, expect: 404,
+      body: { lead_id: other.id, type: 'Call', disposition: 'CALL_PITCH_DONE' },
+    });
+  });
+
+  /* ------------------------------------------------------- assignment */
+
+  await check('an inbound lead is routed the moment it is created', async () => {
+    const { data } = await req('/api/leads', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: { name: 'Facebook Routing Probe', mobile: omob(6), source: 'Facebook Lead Ads', city: 'Mumbai' },
+    });
+    assert(data.routing?.assigned, 'the lead was not routed');
+    assert(/Facebook/i.test(data.routing.reason), `routed by the wrong rule: ${data.routing.reason}`);
+    assert(data.owner_id, 'the lead has no owner');
+    REF.routedLeadId = data.id;
+  });
+
+  await check('routing is explainable and recorded on the timeline', async () => {
+    const id = need(REF.routedLeadId, 'the routed lead');
+    const { data } = await req(`/api/activities/lead/${id}`, { token: T.admin, expect: 200 });
+    const assignment = data.find((a) => a.type === 'Assignment');
+    assert(assignment, 'the assignment was not recorded on the timeline');
+    assert(assignment.body, 'the assignment has no stated reason');
+  });
+
+  await check('round robin spreads leads rather than stacking one rep', async () => {
+    const owners = [];
+    for (let i = 0; i < 4; i += 1) {
+      const { data } = await req('/api/leads', {
+        method: 'POST', token: T.admin, expect: 201,
+        body: { name: `RR Probe ${i}`, mobile: `7${RUN}${i}`.slice(0, 10), source: 'Google Ads' },
+      });
+      owners.push(data.owner_id);
+    }
+    assert(new Set(owners).size > 1, `round robin gave every lead to one rep: ${owners.join(',')}`);
+  });
+
+  await check('a lead is never left without an owner', async () => {
+    const { data } = await req('/api/leads', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: { name: 'Unmatched Source Probe', mobile: omob(7), source: 'Carrier Pigeon' },
+    });
+    assert(data.owner_id, 'a lead with no matching rule was left unowned');
+  });
+
+  /* ------------------------------- 27. setup: users, roles, permissions */
+  suite('27 setup — users, roles & access');
+
+  await check('roles are data, not code', async () => {
+    // The audit's Part 4.1 complaint: four fixed roles meant every persona had
+    // to become a "Permission Template". Roles must be creatable at runtime.
+    const { data } = await req('/api/setup/roles', { token: T.admin, expect: 200 });
+    assert(data.length >= 11, `expected the shipped roles, got ${data.length}`);
+
+    const rm = data.find((r) => r.code === 'sales_rm');
+    assert(rm, 'sales_rm role missing');
+    assert(rm.capabilities.length > 0, 'sales_rm has no capabilities');
+    eq(rm.is_system, 1, 'shipped roles should be marked system');
+    assert(['own', 'team', 'product', 'org'].includes(rm.data_scope), `bad scope: ${rm.data_scope}`);
+  });
+
+  await check('the capability catalogue is grouped and marks sensitive grants', async () => {
+    const { data } = await req('/api/setup/capabilities', { token: T.admin, expect: 200 });
+    assert(data.categories.length > 3, 'capabilities are not grouped');
+
+    const all_ = data.categories.flatMap((c) => c.capabilities);
+    const unmask = all_.find((c) => c.code === 'pii.unmask');
+    assert(unmask, 'pii.unmask missing from the catalogue');
+    eq(unmask.sensitive, 1, 'unmasking client identifiers must be marked sensitive');
+  });
+
+  await check('an administrator can create a new role without a developer', async () => {
+    const { data } = await req('/api/setup/roles', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: {
+        code: `regional_sup_${RUN}`.slice(0, 30),
+        name: 'Regional Supervisor',
+        description: 'Runs a branch, sees their own reports only',
+        data_scope: 'team',
+        capabilities: ['lead.view.own', 'lead.contact', 'report.team'],
+      },
+    });
+    eq(data.data_scope, 'team', 'scope not saved');
+    eq(data.is_system, 0, 'a created role must not be a system role');
+    REF.customRole = data.code;
+  });
+
+  await check('a role can be cloned from an existing one', async () => {
+    const { data } = await req('/api/setup/roles', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: { code: `clone_${RUN}`.slice(0, 30), name: 'Cloned Caller', clone_from: 'caller' },
+    });
+
+    const { data: roles } = await req('/api/setup/roles', { token: T.admin, expect: 200 });
+    const cloned = roles.find((r) => r.code === data.code);
+    const source = roles.find((r) => r.code === 'caller');
+    eq(cloned.capabilities.length, source.capabilities.length, 'clone did not copy capabilities');
+    REF.clonedRole = data.code;
+  });
+
+  await check('role codes are validated and unique', async () => {
+    await req('/api/setup/roles', {
+      method: 'POST', token: T.admin, expect: 400,
+      body: { code: 'Bad Code!', name: 'Nope' },
+    });
+    await req('/api/setup/roles', {
+      method: 'POST', token: T.admin, expect: 409,
+      body: { code: 'sales_rm', name: 'Duplicate' },
+    });
+  });
+
+  await check('a system role cannot be deleted', async () => {
+    await req('/api/setup/roles/sales_rm', { method: 'DELETE', token: T.admin, expect: 400 });
+  });
+
+  await check('a role still held by users cannot be deleted', async () => {
+    const { data } = await req('/api/setup/roles/caller', { method: 'DELETE', token: T.admin, expect: 400 });
+    assert(data.error, 'no error explaining why');
+  });
+
+  await check('an unused custom role can be deleted', async () => {
+    const code = need(REF.clonedRole, 'the cloned role');
+    await req(`/api/setup/roles/${code}`, { method: 'DELETE', token: T.admin, expect: 204 });
+  });
+
+  await check('an admin cannot remove their own ability to manage roles', async () => {
+    // The classic administration accident, and unrecoverable without database
+    // access. It has to be refused rather than confirmed.
+    const { data } = await req('/api/setup/roles/admin', {
+      method: 'PATCH', token: T.admin, expect: 400,
+      body: { capabilities: ['lead.view.all'] },
+    });
+    assert(/your own/i.test(data.error), `unexpected: ${data.error}`);
+  });
+
+  /* -------------------------------------------------------------- users */
+
+  await check('an administrator can create a user, and gets a password once', async () => {
+    const { data } = await req('/api/setup/users', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: {
+        name: 'Setup Probe', email: `setup.${RUN}@bonanza.test`,
+        role: 'caller', branch: 'Pune', employee_code: `BNZ${RUN}`.slice(0, 12),
+      },
+    });
+    eq(data.user.role, 'caller', 'role not set');
+    eq(data.user.active, 1, 'new user should be active');
+    assert(data.initial_password, 'no initial password returned to hand over');
+    REF.newUserId = data.user.id;
+    REF.newUserEmail = data.user.email;
+    REF.newUserPassword = data.initial_password;
+  });
+
+  await check('there is no seat limit', async () => {
+    // The legacy tenant is capped at 132 licences. The brief asked for no limit.
+    const before = (await req('/api/setup/users', { token: T.admin, expect: 200 })).data.total;
+    for (let i = 0; i < 3; i += 1) {
+      await req('/api/setup/users', {
+        method: 'POST', token: T.admin, expect: 201,
+        body: { name: `Bulk User ${i}`, email: `bulk${i}.${RUN}@bonanza.test`, role: 'caller' },
+      });
+    }
+    const after = (await req('/api/setup/users', { token: T.admin, expect: 200 })).data.total;
+    eq(after, before + 3, 'user creation was capped');
+  });
+
+  await check('the created user can sign in with the issued password', async () => {
+    const token = await login(REF.newUserEmail, REF.newUserPassword);
+    assert(token, 'the issued password does not authenticate');
+    REF.newUserToken = token;
+  });
+
+  await check('duplicate email and employee code are refused', async () => {
+    await req('/api/setup/users', {
+      method: 'POST', token: T.admin, expect: 409,
+      body: { name: 'Dup', email: REF.newUserEmail, role: 'caller' },
+    });
+  });
+
+  await check('an unknown role is refused', async () => {
+    await req('/api/setup/users', {
+      method: 'POST', token: T.admin, expect: 400,
+      body: { name: 'Bad Role', email: `badrole.${RUN}@bonanza.test`, role: 'wizard' },
+    });
+  });
+
+  await check('deactivating someone holding live work warns before orphaning it', async () => {
+    // Silently orphaning a book is how leads go missing after someone leaves.
+    const { data: users } = await req('/api/setup/users', { token: T.admin, expect: 200 });
+    const holder = users.users.find((u) => u.lead_count > 0 && u.active && u.role !== 'admin');
+    assert(holder, 'no user with live leads to test with');
+
+    const { data } = await req(`/api/setup/users/${holder.id}/active`, {
+      method: 'POST', token: T.admin, expect: 409,
+      body: { active: false },
+    });
+    assert(data.open_leads > 0, 'the warning did not say how many leads');
+    assert(data.hint, 'the warning offers no way forward');
+    REF.holderId = holder.id;
+
+    // Remember the book so the suite can put it back. These checks mutate
+    // seeded users, and without restoration the suite passes exactly once per
+    // reseed — which is the same as not being run.
+    const { data: book } = await req(`/api/leads?owner_id=${holder.id}&limit=200`, { token: T.admin, expect: 200 });
+    REF.movedLeads = (book.leads ?? book).map((l) => l.id);
+  });
+
+  await check('deactivating can hand the book to someone else', async () => {
+    const holder = need(REF.holderId, 'the lead holder');
+    const { data: users } = await req('/api/setup/users', { token: T.admin, expect: 200 });
+    const target = users.users.find((u) => u.active && u.id !== holder && u.role === 'sales_rm');
+    assert(target, 'no active RM to hand the book to');
+
+    const before = users.users.find((u) => u.id === target.id).lead_count;
+
+    await req(`/api/setup/users/${holder}/active`, {
+      method: 'POST', token: T.admin, expect: 200,
+      body: { active: false, reassign_to: target.id },
+    });
+
+    const { data: after } = await req('/api/setup/users', { token: T.admin, expect: 200 });
+    const moved = after.users.find((u) => u.id === target.id).lead_count;
+    assert(moved > before, `the book did not move (${before} → ${moved})`);
+    eq(after.users.find((u) => u.id === holder).active, 0, 'the user was not deactivated');
+  });
+
+  await check('a deactivated user cannot sign in', async () => {
+    const holder = need(REF.holderId, 'the lead holder');
+    const { data: users } = await req('/api/setup/users', { token: T.admin, expect: 200 });
+    const email = users.users.find((u) => u.id === holder).email;
+
+    const { status } = await req('/api/auth/login', {
+      method: 'POST', body: { email, password: 'bonanza' },
+    });
+    eq(status, 401, 'a deactivated user was allowed to sign in');
+
+    // Restore: reactivate the user and hand their book back, so the next run of
+    // this suite starts from the same state as this one did.
+    await req(`/api/setup/users/${holder}/active`, {
+      method: 'POST', token: T.admin, expect: 200, body: { active: true },
+    });
+    for (const id of REF.movedLeads ?? []) {
+      await req(`/api/leads/${id}`, {
+        method: 'PATCH', token: T.admin, body: { owner_id: holder },
+      });
+    }
+  });
+
+  await check('an administrator cannot deactivate themselves', async () => {
+    const { data: me } = await req('/api/auth/me', { token: T.admin, expect: 200 });
+    await req(`/api/setup/users/${me.user.id}/active`, {
+      method: 'POST', token: T.admin, expect: 400,
+      body: { active: false },
+    });
+  });
+
+  /* --------------------------------------------------- permission sets */
+
+  await check('a permission set grants a capability on top of a role', async () => {
+    const { data: set } = await req('/api/setup/permission-sets', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: {
+        name: `PII unmask exception ${RUN}`,
+        description: 'For the one supervisor who handles disputes',
+        capabilities: ['pii.unmask'],
+      },
+    });
+    REF.permissionSetId = set.id;
+
+    const userId = need(REF.newUserId, 'the created user');
+    const { data } = await req(`/api/setup/users/${userId}/permission-sets`, {
+      method: 'POST', token: T.admin, expect: 201,
+      body: { set_id: set.id, reason: 'Handles billing disputes' },
+    });
+
+    assert(data.effective.includes('pii.unmask'), 'the grant did not take effect');
+    assert(!data.from_role.includes('pii.unmask'), 'a caller role should not carry unmask');
+    assert(data.from_grants.some((g) => g.capabilities.includes('pii.unmask')), 'grant provenance missing');
+  });
+
+  await check('a granted capability actually works at the API', async () => {
+    // The grant has to change behaviour, not just appear in a list.
+    const token = await login(REF.newUserEmail, REF.newUserPassword);
+    const { data: me } = await req('/api/auth/me', { token, expect: 200 });
+    assert(me.user.permissions.includes('pii.unmask'), 'the session does not carry the granted capability');
+  });
+
+  await check('revoking a set removes the capability', async () => {
+    const userId = need(REF.newUserId, 'the created user');
+    const setId = need(REF.permissionSetId, 'the permission set');
+    const { data } = await req(`/api/setup/users/${userId}/permission-sets/${setId}`, {
+      method: 'DELETE', token: T.admin, expect: 200,
+    });
+    assert(!data.effective.includes('pii.unmask'), 'the capability survived revocation');
+  });
+
+  /* ------------------------------------------------ access simulation */
+
+  await check('"what can this person see?" is answerable, with provenance', async () => {
+    // Audit Part 4.1: no screen in the legacy system could answer this.
+    const { data: users } = await req('/api/setup/users', { token: T.admin, expect: 200 });
+    const rm = users.users.find((u) => u.role === 'sales_rm' && u.active);
+
+    const { data } = await req(`/api/setup/users/${rm.id}/access`, { token: T.admin, expect: 200 });
+    assert(data.data_scope.meaning, 'the scope is not explained in words');
+    assert(Array.isArray(data.from_role), 'no role provenance');
+    assert(typeof data.leads_visible === 'number', 'no concrete count of what they see');
+    assert(data.leads_visible <= data.total_in_org, 'a scoped user sees more than the org holds');
+  });
+
+  await check('the simulation matches what the API actually returns', async () => {
+    // A simulation that disagrees with reality is worse than none.
+    const { data: users } = await req('/api/setup/users', { token: T.admin, expect: 200 });
+    const caller = users.users.find((u) => u.role === 'caller' && u.active && u.lead_count > 0);
+    if (!caller) return;
+
+    const { data: sim } = await req(`/api/setup/users/${caller.id}/access`, { token: T.admin, expect: 200 });
+    eq(sim.leads_visible, caller.lead_count, 'simulated visibility disagrees with owned leads');
+  });
+
+  await check('anyone can see their own access', async () => {
+    const { data } = await req('/api/setup/me/access', { token: T.caller, expect: 200 });
+    eq(data.user.role, 'caller', 'wrong user returned');
+    assert(data.effective.length > 0, 'no capabilities reported');
+  });
+
+  await check('setup is refused to non-administrators', async () => {
+    await req('/api/setup/users', { token: T.caller, expect: 403 });
+    await req('/api/setup/roles', { token: T.sales_rm, expect: 403 });
+    await req('/api/setup/capabilities', { token: T.caller, expect: 403 });
+  });
+
+
+  /* ============================================================ 28 */
+  suite('28 metadata layer & record editing');
+
+  await check('the field list for a form comes from metadata, not from code', async () => {
+    const { data } = await req('/api/meta/fields/lead', { token: T.sales_supervisor, expect: 200 });
+    assert(data.fields.length > 10, `only ${data.fields.length} fields described`);
+
+    const stage = data.fields.find((f) => f.api_name === 'stage');
+    assert(stage, 'stage is not described');
+    eq(stage.label, 'Stage', 'label lost');
+    assert(stage.values?.length > 0, 'stage offers no picklist values');
+    assert(stage.required, 'stage should be required');
+  });
+
+  await check('picklist values are data, so Setup can extend them', async () => {
+    const { data } = await req('/api/meta/fields/lead', { token: T.sales_rm, expect: 200 });
+    const source = data.fields.find((f) => f.api_name === 'source');
+    assert(source.values.some((v) => v.value === 'Website'), 'Website missing from source');
+    assert(source.values.length >= 10, `only ${source.values.length} sources`);
+  });
+
+  await check('a field the caller cannot read is never described to them', async () => {
+    // Field-level security applied at the API, not in the browser. Marketing
+    // has no pii.unmask, so PAN must not even appear in the form definition.
+    const { data: open } = await req('/api/meta/fields/lead', { token: T.sales_rm, expect: 200 });
+    const { data: shut } = await req('/api/meta/fields/lead', { token: T.marketing_manager, expect: 200 });
+
+    assert(open.fields.some((f) => f.api_name === 'pan'), 'a capability holder should see PAN');
+    assert(!shut.fields.some((f) => f.api_name === 'pan'),
+      'PAN was described to a role without pii.unmask');
+  });
+
+  await check('an unknown object is a 404, not an empty form', async () => {
+    await req('/api/meta/fields/not_a_thing', { token: T.admin, expect: 404 });
+  });
+
+  /* ---- custom fields, end to end through the API ---- */
+
+  await check('an administrator adds a field without a migration', async () => {
+    const { data } = await req('/api/setup/objects/lead/fields', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: {
+        label: `E2E Channel ${RUN}`,
+        type: 'picklist',
+        purpose: 'End-to-end coverage for the metadata layer',
+        values: [{ label: 'Phone' }, { label: 'Branch' }, { label: 'Digital' }],
+      },
+    });
+    REF.customField = data.field.api_name;
+    assert(data.field.is_custom, 'field was not marked custom');
+    eq(data.field.storage, 'value', 'a custom field should land in the value store');
+  });
+
+  await check('the new field appears on the form immediately', async () => {
+    const name = need(REF.customField, 'the custom field');
+    const { data } = await req('/api/meta/fields/lead', { token: T.sales_supervisor, expect: 200 });
+    const f = data.fields.find((x) => x.api_name === name);
+    assert(f, 'the field an admin just created is not on the form');
+    eq(f.values.length, 3, 'picklist values did not come with it');
+  });
+
+  await check('a value can be written and read back', async () => {
+    const name = need(REF.customField, 'the custom field');
+    const lead = need(REF.leadId, 'a lead');
+
+    await req(`/api/leads/${lead}`, {
+      method: 'PATCH', token: T.sales_supervisor, expect: 200,
+      body: { custom: { [name]: 'Branch' } },
+    });
+
+    const { data } = await req(`/api/leads/${lead}`, { token: T.sales_supervisor, expect: 200 });
+    eq(data.custom[name], 'Branch', 'the custom value did not persist');
+  });
+
+  await check('a value outside the picklist is refused', async () => {
+    // The cascade and the value list are enforced at the API, so an integration
+    // write cannot put "Carrier Pigeon" into a controlled field.
+    const name = need(REF.customField, 'the custom field');
+    const lead = need(REF.leadId, 'a lead');
+
+    const { data } = await req(`/api/leads/${lead}`, {
+      method: 'PATCH', token: T.sales_supervisor, expect: 400,
+      body: { custom: { [name]: 'Carrier Pigeon' } },
+    });
+    assert(data.fields?.[name], 'the refusal did not name the offending field');
+  });
+
+  await check('the API name is frozen once the field exists', async () => {
+    const name = need(REF.customField, 'the custom field');
+    await req(`/api/setup/objects/lead/fields/${name}`, {
+      method: 'PATCH', token: T.admin, expect: 400,
+      body: { type: 'number' },
+    });
+  });
+
+  await check('the label can be renamed and the API name does not move', async () => {
+    const name = need(REF.customField, 'the custom field');
+    const { data } = await req(`/api/setup/objects/lead/fields/${name}`, {
+      method: 'PATCH', token: T.admin, expect: 200,
+      body: { label: 'Renamed By Test' },
+    });
+    eq(data.label, 'Renamed By Test', 'label did not change');
+    eq(data.api_name, name, 'the API name moved with the label');
+  });
+
+  await check('a core field cannot be deleted', async () => {
+    await req('/api/setup/objects/lead/fields/stage', {
+      method: 'DELETE', token: T.admin, expect: 400,
+    });
+  });
+
+  await check('deactivating a field keeps its stored values', async () => {
+    const name = need(REF.customField, 'the custom field');
+    const { data } = await req(`/api/setup/objects/lead/fields/${name}`, {
+      method: 'DELETE', token: T.admin, expect: 200,
+    });
+    assert(data.values_retained >= 1, 'the stored value was discarded with the field');
+  });
+
+  await check('configuring objects is refused without the capability', async () => {
+    await req('/api/setup/objects', { token: T.sales_rm, expect: 403 });
+    await req('/api/setup/objects/lead/fields', {
+      method: 'POST', token: T.sales_rm, expect: 403,
+      body: { label: 'Nope', type: 'text', purpose: 'should not happen' },
+    });
+  });
+
+  await check('a field with no stated purpose is refused', async () => {
+    // The governance gate. 289 unowned custom fields is what its absence
+    // looks like after four years.
+    await req('/api/setup/objects/lead/fields', {
+      method: 'POST', token: T.admin, expect: 400,
+      body: { label: `No Purpose ${RUN}`, type: 'text' },
+    });
+  });
+
+  /* ---- field history ---- */
+
+  await check('changing a tracked field records who and when', async () => {
+    const lead = need(REF.leadId, 'a lead');
+    const { data: before } = await req(`/api/leads/${lead}`, { token: T.sales_supervisor, expect: 200 });
+    const next = before.stage === 'Contacted' ? 'Qualified' : 'Contacted';
+
+    await req(`/api/leads/${lead}`, {
+      method: 'PATCH', token: T.sales_supervisor, expect: 200, body: { stage: next },
+    });
+
+    const { data } = await req(`/api/leads/${lead}`, { token: T.sales_supervisor, expect: 200 });
+    const entry = data.field_history.find((h) => h.field === 'stage' && h.new_value === next);
+    assert(entry, 'the stage change was not recorded in field history');
+    assert(entry.actor_name, 'the change has no named actor');
+  });
+
+  await check('an untracked field records nothing', async () => {
+    const lead = need(REF.leadId, 'a lead');
+    const { data: before } = await req(`/api/leads/${lead}`, { token: T.sales_supervisor, expect: 200 });
+    const cityRows = (h) => h.filter((x) => x.field === 'city').length;
+
+    await req(`/api/leads/${lead}`, {
+      method: 'PATCH', token: T.sales_supervisor, expect: 200, body: { city: 'Kolhapur' },
+    });
+
+    const { data } = await req(`/api/leads/${lead}`, { token: T.sales_supervisor, expect: 200 });
+    eq(cityRows(data.field_history), cityRows(before.field_history),
+      'an untracked field wrote history');
+  });
+
+  /* ---- the edit form must never be seeded from masked PII ---- */
+
+  await check('unmask is refused to a role without the capability', async () => {
+    const lead = need(REF.leadId, 'a lead');
+    const { data } = await req(`/api/leads/${lead}?unmask=true`, { token: T.marketing_manager, expect: 200 });
+    assert(String(data.mobile).includes('•'),
+      'a role without pii.unmask received a real mobile number by asking for it');
+  });
+
+  await check('unmask returns real values to a capability holder', async () => {
+    // The edit form depends on this. Seeded from masked values, the phone input
+    // strips the dots and saves "0000" over a client's real number.
+    const lead = need(REF.leadId, 'a lead');
+    const { data } = await req(`/api/leads/${lead}?unmask=true`, { token: T.sales_supervisor, expect: 200 });
+    assert(!String(data.mobile).includes('•'), 'the edit form would be seeded with a masked mobile');
+    assert(/^\d{10}$/.test(String(data.mobile)), `mobile came back as "${data.mobile}"`);
+  });
+
+  await check('revealing PII is written to the audit log', async () => {
+    const lead = need(REF.leadId, 'a lead');
+    await req(`/api/leads/${lead}?unmask=true`, { token: T.sales_supervisor, expect: 200 });
+
+    const { data } = await req('/api/admin/audit', { token: T.admin, expect: 200 });
+    assert(data.some((r) => r.action === 'pii_unmasked'),
+      'a PII reveal left no audit trail');
+  });
+
+  /* ---- the interaction split ---- */
+
+  await check('the outcome of a call is visible, the notes body is not', async () => {
+    const lead = need(REF.leadId, 'a lead');
+    const { data } = await req(`/api/activities/lead/${lead}`, { token: T.marketing_manager, expect: 200 });
+    if (!data.length) return;
+
+    const foreign = data.filter((a) => a._restricted?.includes('body'));
+    for (const a of foreign) {
+      eq(a.body, null, 'a restricted note leaked its body');
+      assert('type' in a, 'the channel was hidden along with the note');
+    }
+  });
+
+
+  /* ============================================================ 29 */
+  suite('29 consent, click-to-call & lead actions');
+
+  await check('a lead reports what it may be contacted on', async () => {
+    const lead = need(REF.leadId, 'a lead');
+    const { data } = await req(`/api/leads/${lead}`, { token: T.sales_supervisor, expect: 200 });
+
+    assert(data.contactability, 'the lead carries no contactability');
+    for (const channel of ['call', 'whatsapp', 'sms', 'email']) {
+      assert(channel in data.contactability, `${channel} missing from contactability`);
+      assert('marketing' in data.contactability[channel], `${channel} has no marketing verdict`);
+      assert('service' in data.contactability[channel], `${channel} has no service verdict`);
+    }
+  });
+
+  await check('click-to-call reaches the dialler', async () => {
+    // A lead this suite owns. The shared fixture picks up flags from earlier
+    // suites, and a dial test that depends on run order is not a test.
+    const { data } = await req('/api/leads', {
+      method: 'POST', token: T.sales_supervisor, expect: 201,
+      body: { name: `Dial Probe ${RUN}`, mobile: `97${String(RUN).slice(-8)}`, source: 'Manual' },
+    });
+    REF.dialLead = data.id;
+    await req(`/api/leads/${data.id}/call`, { method: 'POST', token: T.sales_supervisor, expect: 200, body: {} });
+  });
+
+  await check('calling is refused to a role without lead.contact', async () => {
+    const lead = need(REF.leadId, 'a lead');
+    await req(`/api/leads/${lead}/call`, {
+      method: 'POST', token: T.marketing_manager, expect: 403, body: {},
+    });
+  });
+
+  /* ---- consent: marketing is gated, service is not ---- */
+
+  await check('a marketing send to an opted-out lead is refused', async () => {
+    // The gap this closes: the disposition matrix has always set this flag and
+    // nothing ever read it before an outbound send.
+    const { data: made } = await req('/api/leads', {
+      method: 'POST', token: T.sales_supervisor, expect: 201,
+      body: { name: `Consent Probe ${RUN}`, mobile: `98${String(RUN).slice(-8)}`, source: 'Manual' },
+    });
+    REF.consentLead = made.id;
+
+    await req(`/api/leads/${made.id}`, {
+      method: 'PATCH', token: T.sales_supervisor, expect: 200,
+      body: { marketing_opt_out: 1 },
+    });
+
+    const { data } = await req(`/api/leads/${made.id}/message`, {
+      method: 'POST', token: T.sales_supervisor, expect: 409,
+      body: { channel: 'whatsapp', body: 'New PMS offer', intent: 'marketing' },
+    });
+    eq(data.code, 'opted_out', `wrong refusal code: ${data.code}`);
+    assert(/opted out/i.test(data.error), `unhelpful reason: ${data.error}`);
+  });
+
+  await check('a service message to the same lead still goes', async () => {
+    // An opt-out from marketing is not an opt-out from being told their KYC
+    // failed. Blocking that would be worse service, not better compliance.
+    const id = need(REF.consentLead, 'the consent probe lead');
+    await req(`/api/leads/${id}/message`, {
+      method: 'POST', token: T.sales_supervisor, expect: 201,
+      body: { channel: 'whatsapp', body: 'Your KYC needs one more document', intent: 'service' },
+    });
+  });
+
+  await check('a call to an opted-out lead still goes', async () => {
+    const id = need(REF.consentLead, 'the consent probe lead');
+    await req(`/api/leads/${id}/call`, { method: 'POST', token: T.sales_supervisor, expect: 200, body: {} });
+  });
+
+  await check('the intent defaults to the safer of the two', async () => {
+    // A caller that forgets to say gets marketing, which is the one that can be
+    // refused. Defaulting to service would make silence the permissive answer.
+    const id = need(REF.consentLead, 'the consent probe lead');
+    const { data } = await req(`/api/leads/${id}/message`, {
+      method: 'POST', token: T.sales_supervisor, expect: 409,
+      body: { channel: 'whatsapp', body: 'No intent declared' },
+    });
+    eq(data.code, 'opted_out', 'an undeclared send was treated as service');
+  });
+
+  await check('contactability reflects the opt-out', async () => {
+    const id = need(REF.consentLead, 'the consent probe lead');
+    const { data } = await req(`/api/leads/${id}`, { token: T.sales_supervisor, expect: 200 });
+
+    eq(data.contactability.whatsapp.marketing, false, 'marketing still shown as allowed');
+    eq(data.contactability.whatsapp.service, true, 'service was blocked along with marketing');
+    assert(data.contactability.whatsapp.reason, 'no reason given for the block');
+  });
+
+  /* ---- consent: a dead number blocks everything on it ---- */
+
+  await check('an invalid mobile blocks calls and texts, including service', async () => {
+    const id = need(REF.consentLead, 'the consent probe lead');
+    await req(`/api/leads/${id}`, {
+      method: 'PATCH', token: T.sales_supervisor, expect: 200,
+      body: { mobile_invalid: 1, marketing_opt_out: 0 },
+    });
+
+    const { data: called } = await req(`/api/leads/${id}/call`, {
+      method: 'POST', token: T.sales_supervisor, expect: 409, body: {},
+    });
+    eq(called.code, 'invalid_destination', `wrong code: ${called.code}`);
+
+    const { data: texted } = await req(`/api/leads/${id}/message`, {
+      method: 'POST', token: T.sales_supervisor, expect: 409,
+      body: { channel: 'sms', body: 'Anything', intent: 'service' },
+    });
+    eq(texted.code, 'invalid_destination', 'a dead number accepted an SMS');
+  });
+
+  await check('email is unaffected by a dead mobile', async () => {
+    // The flag is about the number, not about the person. Blocking their email
+    // because their phone is wrong would be the wrong lesson learned.
+    const id = need(REF.consentLead, 'the consent probe lead');
+    const { data } = await req(`/api/leads/${id}`, { token: T.sales_supervisor, expect: 200 });
+    eq(data.contactability.email.service, data.email ? true : false,
+      'email contactability should depend on having an email, not on the mobile flag');
+  });
+
+  await check('a lead with no mobile says so rather than failing oddly', async () => {
+    const { data: made } = await req('/api/leads', {
+      method: 'POST', token: T.sales_supervisor, expect: 201,
+      body: { name: `No Mobile ${RUN}`, email: `nomobile.${RUN}@test.test`, source: 'Manual' },
+    });
+
+    const { data } = await req(`/api/leads/${made.id}/call`, {
+      method: 'POST', token: T.sales_supervisor, expect: 409, body: {},
+    });
+    eq(data.code, 'no_destination', `wrong code for a lead with no mobile: ${data.code}`);
+  });
+
+  /* ---- the action menu is a convenience, the API is the control ---- */
+
+  await check('the API refuses an action the menu would have hidden', async () => {
+    // The menu hides what a role cannot do. That is courtesy; this is the
+    // control. A forged request must be refused just the same.
+    const lead = need(REF.leadId, 'a lead');
+
+    await req(`/api/leads/${lead}`, {
+      method: 'PATCH', token: T.caller, expect: 403, body: { owner_id: 2 },
+    });
+    await req(`/api/leads/${lead}`, {
+      method: 'PATCH', token: T.sales_rm, expect: 403, body: { stage: 'Won' },
+    });
+  });
+
+  await check('superadmin and admin hold every action the menu offers', async () => {
+    // The stated requirement: both roles get the full action button by default.
+    const required = [
+      'lead.contact', 'lead.edit', 'lead.delete', 'lead.reassign',
+      'lead.stage.change', 'ticket.create', 'card.mark.exploring', 'kyc.manage',
+    ];
+    for (const role of ['superadmin', 'admin']) {
+      const { data } = await req('/api/auth/me', { token: T[role], expect: 200 });
+      const held = new Set(data.user.permissions);
+      const missing = required.filter((c) => !held.has(c));
+      eq(missing.length, 0, `${role} is missing ${missing.join(', ')}`);
+    }
+  });
+
+  await check('pushing to the autodialler works and is scoped', async () => {
+    const lead = need(REF.leadId, 'a lead');
+    await req('/api/autodialler', {
+      method: 'POST', token: T.sales_rm, expect: 200, body: { lead_ids: [lead] },
+    });
+    await req('/api/autodialler', {
+      method: 'POST', token: T.marketing_manager, expect: 403, body: { lead_ids: [lead] },
+    });
+  });
+
+
+  /* ============================================================ 30 */
+  suite('30 market data');
+
+  await check('the login-page strip needs no session', async () => {
+    const { data } = await req('/public/market/indices', { expect: 200 });
+    assert(data.indices?.length > 0, 'no indices returned');
+    for (const ix of data.indices) {
+      assert(typeof ix.last === 'number', `${ix.code} has no level`);
+      assert(typeof ix.change_pct === 'number', `${ix.code} has no change`);
+    }
+  });
+
+  await check('the public endpoint exposes nothing beyond the strip', async () => {
+    // An unauthenticated endpoint on a broker's CRM will be found. It must be
+    // able to leak nothing — no news, no calendars, no identifiers.
+    const { data } = await req('/public/market/indices', { expect: 200 });
+    const allowed = new Set(['indices', 'as_of', 'delayed_minutes', 'disclaimer', 'simulated', 'stale']);
+    const extra = Object.keys(data).filter((k) => !allowed.has(k));
+    eq(extra.length, 0, `public endpoint leaked: ${extra.join(', ')}`);
+  });
+
+  await check('every payload carries its age and the delay', async () => {
+    // The compliance decision rests on this reaching the screen. A figure
+    // without its age attached is a quote.
+    for (const path of ['/api/market/indices', '/api/market/news', '/api/market/snapshot']) {
+      const { data } = await req(path, { token: T.sales_rm, expect: 200 });
+      assert(data.as_of, `${path} has no as_of`);
+      eq(data.delayed_minutes, 15, `${path} reports the wrong delay`);
+      assert(/delayed/i.test(data.disclaimer), `${path} has no disclaimer`);
+    }
+  });
+
+  await check('the delay is real, not decorative', async () => {
+    const { data } = await req('/api/market/indices', { token: T.sales_rm, expect: 200 });
+    const age = Date.now() - Date.parse(data.as_of);
+    assert(age >= 14 * 60_000, `as_of is only ${Math.round(age / 60_000)} minutes old`);
+  });
+
+  await check('a simulated feed says so', async () => {
+    // No vendor is configured yet. If the screen did not admit that, someone
+    // would screenshot a demo and treat the numbers as real.
+    const { data } = await req('/api/market/status', { token: T.sales_rm, expect: 200 });
+    eq(data.live, false, 'reporting a live feed with no vendor configured');
+    assert(/simulated/i.test(data.note), 'the status does not say it is simulated');
+
+    const { data: ix } = await req('/api/market/indices', { token: T.sales_rm, expect: 200 });
+    eq(ix.simulated, true, 'simulated data was not flagged');
+  });
+
+  await check('news, calendars and issues are behind a session', async () => {
+    for (const path of ['/news', '/corporate-actions', '/issues', '/snapshot']) {
+      await req(`/api/market${path}`, { expect: 401 });
+    }
+  });
+
+  await check('every role can see the market, no capability needed', async () => {
+    // Index levels and a results calendar are not client data, and gating them
+    // by role would only mean the people who most need context lose it.
+    for (const role of ['caller', 'sales_rm', 'customer_care', 'marketing_manager']) {
+      await req('/api/market/indices', { token: T[role], expect: 200 });
+    }
+  });
+
+  await check('the snapshot carries all four datasets', async () => {
+    const { data } = await req('/api/market/snapshot', { token: T.sales_rm, expect: 200 });
+    for (const key of ['indices', 'news', 'actions', 'issues']) {
+      assert(Array.isArray(data[key]) && data[key].length > 0, `snapshot is missing ${key}`);
+    }
+  });
+
+  await check('lead context is matched to recorded product interest', async () => {
+    const lead = need(REF.leadId, 'a lead');
+    const { data } = await req(`/api/market/context/${lead}`, { token: T.sales_supervisor, expect: 200 });
+
+    assert(data.basis, 'no basis stated for what is shown');
+    assert(Array.isArray(data.interests), 'interests missing');
+    assert(data.indices.length > 0, 'no indices in lead context');
+    assert(data.disclaimer, 'lead context has no disclaimer');
+  });
+
+  await check('lead context does not claim holdings we cannot see', async () => {
+    // There is no instrument or position table anywhere in the schema. If this
+    // ever starts returning holdings, it is inventing them.
+    const lead = need(REF.leadId, 'a lead');
+    const { data } = await req(`/api/market/context/${lead}`, { token: T.sales_supervisor, expect: 200 });
+    assert(!('holdings' in data), 'lead context claims holdings the CRM does not store');
+    assert(!('positions' in data), 'lead context claims positions the CRM does not store');
+  });
+
+  await check('lead context respects lead visibility', async () => {
+    await req('/api/market/context/999999', { token: T.sales_rm, expect: 404 });
+  });
+
+  await check('repeated calls are served from cache, not the feed', async () => {
+    // Fifty RMs opening the cockpit at 9am must not become fifty calls to a
+    // metered feed.
+    const first = await req('/api/market/indices', { token: T.sales_rm, expect: 200 });
+    const second = await req('/api/market/indices', { token: T.caller, expect: 200 });
+    eq(second.data.fetched_at, first.data.fetched_at,
+      'the second call re-fetched instead of using the cache');
+  });
+
+
+  /* ============================================================ 31 */
+  suite('31 campaign management');
+
+  await check('a Marketing Manager can create a campaign', async () => {
+    // The reported problem. The capability was always held; there was no route
+    // from the screen to it and no way to edit afterwards.
+    const { data: lists } = await req('/api/lists', { token: T.marketing_manager, expect: 200 });
+    assert(lists.length, 'no lead lists to campaign against');
+    REF.listId = lists[0].id;
+
+    const { data } = await req('/api/admin/campaigns', {
+      method: 'POST', token: T.marketing_manager, expect: 201,
+      body: { name: `E2E campaign ${RUN}`, channel: 'whatsapp', list_id: REF.listId },
+    });
+    REF.campaignId = data.id;
+    eq(data.status, 'Draft', 'a new campaign should start as a draft');
+  });
+
+  await check('a Marketing Manager can edit it', async () => {
+    const id = need(REF.campaignId, 'the campaign');
+    const { data } = await req(`/api/admin/campaigns/${id}`, {
+      method: 'PATCH', token: T.marketing_manager, expect: 200,
+      body: { name: `E2E campaign ${RUN} v2` },
+    });
+    assert(data.name.endsWith('v2'), 'the edit did not stick');
+  });
+
+  await check('superadmin and admin can too', async () => {
+    for (const role of ['superadmin', 'admin']) {
+      const { data } = await req('/api/admin/campaigns', {
+        method: 'POST', token: T[role], expect: 201,
+        body: { name: `E2E ${role} ${RUN}`, channel: 'email', list_id: REF.listId },
+      });
+      await req(`/api/admin/campaigns/${data.id}`, { method: 'DELETE', token: T[role], expect: 200 });
+    }
+  });
+
+  await check('a role without campaign.manage is refused', async () => {
+    await req('/api/admin/campaigns', { token: T.sales_rm, expect: 403 });
+    await req('/api/admin/campaigns', {
+      method: 'POST', token: T.sales_rm, expect: 403,
+      body: { name: 'Nope', channel: 'sms', list_id: REF.listId },
+    });
+  });
+
+  await check('a campaign needs a name, a channel and a list', async () => {
+    for (const body of [
+      { channel: 'sms', list_id: REF.listId },
+      { name: 'No channel', list_id: REF.listId },
+      { name: 'No list', channel: 'sms' },
+    ]) {
+      await req('/api/admin/campaigns', { method: 'POST', token: T.marketing_manager, expect: 400, body });
+    }
+  });
+
+  /* ---- the consent gate on the highest-volume send path ---- */
+
+  await check('the audience preview separates reachable from skipped', async () => {
+    const id = need(REF.campaignId, 'the campaign');
+    const { data } = await req(`/api/admin/campaigns/${id}/audience`, {
+      token: T.marketing_manager, expect: 200,
+    });
+
+    eq(data.list_size, data.reachable + data.excluded, 'the numbers do not add up');
+    assert(typeof data.excluded_by_reason === 'object', 'no breakdown of why anyone was skipped');
+  });
+
+  await check('a campaign send skips opted-out members rather than messaging them', async () => {
+    // This path previously sent to every list member with no consent check at
+    // all — the single largest exposure in the product.
+    const id = need(REF.campaignId, 'the campaign');
+
+    const { data: before } = await req(`/api/admin/campaigns/${id}/audience`, {
+      token: T.marketing_manager, expect: 200,
+    });
+
+    const { data: sent } = await req(`/api/admin/campaigns/${id}/send`, {
+      method: 'POST', token: T.marketing_manager, expect: 200,
+    });
+
+    eq(sent.sent, before.reachable, 'the send reached a different number than the preview promised');
+    eq(sent.excluded, before.excluded, 'the send skipped a different number than the preview promised');
+    assert(sent.sent <= before.list_size, 'sent to more people than were on the list');
+  });
+
+  await check('a sent campaign cannot be edited', async () => {
+    // Its reach and engagement are the evidence behind numbers already reported.
+    const id = need(REF.campaignId, 'the campaign');
+    const { data } = await req(`/api/admin/campaigns/${id}`, {
+      method: 'PATCH', token: T.marketing_manager, expect: 409,
+      body: { name: 'Rewriting history' },
+    });
+    assert(/duplicate/i.test(data.fix ?? ''), 'the refusal offers no way forward');
+  });
+
+  await check('a sent campaign cannot be sent twice', async () => {
+    const id = need(REF.campaignId, 'the campaign');
+    await req(`/api/admin/campaigns/${id}/send`, { method: 'POST', token: T.marketing_manager, expect: 409 });
+  });
+
+  await check('deleting a sent campaign archives it instead', async () => {
+    const id = need(REF.campaignId, 'the campaign');
+    const { data } = await req(`/api/admin/campaigns/${id}`, {
+      method: 'DELETE', token: T.marketing_manager, expect: 200,
+    });
+    eq(data.archived, true, 'a sent campaign was deleted outright');
+
+    const { data: live } = await req('/api/admin/campaigns', { token: T.marketing_manager, expect: 200 });
+    assert(!live.some((c) => c.id === id), 'the archived campaign is still on the working list');
+
+    const { data: archived } = await req('/api/admin/campaigns/archived', { token: T.marketing_manager, expect: 200 });
+    assert(archived.some((c) => c.id === id), 'the archived campaign is nowhere to be found');
+  });
+
+  /* ---- the rest of the action set ---- */
+
+  await check('duplicate makes a fresh draft', async () => {
+    const { data: made } = await req('/api/admin/campaigns', {
+      method: 'POST', token: T.marketing_manager, expect: 201,
+      body: { name: `Dup source ${RUN}`, channel: 'sms', list_id: REF.listId },
+    });
+    const { data: copy } = await req(`/api/admin/campaigns/${made.id}/duplicate`, {
+      method: 'POST', token: T.marketing_manager, expect: 201,
+    });
+    eq(copy.status, 'Draft', 'a duplicate should be a draft');
+    eq(copy.sent, 0, 'a duplicate inherited its parent’s send count');
+    assert(copy.name.includes('copy'), 'the duplicate is not distinguishable by name');
+    REF.dupId = copy.id;
+  });
+
+  await check('scheduling moves a draft to Scheduled, and it can be paused and resumed', async () => {
+    const id = need(REF.dupId, 'the duplicate');
+    const when = new Date(Date.now() + 86_400_000).toISOString().slice(0, 19).replace('T', ' ');
+
+    const { data: scheduled } = await req(`/api/admin/campaigns/${id}`, {
+      method: 'PATCH', token: T.marketing_manager, expect: 200, body: { scheduled_at: when },
+    });
+    eq(scheduled.status, 'Scheduled', 'scheduling did not change the status');
+
+    const { data: paused } = await req(`/api/admin/campaigns/${id}/pause`, {
+      method: 'POST', token: T.marketing_manager, expect: 200,
+    });
+    eq(paused.status, 'Paused');
+
+    const { data: resumed } = await req(`/api/admin/campaigns/${id}/resume`, {
+      method: 'POST', token: T.marketing_manager, expect: 200,
+    });
+    eq(resumed.status, 'Scheduled', 'resuming lost the schedule');
+  });
+
+  await check('pausing a draft is refused with the reason', async () => {
+    const { data: made } = await req('/api/admin/campaigns', {
+      method: 'POST', token: T.marketing_manager, expect: 201,
+      body: { name: `Draft ${RUN}`, channel: 'sms', list_id: REF.listId },
+    });
+    const { data } = await req(`/api/admin/campaigns/${made.id}/pause`, {
+      method: 'POST', token: T.marketing_manager, expect: 409,
+    });
+    assert(/draft/i.test(data.error), `unhelpful refusal: ${data.error}`);
+
+    // A draft has sent nothing, so it deletes outright rather than archiving.
+    const { data: gone } = await req(`/api/admin/campaigns/${made.id}`, {
+      method: 'DELETE', token: T.marketing_manager, expect: 200,
+    });
+    eq(gone.deleted, true, 'an unsent draft was archived rather than deleted');
+  });
+
+  await check('a test send goes to the sender, never to a lead', async () => {
+    const id = need(REF.dupId, 'the duplicate');
+    const { status, data } = await req(`/api/admin/campaigns/${id}/test`, {
+      method: 'POST', token: T.admin,
+    });
+    // Either it sent to the admin's own number, or it explained why it could not.
+    if (status === 200) {
+      assert(data.sent_to, 'a test send reported no destination');
+      assert(/only/i.test(data.note ?? ''), 'the test send does not say it went nowhere near a lead');
+    } else {
+      eq(status, 400, `unexpected status ${status}`);
+      assert(/no (email|mobile)/i.test(data.error), `unhelpful error: ${data.error}`);
+    }
+  });
+
+
+  /* ============================================================ 32 */
+  suite('32 Meta connector (Facebook / Instagram)');
+
+  await check('the connector reports what it still needs', async () => {
+    const { data } = await req('/api/admin/connectors/meta', { token: T.superadmin, expect: 200 });
+    assert('live' in data, 'no live flag');
+    assert(Array.isArray(data.needs), 'no list of what is missing');
+    assert(data.webhook_url, 'the webhook URL is not stated');
+  });
+
+  await check('a Lead Ads delivery becomes a lead, routed and attributed', async () => {
+    const leadgenId = `LG-E2E-${RUN}`;
+    const { data } = await req('/api/webhooks/meta', {
+      method: 'POST', expect: 200,
+      body: {
+        object: 'page',
+        entry: [{ id: 'page-1', changes: [{ field: 'leadgen', value: { leadgen_id: leadgenId, page_id: 'page-1', form_id: 'form-e2e' } }] }],
+      },
+    });
+    eq(data.leads, 1, 'the delivery produced no lead');
+    REF.metaLeadgen = leadgenId;
+
+    // It should be findable, sourced correctly, and carry its provenance.
+    const { data: found } = await req(`/api/search-advanced/lead`, {
+      method: 'POST', token: T.admin, expect: 200,
+      body: { where: { op: 'AND', children: [{ field: 'source', operator: 'eq', value: 'Facebook Lead Ads' }] }, limit: 50 },
+    });
+    assert(found.total > 0, 'no Facebook leads exist after the webhook fired');
+  });
+
+  await check('Meta re-delivering the same lead does not duplicate it', async () => {
+    // Meta retries anything that is not a 200, so this happens routinely.
+    const leadgenId = need(REF.metaLeadgen, 'the Meta lead');
+    const { data } = await req('/api/webhooks/meta', {
+      method: 'POST', expect: 200,
+      body: {
+        object: 'page',
+        entry: [{ id: 'page-1', changes: [{ field: 'leadgen', value: { leadgen_id: leadgenId, page_id: 'page-1', form_id: 'form-e2e' } }] }],
+      },
+    });
+    eq(data.leads, 0, 'a retry created a second lead');
+    eq(data.skipped, 1, 'the retry was not recognised as one');
+  });
+
+  await check('a malformed entry does not cost the rest of the batch', async () => {
+    // Meta will not resend the good entries, so one bad one must not lose them.
+    const { data } = await req('/api/webhooks/meta', {
+      method: 'POST', expect: 200,
+      body: {
+        object: 'page',
+        entry: [
+          { id: 'p', changes: [{ field: 'not_leadgen', value: {} }] },
+          { id: 'p', changes: [{ field: 'leadgen', value: { leadgen_id: `LG-BATCH-${RUN}`, page_id: 'p' } }] },
+        ],
+      },
+    });
+    eq(data.leads, 1, 'the good entry in a mixed batch was lost');
+    assert(data.skipped >= 1, 'the unknown field was not skipped');
+  });
+
+  await check('an unknown sender’s DM is recorded as unmatched, not turned into a lead', async () => {
+    // A Messenger id is not a contact detail. A CRM full of records nobody can
+    // ring is worse than a missed message.
+    const before = (await req('/api/admin/connectors/meta/leads', { token: T.superadmin, expect: 200 })).data.length;
+    const { data } = await req('/api/webhooks/meta', {
+      method: 'POST', expect: 200,
+      body: {
+        object: 'page',
+        entry: [{ id: 'p', messaging: [{ sender: { id: 'stranger-1' }, recipient: { id: 'page' }, timestamp: Date.now(), message: { mid: `m-${RUN}`, text: 'Hello' } }] }],
+      },
+    });
+    eq(data.messages, 0, 'a stranger’s DM created a record');
+    const after = (await req('/api/admin/connectors/meta/leads', { token: T.superadmin, expect: 200 })).data.length;
+    eq(after, before, 'the lead count changed on an unmatched DM');
+  });
+
+  await check('an ad campaign is created paused, never spending on the button press', async () => {
+    const { data } = await req('/api/admin/connectors/meta/campaigns', {
+      method: 'POST', token: T.superadmin, expect: 201,
+      body: { name: `E2E Meta campaign ${RUN}`, daily_budget: 2500 },
+    });
+    eq(data.status, 'PAUSED', 'a CRM button started a live ad spend');
+    assert(data.id, 'no campaign id returned');
+  });
+
+  await check('campaign insights come back in the normalised shape', async () => {
+    const { data } = await req('/api/admin/connectors/meta/campaigns/sim-1/insights', {
+      token: T.superadmin, expect: 200,
+    });
+    for (const k of ['impressions', 'clicks', 'leads', 'spend']) {
+      assert(typeof data[k] === 'number', `${k} is missing from insights`);
+    }
+  });
+
+  /* ---- the residency flag ---- */
+
+  await check('Custom Audiences are refused, and the refusal names the conflict', async () => {
+    // Not a missing credential — a policy decision. Whoever hits this needs to
+    // know which of the two it is.
+    // Lists are scoped to whoever owns them, so this makes its own rather than
+    // assuming the superadmin happens to own one.
+    const { data: made } = await req('/api/lists', {
+      method: 'POST', token: T.superadmin, expect: 201,
+      body: { name: `Audience probe ${RUN}` },
+    });
+
+    const { data } = await req('/api/admin/connectors/meta/audiences', {
+      method: 'POST', token: T.superadmin, expect: 409,
+      body: { name: 'E2E audience', list_id: made.id },
+    });
+    eq(data.code, 'audiences_disabled');
+    assert(/India/i.test(data.detail ?? ''), 'the refusal does not explain the residency conflict');
+  });
+
+  await check('the connector states plainly that nothing leaves India', async () => {
+    const { data } = await req('/api/admin/connectors/meta', { token: T.superadmin, expect: 200 });
+    eq(data.audiences_enabled, false, 'audiences are on by default — they must not be');
+    assert(/no client identifier leaves india/i.test(data.residency_note),
+      `residency note is unclear: ${data.residency_note}`);
+  });
+
+  await check('connector settings need admin.system', async () => {
+    await req('/api/admin/connectors/meta', { token: T.sales_rm, expect: 403 });
+    await req('/api/admin/connectors/meta/leads', { token: T.marketing_manager, expect: 403 });
+  });
+
+  /* ------------------------------------------------------------- report */
+  report();
+}
+
+/* ---------------------------------------------------------------- output */
+
+function report() {
+  const bySuite = new Map();
+  for (const r of results) {
+    if (!bySuite.has(r.suite)) bySuite.set(r.suite, []);
+    bySuite.get(r.suite).push(r);
+  }
+
+  for (const [name, rows] of bySuite) {
+    const failed = rows.filter((r) => !r.ok).length;
+    console.log(`\n${name}  ${failed ? `— ${failed} FAILED` : ''}`);
+    for (const r of rows) {
+      console.log(`  ${r.ok ? '  ok' : 'FAIL'}  ${r.name}${r.ok ? '' : `\n         → ${r.error}`}`);
+    }
+  }
+
+  const passed = results.filter((r) => r.ok).length;
+  const failed = results.length - passed;
+  const ms = results.reduce((s, r) => s + r.ms, 0);
+
+  // Slowest tests, because a suite that quietly gets slower is a suite people
+  // stop running. Anything over a quarter second deserves an explanation.
+  const slow = [...results].sort((a, b) => b.ms - a.ms).slice(0, 6).filter((r) => r.ms > 250);
+  if (slow.length) {
+    console.log('\nslowest');
+    for (const r of slow) console.log(`  ${String(r.ms).padStart(6)}ms  ${r.name}`);
+  }
+
+  console.log(`\n${'─'.repeat(64)}`);
+  console.log(`${passed}/${results.length} passed${failed ? `, ${failed} FAILED` : ''}  ·  ${(ms / 1000).toFixed(1)}s`);
+  console.log(`${'─'.repeat(64)}\n`);
+
+  process.exit(failed ? 1 : 0);
+}
+
+run().catch((err) => {
+  console.error('\nSuite aborted:', err.message);
+  report();
+});

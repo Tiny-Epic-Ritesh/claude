@@ -1,0 +1,1361 @@
+/**
+ * Bonanza CRM — schema and data-access helpers.
+ *
+ * One SQLite file backs all three surfaces (CRM, DKYC portal, Partner portal).
+ * node:sqlite is built into Node 24, so there is no native module to compile.
+ */
+
+import { DatabaseSync } from 'node:sqlite';
+import { mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const dataDir = join(here, '..', 'data');
+mkdirSync(dataDir, { recursive: true });
+
+export const db = new DatabaseSync(join(dataDir, 'bonanza.db'));
+db.exec('PRAGMA journal_mode = WAL');
+db.exec('PRAGMA foreign_keys = ON');
+
+/**
+ * Write durability.
+ *
+ * SQLite defaults to `synchronous = FULL`, which fsyncs on every commit. On this
+ * machine that measured at **36ms per single-row write** — so every lead
+ * created, every activity logged and every metric rebuilt paid a disk flush.
+ *
+ * WAL + NORMAL is the standard production pairing: the database is never
+ * corrupted, and the only exposure is losing transactions committed since the
+ * last checkpoint if the OS or the machine dies. An application crash loses
+ * nothing. That is the right trade for a CRM, and it is stated here rather than
+ * buried because it IS a durability decision.
+ *
+ * Postgres at pilot makes this moot — it is the equivalent of leaving
+ * `synchronous_commit` at its default `on`.
+ */
+db.exec('PRAGMA synchronous = NORMAL');
+
+/** Batch writes into one transaction. One fsync instead of N. */
+export function transact(fn) {
+  db.exec('BEGIN');
+  try {
+    const out = fn();
+    db.exec('COMMIT');
+    return out;
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/* ------------------------------------------------------------------ schema */
+
+db.exec(`
+/* ---- Identity ------------------------------------------------------ */
+
+CREATE TABLE IF NOT EXISTS users (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  email       TEXT NOT NULL UNIQUE,
+  password    TEXT NOT NULL,            -- scrypt hash: scrypt$N$r$p$salt$hash
+  role        TEXT NOT NULL,            -- one of the 11 CRM roles
+  product_type_id INTEGER,              -- Product RM / Supervisor: which product they own
+  manager_id  INTEGER REFERENCES users(id),
+  phone       TEXT,
+  active      INTEGER NOT NULL DEFAULT 1,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+/* ---- Configuration -------------------------------------------------- */
+
+CREATE TABLE IF NOT EXISTS product_types (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  code         TEXT NOT NULL UNIQUE,
+  name         TEXT NOT NULL,
+  category     TEXT,                    -- Broking / Investment / Advisory / Protection
+  min_investment REAL,
+  lock_in      TEXT,
+  risk_category TEXT,
+  pitch_points TEXT,                    -- JSON array of selling points
+  objections   TEXT,                    -- JSON array of {objection, response}
+  brochure_url TEXT,
+  apply_url    TEXT,
+  requires_kyc INTEGER NOT NULL DEFAULT 1,
+  active       INTEGER NOT NULL DEFAULT 1,
+  sort_order   INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS ticket_categories (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL UNIQUE,
+  auto_assign_role TEXT,
+  active        INTEGER NOT NULL DEFAULT 1
+);
+
+/* SLA is configured per product type + priority (BRD OD-08). */
+CREATE TABLE IF NOT EXISTS sla_policies (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  product_type_id  INTEGER REFERENCES product_types(id) ON DELETE CASCADE,
+  priority         TEXT NOT NULL,       -- Critical / High / Medium / Low
+  response_mins    INTEGER NOT NULL,
+  resolution_mins  INTEGER NOT NULL,
+  UNIQUE (product_type_id, priority)
+);
+
+CREATE TABLE IF NOT EXISTS templates (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  channel    TEXT NOT NULL,             -- whatsapp / sms / email
+  subject    TEXT,
+  body       TEXT NOT NULL,
+  product_type_id INTEGER REFERENCES product_types(id) ON DELETE SET NULL,
+  approved   INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS content_items (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  type        TEXT NOT NULL,            -- PDF / Video / Link / PPT
+  url         TEXT,
+  product_type_id INTEGER REFERENCES product_types(id) ON DELETE SET NULL,
+  kyc_step_code TEXT,
+  version     INTEGER NOT NULL DEFAULT 1,
+  expiry_date TEXT,
+  owner_role  TEXT,                     -- BRD OD-07 category ownership
+  status      TEXT NOT NULL DEFAULT 'active',
+  send_count  INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+/* ---- Lead core ------------------------------------------------------ */
+
+CREATE TABLE IF NOT EXISTS leads (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL,
+  mobile        TEXT,
+  email         TEXT,
+  pan           TEXT,
+  alt_contact   TEXT,
+  city          TEXT,
+  state         TEXT,
+  language      TEXT DEFAULT 'English',
+  risk_profile  TEXT,                   -- Conservative / Moderate / Aggressive
+  source        TEXT,
+  stage         TEXT NOT NULL DEFAULT 'New',
+  score         INTEGER NOT NULL DEFAULT 0,
+  owner_id      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  partner_id    INTEGER REFERENCES partners(id) ON DELETE SET NULL,
+  -- kyc_status used to live here. It mirrored the journey status, had four
+  -- writers and every reader, and had already drifted on two of the six seeded
+  -- leads that have a journey at all. It is derived now (engine/kycstatus.js)
+  -- and the column is gone, so nothing can read a stale one by accident.
+  -- kyc_portal_stage is added by the migration list below.
+  aum           REAL DEFAULT 0,         -- nightly batch from trading DB (BRD OD-06)
+  aum_as_of     TEXT,
+  callback_at   TEXT,
+  deleted_at    TEXT,                   -- recycle bin
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+/* A permanent card per product type per lead — never created on demand. */
+CREATE TABLE IF NOT EXISTS product_cards (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  lead_id         INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  product_type_id INTEGER NOT NULL REFERENCES product_types(id) ON DELETE CASCADE,
+  state           TEXT NOT NULL DEFAULT 'INACTIVE',
+  contact_flag    TEXT,                 -- Direct / No Direct / Joint Call
+  product_rm_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  value           REAL DEFAULT 0,
+  lost_reason     TEXT,
+  last_state_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (lead_id, product_type_id)
+);
+
+CREATE TABLE IF NOT EXISTS card_audit (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  card_id    INTEGER NOT NULL REFERENCES product_cards(id) ON DELETE CASCADE,
+  from_state TEXT,
+  to_state   TEXT NOT NULL,
+  user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  note       TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS activities (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  lead_id    INTEGER REFERENCES leads(id) ON DELETE CASCADE,
+  card_id    INTEGER REFERENCES product_cards(id) ON DELETE CASCADE,
+  partner_id INTEGER REFERENCES partners(id) ON DELETE CASCADE,
+  type       TEXT NOT NULL,             -- Call / AI Call Summary / WhatsApp / Email / SMS / Note / Ticket Event / Partner Activity / Meeting / KYC Event
+  direction  TEXT,                      -- inbound / outbound / system
+  subject    TEXT,
+  body       TEXT,
+  outcome    TEXT,
+  duration_s INTEGER,
+  ai_generated INTEGER NOT NULL DEFAULT 0,
+  score_delta INTEGER NOT NULL DEFAULT 0,
+  user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  title       TEXT NOT NULL,
+  description TEXT,
+  lead_id     INTEGER REFERENCES leads(id) ON DELETE CASCADE,
+  card_id     INTEGER REFERENCES product_cards(id) ON DELETE CASCADE,
+  ticket_id   INTEGER REFERENCES tickets(id) ON DELETE CASCADE,
+  partner_id  INTEGER REFERENCES partners(id) ON DELETE CASCADE,
+  assignee_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  due_at      TEXT NOT NULL,
+  priority    TEXT NOT NULL DEFAULT 'Normal',
+  status      TEXT NOT NULL DEFAULT 'Open',
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+/* Notes are a shared threaded message list — no private notes (BRD §9). */
+CREATE TABLE IF NOT EXISTS notes (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  lead_id     INTEGER REFERENCES leads(id) ON DELETE CASCADE,
+  partner_id  INTEGER REFERENCES partners(id) ON DELETE CASCADE,
+  parent_id   INTEGER REFERENCES notes(id) ON DELETE CASCADE,
+  body        TEXT NOT NULL,
+  mentions    TEXT,                     -- JSON array of user ids
+  pinned      INTEGER NOT NULL DEFAULT 0,
+  user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+/* ---- Tickets -------------------------------------------------------- */
+
+CREATE TABLE IF NOT EXISTS tickets (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  ref            TEXT UNIQUE,
+  subject        TEXT NOT NULL,
+  description    TEXT,
+  priority       TEXT NOT NULL DEFAULT 'Medium',
+  category_id    INTEGER REFERENCES ticket_categories(id) ON DELETE SET NULL,
+  status         TEXT NOT NULL DEFAULT 'Open',
+  channel        TEXT DEFAULT 'CRM',    -- CRM / WhatsApp / Email / Chat / Phone / Portal
+  lead_id        INTEGER REFERENCES leads(id) ON DELETE CASCADE,
+  card_id        INTEGER REFERENCES product_cards(id) ON DELETE SET NULL,
+  partner_id     INTEGER REFERENCES partners(id) ON DELETE CASCADE,
+  assignee_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  ai_summary     TEXT,
+  response_due   TEXT,
+  resolution_due TEXT,
+  first_response_at TEXT,
+  resolved_at    TEXT,
+  closed_at      TEXT,
+  sla_paused_at  TEXT,                  -- set when status = Waiting on Client
+  sla_paused_ms  INTEGER NOT NULL DEFAULT 0,
+  breached       INTEGER NOT NULL DEFAULT 0,
+  merged_into    INTEGER REFERENCES tickets(id) ON DELETE SET NULL,
+  csat           INTEGER,
+  created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS ticket_replies (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticket_id  INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  body       TEXT NOT NULL,
+  author_type TEXT NOT NULL DEFAULT 'agent',  -- agent / client / partner / system
+  user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  internal   INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+/* ---- Partners ------------------------------------------------------- */
+
+CREATE TABLE IF NOT EXISTS partners (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  partner_code    TEXT UNIQUE,
+  name            TEXT NOT NULL,
+  business_name   TEXT,
+  partner_model   TEXT,                 -- Remisier / Agent / Trainee Entrepreneur / Associate / Authorised Person
+  state_code      TEXT NOT NULL DEFAULT 'PROSPECT',
+  mobile          TEXT,
+  email           TEXT,
+  city            TEXT,
+  state           TEXT,
+  pan             TEXT,
+  sebi_reg_no     TEXT,
+  language        TEXT DEFAULT 'English',
+  bank_account    TEXT,
+  bank_ifsc       TEXT,
+  owner_id        INTEGER REFERENCES users(id) ON DELETE SET NULL,   -- Partner RM
+  commission_pct  REAL DEFAULT 0,
+  portal_password TEXT,                 -- partner portal login (separate surface)
+  onboarded_at    TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS partner_steps (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  partner_id  INTEGER NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
+  code        TEXT NOT NULL,
+  label       TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'pending',  -- pending / active / done
+  completed_at TEXT,
+  sort_order  INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS partner_lms (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  partner_id  INTEGER NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
+  module      TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'Not Started',
+  score       INTEGER,
+  completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS commissions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  partner_id  INTEGER NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
+  lead_id     INTEGER REFERENCES leads(id) ON DELETE SET NULL,
+  product_type_id INTEGER REFERENCES product_types(id) ON DELETE SET NULL,
+  period      TEXT NOT NULL,            -- YYYY-MM
+  gross       REAL NOT NULL DEFAULT 0,
+  payout      REAL NOT NULL DEFAULT 0,
+  status      TEXT NOT NULL DEFAULT 'Accrued',  -- Accrued / Approved / Paid
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+/* ---- KYC ------------------------------------------------------------ */
+
+/* Compliance-managed master catalogue (BRD §7.6). */
+CREATE TABLE IF NOT EXISTS kyc_steps_master (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  code        TEXT NOT NULL UNIQUE,
+  label       TEXT NOT NULL,
+  description TEXT,
+  owner_type  TEXT NOT NULL DEFAULT 'Lead',   -- Lead / RM / System
+  default_timer_s INTEGER NOT NULL DEFAULT 180,
+  input_schema TEXT,                    -- JSON: fields the DKYC portal renders
+  sort_order  INTEGER NOT NULL DEFAULT 0
+);
+
+/* Journey Composer output: which steps apply to which product type. */
+CREATE TABLE IF NOT EXISTS kyc_journey_steps (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  product_type_id INTEGER NOT NULL REFERENCES product_types(id) ON DELETE CASCADE,
+  step_code       TEXT NOT NULL REFERENCES kyc_steps_master(code),
+  sort_order      INTEGER NOT NULL DEFAULT 0,
+  timer_override_s INTEGER,
+  conditional_on  TEXT,                 -- e.g. income_gt_10L | segment_fno
+  UNIQUE (product_type_id, step_code)
+);
+
+/* One journey per lead per product. Drives both the DKYC portal and the CRM rail. */
+CREATE TABLE IF NOT EXISTS kyc_journeys (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  lead_id         INTEGER REFERENCES leads(id) ON DELETE CASCADE,
+  card_id         INTEGER REFERENCES product_cards(id) ON DELETE CASCADE,
+  product_type_id INTEGER NOT NULL REFERENCES product_types(id),
+  applicant_mobile TEXT,
+  applicant_email TEXT,
+  resume_token    TEXT UNIQUE,          -- lets the applicant resume the DKYC journey
+  status          TEXT NOT NULL DEFAULT 'Not Started', -- Not Started / In Progress / Stalled / Abandoned / Complete
+  current_step    TEXT,
+  segments        TEXT,                 -- JSON: chosen trading segments
+  form_data       TEXT,                 -- JSON: everything captured so far
+  started_at      TEXT,
+  completed_at    TEXT,
+  abandoned_at    TEXT,
+  stalled_at      TEXT,
+  elapsed_s       INTEGER NOT NULL DEFAULT 0,
+  assisted_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS kyc_journey_progress (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  journey_id  INTEGER NOT NULL REFERENCES kyc_journeys(id) ON DELETE CASCADE,
+  step_code   TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'pending',  -- pending / active / done / stalled / skipped
+  entered_at  TEXT,
+  completed_at TEXT,
+  seconds_on_step INTEGER NOT NULL DEFAULT 0,
+  payload     TEXT,                     -- JSON captured for this step
+  UNIQUE (journey_id, step_code)
+);
+
+/* ---- Automation, lists, audit --------------------------------------- */
+
+CREATE TABLE IF NOT EXISTS rules (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  description TEXT,
+  conditions  TEXT NOT NULL,            -- JSON [{field, op, value, join}]
+  actions     TEXT NOT NULL,            -- JSON [{type, params}]
+  schedule    TEXT,                     -- JSON {mode, delay_h, business_hours, skip_weekends}
+  enabled     INTEGER NOT NULL DEFAULT 0,
+  priority    INTEGER NOT NULL DEFAULT 100,
+  fire_count  INTEGER NOT NULL DEFAULT 0,
+  last_fired  TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS rule_runs (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  rule_id    INTEGER NOT NULL REFERENCES rules(id) ON DELETE CASCADE,
+  lead_id    INTEGER REFERENCES leads(id) ON DELETE CASCADE,
+  dry_run    INTEGER NOT NULL DEFAULT 0,
+  matched    INTEGER NOT NULL DEFAULT 0,
+  detail     TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS lead_lists (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  kind        TEXT NOT NULL DEFAULT 'static',   -- static / dynamic / newsletter
+  criteria    TEXT,                     -- JSON filter for dynamic lists
+  owner_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  shared_with TEXT,                     -- JSON array of role names or user ids
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS lead_list_members (
+  list_id INTEGER NOT NULL REFERENCES lead_lists(id) ON DELETE CASCADE,
+  lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  PRIMARY KEY (list_id, lead_id)
+);
+
+CREATE TABLE IF NOT EXISTS campaigns (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  channel     TEXT NOT NULL,
+  template_id INTEGER REFERENCES templates(id) ON DELETE SET NULL,
+  list_id     INTEGER REFERENCES lead_lists(id) ON DELETE SET NULL,
+  status      TEXT NOT NULL DEFAULT 'Draft',
+  sent        INTEGER NOT NULL DEFAULT 0,
+  opened      INTEGER NOT NULL DEFAULT 0,
+  clicked     INTEGER NOT NULL DEFAULT 0,
+  scheduled_at TEXT,
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title      TEXT NOT NULL,
+  body       TEXT,
+  link       TEXT,
+  read       INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  actor      TEXT,
+  action     TEXT NOT NULL,
+  entity     TEXT,
+  entity_id  INTEGER,
+  detail     TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  token        TEXT PRIMARY KEY,
+  user_id      INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  partner_id   INTEGER REFERENCES partners(id) ON DELETE CASCADE,
+  kind         TEXT NOT NULL DEFAULT 'crm',   -- crm / partner
+  expires_at   TEXT,                          -- absolute expiry
+  last_seen_at TEXT,                          -- drives the idle timeout
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_leads_owner   ON leads(owner_id);
+CREATE INDEX IF NOT EXISTS idx_leads_stage   ON leads(stage);
+CREATE INDEX IF NOT EXISTS idx_cards_lead    ON product_cards(lead_id);
+CREATE INDEX IF NOT EXISTS idx_cards_state   ON product_cards(state);
+CREATE INDEX IF NOT EXISTS idx_cards_product ON product_cards(product_type_id);
+CREATE INDEX IF NOT EXISTS idx_act_lead      ON activities(lead_id);
+CREATE INDEX IF NOT EXISTS idx_tickets_assignee ON tickets(assignee_id);
+CREATE INDEX IF NOT EXISTS idx_tickets_status   ON tickets(status);
+CREATE INDEX IF NOT EXISTS idx_journeys_status  ON kyc_journeys(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_assignee   ON tasks(assignee_id);
+`);
+
+/* ---------------------------------------------------------- migrations */
+
+/**
+ * Additive column migrations.
+ *
+ * SQLite has no `ADD COLUMN IF NOT EXISTS`, so each is guarded by a lookup and
+ * ignored when already present. Additive only, by policy: a migration that drops
+ * or retypes a column is a data-loss event and belongs in a reviewed script, not
+ * in a function that runs on every boot.
+ *
+ * These columns exist because of the vendor integrations — QuickCall needs an
+ * agent extension to ring, its Save Call callback returns a recording URL and a
+ * call id worth de-duplicating on, and the eKYC portal attributes by shortcode.
+ */
+const COLUMNS = [
+  ['users', 'phone_extension', 'TEXT'],        // QuickCall rings this first
+  ['users', 'cti_agent_id', 'TEXT'],           // agent id as known to QuickCall
+  ['users', 'kyc_shortcode', 'TEXT'],          // RM attribution on the eKYC portal
+  ['partners', 'kyc_shortcode', 'TEXT'],       // partner attribution, drives commission
+  ['activities', 'external_id', 'TEXT'],       // vendor call/message id, for de-duplication
+  ['activities', 'recording_url', 'TEXT'],     // QuickCall voice-logger file
+  ['leads', 'client_code', 'TEXT'],            // UCC once the account is opened
+  ['leads', 'kyc_external_ref', 'TEXT'],       // our correlation id echoed by the portal
+  ['leads', 'kyc_portal_stage', 'TEXT'],       // raw stage reported by the eKYC portal
+  ['leads', 'wa_last_inbound_at', 'TEXT'],     // opens the WhatsApp 24-hour window
+
+  // Sales org. Every owned record carries the business it belongs to, so one
+  // database serves both Bonanza and Bigul without either seeing the other's
+  // book unless the user is entitled to both.
+  ["users", "sales_org", "TEXT NOT NULL DEFAULT 'BONANZA'"],
+  ['users', 'org_access', 'TEXT'],             // JSON array; null means their own org only
+  ['users', 'employee_code', 'TEXT'],          // ADM0001 / MUM-0447 — staff sign in by this
+  ['users', 'branch', 'TEXT'],                 // Mumbai / Delhi / Bengaluru
+  ['users', 'avatar_hue', 'INTEGER'],          // stable colour for the initials avatar
+  ["leads", "sales_org", "TEXT NOT NULL DEFAULT 'BONANZA'"],
+  ["partners", "sales_org", "TEXT NOT NULL DEFAULT 'BONANZA'"],
+  ["product_types", "sales_org", "TEXT NOT NULL DEFAULT 'BONANZA'"],
+  ["tickets", "sales_org", "TEXT NOT NULL DEFAULT 'BONANZA'"],
+  ["campaigns", "sales_org", "TEXT NOT NULL DEFAULT 'BONANZA'"],
+  ["lead_lists", "sales_org", "TEXT NOT NULL DEFAULT 'BONANZA'"],
+  ["content_items", "sales_org", "TEXT NOT NULL DEFAULT 'BONANZA'"],
+
+  // The disposition loop. `follow_up_at` is what turns a logged call into a
+  // scheduled commitment, and `follow_up_task_id` is the link back, so the
+  // activity and the task it created stay connected in both directions.
+  ['activities', 'disposition', 'TEXT'],
+  ['activities', 'sub_disposition', 'TEXT'],
+  ['activities', 'follow_up_at', 'TEXT'],
+  ['activities', 'follow_up_task_id', 'INTEGER'],
+  ['activities', 'meeting_at', 'TEXT'],
+  ['activities', 'meeting_mode', 'TEXT'],          // Physical / Virtual / Branch
+  ['activities', 'meeting_location', 'TEXT'],
+  ['activities', 'reason', 'TEXT'],                // required on negative outcomes
+  ['activities', 'sentiment', 'TEXT'],
+
+  // Routing and reachability, set by dispositions rather than typed by hand.
+  ['leads', 'mobile_invalid', 'INTEGER NOT NULL DEFAULT 0'],
+  ['leads', 'marketing_opt_out', 'INTEGER NOT NULL DEFAULT 0'],
+  // The id the source system knows this lead by — a Meta leadgen id, a
+  // Messenger sender id. Dedupes retries and matches inbound DMs back to a
+  // person we already have.
+  ['leads', 'external_id', 'TEXT'],
+  // The other half of a polymorphic owner. Exactly one of owner_id and
+  // owner_queue_id is set; two nullable keys rather than a type+ref pair so
+  // referential integrity survives and existing queries keep working.
+  ['leads', 'owner_queue_id', 'INTEGER REFERENCES queues(id) ON DELETE SET NULL'],
+  ['leads', 'assigned_at', 'TEXT'],
+  ['leads', 'assigned_by_rule', 'INTEGER'],
+  ['leads', 'first_response_at', 'TEXT'],          // speed-to-first-contact
+  ['leads', 'next_follow_up_at', 'TEXT'],          // denormalised for the work list
+
+  // Tasks gain a kind so a follow-up is distinguishable from an ad-hoc to-do.
+  ['tasks', 'kind', 'TEXT'],                       // follow_up / meeting / retry / manual
+  ['tasks', 'activity_id', 'INTEGER'],
+  ['tasks', 'auto_created', 'INTEGER NOT NULL DEFAULT 0'],
+  ['tasks', 'updated_at', 'TEXT'],                 // stamped on reschedule / completion
+
+  // Reachability for reminders sent to staff.
+  ['users', 'whatsapp', 'TEXT'],
+];
+
+for (const [table, column, type] of COLUMNS) {
+  const exists = db.prepare(`SELECT COUNT(*) n FROM pragma_table_info(?) WHERE name = ?`).get(table, column);
+  if (!exists.n) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+}
+
+db.exec(`
+CREATE INDEX IF NOT EXISTS idx_activities_external ON activities(external_id);
+CREATE INDEX IF NOT EXISTS idx_leads_client_code ON leads(client_code);
+CREATE INDEX IF NOT EXISTS idx_leads_kyc_ref ON leads(kyc_external_ref);
+CREATE INDEX IF NOT EXISTS idx_leads_org ON leads(sales_org);
+CREATE INDEX IF NOT EXISTS idx_partners_org ON partners(sales_org);
+CREATE INDEX IF NOT EXISTS idx_products_org ON product_types(sales_org);
+CREATE INDEX IF NOT EXISTS idx_tickets_org ON tickets(sales_org);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_empcode ON users(employee_code) WHERE employee_code IS NOT NULL;
+`);
+
+/* ------------------------------------------------------- sales orgs */
+
+/**
+ * Bonanza and Bigul are two businesses on one platform.
+ *
+ * They are NOT separate tenants with separate databases. A single relationship
+ * manager can hold leads in both and earns a combined KRA scorecard across
+ * them — the scorecard already mixes "New Client — Bigul" with "Offline
+ * Broking" in one total. Hard isolation would break that, so the model is a
+ * shared database with `sales_org` on every owned record and scoping applied
+ * at query time, exactly like the role scoping alongside it.
+ *
+ * The two businesses are genuinely different, which is why products, targets
+ * and KRA metrics all carry the org rather than being shared:
+ *
+ *   BONANZA  RM-led full-service wealth — PMS, AIF, Insurance, Bonds,
+ *            advisory. High-touch, HNI and Ultra-HNI.
+ *   BIGUL    Self-serve digital broking — flat ₹18 brokerage, Algos, API,
+ *            Stock Baskets, Global Investing. Mass retail, partner-driven.
+ */
+db.exec(`
+CREATE TABLE IF NOT EXISTS sales_orgs (
+  code        TEXT PRIMARY KEY,          -- BONANZA / BIGUL
+  name        TEXT NOT NULL,
+  legal_name  TEXT,
+  tagline     TEXT,
+  accent      TEXT NOT NULL,             -- brand colour, drives per-org theming
+  accent_dark TEXT,
+  model       TEXT,                      -- 'full_service' / 'discount_digital'
+  kyc_url     TEXT,
+  active      INTEGER NOT NULL DEFAULT 1,
+  sort_order  INTEGER NOT NULL DEFAULT 0
+);
+`);
+
+const SEED_ORGS = [
+  {
+    code: 'BONANZA',
+    name: 'Bonanza',
+    legal_name: 'Bonanza Portfolio Ltd.',
+    tagline: 'RM-led wealth & advisory',
+    accent: '#81c141',
+    accent_dark: '#5f9a2c',
+    model: 'full_service',
+    kyc_url: 'https://kyc.bonanzaonline.com',
+    sort_order: 1,
+  },
+  {
+    code: 'BIGUL',
+    name: 'Bigul',
+    legal_name: 'Bonanza Portfolio Ltd. (Bigul)',
+    tagline: 'Self-serve digital broking',
+    accent: '#2f6fed',
+    accent_dark: '#1f52c0',
+    model: 'discount_digital',
+    kyc_url: 'https://kyc.bigul.co',
+    sort_order: 2,
+  },
+];
+
+for (const o of SEED_ORGS) {
+  db.prepare(
+    `INSERT INTO sales_orgs (code, name, legal_name, tagline, accent, accent_dark, model, kyc_url, sort_order)
+     VALUES (@code, @name, @legal_name, @tagline, @accent, @accent_dark, @model, @kyc_url, @sort_order)
+     ON CONFLICT(code) DO UPDATE SET
+       name = excluded.name, legal_name = excluded.legal_name, tagline = excluded.tagline,
+       accent = excluded.accent, accent_dark = excluded.accent_dark, model = excluded.model,
+       kyc_url = excluded.kyc_url, sort_order = excluded.sort_order`,
+  ).run(o);
+}
+
+/* ------------------------------------------------- sales execution */
+
+/**
+ * The activity → disposition → follow-up loop.
+ *
+ * This is the part of a CRM a sales desk actually lives in, and the part that
+ * decides whether the pipeline is real. The shape follows how the work happens:
+ *
+ *   1. The RM calls. They log a PHONE CALL activity.
+ *   2. They pick a disposition (Connected / Not Connected) and a
+ *      sub-disposition (Pitch Done, Callback Requested, Ringing…).
+ *   3. The sub-disposition decides what must happen next — and the system
+ *      creates that next step rather than trusting anyone to remember it.
+ *
+ * Step 3 is the whole point. A follow-up date typed into a notes field is a
+ * promise nobody is holding; a follow-up date that creates a dated, owned,
+ * reminded task is a commitment the system can chase.
+ */
+db.exec(`
+CREATE TABLE IF NOT EXISTS dispositions (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity_type TEXT NOT NULL,           -- Call / Meeting / WhatsApp / Email / Visit
+  outcome       TEXT NOT NULL,           -- Connected / Not Connected / Other
+  code          TEXT NOT NULL UNIQUE,
+  label         TEXT NOT NULL,
+
+  -- What this outcome obliges the RM to do next.
+  next_step     TEXT,                    -- follow_up / meeting / none / retry
+  follow_up_hours REAL,                  -- auto-scheduled retry offset, when fixed
+  requires_datetime INTEGER NOT NULL DEFAULT 0,  -- RM must pick a date/time
+  requires_reason INTEGER NOT NULL DEFAULT 0,    -- RM must say why
+
+  -- Side effects on the record.
+  sets_card_state TEXT,                  -- e.g. LOST on Not Interested
+  flags_mobile_invalid INTEGER NOT NULL DEFAULT 0,
+  suppress_marketing INTEGER NOT NULL DEFAULT 0,
+  score_delta   INTEGER NOT NULL DEFAULT 0,
+
+  hint          TEXT,                    -- shown under the picker in the UI
+  sort_order    INTEGER NOT NULL DEFAULT 0,
+  active        INTEGER NOT NULL DEFAULT 1,
+  sales_org     TEXT NOT NULL DEFAULT 'BONANZA'
+);
+
+/**
+ * Teams are the unit automations assign to.
+ *
+ * A rule that names an individual breaks the moment that person is on leave,
+ * so routing targets a team and a strategy decides the person. A team of one
+ * is still a team, which keeps named routing in the same mechanism instead of
+ * a special case beside it.
+ */
+CREATE TABLE IF NOT EXISTS teams (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  description TEXT,
+  strategy    TEXT NOT NULL DEFAULT 'round_robin',  -- round_robin / least_loaded / named
+  manager_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  -- Where round-robin got to last time, so rotation survives a restart.
+  rr_cursor   INTEGER NOT NULL DEFAULT 0,
+  active      INTEGER NOT NULL DEFAULT 1,
+  sales_org   TEXT NOT NULL DEFAULT 'BONANZA',
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS team_members (
+  team_id   INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- An RM on leave stays in the team but stops receiving new work.
+  accepting INTEGER NOT NULL DEFAULT 1,
+  weight    INTEGER NOT NULL DEFAULT 1,      -- round-robin share
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (team_id, user_id)
+);
+
+/**
+ * Assignment rules — "leads from Facebook Lead Ads go to the Digital desk".
+ *
+ * Separate from the general automation rules because routing has to be
+ * synchronous. A lead that sits unowned for five minutes while a sweep catches
+ * up is five minutes of a prospect waiting, and speed-to-first-call is the
+ * single strongest predictor of conversion on an inbound enquiry.
+ */
+CREATE TABLE IF NOT EXISTS assignment_rules (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  description TEXT,
+  conditions  TEXT NOT NULL,             -- JSON [{field, op, value}]
+  strategy    TEXT NOT NULL,             -- team / named / least_loaded / territory / product
+  team_id     INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+  user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  -- territory/product routing: JSON map of value → team_id or user_id
+  routing_map TEXT,
+  fallback_team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+  priority    INTEGER NOT NULL DEFAULT 100,   -- lowest number wins
+  enabled     INTEGER NOT NULL DEFAULT 1,
+  fire_count  INTEGER NOT NULL DEFAULT 0,
+  last_fired  TEXT,
+  sales_org   TEXT NOT NULL DEFAULT 'BONANZA',
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+/**
+ * Reminders. One row per thing somebody must be told about, per channel.
+ *
+ * Modelled as rows rather than fired-and-forgotten so that "did the RM
+ * actually get chased?" is answerable after the fact — which is the question a
+ * sales manager asks when a follow-up was missed.
+ */
+CREATE TABLE IF NOT EXISTS reminders (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id     INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
+  lead_id     INTEGER REFERENCES leads(id) ON DELETE CASCADE,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  channel     TEXT NOT NULL,             -- bell / email / whatsapp / manager
+  due_at      TEXT NOT NULL,
+  sent_at     TEXT,
+  status      TEXT NOT NULL DEFAULT 'Pending',  -- Pending / Sent / Failed / Cancelled
+  escalated   INTEGER NOT NULL DEFAULT 0,
+  detail      TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(status, due_at);
+CREATE INDEX IF NOT EXISTS idx_teams_org ON teams(sales_org);
+CREATE INDEX IF NOT EXISTS idx_dispositions_type ON dispositions(activity_type, active);
+`);
+
+/* --------------------------------------------------- access control */
+
+/**
+ * Roles, capabilities and permission sets.
+ *
+ * THE FAILURE THIS REPLACES
+ * -------------------------
+ * The legacy tenant has FOUR overlapping mechanisms — Role (fixed at 4, not
+ * extensible), Permission Template (12+), Team (16) and Sales Group (9). A user
+ * carries one of the first, N of the second, one of the third and N of the
+ * fourth, and no screen in the product answers "what can this person actually
+ * see?" (audit Part 4.1).
+ *
+ * Because only four roles existed, every real persona — dealer, telecaller,
+ * supervisor, post-sales, partner RM, B2B manager — had to be smuggled in as a
+ * Permission Template. That is the whole reason the second mechanism exists.
+ *
+ * TWO MECHANISMS, NOT FOUR
+ * ------------------------
+ *   ROLE            what this persona can do, and how much data it sees.
+ *                   Extensible: an administrator creates the twelfth role
+ *                   without a developer.
+ *   PERMISSION SET  additive grants on top, for the exceptions. "This one
+ *                   supervisor may also unmask PII."
+ *
+ * Team and manager stay, but they answer a different question. The audit found
+ * `Bigul Dealer Team` with 12 managers and 1 sales user — the manager slot being
+ * used to grant visibility rather than express reporting (Part 4.4). So here,
+ * MANAGES is `users.manager_id`, and CAN SEE is `roles.data_scope`. They are
+ * never the same field.
+ *
+ * Effective capability = role's capabilities ∪ every granted set's capabilities.
+ * There is no deny list: subtraction makes effective access impossible to reason
+ * about, which is the failure being replaced.
+ */
+db.exec(`
+CREATE TABLE IF NOT EXISTS capabilities (
+  code        TEXT PRIMARY KEY,
+  label       TEXT NOT NULL,
+  category    TEXT NOT NULL,
+  description TEXT,
+  -- Capabilities that expose client identifiers or move money are marked so the
+  -- Setup UI can warn before granting them.
+  sensitive   INTEGER NOT NULL DEFAULT 0,
+  sort_order  INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS roles (
+  code        TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  description TEXT,
+  /**
+   * How much data this role sees. Previously a switch statement inside
+   * leadScope(); as a column an administrator can create "Regional Supervisor"
+   * with team scope without touching code.
+   *   own      records they own
+   *   team     their own plus their reports' (via manager_id)
+   *   product  every record carrying their product (Product RM)
+   *   org      everything in their sales org
+   */
+  data_scope  TEXT NOT NULL DEFAULT 'own',
+  -- A system role is one the product depends on; it may be edited but not deleted.
+  is_system   INTEGER NOT NULL DEFAULT 0,
+  active      INTEGER NOT NULL DEFAULT 1,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS role_capabilities (
+  role_code  TEXT NOT NULL REFERENCES roles(code) ON DELETE CASCADE,
+  capability TEXT NOT NULL REFERENCES capabilities(code) ON DELETE CASCADE,
+  PRIMARY KEY (role_code, capability)
+);
+
+CREATE TABLE IF NOT EXISTS permission_sets (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  description TEXT,
+  sales_org   TEXT,                      -- null = available to every org
+  active      INTEGER NOT NULL DEFAULT 1,
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS permission_set_capabilities (
+  set_id     INTEGER NOT NULL REFERENCES permission_sets(id) ON DELETE CASCADE,
+  capability TEXT NOT NULL REFERENCES capabilities(code) ON DELETE CASCADE,
+  PRIMARY KEY (set_id, capability)
+);
+
+/**
+ * Grants are dated and attributed. "Who gave this person the ability to unmask
+ * client PII, and when?" is an audit question, and the answer has to survive
+ * the grant being revoked.
+ */
+CREATE TABLE IF NOT EXISTS user_permission_sets (
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  set_id     INTEGER NOT NULL REFERENCES permission_sets(id) ON DELETE CASCADE,
+  granted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  granted_at TEXT NOT NULL DEFAULT (datetime('now')),
+  reason     TEXT,
+  PRIMARY KEY (user_id, set_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_role_caps ON role_capabilities(role_code);
+CREATE INDEX IF NOT EXISTS idx_set_caps ON permission_set_capabilities(set_id);
+CREATE INDEX IF NOT EXISTS idx_user_sets ON user_permission_sets(user_id);
+`);
+
+/* ------------------------------------------------ computed metrics */
+
+/**
+ * Signals and score as a rebuildable projection, never a stamped counter.
+ *
+ * `lead_metrics` is a cache: every row can be reproduced from `activities` and
+ * `product_cards` alone, and `rebuild()` is its only writer. `score_models`
+ * holds the formula as versioned data so a reweighting produces a new version
+ * rather than silently rewriting what past scores meant — which is exactly what
+ * an incrementing counter cannot promise, and why the audit lists the legacy
+ * `Activity Score` automation (8,023,974 triggers) as a failure mode.
+ */
+db.exec(`
+CREATE TABLE IF NOT EXISTS score_models (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  version     INTEGER NOT NULL UNIQUE,
+  name        TEXT NOT NULL,
+  description TEXT,
+  weights     TEXT NOT NULL,             -- JSON, the whole formula
+  active      INTEGER NOT NULL DEFAULT 0,
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS lead_metrics (
+  lead_id             INTEGER PRIMARY KEY REFERENCES leads(id) ON DELETE CASCADE,
+  days_since_contact  INTEGER,
+  call_attempts       INTEGER,
+  call_connects       INTEGER,
+  connect_rate        INTEGER,           -- null until there is enough evidence
+  activity_count      INTEGER,
+  products_held       INTEGER,
+  untapped_products   INTEGER,
+  open_cases          INTEGER,
+  aum                 REAL,
+  furthest_state      TEXT,
+  score               INTEGER,
+  score_components    TEXT,              -- JSON, so "why 62?" is answerable
+  score_model_version INTEGER,
+  computed_at         TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_metrics_score ON lead_metrics(score DESC);
+CREATE INDEX IF NOT EXISTS idx_metrics_stale ON lead_metrics(computed_at);
+`);
+
+/* --------------------------------------------------- metadata layer */
+
+/**
+ * Entities and fields as data.
+ *
+ * THE IDEA, AND WHY IT IS THE ARCHITECTURE
+ * ----------------------------------------
+ * Part 1 item 1 of the Salesforce reference: every object exposes the same
+ * configuration contract, so an admin who learns one object can configure any
+ * object, and the configuration UI is built once rather than per entity.
+ *
+ * Before this, adding a field meant a migration, an INSERT column, a SELECT
+ * column, a validator, a form control and a test — six edits in five files, by a
+ * developer. That is the difference between a product an administrator can shape
+ * and one that needs an engineer for every business change.
+ *
+ * HYBRID STORAGE, DELIBERATELY
+ * ----------------------------
+ * Core fields stay real SQL columns on `leads`, `partners` and the rest: fast to
+ * query, indexable, and the thing 495,118 rows will actually be filtered by.
+ * Custom fields land in `field_value`, one row per (record, field). That costs a
+ * join and is the right trade — the alternative, everything generic, is the
+ * purest form of the idea and the slowest to report on at this scale.
+ *
+ * `field_def.storage` records which side a field lives on, so the rest of the
+ * system never has to guess.
+ *
+ * LABEL IS NOT API NAME
+ * ---------------------
+ * Two identifiers, from the start. `api_name` is immutable and is what
+ * integrations bind to; `label` is what business users see and may rename freely.
+ * The legacy tenant has `mx_Subscription_End_dtae` and
+ * `mx_Presales_Initial_Margin_Commitmnt` permanently in its schema because it
+ * conflates the two. That cannot happen here.
+ *
+ * No `__c` suffix, though — encoding "custom" into the name is Salesforce's own
+ * historical debt, and Part 7 of that reference warns against inheriting exactly
+ * this kind of thing. `is_custom` is a column.
+ */
+db.exec(`
+CREATE TABLE IF NOT EXISTS entity_def (
+  api_name     TEXT PRIMARY KEY,          -- immutable; integrations bind to this
+  label        TEXT NOT NULL,             -- renameable, never load-bearing
+  label_plural TEXT NOT NULL,
+  description  TEXT,
+  table_name   TEXT,                      -- physical table for core storage
+  is_custom    INTEGER NOT NULL DEFAULT 0,
+  owner_type   TEXT NOT NULL DEFAULT 'user',   -- user | user_or_queue | none
+  icon         TEXT,
+
+  -- Feature toggles, mirroring the reference's per-object "Details" surface.
+  has_history      INTEGER NOT NULL DEFAULT 1,
+  has_activities   INTEGER NOT NULL DEFAULT 0,
+  has_record_types INTEGER NOT NULL DEFAULT 0,
+  has_approvals    INTEGER NOT NULL DEFAULT 0,
+
+  sales_org    TEXT,                      -- null = shared by both businesses
+  active       INTEGER NOT NULL DEFAULT 1,
+  sort_order   INTEGER NOT NULL DEFAULT 0,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS field_def (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity       TEXT NOT NULL REFERENCES entity_def(api_name) ON DELETE CASCADE,
+  api_name     TEXT NOT NULL,             -- immutable
+  label        TEXT NOT NULL,             -- renameable
+  type         TEXT NOT NULL,             -- see the palette in engine/metadata.js
+  storage      TEXT NOT NULL DEFAULT 'value',   -- column | value | derived
+
+  -- Precision is part of the declared type: text(120), currency(16,2).
+  length       INTEGER,
+  precision    INTEGER,
+  scale        INTEGER,
+
+  required     INTEGER NOT NULL DEFAULT 0,
+  is_unique    INTEGER NOT NULL DEFAULT 0,
+  external_id  INTEGER NOT NULL DEFAULT 0,
+  indexed      INTEGER NOT NULL DEFAULT 0,
+
+  default_value TEXT,
+  help_text     TEXT,
+  description   TEXT,
+
+  -- Cascading picklists. The child's allowed values depend on the parent's
+  -- value, and it is enforced at the API — most writes arrive from automation
+  -- and integrations, which never see a UI.
+  controlling_field INTEGER REFERENCES field_def(id) ON DELETE SET NULL,
+
+  -- Derived types. A formula recomputes from an expression; a rollup aggregates
+  -- a child list. Both are read-only and neither is maintained by automation —
+  -- which is what deletes the legacy tenant's two busiest jobs.
+  formula      TEXT,
+  rollup       TEXT,                      -- JSON {child_entity, fk, agg, field, filter}
+
+  -- Encryption as a schema decision rather than a call-site one. A route that
+  -- forgets to call encryptField() cannot leak a field declared encrypted.
+  encrypted    INTEGER NOT NULL DEFAULT 0,
+  -- Field-level security: who may read the VALUE, as opposed to the record.
+  -- This is what makes "metadata open, content restricted" expressible.
+  read_scope   TEXT NOT NULL DEFAULT 'record',  -- record | owner_or_manager | capability
+  read_capability TEXT,
+
+  history_tracked INTEGER NOT NULL DEFAULT 0,
+
+  -- The governance gate the audit says is missing: 289 custom fields, 8+
+  -- duplicate pairs, 4 test fields live in production.
+  owner_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  purpose       TEXT,
+  retire_at     TEXT,
+
+  is_custom    INTEGER NOT NULL DEFAULT 1,
+  active       INTEGER NOT NULL DEFAULT 1,
+  sort_order   INTEGER NOT NULL DEFAULT 0,
+  created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+
+  UNIQUE (entity, api_name)
+);
+
+CREATE TABLE IF NOT EXISTS picklist_value (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  field_id    INTEGER NOT NULL REFERENCES field_def(id) ON DELETE CASCADE,
+  value       TEXT NOT NULL,
+  label       TEXT NOT NULL,
+  -- Which parent value permits this child. Null means always available.
+  controlling_value TEXT,
+  colour      TEXT,
+  is_default  INTEGER NOT NULL DEFAULT 0,
+  active      INTEGER NOT NULL DEFAULT 1,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (field_id, value)
+);
+
+/**
+ * Custom field storage. One row per (record, field).
+ *
+ * Typed columns rather than one TEXT blob, so the query planner and the
+ * condition compiler can both work with real types instead of casting strings.
+ */
+CREATE TABLE IF NOT EXISTS field_value (
+  entity     TEXT NOT NULL,
+  record_id  INTEGER NOT NULL,
+  field_id   INTEGER NOT NULL REFERENCES field_def(id) ON DELETE CASCADE,
+  text_value TEXT,
+  num_value  REAL,
+  date_value TEXT,
+  bool_value INTEGER,
+  PRIMARY KEY (entity, record_id, field_id)
+);
+
+/**
+ * Field history. First-class and queryable, which deletes the six legacy
+ * automations that exist only to stamp a date into an mx_ field.
+ */
+CREATE TABLE IF NOT EXISTS field_history (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity     TEXT NOT NULL,
+  record_id  INTEGER NOT NULL,
+  field      TEXT NOT NULL,               -- api_name
+  old_value  TEXT,
+  new_value  TEXT,
+  actor_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  source     TEXT NOT NULL DEFAULT 'ui',  -- ui | api | automation | import | vendor
+  changed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+/**
+ * Configuration audit. Separate from the data audit log on purpose: "who changed
+ * the schema?" and "who changed this lead?" are different questions with
+ * different retention and different readers.
+ *
+ * Its absence in the legacy tenant is why admins encode deploy dates into
+ * automation names.
+ */
+CREATE TABLE IF NOT EXISTS config_audit (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  area       TEXT NOT NULL,               -- entity | field | role | rule | layout | org
+  target     TEXT NOT NULL,
+  action     TEXT NOT NULL,               -- created | updated | deleted | activated
+  before_json TEXT,
+  after_json  TEXT,
+  actor_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  at         TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_field_entity ON field_def(entity, active);
+CREATE INDEX IF NOT EXISTS idx_fieldvalue_record ON field_value(entity, record_id);
+CREATE INDEX IF NOT EXISTS idx_fieldvalue_field ON field_value(field_id);
+CREATE INDEX IF NOT EXISTS idx_history_record ON field_history(entity, record_id, changed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_history_field ON field_history(entity, field, changed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_config_audit_at ON config_audit(at DESC);
+`);
+
+db.exec(`
+/**
+ * A saved search is a query, never a membership list.
+ *
+ * Non-negotiable 10. "At-risk leads" saved in August and opened in March must
+ * answer March's question — a stored set of ids would answer August's, and be
+ * quietly wrong for seven months.
+ */
+CREATE TABLE IF NOT EXISTS saved_searches (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  entity     TEXT NOT NULL,
+  tree       TEXT NOT NULL,
+  described  TEXT,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  sales_org  TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_saved_entity ON saved_searches(entity, sales_org);
+`);
+
+/**
+ * Drop the `kyc_status` mirror from databases created before it was derived.
+ *
+ * Guarded rather than unconditional: `DROP COLUMN` fails on a column that is
+ * not there, and this file runs on every boot.
+ */
+// `db` directly rather than the `all` helper: this runs at module load, before
+// the helpers below are initialised.
+if (db.prepare("SELECT name FROM pragma_table_info('leads')").all().some((c) => c.name === 'kyc_status')) {
+  try {
+    db.exec('ALTER TABLE leads DROP COLUMN kyc_status');
+    console.log('[db] dropped the leads.kyc_status mirror — it is derived now');
+  } catch (err) {
+    console.warn('[db] could not drop leads.kyc_status:', err.message);
+  }
+}
+
+db.exec(`
+/**
+ * Working calendars. Two of them: when the office is open, and when the
+ * exchange trades. They are different weeks and they diverge often.
+ */
+CREATE TABLE IF NOT EXISTS calendars (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind       TEXT NOT NULL UNIQUE,          -- office | exchange
+  label      TEXT NOT NULL,
+  open_hour  INTEGER NOT NULL DEFAULT 9,
+  close_hour INTEGER NOT NULL DEFAULT 19,
+  week_days  TEXT NOT NULL DEFAULT '[1,2,3,4,5,6]',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS calendar_days (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  calendar_id INTEGER NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
+  on_date     TEXT NOT NULL,                -- YYYY-MM-DD
+  name        TEXT NOT NULL,
+  -- Muhurat trading is an hour on a day the exchange is otherwise shut, so a
+  -- closed day and a short day are not the same thing.
+  half_day    INTEGER NOT NULL DEFAULT 0,
+  close_hour  INTEGER,
+  source      TEXT NOT NULL DEFAULT 'manual',
+  UNIQUE (calendar_id, on_date)
+);
+CREATE INDEX IF NOT EXISTS idx_caldays ON calendar_days(calendar_id, on_date);
+`);
+
+db.exec(`
+/**
+ * Queues — an owner that is not a person.
+ *
+ * Non-negotiable 8. Without this, work with no obvious owner either sits at
+ * NULL (belonging to nobody, on nobody's list) or gets parked on a placeholder
+ * human, which is how the legacy tenant ended up with shared logins and
+ * unattributable activity.
+ */
+CREATE TABLE IF NOT EXISTS queues (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  code        TEXT NOT NULL UNIQUE,
+  name        TEXT NOT NULL,
+  description TEXT,
+  entity      TEXT NOT NULL DEFAULT 'lead',
+  sales_org   TEXT,
+  active      INTEGER NOT NULL DEFAULT 1,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+/**
+ * Membership by role, not by person: a queue outlives the people in it, and a
+ * list of names is wrong the first time somebody changes desks.
+ */
+CREATE TABLE IF NOT EXISTS queue_members (
+  queue_id  INTEGER NOT NULL REFERENCES queues(id) ON DELETE CASCADE,
+  role_code TEXT NOT NULL,
+  PRIMARY KEY (queue_id, role_code)
+);
+`);
+
+db.exec(`
+/**
+ * Approvals. One table, four scopes — see engine/approvals.js for why a generic
+ * engine rather than four bespoke flows.
+ *
+ * A Pending row is also a lock: the record it names cannot be changed while it
+ * waits, so an approver never signs off a number that has since moved.
+ */
+CREATE TABLE IF NOT EXISTS approvals (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  scope           TEXT NOT NULL,
+  entity          TEXT NOT NULL,
+  entity_id       INTEGER NOT NULL,
+  subject_name    TEXT,
+  payload         TEXT,
+  reason          TEXT NOT NULL,
+  status          TEXT NOT NULL DEFAULT 'Pending',   -- Pending|Approved|Rejected|Withdrawn
+  requested_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  decided_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  decision_reason TEXT,
+  decided_at      TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_approvals_pending ON approvals(entity, entity_id, status);
+CREATE INDEX IF NOT EXISTS idx_approvals_scope ON approvals(scope, status);
+`);
+
+db.exec(`
+/**
+ * The automation failure queue — non-negotiable 12.
+ *
+ * An action that throws is recorded here instead of aborting the run, so a
+ * dead number on lead 40 does not silently skip leads 41 to 500. Rows stay
+ * until somebody resolves them, because a failure nobody sees is the same as
+ * one that never happened.
+ */
+CREATE TABLE IF NOT EXISTS rule_failures (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  rule_id     INTEGER REFERENCES rules(id) ON DELETE CASCADE,
+  lead_id     INTEGER REFERENCES leads(id) ON DELETE CASCADE,
+  action_type TEXT NOT NULL,
+  error       TEXT NOT NULL,
+  payload     TEXT,
+  resolved_at TEXT,
+  resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_rule_failures ON rule_failures(resolved_at, created_at DESC);
+`);
+
+export const SALES_ORGS = SEED_ORGS.map((o) => o.code);
+export const DEFAULT_ORG = 'BONANZA';
+
+
+/* ---------------------------------------------------- domain constants */
+
+export const ROLES = [
+  'superadmin', 'admin', 'caller', 'dealer', 'sales_rm', 'sales_supervisor',
+  'partner_rm', 'product_rm', 'product_supervisor', 'customer_care', 'marketing_manager',
+];
+
+export const ROLE_LABELS = {
+  superadmin: 'Superadmin',
+  admin: 'Admin',
+  caller: 'Caller',
+  dealer: 'Dealer',
+  sales_rm: 'Sales RM',
+  sales_supervisor: 'Sales Supervisor',
+  partner_rm: 'Partner RM',
+  product_rm: 'Product RM',
+  product_supervisor: 'Product Supervisor',
+  customer_care: 'Customer Care Agent',
+  marketing_manager: 'Marketing Manager',
+};
+
+export const CARD_STATES = [
+  'INACTIVE', 'EXPLORING', 'WARM', 'PRODUCT_RM_ENGAGED',
+  'KYC_IN_PROGRESS', 'ACTIVE', 'ON_HOLD', 'LOST',
+];
+
+/* Grey = untouched · Yellow = engaged · Green = won · Red = lost (BRD OD-01) */
+export const CARD_COLOUR = {
+  INACTIVE: 'grey',
+  EXPLORING: 'yellow',
+  WARM: 'yellow',
+  PRODUCT_RM_ENGAGED: 'yellow',
+  KYC_IN_PROGRESS: 'yellow',
+  ON_HOLD: 'yellow',
+  ACTIVE: 'green',
+  LOST: 'red',
+};
+
+export const LEAD_STAGES = ['New', 'Contacted', 'Qualified', 'In Progress', 'Won', 'Lost'];
+
+export const PARTNER_STATES = ['PROSPECT', 'QUALIFYING', 'ONBOARDING', 'ACTIVE', 'SUSPENDED', 'TERMINATED'];
+
+export const AGE_BANDS = [
+  { code: 'Fresh', min: 0, max: 7 },
+  { code: 'Active', min: 8, max: 30 },
+  { code: 'Ageing', min: 31, max: 60 },
+  { code: 'At Risk', min: 61, max: 90 },
+  { code: 'Cold', min: 91, max: Infinity },
+];
+
+export const ageBand = (days) => AGE_BANDS.find((b) => days >= b.min && days <= b.max)?.code ?? 'Fresh';
+
+/* ------------------------------------------------------------ helpers */
+
+export const all = (sql, params = []) => db.prepare(sql).all(...params);
+export const one = (sql, params = []) => db.prepare(sql).get(...params);
+export const run = (sql, params = []) => db.prepare(sql).run(...params);
+
+export const nowSql = () => new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+export const daysSince = (iso) =>
+  iso ? Math.floor((Date.now() - new Date(`${iso.replace(' ', 'T')}Z`).getTime()) / 86_400_000) : null;
+
+export function audit(userId, action, entity, entityId, detail) {
+  run('INSERT INTO audit_log (user_id, action, entity, entity_id, detail) VALUES (?,?,?,?,?)', [
+    userId ?? null, action, entity ?? null, entityId ?? null,
+    typeof detail === 'string' ? detail : JSON.stringify(detail ?? null),
+  ]);
+}
+
+export function notify(userId, title, body, link) {
+  if (!userId) return;
+  run('INSERT INTO notifications (user_id, title, body, link) VALUES (?,?,?,?)', [userId, title, body ?? null, link ?? null]);
+}

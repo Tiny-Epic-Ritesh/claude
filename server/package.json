@@ -1,0 +1,22 @@
+{
+  "name": "bonanza-crm-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch-path=./src src/index.js",
+    "start": "node src/index.js",
+    "seed": "node src/seed.js",
+    "test": "node src/seed.js --quiet && npm run test:unit && node test/e2e.mjs",
+    "test:only": "node test/e2e.mjs",
+    "test:unit": "node test/deidentify.test.mjs && node test/vendors.test.mjs && node test/conditions.test.mjs",
+    "dev:webhooks": "CUBE_QUICKCALL_WEBHOOK_SECRET=e2e-webhook-secret SMARTPING_WEBHOOK_SECRET=e2e-webhook-secret BONANZA_KYC_WEBHOOK_SECRET=e2e-webhook-secret node --watch-path=./src src/index.js",
+    "test:webhooks": "E2E_WEBHOOK_SECRET=e2e-webhook-secret node test/e2e.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.68.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2"
+  }
+}
