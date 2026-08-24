@@ -66,6 +66,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-and-push
     environment: uat
+    permissions:
+      contents: read
+      packages: read    # needed so GITHUB_TOKEN can pull from GHCR on the server
 
     steps:
       # Checkout is needed only to get docker-compose.yml.
@@ -73,34 +76,54 @@ jobs:
       - name: Checkout (for docker-compose.yml)
         uses: actions/checkout@v4
 
+      # Write the SSH key to a temp file.
+      # GitHub Secrets can strip trailing newlines from multi-line values,
+      # which breaks OpenSSH key parsing. Writing it explicitly fixes this.
+      - name: Write SSH key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.UAT_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.UAT_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
       # SCP just the one config file the server actually needs.
       - name: Copy docker-compose.yml to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.UAT_HOST }}
           username: ${{ secrets.UAT_USER }}
-          key: ${{ secrets.UAT_SSH_KEY }}
+          key_path: ~/.ssh/deploy_key
           source: "docker-compose.yml"
           target: "/www/wwwroot/labs.tinyepic.in"
           overwrite: true
+          timeout: 30s
 
-      # SSH in, pull the new image, swap the container.
+      # SSH in, log into GHCR with the workflow token, pull the new image, swap.
       - name: Pull image and restart container
         uses: appleboy/ssh-action@v1
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          IMAGE_TAG: sha-${{ needs.build-and-push.outputs.short_sha }}
         with:
           host: ${{ secrets.UAT_HOST }}
           username: ${{ secrets.UAT_USER }}
-          key: ${{ secrets.UAT_SSH_KEY }}
+          key_path: ~/.ssh/deploy_key
+          timeout: 30s
+          command_timeout: 10m
+          envs: GHCR_TOKEN,GHCR_USER,IMAGE_TAG
           script: |
             set -e
+
+            # Log into GHCR using the workflow's token — no manual PAT needed
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
 
             cd /www/wwwroot/labs.tinyepic.in
 
             # Pin to the exact SHA built in this run — no "latest" drift
-            echo "IMAGE_TAG=sha-${{ needs.build-and-push.outputs.short_sha }}" > .env.deploy
+            echo "IMAGE_TAG=$IMAGE_TAG" > .env.deploy
 
             # Pull the new image from GHCR
-            # (GHCR login was done once on the server via setup-server.sh)
             docker compose --env-file .env.deploy pull app
 
             # Zero-downtime swap: starts new container, stops old one
@@ -109,4 +132,4 @@ jobs:
             # Remove dangling images to keep disk tidy
             docker image prune -f
 
-            echo "✅ Deployed sha-${{ needs.build-and-push.outputs.short_sha }}"
+            echo "✅ Deployed $IMAGE_TAG"
