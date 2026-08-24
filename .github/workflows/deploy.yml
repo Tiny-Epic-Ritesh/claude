@@ -3,11 +3,10 @@ name: Build & Deploy to UAT
 on:
   push:
     branches:
-      - main          # change to your default branch if different
+      - main
 
 env:
   REGISTRY: ghcr.io
-  # github.repository is "owner/repo" — Docker requires lowercase
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
@@ -17,10 +16,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write   # needed to push to GHCR
+      packages: write
 
     outputs:
-      image_tag: ${{ steps.meta.outputs.tags }}
       short_sha: ${{ steps.sha.outputs.short }}
 
     steps:
@@ -36,9 +34,9 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}   # automatic — no secret to add
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Docker metadata (tags + labels)
+      - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -58,7 +56,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max    # GitHub Actions cache speeds up rebuilds
+          cache-to: type=gha,mode=max
 
   # ────────────────────────────────────────────────────────────────────────────
   deploy:
@@ -68,27 +66,13 @@ jobs:
     environment: uat
     permissions:
       contents: read
-      packages: read    # needed so GITHUB_TOKEN can pull from GHCR on the server
+      packages: read
 
     steps:
-      # Checkout is needed only to get docker-compose.yml.
-      # The full source code is NEVER sent to EC2.
       - name: Checkout (for docker-compose.yml)
         uses: actions/checkout@v4
 
-      # Write the SSH key to a temp file.
-      # GitHub Secrets can strip trailing newlines from multi-line values,
-      # which breaks OpenSSH key parsing. Writing it explicitly fixes this.
-      - name: Write SSH key
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.UAT_SSH_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.UAT_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
-
-      # SCP just the one config file the server actually needs.
-      # scp-action runs inside Docker so it can't use key_path (runner filesystem).
-      # We pass the key inline instead — the new bonanza_cicd key has no newline issues.
+      # scp-action runs in Docker — uses inline key (key:)
       - name: Copy docker-compose.yml to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -100,7 +84,7 @@ jobs:
           overwrite: true
           timeout: 30s
 
-      # SSH in, log into GHCR with the workflow token, pull the new image, swap.
+      # ssh-action runs as a binary — also uses inline key (key:)
       - name: Pull image and restart container
         uses: appleboy/ssh-action@v1
         env:
@@ -110,28 +94,24 @@ jobs:
         with:
           host: ${{ secrets.UAT_HOST }}
           username: ${{ secrets.UAT_USER }}
-          key_path: ~/.ssh/deploy_key
+          key: ${{ secrets.UAT_SSH_KEY }}
           timeout: 30s
           command_timeout: 10m
           envs: GHCR_TOKEN,GHCR_USER,IMAGE_TAG
           script: |
             set -e
 
-            # Log into GHCR using the workflow's token — no manual PAT needed
+            # Log into GHCR — no manual PAT needed, workflow token is used
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
 
             cd /www/wwwroot/labs.tinyepic.in
 
-            # Pin to the exact SHA built in this run — no "latest" drift
             echo "IMAGE_TAG=$IMAGE_TAG" > .env.deploy
 
-            # Pull the new image from GHCR
             docker compose --env-file .env.deploy pull app
 
-            # Zero-downtime swap: starts new container, stops old one
             docker compose --env-file .env.deploy up -d --remove-orphans
 
-            # Remove dangling images to keep disk tidy
             docker image prune -f
 
             echo "✅ Deployed $IMAGE_TAG"
