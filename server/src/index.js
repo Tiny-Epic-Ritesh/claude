@@ -125,7 +125,7 @@ app.use('/public/market', dkycLimiter, publicIndices);
 app.use('/api/reports', reports);
 app.use('/api/admin', admin);
 app.use('/api/portal', portal);
-app.use('/dkyc', dkycLimiter, dkyc);   // public — no CRM session required
+app.use('/dkyc-api', dkycLimiter, dkyc);   // public — no CRM session required
 app.use('/api', crm);
 
 /* --------------------------------------------------------- static / SPA */
