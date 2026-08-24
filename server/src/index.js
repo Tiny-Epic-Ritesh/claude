@@ -1,6 +1,9 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { existsSync } from 'node:fs';
 
 import { attachSession, login, partnerLogin, logout, publicUser, publicPartner } from './auth.js';
 import { rateLimiter, usingDevKey } from './security.js';
@@ -125,7 +128,26 @@ app.use('/api/portal', portal);
 app.use('/dkyc', dkycLimiter, dkyc);   // public — no CRM session required
 app.use('/api', crm);
 
-app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
+/* --------------------------------------------------------- static / SPA */
+
+/**
+ * Serve the React build as static files and fall back to index.html for any
+ * route the SPA handles client-side.
+ *
+ * This is only active when the built client/dist directory exists (i.e. in
+ * production Docker). In local dev, Vite serves the frontend on its own port.
+ */
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const clientDist = join(__dirname, '..', '..', 'client', 'dist');
+
+if (existsSync(clientDist)) {
+  // Serve hashed JS/CSS/image assets with a long cache
+  app.use(express.static(clientDist, { maxAge: '1y', immutable: true }));
+  // SPA fallback — any unrecognised path returns index.html
+  app.get('*', (_req, res) => res.sendFile(join(clientDist, 'index.html')));
+} else {
+  app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
+}
 
 // eslint-disable-next-line no-unused-vars -- Express identifies error handlers by arity.
 app.use((err, _req, res, _next) => {
