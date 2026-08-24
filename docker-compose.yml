@@ -1,0 +1,20 @@
+services:
+
+  # ── Express API + built React static files ───────────────────────────────────
+  # BT Panel's Nginx (running on the host) proxies to this container.
+  # The port is bound to 127.0.0.1 only — never exposed to the internet directly.
+  app:
+    image: ghcr.io/thakurritesh275/bonanza-crm:${IMAGE_TAG:-latest}
+    container_name: bonanza_app
+    restart: unless-stopped
+    env_file:
+      - ./server/.env          # fill this in on the server — never commit it
+    volumes:
+      # Named volume keeps bonanza.db alive across redeploys
+      - bonanza_data:/app/server/data
+    ports:
+      - "127.0.0.1:4100:4100" # localhost only — BT Panel Nginx proxies here
+
+volumes:
+  bonanza_data:
+    driver: local
