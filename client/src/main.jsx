@@ -11,10 +11,16 @@ import './styles.css';
  *   /dkyc/*   public self-service KYC portal (no login)
  *   /portal/* partner portal (separate partner auth — BRD OD-10)
  *   /*        the internal CRM (11 role cockpits)
+ *
+ * basename is set to the Vite base path so React Router resolves links
+ * correctly when deployed under labs.tinyepic.in/ai-crm.
+ * In local dev Vite serves from "/" and the basename env var is not set.
  */
+const basename = import.meta.env.BASE_URL?.replace(/\/$/, '') || '';
+
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <BrowserRouter>
+    <BrowserRouter basename={basename}>
       <Routes>
         <Route path="/dkyc/*" element={<DkycPortal />} />
         <Route path="/portal/*" element={<PartnerPortal />} />

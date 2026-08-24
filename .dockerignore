@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs (these are generated fresh inside Docker)
+client/dist/
+
+# Database — NEVER bake the SQLite file into the image.
+# It is mounted as a named volume at runtime.
+server/data/
+
+# Environment files — injected at runtime, never copied into the image
+.env
+server/.env
+**/.env
+
+# Git history
+.git/
+.gitignore
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# CI / docs (not needed in the image)
+.github/
+docs/
+scripts/
+*.md
+
+# Test files
+server/test/
