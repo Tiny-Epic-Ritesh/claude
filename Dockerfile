@@ -13,11 +13,9 @@ RUN npm ci --prefix client
 COPY server/package*.json ./server/
 RUN npm ci --prefix server --omit=dev
 
-# Copy source and build the React app.
-# --base=/ai-crm/ makes all asset URLs and React Router work correctly
-# when the app is served under labs.tinyepic.in/ai-crm/
+# Copy source and build the React app at the root path
 COPY client/ ./client/
-RUN npm run build --prefix client -- --base=/ai-crm/
+RUN npm run build --prefix client
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 2 — Production runtime
