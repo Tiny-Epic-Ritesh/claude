@@ -87,12 +87,14 @@ jobs:
           ssh-keyscan -H ${{ secrets.UAT_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
       # SCP just the one config file the server actually needs.
+      # scp-action runs inside Docker so it can't use key_path (runner filesystem).
+      # We pass the key inline instead — the new bonanza_cicd key has no newline issues.
       - name: Copy docker-compose.yml to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.UAT_HOST }}
           username: ${{ secrets.UAT_USER }}
-          key_path: ~/.ssh/deploy_key
+          key: ${{ secrets.UAT_SSH_KEY }}
           source: "docker-compose.yml"
           target: "/www/wwwroot/labs.tinyepic.in"
           overwrite: true
