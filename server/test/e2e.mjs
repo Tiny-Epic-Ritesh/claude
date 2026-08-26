@@ -687,14 +687,14 @@ async function run() {
   suite('12 DKYC portal (public, 16-step)');
 
   await check('the public product list is reachable without a session', async () => {
-    const { data } = await req('/dkyc/products', { expect: 200 });
+    const { data } = await req('/dkyc-api/products', { expect: 200 });
     assert(data.length > 0, 'no products offered');
     REF.eqdProduct = data.find((p) => p.code === 'EQD');
     assert(REF.eqdProduct, 'Equity & Derivatives not offered');
   });
 
   await check('starting an application returns a resume token', async () => {
-    const { data } = await req('/dkyc/start', {
+    const { data } = await req('/dkyc-api/start', {
       method: 'POST', expect: 201,
       body: { product_type_id: REF.eqdProduct.id, mobile: mob(4) },
     });
@@ -705,16 +705,16 @@ async function run() {
   });
 
   await check('a journey can be resumed from its token', async () => {
-    const { data } = await req(`/dkyc/resume/${REF.dkycToken}`, { expect: 200 });
+    const { data } = await req(`/dkyc-api/resume/${REF.dkycToken}`, { expect: 200 });
     eq(data.current_step, 'MOBILE', 'resumed step');
   });
 
   await check('an unknown resume token returns 404', async () => {
-    await req('/dkyc/resume/not-a-real-token', { expect: 404 });
+    await req('/dkyc-api/resume/not-a-real-token', { expect: 404 });
   });
 
   const dkycStep = (step_code, payload) =>
-    req(`/dkyc/resume/${REF.dkycToken}/step`, { method: 'POST', body: { step_code, payload } });
+    req(`/dkyc-api/resume/${REF.dkycToken}/step`, { method: 'POST', body: { step_code, payload } });
 
   await check('submitting a step out of order is rejected with 409', async () => {
     const { status, data } = await dkycStep('ESIGN', { esign_otp: '123456' });
