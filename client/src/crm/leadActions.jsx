@@ -6,7 +6,7 @@
  */
 
 import { useState } from 'react';
-import { api } from '../api.js';
+import { api, appUrl } from '../api.js';
 import { Icon, Spinner } from '../components/ui.jsx';
 
 /* ------------------------------------------------------- lead actions */
@@ -61,7 +61,7 @@ export function useLeadActions({ session, reload, onError, onNotice }) {
   async function startKyc(lead) {
     try {
       const j = await api.post('/kyc/journeys', { lead_id: lead.id });
-      window.open(`/dkyc/resume/${j.resume_token}`, '_blank', 'noopener');
+      window.open(appUrl(`/dkyc/resume/${j.resume_token}`), '_blank', 'noopener');
       onNotice?.('KYC journey started — the applicant link is open in a new tab.');
       reload?.();
     } catch (err) { onError?.(err.message); }

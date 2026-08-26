@@ -500,8 +500,24 @@ h3 { font-size: 13.5px; font-weight: 600; }
 }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
-input[type='text'], input[type='email'], input[type='password'], input[type='number'],
-input[type='date'], input[type='search'], input[type='tel'], select, textarea {
+/**
+ * Text-like inputs, selected by exclusion rather than by listing types.
+ *
+ * This used to enumerate `input[type='text']`, `input[type='email']` and so on.
+ * An attribute selector only matches an attribute that is actually written, so
+ * every `<input>` authored without an explicit `type` — 45 of them across the
+ * app, including the login email box — matched nothing at all and fell back to
+ * the browser default: white background, no radius, no padding.
+ *
+ * In dark theme that put near-white text on a white box, so the value was
+ * invisible once focus left the field.
+ *
+ * Excluding the handful of input types that must NOT get this treatment is both
+ * shorter and safe by default: a new input inherits the design system unless it
+ * is explicitly one of the controls below.
+ */
+input:not([type='checkbox']):not([type='radio']):not([type='file']):not([type='range']):not([type='color']):not([type='submit']):not([type='button']):not([type='reset']),
+select, textarea {
   width: 100%;
   padding: 9px 12px;
   border-radius: var(--r-sm);

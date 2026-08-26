@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api, money, rupees, shortDate, dateTime, mins, STATE_LABEL, ROLE_LABEL } from '../api.js';
+import { api, money, rupees, shortDate, dateTime, mins, STATE_LABEL, ROLE_LABEL, appUrl } from '../api.js';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, AgeBadge, PriorityBadge, Progress, CardDot, Icon } from '../components/ui.jsx';
 import ActivityComposer from './ActivityComposer.jsx';
 import InCall from './InCall.jsx';
@@ -306,7 +306,7 @@ function CardPanel({ card, lead, session, canWarm, canExplore, canEngage, canReq
     setBusy(true);
     try {
       const j = await api.post('/kyc/journeys', { lead_id: lead.id, card_id: card.id });
-      window.open(`/dkyc/resume/${j.resume_token}`, '_blank');
+      window.open(appUrl(`/dkyc/resume/${j.resume_token}`), '_blank');
       onDone();
     } catch (err) { onError(err.message); setBusy(false); }
   }
@@ -754,7 +754,7 @@ function JourneyCard({ journey, canManage, onError, reload, setCoach, busy, setB
           {['Stalled', 'Abandoned'].includes(full.status) && <button className="btn-sm" onClick={coach} disabled={busy}>Why stuck?</button>}
           {canManage && full.status === 'Abandoned' && <button className="btn-sm btn-primary" onClick={assist} disabled={busy}>Take over</button>}
           {full.resume_token && full.status !== 'Complete' && (
-            <a className="btn btn-sm" href={`/dkyc/resume/${full.resume_token}`} target="_blank" rel="noreferrer">Open applicant link</a>
+            <a className="btn btn-sm" href={appUrl(`/dkyc/resume/${full.resume_token}`)} target="_blank" rel="noreferrer">Open applicant link</a>
           )}
         </div>
       </div>

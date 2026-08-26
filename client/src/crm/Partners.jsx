@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, shortDate } from '../api.js';
+import { api, shortDate, appUrl } from '../api.js';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Progress, Tabs } from '../components/ui.jsx';
 
 const MODELS = ['Remisier', 'Agent', 'Trainee Entrepreneur', 'Associate', 'Authorised Person'];
@@ -26,7 +26,7 @@ export default function Partners({ session }) {
           <h1>Partners</h1>
           <p>
             Partners are entities in the CRM, not users of it. Their own login lives on the
-            {' '}<a href="/portal" target="_blank" rel="noreferrer" style={{ color: 'var(--brand)' }}>Partner Portal</a>.
+            {' '}<a href={appUrl("/portal")} target="_blank" rel="noreferrer" style={{ color: 'var(--brand)' }}>Partner Portal</a>.
           </p>
         </div>
         {session.permissions.includes('partner.create') && (

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, mins, shortDate } from '../api.js';
+import { api, mins, shortDate, appUrl } from '../api.js';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Progress, Tabs } from '../components/ui.jsx';
 
 /**
@@ -41,7 +41,7 @@ export default function KycConsole({ session }) {
         </div>
         <div className="row">
           <button onClick={async () => { await api.post('/kyc/sweep'); reload(); }}>Run stall sweep</button>
-          <a className="btn btn-primary" href="/dkyc" target="_blank" rel="noreferrer">Open DKYC portal</a>
+          <a className="btn btn-primary" href={appUrl("/dkyc")} target="_blank" rel="noreferrer">Open DKYC portal</a>
         </div>
       </div>
 
@@ -145,7 +145,7 @@ function JourneyModal({ journey, session, onClose, onChanged, onError }) {
                 <button className="btn-sm btn-primary" disabled={busy} onClick={() => act(() => api.post(`/kyc/journeys/${journey.id}/assist`))}>Take over</button>
               )}
               {full.resume_token && full.status !== 'Complete' && (
-                <a className="btn btn-sm" href={`/dkyc/resume/${full.resume_token}`} target="_blank" rel="noreferrer">Applicant link</a>
+                <a className="btn btn-sm" href={appUrl(`/dkyc/resume/${full.resume_token}`)} target="_blank" rel="noreferrer">Applicant link</a>
               )}
             </div>
           </div>

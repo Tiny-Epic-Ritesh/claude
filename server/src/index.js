@@ -155,6 +155,22 @@ if (existsSync(clientDist)) {
   // receives the bare path (/, /leads, /lists etc.).  Return index.html for
   // anything that isn't a real static file; React Router takes it from there.
   // The root redirect (/ → /ai-crm/) is handled by nginx, not here.
+  /**
+   * An unknown API route must 404, not return the app.
+   *
+   * Without this, `GET /api/pipeline` — a route that does not exist — fell
+   * through to the SPA fallback and answered 200 with index.html. The client
+   * asked for JSON, got a webpage, rendered nothing, and the tab looked broken
+   * rather than unbuilt. Every unimplemented endpoint was invisible for exactly
+   * as long as nobody checked the content type.
+   *
+   * These prefixes are API surfaces and are never client routes, so anything
+   * unmatched under them is a genuine 404.
+   */
+  app.use(['/api', '/dkyc-api', '/public'], (req, res) => res.status(404).json({
+    error: `No such endpoint: ${req.method} ${req.originalUrl}`,
+  }));
+
   app.get('*', (_req, res) => res.sendFile(join(clientDist, 'index.html')));
 } else {
   app.use((_req, res) => res.status(404).json({ error: 'Not found' }));

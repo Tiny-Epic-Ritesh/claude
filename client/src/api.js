@@ -68,6 +68,22 @@ export const dkycApi = {
   post: (p, body) => request(`/dkyc-api${p}`, { method: 'POST', body, raw: true }),
 };
 
+/**
+ * An absolute in-app URL, honouring the deployment's base path.
+ *
+ * The app is served under `/ai-crm/`, so a bare `href="/portal"` leaves the
+ * application entirely and 404s. Hardcoding the prefix instead would break the
+ * moment the base changes, so it is read from the build config — one place,
+ * and it cannot drift from where the app is actually mounted.
+ *
+ *   appUrl('/portal')            -> /ai-crm/portal
+ *   appUrl('/dkyc/resume/abc')   -> /ai-crm/dkyc/resume/abc
+ */
+export const appUrl = (path = '/') => {
+  const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
+  return `${base}/${String(path).replace(/^\//, '')}`;
+};
+
 /* ------------------------------------------------------------ formatting */
 
 export const money = (n) => {

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api, token, ROLE_LABEL } from '../api.js';
+import { api, token, ROLE_LABEL, appUrl } from '../api.js';
 import { ErrorBanner, Spinner } from '../components/ui.jsx';
 import { MarketStrip } from '../components/Market.jsx';
 import BrandLogo from '../components/BrandLogo.jsx';
@@ -107,7 +107,7 @@ export default function Login({ onSignedIn }) {
 
         <p className="login-foot">
           Every demo account uses the password <code>bonanza</code>. The client-facing
-          surfaces are at <a href="/dkyc">/dkyc</a> and <a href="/portal">/portal</a>.
+          surfaces are at <a href={appUrl("/dkyc")}>/dkyc</a> and <a href={appUrl("/portal")}>/portal</a>.
         </p>
       </div>
     </div>
