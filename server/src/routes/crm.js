@@ -3,7 +3,7 @@
  */
 
 import { Router } from 'express';
-import { all, one, run, audit, notify, daysSince, ageBand, CARD_COLOUR, LEAD_STAGES, CARD_STATES } from '../db.js';
+import { all, one, run, audit, notify, daysSince, ageBand, AGE_BANDS, CARD_COLOUR, LEAD_STAGES, CARD_STATES } from '../db.js';
 import { can, requireUser, requirePermission, reqScope, isReadOnlyOnLeads, unmaskRequested, orgsFor, activeOrg, mayUseOrg } from '../auth.js';
 import { encryptField, decryptField, maskRecord, maskRecords, validate } from '../security.js';
 import { applyScore } from '../engine/rules.js';
@@ -102,12 +102,45 @@ export function generateCards(leadId) {
 
 /* --------------------------------------------------------------- leads */
 
+/**
+ * The lead list.
+ *
+ * WHY THIS IS NOT `decorate()` IN A LOOP
+ * -------------------------------------
+ * It used to be. `decorate()` runs four queries per lead — the product cards
+ * with two joins, a MAX over activities, the metrics projection, and a PAN
+ * decrypt — which is right for one record and catastrophic for a page of them.
+ * At 289 leads that was roughly 1,150 queries, 1.4MB of JSON and up to two
+ * seconds, on the screen every RM opens first.
+ *
+ * This does the same job in five set-based queries regardless of page size, and
+ * returns only what a list row draws. `decorate()` stays exactly as it is for
+ * the record view, where the per-lead cost is the point.
+ *
+ * PAN IS NOT DECRYPTED HERE
+ * -------------------------
+ * The list never shows it. Decrypting 500 PANs to mask all 500 of them is work
+ * done purely to throw away, and it puts plaintext identifiers in memory on a
+ * request that has no use for them.
+ *
+ * PAGING IS REAL NOW
+ * ------------------
+ * `limit` and `offset` are honoured and the unpaged total goes back in
+ * `X-Total-Count`. The response stays a bare array so every existing caller and
+ * test keeps working — the count is additive, not a breaking envelope.
+ *
+ * The age-band filter moved into SQL. It used to run in JavaScript *after*
+ * `LIMIT 500`, so asking for "Cold" returned however many of the first 500 rows
+ * happened to be cold — a number that looked like an answer and was not.
+ */
 router.get('/leads', (req, res) => {
   const scope = reqScope(req, 'l');
   const where = ['l.deleted_at IS NULL', scope.sql];
   const params = [...scope.params];
 
-  const { q, stage, band, card_state, product_id, owner_id, partner_id, list_id } = req.query;
+  const {
+    q, stage, band, card_state, product_id, owner_id, partner_id, list_id,
+  } = req.query;
 
   if (q) {
     // PAN is encrypted at rest, so it cannot be LIKE-searched. Exact PAN lookup
@@ -118,6 +151,7 @@ router.get('/leads', (req, res) => {
   if (stage) { where.push('l.stage = ?'); params.push(stage); }
   if (owner_id) { where.push('l.owner_id = ?'); params.push(owner_id); }
   if (partner_id) { where.push('l.partner_id = ?'); params.push(partner_id); }
+
   if (card_state) {
     where.push(`EXISTS (SELECT 1 FROM product_cards pc WHERE pc.lead_id = l.id AND pc.state = ?${product_id ? ' AND pc.product_type_id = ?' : ''})`);
     params.push(card_state);
@@ -126,20 +160,100 @@ router.get('/leads', (req, res) => {
     where.push('EXISTS (SELECT 1 FROM product_cards pc WHERE pc.lead_id = l.id AND pc.product_type_id = ?)');
     params.push(product_id);
   }
+
   if (list_id) {
     where.push('EXISTS (SELECT 1 FROM lead_list_members m WHERE m.lead_id = l.id AND m.list_id = ?)');
     params.push(list_id);
   }
 
-  let leads = all(
-    `SELECT l.*, ${kycStatusSql('l')} AS kyc_status
-     FROM leads l WHERE ${where.join(' AND ')} ORDER BY l.updated_at DESC LIMIT 500`,
-    params,
-  ).map(decorate);
+  // The band, in SQL, so it narrows before the limit rather than after it.
+  const bandDef = AGE_BANDS.find((b) => b.code === band);
+  if (bandDef) {
+    const age = "CAST(julianday('now') - julianday(l.created_at) AS INTEGER)";
+    where.push(Number.isFinite(bandDef.max) ? `${age} BETWEEN ? AND ?` : `${age} >= ?`);
+    params.push(bandDef.min);
+    if (Number.isFinite(bandDef.max)) params.push(bandDef.max);
+  }
 
-  if (band) leads = leads.filter((l) => l.age_band === band);
+  const clause = where.join(' AND ');
 
-  res.json(maskRecords(leads, { unmask: unmaskRequested(req, 'lead_list') }));
+  // Bounded whatever the caller asks for: an unbounded list over 495k rows is
+  // a denial of service someone reaches by typing a big number into a URL.
+  const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+  const total = one(`SELECT COUNT(*) n FROM leads l WHERE ${clause}`, params).n;
+
+  const rows = all(
+    `SELECT l.id, l.name, l.mobile, l.email, l.city, l.state, l.source, l.stage,
+            l.language, l.risk_profile, l.sales_org, l.owner_id, l.partner_id,
+            l.client_code, l.marketing_opt_out, l.mobile_invalid,
+            l.created_at, l.updated_at, l.callback_at,
+            ${kycStatusSql('l')} AS kyc_status,
+            CAST(julianday('now') - julianday(l.created_at) AS INTEGER) AS age_days,
+            u.name AS owner_name,
+            p.name AS partner_name
+     FROM leads l
+     LEFT JOIN users u ON u.id = l.owner_id
+     LEFT JOIN partners p ON p.id = l.partner_id
+     WHERE ${clause}
+     ORDER BY l.updated_at DESC
+     LIMIT ? OFFSET ?`,
+    [...params, limit, offset],
+  );
+
+  if (rows.length === 0) {
+    res.set('X-Total-Count', String(total));
+    return res.json([]);
+  }
+
+  // Everything else in one query each, keyed on just this page of ids.
+  const ids = rows.map((r) => r.id);
+  const list = ids.map(() => '?').join(',');
+
+  const cards = all(
+    `SELECT pc.lead_id, pc.state, pc.value, pt.code AS product_code, pt.name AS product_name
+     FROM product_cards pc
+     JOIN product_types pt ON pt.id = pc.product_type_id
+     WHERE pc.lead_id IN (${list}) AND pt.active = 1
+     ORDER BY pt.sort_order`,
+    ids,
+  );
+  const cardsByLead = new Map();
+  for (const c of cards) {
+    if (!cardsByLead.has(c.lead_id)) cardsByLead.set(c.lead_id, []);
+    cardsByLead.get(c.lead_id).push({ ...c, colour: CARD_COLOUR[c.state] || 'grey' });
+  }
+
+  const metrics = new Map(
+    all(`SELECT lead_id, score, aum, days_since_contact FROM lead_metrics WHERE lead_id IN (${list})`, ids)
+      .map((m) => [m.lead_id, m]),
+  );
+
+  const tickets = new Map(
+    all(
+      `SELECT lead_id, COUNT(*) n FROM tickets
+       WHERE lead_id IN (${list}) AND status NOT IN ('Resolved','Closed')
+       GROUP BY lead_id`,
+      ids,
+    ).map((t) => [t.lead_id, t.n]),
+  );
+
+  const leads = rows.map((l) => {
+    const m = metrics.get(l.id);
+    return {
+      ...l,
+      cards: cardsByLead.get(l.id) ?? [],
+      score: m?.score ?? 0,
+      aum: m?.aum ?? 0,
+      days_since_contact: m?.days_since_contact ?? null,
+      age_band: ageBand(l.age_days ?? 0),
+      open_tickets: tickets.get(l.id) ?? 0,
+    };
+  });
+
+  res.set('X-Total-Count', String(total));
+  return res.json(maskRecords(leads, { unmask: unmaskRequested(req, 'lead_list') }));
 });
 
 router.get('/leads/:id', (req, res) => {
