@@ -38,11 +38,17 @@ import { one } from '../db.js';
 
 /** Channels that carry a marketing payload, and the flag that gates each. */
 const CHANNEL_RULES = {
-  call: { needs: 'mobile', flag: 'mobile_invalid' },
-  sms: { needs: 'mobile', flag: 'mobile_invalid' },
-  whatsapp: { needs: 'mobile', flag: 'mobile_invalid' },
-  ivr: { needs: 'mobile', flag: 'mobile_invalid' },
-  email: { needs: 'email', flag: null },
+  //            what it needs   dead-destination flag   per-channel withdrawal
+  call:     { needs: 'mobile', flag: 'mobile_invalid', optOut: 'no_call' },
+  sms:      { needs: 'mobile', flag: 'mobile_invalid', optOut: 'no_sms' },
+  whatsapp: { needs: 'mobile', flag: 'mobile_invalid', optOut: 'no_whatsapp' },
+  ivr:      { needs: 'mobile', flag: 'mobile_invalid', optOut: 'no_call' },
+  email:    { needs: 'email',  flag: null,             optOut: 'no_email' },
+};
+
+/** What a channel is called when we have to tell someone it is closed. */
+const CHANNEL_LABEL = {
+  call: 'phone', ivr: 'phone', sms: 'SMS', whatsapp: 'WhatsApp', email: 'email',
 };
 
 export const CHANNELS = Object.keys(CHANNEL_RULES);
@@ -88,7 +94,25 @@ export function checkConsent(lead, channel, intent = 'marketing') {
     };
   }
 
-  // 3. Consent. Only marketing is gated — service must still get through.
+  /* 3. A withdrawal on this specific channel.
+   *
+   * Checked before the blanket flag and enforced for service too, because
+   * "do not call me" is not a statement about marketing — it is a statement
+   * about the telephone. Someone who asked not to be phoned can still be
+   * emailed a KYC reminder, which is the whole reason these are separate.
+   *
+   * A regulator asking "why did you call this person" needs the answer to be
+   * "they never told us not to", and one boolean cannot support that answer. */
+  if (rule.optOut && lead[rule.optOut]) {
+    return {
+      allowed: false,
+      code: 'channel_opted_out',
+      reason: `${who} has asked not to be contacted by ${CHANNEL_LABEL[channel] ?? channel}`,
+      fix: 'Another channel may still be open — check their contact preferences.',
+    };
+  }
+
+  // 4. The blanket marketing withdrawal. Service still gets through.
   if (intent === 'marketing' && lead.marketing_opt_out) {
     return {
       allowed: false,

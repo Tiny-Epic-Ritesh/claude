@@ -2702,6 +2702,48 @@ async function run() {
 
   /* ---- consent: a dead number blocks everything on it ---- */
 
+await check('a per-channel withdrawal closes only that channel', async () => {
+    // The lossless consent model the migration map calls for. Legacy carries
+    // DoNotCall, DoNotEmail and DoNotSMS as independent withdrawals; one
+    // boolean cannot represent them without over- or under-blocking.
+    const { data: made } = await req('/api/leads', {
+      method: 'POST', token: T.sales_supervisor, expect: 201,
+      body: { name: `Channel Consent ${RUN}`, mobile: `96${String(RUN).slice(-8)}`,
+              email: `chan.${RUN}@test.test`, source: 'Manual' },
+    });
+
+    await req(`/api/leads/${made.id}`, {
+      method: 'PATCH', token: T.sales_supervisor, expect: 200,
+      body: { no_call: 1, consent_source: 'Said so on a call' },
+    });
+
+    const { data } = await req(`/api/leads/${made.id}`, { token: T.sales_supervisor, expect: 200 });
+    eq(data.contactability.call.service, false, 'the phone should be closed');
+    eq(data.contactability.email.service, true, 'email should still be open');
+    eq(data.contactability.sms.service, true, 'SMS should still be open');
+    REF.channelLead = made.id;
+  });
+
+  await check('do-not-call blocks service too, not just marketing', async () => {
+    // "Do not call me" is a statement about the telephone, not about marketing.
+    // Blocking only promotional calls would still ring a client who asked us
+    // not to — which is the breach, whatever the intent field said.
+    const id = need(REF.channelLead, 'the channel-consent lead');
+    const { data } = await req(`/api/leads/${id}/call`, {
+      method: 'POST', token: T.sales_supervisor, expect: 409, body: {},
+    });
+    eq(data.code, 'channel_opted_out', `wrong code: ${data.code}`);
+    assert(/phone/i.test(data.error), `the reason does not name the channel: ${data.error}`);
+  });
+
+  await check('another channel still delivers for the same lead', async () => {
+    const id = need(REF.channelLead, 'the channel-consent lead');
+    await req(`/api/leads/${id}/message`, {
+      method: 'POST', token: T.sales_supervisor, expect: 201,
+      body: { channel: 'email', body: 'Your KYC needs a document', intent: 'service' },
+    });
+  });
+
   await check('an invalid mobile blocks calls and texts, including service', async () => {
     const id = need(REF.consentLead, 'the consent probe lead');
     await req(`/api/leads/${id}`, {

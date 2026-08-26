@@ -437,6 +437,10 @@ router.patch('/leads/:id', (req, res) => {
     'name', 'mobile', 'email', 'pan', 'city', 'state', 'risk_profile', 'language',
     'source', 'stage', 'owner_id', 'partner_id', 'callback_at',
     'mobile_invalid', 'marketing_opt_out',
+    // Per-channel withdrawals. Separate from the blanket flag because "do not
+    // call me" and "stop marketing to me" are different statements, and a
+    // regulator asks about the specific one.
+    'no_call', 'no_sms', 'no_email', 'no_whatsapp', 'consent_source',
   ];
   const sets = [];
   const params = [];

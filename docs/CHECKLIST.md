@@ -219,7 +219,14 @@ own capability and every export is logged with row count and the filter used.
       495k leads is one you want to have tested first.
 - [x] Drop `leads.kyc_status` mirror — derived from the journeys and the eKYC portal; **it had already drifted on 2 of the 6 seeded leads with a journey**, column now dropped
 - [x] Holiday calendars (office + NSE/BSE) — two calendars, half-days, wired into the SLA clock and follow-up scheduling, 20 tests
-- [~] LeadSquared data-quality export → `docs/migration-map.md` — **deferred at the user's request, 22 Aug 2026**
+- [x] Migration map — `docs/migration-map.md` written from the audit. Routes all
+      ~330 legacy fields by domain, ranks the cutover risks, and lists the five
+      aggregate exports still needed to close the open decisions.
+- [x] Per-channel consent — the one migration blocker that needed no export.
+      Legacy holds four independent withdrawals (DoNotCall/Email/SMS/Track);
+      the CRM had one boolean, which could only over- or under-block.
+- [ ] LeadSquared data-quality export — five aggregate queries, no client rows.
+      Closes every **NEEDS DATA** marker in the migration map.
 
 ---
 

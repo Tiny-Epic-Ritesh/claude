@@ -511,6 +511,24 @@ const COLUMNS = [
   ['leads', 'client_code', 'TEXT'],            // UCC once the account is opened
   ['leads', 'kyc_external_ref', 'TEXT'],       // our correlation id echoed by the portal
   ['leads', 'kyc_portal_stage', 'TEXT'],       // raw stage reported by the eKYC portal
+
+  /* Per-channel consent.
+   *
+   * `marketing_opt_out` alone cannot represent what the legacy tenant already
+   * holds: DoNotCall, DoNotEmail, DoNotSMS and DoNotTrack are four independent
+   * withdrawals, and collapsing them into one boolean either over-blocks —
+   * losing contactability the client never withdrew — or under-blocks, which
+   * under TRAI DND rules is the one with a penalty attached.
+   *
+   * `marketing_opt_out` stays as the blanket withdrawal. These narrow it. */
+  ['leads', 'no_call', 'INTEGER NOT NULL DEFAULT 0'],
+  ['leads', 'no_sms', 'INTEGER NOT NULL DEFAULT 0'],
+  ['leads', 'no_email', 'INTEGER NOT NULL DEFAULT 0'],
+  ['leads', 'no_whatsapp', 'INTEGER NOT NULL DEFAULT 0'],
+  /* Provenance: when consent was last recorded and where it came from. A
+   * withdrawal a regulator asks about needs a date and a source, not a flag. */
+  ['leads', 'consent_updated_at', 'TEXT'],
+  ['leads', 'consent_source', 'TEXT'],
   ['leads', 'wa_last_inbound_at', 'TEXT'],     // opens the WhatsApp 24-hour window
 
   // Sales org. Every owned record carries the business it belongs to, so one
