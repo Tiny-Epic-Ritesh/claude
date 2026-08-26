@@ -3586,3 +3586,97 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
 /* Product engagement summary (ENH-10a) — replaces the row of hover-only dots. */
 .card-summary { display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 .card-summary .state-pill { font-size: 11px; padding: 2px 8px; }
+
+/* ==================================================== outcome picker
+ *
+ * ENH-21a / ENH-21b. The Connected / Not Connected choice drives the whole
+ * follow-up engine, and it used to be three small grey headings above a wall of
+ * twenty-two identical chips. It is now the first and largest thing on the
+ * form, and only the chosen group's outcomes are shown.
+ */
+
+.outcome-picker { display: grid; gap: 12px; }
+
+.outcome-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 9px;
+}
+
+.outcome-group {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 13px 14px;
+  border-radius: var(--r);
+  border: 1.5px solid var(--hairline);
+  background: var(--glass-2);
+  color: var(--ink-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+.outcome-group:hover { transform: translateY(-1px); box-shadow: var(--lift-1); }
+.outcome-group .material-symbols-rounded { color: var(--ink-4); transition: color 0.14s ease; }
+.outcome-name { font-size: 14px; font-weight: 620; color: var(--ink); }
+.outcome-count { font-size: 11px; color: var(--ink-4); }
+
+/* The two that matter carry colour; Other stays quiet on purpose. */
+.outcome-group.is-connected.is-on {
+  border-color: var(--ok);
+  background: var(--ok-soft);
+  box-shadow: 0 0 0 1px var(--ok);
+}
+.outcome-group.is-connected.is-on .material-symbols-rounded { color: var(--ok); }
+
+.outcome-group.is-not-connected.is-on {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+  box-shadow: 0 0 0 1px var(--warn);
+}
+.outcome-group.is-not-connected.is-on .material-symbols-rounded { color: var(--warn); }
+
+.outcome-group.is-other.is-on {
+  border-color: var(--ink-4);
+  background: var(--glass-solid);
+  box-shadow: 0 0 0 1px var(--ink-4);
+}
+
+/* Every target prints its own shortcut, so the keyboard path is discovered
+   rather than documented. */
+.outcome-group kbd,
+.chip kbd {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: var(--hairline);
+  color: var(--ink-4);
+  border: none;
+}
+.chip { position: relative; }
+.chip kbd { position: static; margin-left: 5px; }
+
+.outcome-options {
+  padding: 11px 12px;
+  border-radius: var(--r);
+  background: var(--glass);
+  border: 1px solid var(--hairline);
+  animation: outcome-in 0.16s ease;
+}
+
+@keyframes outcome-in {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .outcome-options { animation: none; }
+}

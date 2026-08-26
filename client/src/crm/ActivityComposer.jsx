@@ -49,6 +49,19 @@ const PRESETS = [
   { label: 'Next week', hours: 168 },
 ];
 
+/**
+ * How each outcome group presents itself.
+ *
+ * Connected and Not Connected carry the weight — they decide whether a
+ * follow-up is created and what the disposition matrix does next — so they get
+ * the colour and the size. Other is deliberately quieter.
+ */
+const OUTCOME_META = {
+  Connected: { icon: 'phone_in_talk', cls: 'is-connected' },
+  'Not Connected': { icon: 'phone_missed', cls: 'is-not-connected' },
+  Other: { icon: 'more_horiz', cls: 'is-other' },
+};
+
 export default function ActivityComposer({ lead, cards = [], onLogged }) {
   const [meta, setMeta] = useState(null);
   const [type, setType] = useState('Call');
@@ -64,9 +77,40 @@ export default function ActivityComposer({ lead, cards = [], onLogged }) {
   }, []);
 
   // Changing the type invalidates the outcome — the matrix is per type.
-  useEffect(() => { setCode(''); setForm({}); setFieldErrors({}); }, [type]);
+  const [outcome, setOutcome] = useState('');
+  useEffect(() => { setCode(''); setOutcome(''); setForm({}); setFieldErrors({}); }, [type]);
 
   const groups = meta?.dispositions?.[type] ?? [];
+  const activeGroup = groups.find((g) => g.outcome === outcome) ?? null;
+
+  /**
+   * Number keys pick the group, then the outcome.
+   *
+   * This screen is used a hundred times a day by the same people. Reaching for
+   * the mouse twice per call is the slow path, and the shortcut is discoverable
+   * because every target prints its own key.
+   */
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // Never steal a keystroke from someone typing a note.
+      const t = e.target.tagName;
+      if (t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT') return;
+
+      const n = Number(e.key);
+      if (!Number.isInteger(n) || n < 1) return;
+
+      if (!activeGroup) {
+        const g = groups[n - 1];
+        if (g) { setOutcome(g.outcome); setCode(''); }
+      } else {
+        const o = activeGroup.options[n - 1];
+        if (o) { setCode(o.code); setFieldErrors({}); }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [groups, activeGroup]);
   const chosen = useMemo(
     () => groups.flatMap((g) => g.options).find((o) => o.code === code) ?? null,
     [groups, code],
@@ -146,26 +190,67 @@ export default function ActivityComposer({ lead, cards = [], onLogged }) {
           ))}
         </div>
 
-        {/* --- outcome --- */}
+        {/* --- outcome, in two steps ---
+            ENH-21a / ENH-21b.
+
+            This was one flat wall of chips. Twenty-two dispositions, three
+            group headings set in the same small grey label as everything else,
+            and the Connected / Not Connected distinction — the single most
+            important choice on the screen — visually indistinguishable from the
+            options inside it.
+
+            Now the group is chosen first, as three large targets, and only that
+            group's outcomes appear. A caller doing a hundred calls a day makes
+            two taps instead of scanning twenty-two chips, and the choice that
+            drives the follow-up engine is the one the eye lands on.
+
+            Number keys work on both steps, because on a high-frequency screen
+            the mouse is the slow path. */}
         {needsOutcome && (
-          <div className="stack" style={{ gap: 8 }}>
-            {groups.map((g) => (
-              <div key={g.outcome}>
-                <div className="field-label" style={{ marginBottom: 5 }}>{g.outcome}</div>
+          <div className="outcome-picker">
+            <div className="outcome-groups">
+              {groups.map((g, i) => {
+                const active = outcome === g.outcome;
+                // Not `meta` — that name already holds the dispositions payload
+                // in this component, and shadowing it here would be a trap.
+                const look = OUTCOME_META[g.outcome] ?? OUTCOME_META.Other;
+                return (
+                  <button
+                    key={g.outcome}
+                    type="button"
+                    className={`outcome-group ${look.cls} ${active ? 'is-on' : ''}`}
+                    onClick={() => { setOutcome(g.outcome); setCode(''); setFieldErrors({}); }}
+                  >
+                    <Icon name={look.icon} size={20} />
+                    <span className="outcome-name">{g.outcome}</span>
+                    <span className="outcome-count">{g.options.length}</span>
+                    <kbd>{i + 1}</kbd>
+                  </button>
+                );
+              })}
+            </div>
+
+            {activeGroup && (
+              <div className="outcome-options">
+                <div className="field-label">
+                  What happened? <span className="muted">— {activeGroup.outcome}</span>
+                </div>
                 <div className="row wrap" style={{ gap: 6 }}>
-                  {g.options.map((o) => (
+                  {activeGroup.options.map((o, i) => (
                     <button
                       key={o.code}
+                      type="button"
                       className={`chip ${code === o.code ? 'chip-active' : ''}`}
                       onClick={() => { setCode(o.code); setFieldErrors({}); }}
                       title={o.hint}
                     >
                       {o.label}
+                      {i < 9 && <kbd>{i + 1}</kbd>}
                     </button>
                   ))}
                 </div>
               </div>
-            ))}
+            )}
           </div>
         )}
 

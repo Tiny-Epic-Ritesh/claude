@@ -57,8 +57,8 @@ HTML** because the SPA fallback caught them. An unbuilt endpoint must 404.
 | ENH-19 | Input styling | P2 | **Done** — all 45 untyped inputs now inherit the design system | |
 | BUG-20 | Pipeline | P0 | Not started | **module, not a fix** |
 | BUG-21 | Log Activity opens | P0 | **Done** — modal host had no case for it; composer existed but was unreachable | |
-| ENH-21a | Highlight connected | P1 | Not started | |
-| ENH-21b | Log Activity UX | P1 | Not started | |
+| ENH-21a | Highlight connected | P1 | **Done** — Connected/Not Connected are now the first, largest choice | |
+| ENH-21b | Log Activity UX | P1 | **Done** — two-step picker, keyboard shortcuts, 0 chips until you choose | |
 | ENH-21c | Dispositions in Setup | P1 | Not started | 22 values sent |
 | ENH-22 | Setup in main nav | P2 | Not started | |
 | ENH-23 | Launcher animation | P2 | Not started | |
