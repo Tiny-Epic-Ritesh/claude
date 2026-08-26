@@ -147,18 +147,13 @@ app.use('/api', crm);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const clientDist = join(__dirname, '..', '..', 'client', 'dist');
 
-/** Prefixes that belong to the server and should never be redirected. */
-const SERVER_PREFIXES = ['/api', '/dkyc-api', '/public'];
-
 if (existsSync(clientDist)) {
   // Serve hashed JS/CSS/image assets with a long cache
   app.use(express.static(clientDist, { maxAge: '1y', immutable: true }));
 
-  // Redirect bare / and any non-/ai-crm, non-API path to the SPA root.
+  // Redirect bare / → /ai-crm/  (exact root only — not a prefix catch-all).
   app.get('*', (req, res) => {
-    const isApi = SERVER_PREFIXES.some((p) => req.path.startsWith(p));
-    const isCrm = req.path.startsWith('/ai-crm');
-    if (!isApi && !isCrm) {
+    if (req.path === '/') {
       return res.redirect(301, '/ai-crm/');
     }
     // SPA fallback — let React Router handle the path client-side.
