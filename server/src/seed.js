@@ -7,6 +7,10 @@
  *   npm run seed
  */
 
+/* dotenv first: security.js reads CRM_MASTER_KEY at module load, and ES
+   imports are hoisted — so without this the script encrypts under the
+   development key while the server decrypts under the real one. */
+import 'dotenv/config';
 import { db, run, one, all } from './db.js';
 import { MASTER_STEPS } from './engine/kyc.js';
 import { ONBOARDING_STEPS, LMS_MODULES } from './routes/partners.js';

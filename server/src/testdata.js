@@ -30,6 +30,10 @@
  * real person if an integration were accidentally switched live.
  */
 
+/* dotenv first: security.js reads CRM_MASTER_KEY at module load, and ES
+   imports are hoisted — so without this the script encrypts under the
+   development key while the server decrypts under the real one. */
+import 'dotenv/config';
 import { db, all, one, run, transact } from './db.js';
 import { encryptField } from './security.js';
 
