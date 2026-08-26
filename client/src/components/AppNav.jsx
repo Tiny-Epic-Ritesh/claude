@@ -244,11 +244,11 @@ export function UserMenu({ session, orgName, onSignOut }) {
             <div className="divider" style={{ margin: '8px 0' }} />
 
             <div className="launcher-section">Customer surfaces</div>
-            <a className="popover-item" href="/dkyc" target="_blank" rel="noreferrer" role="menuitem">
+            <a className="popover-item" href="/ai-crm/dkyc" target="_blank" rel="noreferrer" role="menuitem">
               <Icon name="badge" size={17} /> DKYC portal
               <Icon name="open_in_new" size={14} style={{ marginLeft: 'auto', color: 'var(--ink-4)' }} />
             </a>
-            <a className="popover-item" href="/portal" target="_blank" rel="noreferrer" role="menuitem">
+            <a className="popover-item" href="/ai-crm/portal" target="_blank" rel="noreferrer" role="menuitem">
               <Icon name="handshake" size={17} /> Partner portal
               <Icon name="open_in_new" size={14} style={{ marginLeft: 'auto', color: 'var(--ink-4)' }} />
             </a>

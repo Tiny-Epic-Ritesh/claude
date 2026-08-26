@@ -151,14 +151,11 @@ if (existsSync(clientDist)) {
   // Serve hashed JS/CSS/image assets with a long cache
   app.use(express.static(clientDist, { maxAge: '1y', immutable: true }));
 
-  // Redirect bare / → /ai-crm/  (exact root only — not a prefix catch-all).
-  app.get('*', (req, res) => {
-    if (req.path === '/') {
-      return res.redirect(301, '/ai-crm/');
-    }
-    // SPA fallback — let React Router handle the path client-side.
-    res.sendFile(join(clientDist, 'index.html'));
-  });
+  // SPA fallback — nginx strips the /ai-crm/ prefix so Express always
+  // receives the bare path (/, /leads, /lists etc.).  Return index.html for
+  // anything that isn't a real static file; React Router takes it from there.
+  // The root redirect (/ → /ai-crm/) is handled by nginx, not here.
+  app.get('*', (_req, res) => res.sendFile(join(clientDist, 'index.html')));
 } else {
   app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 }
