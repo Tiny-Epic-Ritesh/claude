@@ -152,7 +152,7 @@ export default function Crm() {
           <OrgSwitcher orgs={orgs} value={activeOrg} onChange={switchOrg} />
           <ThemeToggle />
 
-          <button className="btn-ghost btn-sm" onClick={() => setCopilotOpen(true)} title="Ask the copilot">
+          <button className="btn-ghost btn-sm copilot-trigger" onClick={() => setCopilotOpen(true)} title="Ask the copilot">
             <Icon name="auto_awesome" size={18} />
           </button>
 

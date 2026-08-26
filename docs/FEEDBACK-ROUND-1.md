@@ -38,7 +38,7 @@ HTML** because the SPA fallback caught them. An unbuilt endpoint must 404.
 | ENH-05 | Summary-card drill-through | P1 | Not started | needs Q-05 |
 | ENH-05a | Drill-through per role | P1 | Not started | |
 | ENH-06 | Email composer | P1 | Not started | simulate until SMTP set |
-| BUG-07 | Copilot breaks layout | P0 | Not started | |
+| BUG-07 | Copilot breaks layout | P0 | **Done** — `.copilot` had no CSS at all | |
 | ENH-08 | Role→tab matrix | P1 | Blocked | matrix sent, awaiting mark-up |
 | ENH-09 | Market items link out | P2 | Not started | |
 | ENH-10 | Rename to Products | P2 | Not started | needs Q-10 |
