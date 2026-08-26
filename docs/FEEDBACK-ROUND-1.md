@@ -48,7 +48,7 @@ HTML** because the SPA fallback caught them. An unbuilt endpoint must 404.
 | ENH-10d | Start Engaging actions | P1 | Not started | |
 | ENH-11 | Group NBA + Start Call | P2 | Not started | |
 | ENH-12 | Warm card meaning | P1 | Not started | needs Q-12 |
-| BUG-13 | Quick Actions dead | P0 | Not started | |
+| BUG-13 | Quick Actions dead | P0 | **Done** — were spans, not buttons; server now declares each destination | |
 | ENH-14 | Contextual AI help | P1 | Not started | one assistant |
 | ENH-15 | Advanced Search UX | P1 | Not started | |
 | ENH-16 | Unmask + config | P1 | Not started | Admin/Superadmin only |
@@ -56,7 +56,7 @@ HTML** because the SPA fallback caught them. An unbuilt endpoint must 404.
 | BUG-18 | Dark theme audit | P1 | **Done** — same root cause, verified across the lead edit form | |
 | ENH-19 | Input styling | P2 | **Done** — all 45 untyped inputs now inherit the design system | |
 | BUG-20 | Pipeline | P0 | Not started | **module, not a fix** |
-| BUG-21 | Log Activity opens | P0 | Not started | |
+| BUG-21 | Log Activity opens | P0 | **Done** — modal host had no case for it; composer existed but was unreachable | |
 | ENH-21a | Highlight connected | P1 | Not started | |
 | ENH-21b | Log Activity UX | P1 | Not started | |
 | ENH-21c | Dispositions in Setup | P1 | Not started | 22 values sent |

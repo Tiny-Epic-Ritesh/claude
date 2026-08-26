@@ -459,6 +459,118 @@ function maskWorklist(worklist, unmask) {
   return out;
 }
 
+/* ------------------------------------------------------- quick actions */
+
+/**
+ * The cockpit's action pane.
+ *
+ * These used to be bare strings, which the client rendered as `<span>` badges.
+ * They looked like buttons, sat under a heading that promised "one click from
+ * the work list", and did nothing at all — the space was allocated and never
+ * connected.
+ *
+ * The fix is not to guess in the client what "Mark Warm" should do. It is for
+ * the server to say, the same way it already declares tabs, capabilities and
+ * disposition effects. Each action now carries where it goes and what kind of
+ * thing it is, so the client renders without knowing what any of them mean.
+ *
+ *   kind: 'go'      a destination that exists — navigate there
+ *   kind: 'pick'    needs a record the cockpit does not have. Opens the right
+ *                   list, filtered, so the user chooses the target rather than
+ *                   the system guessing it
+ *   kind: 'soon'    the surface is genuinely not built. Says so on hover
+ *                   instead of failing silently — an honest dead end beats a
+ *                   button that swallows the click
+ *
+ * `needs` is a capability. An action a role cannot perform is not rendered,
+ * so the pane never offers something the API would refuse.
+ */
+const ACTION = {
+  /* ---- navigation ---- */
+  'Manage users': { icon: 'group', kind: 'go', to: '/admin?tab=users', needs: 'admin.users' },
+  'Create user': { icon: 'person_add', kind: 'go', to: '/admin?tab=users', needs: 'admin.users' },
+  'Rule builder': { icon: 'rule', kind: 'go', to: '/admin?tab=rules', needs: 'admin.rules' },
+  'Create rule': { icon: 'rule', kind: 'go', to: '/admin?tab=rules', needs: 'admin.rules' },
+  'Integration health': { icon: 'cable', kind: 'go', to: '/admin?tab=integrations', needs: 'admin.system' },
+  'System config': { icon: 'settings', kind: 'go', to: '/admin?tab=integrations', needs: 'admin.system' },
+  'Audit export': { icon: 'receipt_long', kind: 'go', to: '/admin?tab=audit', needs: 'audit.read' },
+  'Upload template': { icon: 'description', kind: 'go', to: '/admin?tab=templates', needs: 'admin.templates' },
+  'Configure product': { icon: 'inventory_2', kind: 'go', to: '/admin?tab=products', needs: 'admin.products' },
+  'KYC journeys': { icon: 'verified_user', kind: 'go', to: '/kyc', needs: 'kyc.view' },
+  'View reports': { icon: 'assessment', kind: 'go', to: '/reports', needs: 'report.team' },
+  'Create campaign': { icon: 'campaign', kind: 'go', to: '/admin?tab=campaigns', needs: 'campaign.manage' },
+  'Upload content': { icon: 'folder', kind: 'go', to: '/admin?tab=content', needs: 'admin.content' },
+  'View source report': { icon: 'insights', kind: 'go', to: '/reports', needs: 'report.team' },
+  'Export analytics': { icon: 'download', kind: 'go', to: '/reports', needs: 'report.team' },
+  'Export team report': { icon: 'download', kind: 'go', to: '/reports', needs: 'report.team' },
+  'RM scorecard': { icon: 'leaderboard', kind: 'go', to: '/reports', needs: 'report.team' },
+  'Export pipeline report': { icon: 'download', kind: 'go', to: '/reports', needs: 'report.team' },
+  'View partner profile': { icon: 'handshake', kind: 'go', to: '/partners', needs: 'partner.view' },
+  'Add partner prospect': { icon: 'person_add', kind: 'go', to: '/partners', needs: 'partner.create' },
+  'Open ticket': { icon: 'support_agent', kind: 'go', to: '/tickets', needs: 'ticket.create' },
+
+  /* ---- needs a record the cockpit does not have ---- */
+  Call: { icon: 'call', kind: 'pick', to: '/leads', hint: 'Choose who to call', needs: 'lead.contact' },
+  WhatsApp: { icon: 'chat', kind: 'pick', to: '/leads', hint: 'Choose who to message', needs: 'lead.contact' },
+  SMS: { icon: 'sms', kind: 'pick', to: '/leads', hint: 'Choose who to message', needs: 'lead.contact' },
+  'Send brochure': { icon: 'attach_file', kind: 'pick', to: '/leads', hint: 'Choose who to send to', needs: 'lead.contact' },
+  'Mark callback': { icon: 'schedule', kind: 'pick', to: '/leads', hint: 'Choose the lead', needs: 'lead.contact' },
+  'Not reachable': { icon: 'phone_missed', kind: 'pick', to: '/leads', hint: 'Choose the lead', needs: 'lead.contact' },
+  'Mark Exploring': { icon: 'explore', kind: 'pick', to: '/leads', hint: 'Choose the lead', needs: 'card.mark.exploring' },
+  'Mark Warm': { icon: 'local_fire_department', kind: 'pick', to: '/leads', hint: 'Choose the lead', needs: 'card.mark.warm' },
+  'Mark Exploring / Warm': { icon: 'local_fire_department', kind: 'pick', to: '/leads', hint: 'Choose the lead', needs: 'card.mark.exploring' },
+  'Schedule follow-up': { icon: 'event', kind: 'pick', to: '/leads', hint: 'Choose the lead', needs: 'lead.contact' },
+  'Create task': { icon: 'add_task', kind: 'go', to: '/tasks' },
+  'Create ticket': { icon: 'support_agent', kind: 'pick', to: '/tickets', hint: 'Raise against a lead', needs: 'ticket.create' },
+  'Add note': { icon: 'edit_note', kind: 'pick', to: '/leads', hint: 'Choose the lead', needs: 'lead.contact' },
+  'Flag for Sales RM': { icon: 'flag', kind: 'pick', to: '/leads', hint: 'Choose the lead', needs: 'lead.contact' },
+  'Hand to Sales RM': { icon: 'forward', kind: 'pick', to: '/leads', hint: 'Choose the lead', needs: 'lead.contact' },
+  'Request Product RM': { icon: 'support_agent', kind: 'pick', to: '/leads', hint: 'Choose the lead', needs: 'card.request.productrm' },
+  'Reassign lead': { icon: 'person_pin', kind: 'pick', to: '/leads', hint: 'Choose the lead', needs: 'lead.reassign' },
+  'Approve stage change': { icon: 'approval', kind: 'go', to: '/approvals', needs: 'lead.stage.change' },
+  'Push to autodialler': { icon: 'dialpad', kind: 'pick', to: '/leads', hint: 'Select leads to push', needs: 'lead.contact' },
+  'View lead (read-only)': { icon: 'visibility', kind: 'go', to: '/leads', needs: 'lead.view.all' },
+  'View KYC progress': { icon: 'verified_user', kind: 'go', to: '/kyc', needs: 'kyc.view' },
+  'Add internal note': { icon: 'edit_note', kind: 'pick', to: '/leads', hint: 'Choose the lead' },
+  'Flag concern to Supervisor': { icon: 'flag', kind: 'pick', to: '/leads', hint: 'Choose the lead' },
+  'Log partner activity': { icon: 'edit_note', kind: 'pick', to: '/partners', hint: 'Choose the partner', needs: 'partner.view' },
+  'Advance onboarding step': { icon: 'trending_flat', kind: 'pick', to: '/partners', hint: 'Choose the partner', needs: 'partner.view' },
+  'Request elevation': { icon: 'upgrade', kind: 'pick', to: '/partners', hint: 'Choose the partner', needs: 'partner.elevate.request' },
+  Reply: { icon: 'reply', kind: 'pick', to: '/tickets', hint: 'Choose the case', needs: 'ticket.reply' },
+  Reassign: { icon: 'person_pin', kind: 'pick', to: '/tickets', hint: 'Choose the case', needs: 'ticket.reassign' },
+  Escalate: { icon: 'priority_high', kind: 'pick', to: '/tickets', hint: 'Choose the case', needs: 'ticket.escalate' },
+  'Mark resolved': { icon: 'task_alt', kind: 'pick', to: '/tickets', hint: 'Choose the case', needs: 'ticket.reply' },
+  'Waiting on client': { icon: 'hourglass_empty', kind: 'pick', to: '/tickets', hint: 'Choose the case', needs: 'ticket.reply' },
+  Merge: { icon: 'merge', kind: 'pick', to: '/tickets', hint: 'Choose the case', needs: 'ticket.merge' },
+  'Send CSAT': { icon: 'sentiment_satisfied', kind: 'pick', to: '/tickets', hint: 'Choose the case', needs: 'ticket.reply' },
+
+  /* ---- honestly not built ---- */
+  'Create list': { icon: 'format_list_bulleted', kind: 'soon', label: 'Lead Lists is still in build' },
+  'Reassign product card': { icon: 'swap_horiz', kind: 'soon', label: 'Bulk card reassignment is still in build' },
+  'Override KYC step': { icon: 'edit', kind: 'pick', to: '/kyc', hint: 'Choose the journey', needs: 'kyc.override' },
+  'Escalate stalled KYC': { icon: 'priority_high', kind: 'pick', to: '/kyc', hint: 'Choose the journey', needs: 'kyc.view' },
+};
+
+/**
+ * Resolve a role's action labels into things the client can actually render.
+ *
+ * Anything the user's capabilities do not permit is dropped rather than shown
+ * disabled — the cockpit is a starting point, not a permissions explainer, and
+ * a pane full of things you cannot do is worse than a shorter pane.
+ */
+export function resolveActions(labels, caps) {
+  return labels
+    .map((label) => {
+      const def = ACTION[label];
+      // An unmapped label is a bug in this table, not in the cockpit. Render it
+      // as unavailable rather than as a button that does nothing.
+      if (!def) return { label, icon: 'help', kind: 'soon', hint: 'Not wired up yet' };
+      if (def.needs && !caps.has(def.needs)) return null;
+      return { label, icon: def.icon, kind: def.kind, to: def.to ?? null, hint: def.hint ?? def.label ?? null };
+    })
+    .filter(Boolean);
+}
+
 router.get('/', (req, res) => {
   const build = COCKPITS[req.user.role];
   if (!build) return res.status(400).json({ error: `No cockpit configured for role "${req.user.role}"` });
@@ -468,6 +580,9 @@ router.get('/', (req, res) => {
 
   res.json({
     ...cockpit,
+    // Resolved here rather than in each cockpit builder, so every role gets the
+    // same treatment and a new action only has to be declared once.
+    actions: resolveActions(cockpit.actions ?? [], req.caps ?? new Set()),
     worklist: maskWorklist(cockpit.worklist, unmask),
     role: req.user.role,
     user: { id: req.user.id, name: req.user.name },

@@ -3484,3 +3484,55 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
 @media (prefers-reduced-motion: reduce) {
   .copilot, .copilot-trigger::after { animation: none; }
 }
+
+/* ======================================================== quick actions
+ *
+ * The cockpit's action pane. These were spans styled as badges — they looked
+ * clickable, sat under a heading promising "one click", and did nothing. Now
+ * they are buttons, and they look like buttons.
+ */
+
+.quick-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 8px;
+}
+
+.quick-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--hairline);
+  background: var(--glass-2);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease, transform 0.14s ease, color 0.14s ease;
+}
+.quick-action > span { flex: 1; min-width: 0; }
+.quick-action .material-symbols-rounded:first-child { color: var(--accent-dark); flex-shrink: 0; }
+
+.quick-action:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--ink);
+  transform: translateY(-1px);
+}
+.quick-action:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* The arrow only appears on hover, so a grid of eight actions does not read as
+   eight arrows competing for attention. */
+.qa-go { opacity: 0; transition: opacity 0.14s ease; flex-shrink: 0; }
+.quick-action:hover .qa-go { opacity: 0.7; }
+
+/* Not built yet, and says so rather than swallowing the click. */
+.quick-action.is-soon { opacity: 0.5; cursor: not-allowed; }
+.quick-action.is-soon .qa-go { opacity: 0.7; }

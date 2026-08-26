@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { money, rupees, shortDate, dateTime, mins, STATE_LABEL, ROLE_LABEL } from '../api.js';
-import { useApi, Loading, ErrorBanner, Stat, Empty, CardStrip, AgeBadge, PriorityBadge, Progress, Tabs } from '../components/ui.jsx';
+import { useApi, Loading, ErrorBanner, Stat, Empty, CardStrip, AgeBadge, PriorityBadge, Progress, Tabs, Icon } from '../components/ui.jsx';
 
 /**
  * One component renders all eleven cockpits.
@@ -10,9 +10,9 @@ import { useApi, Loading, ErrorBanner, Stat, Empty, CardStrip, AgeBadge, Priorit
  * changing a metric is a server-side config change, not a new screen.
  */
 export default function Cockpit({ session }) {
+  const navigate = useNavigate();
   const [data, { loading, error, reload }] = useApi('/cockpit');
   const [view, setView] = useState('primary');
-  const navigate = useNavigate();
 
   if (loading) return <Loading label="Building your cockpit…" />;
   if (error) return <ErrorBanner error={error} />;
@@ -41,9 +41,11 @@ export default function Cockpit({ session }) {
       <div className="grid grid-2" style={{ marginBottom: 14 }}>
         {/* Zone 3 — action pane. Actions are the role's most frequent moves. */}
         <section className="card">
-          <div className="card-head"><h2>Actions</h2><span className="tiny muted">One click from the work list</span></div>
-          <div className="card-body row wrap" style={{ gap: 6 }}>
-            {data.actions.map((a) => <span key={a} className="badge">{a}</span>)}
+          <div className="card-head"><h2>Actions</h2><span className="tiny muted">The moves this role makes most</span></div>
+          <div className="card-body quick-actions">
+            {data.actions.map((a) => (
+              <QuickAction key={a.label} action={a} onGo={(to) => navigate(to)} />
+            ))}
           </div>
         </section>
 
@@ -365,5 +367,36 @@ function SourceRows({ rows }) {
         ))}
       </tbody>
     </table>
+  );
+}
+
+/**
+ * One quick action.
+ *
+ * These were `<span className="badge">` — labels styled to look like controls,
+ * under a heading promising "one click", wired to nothing. Now each is a real
+ * button that goes where the server says.
+ *
+ * `pick` actions need a record the cockpit does not have, so they open the
+ * right list and say why rather than guessing which lead was meant. `soon`
+ * actions state plainly that the surface is not built — an honest dead end is
+ * better than a click that vanishes.
+ */
+function QuickAction({ action, onGo }) {
+  const unavailable = action.kind === 'soon';
+
+  return (
+    <button
+      type="button"
+      className={`quick-action ${unavailable ? 'is-soon' : ''}`}
+      disabled={unavailable}
+      title={action.hint ?? undefined}
+      onClick={() => !unavailable && action.to && onGo(action.to)}
+    >
+      <Icon name={action.icon} size={16} />
+      <span>{action.label}</span>
+      {action.kind === 'pick' && <Icon name="arrow_forward" size={13} className="qa-go" />}
+      {unavailable && <Icon name="schedule" size={13} className="qa-go" />}
+    </button>
   );
 }

@@ -13,6 +13,7 @@
 import { useState } from 'react';
 import { api, money } from '../api.js';
 import { useApi, Modal, Spinner, ErrorBanner, Loading, Icon } from '../components/ui.jsx';
+import ActivityComposer from './ActivityComposer.jsx';
 
 const CHANNEL_LABEL = { whatsapp: 'WhatsApp', sms: 'SMS', email: 'Email' };
 
@@ -27,6 +28,7 @@ export default function ActionModal({ state, session, onClose, onDone, onNotice 
     case 'bulk_owner': return <BulkOwnerModal {...bulk} />;
     case 'bulk_stage': return <BulkStageModal {...bulk} />;
     case 'bulk_message': return <BulkMessageModal {...bulk} channel={channel} />;
+    case 'activity': return <ActivityModal {...common} />;
     case 'message': return <MessageModal {...common} channel={channel} />;
     case 'task': return <TaskModal {...common} />;
     case 'case': return <CaseModal {...common} />;
@@ -676,5 +678,42 @@ function BulkMessageModal({ ids, channel, onClose, onDone, onNotice }) {
         </small>
       </label>
     </BulkRunner>
+  );
+}
+
+/* ----------------------------------------------------------- activity */
+
+/**
+ * Log an activity.
+ *
+ * `leadActions` has always set `kind: 'activity'` and this switch had no case
+ * for it, so the state changed and `default: return null` rendered nothing.
+ * Clicking the menu item did precisely nothing, silently — BUG-21.
+ *
+ * The composer itself was already built and already good: it drives the
+ * disposition matrix, enforces which outcomes need a date or a reason, and
+ * creates the follow-up task. It was simply never reachable from here.
+ */
+function ActivityModal({ lead, onClose, onDone, onNotice }) {
+  const [detail] = useApi(`/leads/${lead.id}`);
+
+  return (
+    <Modal
+      title="Log an activity"
+      subtitle={`On ${lead.name}`}
+      onClose={onClose}
+      wide
+    >
+      {!detail ? <Loading /> : (
+        <ActivityComposer
+          lead={detail}
+          cards={detail.cards ?? []}
+          onLogged={(res) => {
+            onNotice?.(res?.confirmation ?? 'Activity logged.');
+            onDone();
+          }}
+        />
+      )}
+    </Modal>
   );
 }
