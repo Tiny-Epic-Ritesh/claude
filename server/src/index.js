@@ -134,17 +134,36 @@ app.use('/api', crm);
  * Serve the React build as static files and fall back to index.html for any
  * route the SPA handles client-side.
  *
+ * The React app is built with base="/ai-crm/" so all its assets live under
+ * /ai-crm/assets/…  Express static serves them directly from client/dist.
+ *
+ * Any request that does NOT start with a known API prefix and does NOT start
+ * with /ai-crm is redirected to /ai-crm/ so that visiting bare "/" lands on
+ * the CRM instead of a 404.
+ *
  * This is only active when the built client/dist directory exists (i.e. in
  * production Docker). In local dev, Vite serves the frontend on its own port.
  */
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const clientDist = join(__dirname, '..', '..', 'client', 'dist');
 
+/** Prefixes that belong to the server and should never be redirected. */
+const SERVER_PREFIXES = ['/api', '/dkyc-api', '/public'];
+
 if (existsSync(clientDist)) {
   // Serve hashed JS/CSS/image assets with a long cache
   app.use(express.static(clientDist, { maxAge: '1y', immutable: true }));
-  // SPA fallback — any unrecognised path returns index.html
-  app.get('*', (_req, res) => res.sendFile(join(clientDist, 'index.html')));
+
+  // Redirect bare / and any non-/ai-crm, non-API path to the SPA root.
+  app.get('*', (req, res) => {
+    const isApi = SERVER_PREFIXES.some((p) => req.path.startsWith(p));
+    const isCrm = req.path.startsWith('/ai-crm');
+    if (!isApi && !isCrm) {
+      return res.redirect(301, '/ai-crm/');
+    }
+    // SPA fallback — let React Router handle the path client-side.
+    res.sendFile(join(clientDist, 'index.html'));
+  });
 } else {
   app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 }

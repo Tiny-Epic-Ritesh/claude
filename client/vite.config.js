@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  base: '/ai-crm/',
   server: {
     port: 5200,
     // One origin for all three surfaces, so no CORS handling in the app.
