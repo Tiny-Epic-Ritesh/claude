@@ -20,7 +20,20 @@ import { integrationRegistry } from '../integrations.js';
 const router = Router();
 router.use(requireUser);
 
-const metric = (label, value, sub, tone) => ({ label, value, sub: sub ?? null, tone: tone ?? null });
+/**
+ * One headline figure.
+ *
+ * `to` is the point of ENH-05: a count that cannot be opened is trivia. Where a
+ * metric knows the query behind it, it carries the destination, and the client
+ * renders the number as a link to exactly the records it counted.
+ *
+ * Metrics that genuinely have no list behind them — a percentage, an average —
+ * simply omit it and render as plain text. Better an honest number than a link
+ * that lands somewhere approximate.
+ */
+const metric = (label, value, sub, tone, to) => ({
+  label, value, sub: sub ?? null, tone: tone ?? null, to: to ?? null,
+});
 const money = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
 
 /* --------------------------------------------------------------- shared */
@@ -102,8 +115,8 @@ const COCKPITS = {
     title: 'System cockpit',
     subtitle: 'Platform health, every action, every integration.',
     metrics: [
-      metric('Active users', orgCount(user, active, 'users', 'active = 1'), `${all('SELECT DISTINCT role FROM users').length} roles in use`),
-      metric('Total leads', orgCount(user, active, 'leads', 'deleted_at IS NULL'), `${orgCount(user, active, 'leads', 'deleted_at IS NOT NULL')} in recycle bin`),
+      metric('Active users', orgCount(user, active, 'users', 'active = 1'), `${all('SELECT DISTINCT role FROM users').length} roles in use`, null, '/admin?tab=users'),
+      metric('Total leads', orgCount(user, active, 'leads', 'deleted_at IS NULL'), `${orgCount(user, active, 'leads', 'deleted_at IS NOT NULL')} in recycle bin`, null, '/leads'),
       metric('Product cards', one('SELECT COUNT(*) n FROM product_cards').n, `${one("SELECT COUNT(*) n FROM product_cards WHERE state != 'INACTIVE'").n} engaged`),
       metric('Rules fired today', one("SELECT COUNT(*) n FROM rule_runs WHERE date(created_at) = date('now') AND dry_run = 0").n, `${one('SELECT COUNT(*) n FROM rules WHERE enabled = 1').n} rules enabled`),
       (() => {
@@ -111,7 +124,7 @@ const COCKPITS = {
         const live = reg.filter((i) => i.status === 'live').length;
         return metric('Integrations', `${live}/${reg.length}`, live ? `${live} live, rest simulated` : 'all simulated in this build', live ? 'ok' : 'warn');
       })(),
-      metric('Audit events today', one("SELECT COUNT(*) n FROM audit_log WHERE date(created_at) = date('now')").n),
+      metric('Audit events today', one("SELECT COUNT(*) n FROM audit_log WHERE date(created_at) = date('now')").n, null, null, '/admin?tab=audit'),
     ],
     worklist: {
       type: 'audit',
@@ -128,10 +141,10 @@ const COCKPITS = {
     metrics: [
       metric('Leads created today', orgCount(user, active, 'leads', "date(created_at) = date('now')")),
       metric('Calls today', one("SELECT COUNT(*) n FROM activities WHERE type = 'Call' AND date(created_at) = date('now')").n),
-      metric('Tickets opened today', orgCount(user, active, 'tickets', "date(created_at) = date('now')")),
-      metric('SLA breaches', one('SELECT COUNT(*) n FROM tickets WHERE breached = 1').n, 'open + closed', 'danger'),
-      metric('Active users', orgCount(user, active, 'users', 'active = 1')),
-      metric('Products configured', orgCount(user, active, 'product_types', 'active = 1')),
+      metric('Tickets opened today', orgCount(user, active, 'tickets', "date(created_at) = date('now')"), null, null, '/tickets'),
+      metric('SLA breaches', one('SELECT COUNT(*) n FROM tickets WHERE breached = 1').n, 'open + closed', 'danger', '/tickets?breached=1'),
+      metric('Active users', orgCount(user, active, 'users', 'active = 1'), null, null, '/admin?tab=users'),
+      metric('Products configured', orgCount(user, active, 'product_types', 'active = 1'), null, null, '/admin?tab=products'),
     ],
     worklist: {
       type: 'users',
@@ -172,12 +185,12 @@ const COCKPITS = {
       title: 'Caller cockpit',
       subtitle: 'Your queue for today, ordered by what needs calling first.',
       metrics: [
-        metric('Leads in queue', leads.length),
+        metric('Leads in queue', leads.length, null, null, '/leads'),
         metric('Assigned today', leads.filter((l) => String(l.created_at).startsWith(today)).length),
         metric('Calls made', callsToday.length),
         metric('Connects', callsToday.filter((c) => /connected/i.test(c.outcome || '')).length),
         metric('Callbacks pending', leads.filter((l) => l.callback_at).length, 'due first in the queue', 'warn'),
-        metric('Marked Exploring', leads.reduce((s, l) => s + l.exploring_count, 0)),
+        metric('Marked Exploring', leads.reduce((s, l) => s + l.exploring_count, 0), null, null, '/leads?card_state=EXPLORING'),
       ],
       worklist: { type: 'leads', title: 'Call queue', rows: queue, columns: ['name', 'mobile', 'stage', 'age_band', 'callback_at', 'source'] },
       actions: ['Call', 'WhatsApp', 'SMS', 'Mark callback', 'Not reachable', 'Mark Exploring', 'Flag for Sales RM', 'Push to autodialler'],
@@ -190,14 +203,20 @@ const COCKPITS = {
     const sorted = [...leads].sort((a, b) => (b.warm_count - a.warm_count) || (b.exploring_count - a.exploring_count));
     return {
       title: 'Dealer cockpit',
-      subtitle: 'Warm leads first — product engagement and follow-ups.',
+      subtitle: 'Warmest products first — engagement and follow-ups.',
       metrics: [
-        metric('Leads assigned', leads.length),
-        metric('Follow-ups due today', countDueToday(user.id), null, 'warn'),
-        metric('Warm cards', leads.reduce((s, l) => s + l.warm_count, 0), 'genuine interest confirmed'),
-        metric('Exploring cards', leads.reduce((s, l) => s + l.exploring_count, 0)),
+        metric('Leads assigned', leads.length, null, null, '/leads'),
+        metric('Follow-ups due today', countDueToday(user.id), null, 'warn', '/tasks'),
+        // ENH-12: 'Warm cards' was ambiguous — it reads as leads at a warm
+        // stage, but it counts product interests in the WARM state. Named for
+        // what it counts, and it opens exactly those leads.
+        metric('Products marked Warm', leads.reduce((s, l) => s + l.warm_count, 0),
+          'across your leads — genuine interest confirmed', null, '/leads?card_state=WARM'),
+        metric('Products being explored', leads.reduce((s, l) => s + l.exploring_count, 0),
+          null, null, '/leads?card_state=EXPLORING'),
         metric('Brochures sent (7d)', one("SELECT COUNT(*) n FROM activities WHERE user_id = ? AND type = 'WhatsApp' AND created_at >= datetime('now','-7 days')", [user.id]).n),
-        metric('Cards Active this month', leads.reduce((s, l) => s + l.active_count, 0)),
+        metric('Products now Active', leads.reduce((s, l) => s + l.active_count, 0),
+          null, null, '/leads?card_state=ACTIVE'),
       ],
       worklist: { type: 'leads', title: 'Pipeline by warmth', rows: sorted, columns: ['name', 'mobile', 'cards', 'days_since_contact', 'age_band'] },
       actions: ['Call', 'WhatsApp', 'Send brochure', 'Mark Exploring', 'Mark Warm', 'Schedule follow-up', 'Create ticket', 'Hand to Sales RM'],
@@ -212,12 +231,12 @@ const COCKPITS = {
       title: 'Sales RM cockpit',
       subtitle: 'Your book — product states, ageing and what needs moving.',
       metrics: [
-        metric('Leads owned', leads.length),
+        metric('Leads owned', leads.length, null, null, '/leads'),
         metric('Active (7d contact)', leads.filter((l) => l.days_since_contact !== null && l.days_since_contact <= 7).length),
-        metric('Warm cards', leads.reduce((s, l) => s + l.warm_count, 0), 'awaiting your next move'),
-        metric('KYC in progress', journeys.filter((j) => j.status === 'In Progress').length),
-        metric('At risk / cold', leads.filter((l) => ['At Risk', 'Cold'].includes(l.age_band)).length, 'ageing bands', 'danger'),
-        metric('Tasks due today', countDueToday(user.id), null, 'warn'),
+        metric('Products marked Warm', leads.reduce((s, l) => s + l.warm_count, 0), 'awaiting your next move', null, '/leads?card_state=WARM'),
+        metric('KYC in progress', journeys.filter((j) => j.status === 'In Progress').length, null, null, '/kyc'),
+        metric('At risk / cold', leads.filter((l) => ['At Risk', 'Cold'].includes(l.age_band)).length, 'ageing bands', 'danger', '/leads?band=Cold'),
+        metric('Tasks due today', countDueToday(user.id), null, 'warn', '/tasks'),
       ],
       worklist: { type: 'leads', title: 'My leads', rows: leads, columns: ['name', 'stage', 'cards', 'age_band', 'days_since_contact', 'partner_name'] },
       actions: ['Call', 'WhatsApp', 'Send brochure', 'Mark Exploring / Warm', 'Request Product RM', 'Create task', 'Create ticket', 'Add note'],

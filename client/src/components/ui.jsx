@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api, STATE_LABEL } from '../api.js';
 import { avatarStyle, initials, resolvedTheme, cycleTheme } from '../theme.js';
 
@@ -70,13 +71,32 @@ export function Modal({ title, subtitle, onClose, children, wide }) {
   );
 }
 
-export function Stat({ label, value, sub, tone }) {
-  return (
-    <div className={`card stat ${tone ? `tone-${tone}` : ''}`}>
+/**
+ * One headline figure.
+ *
+ * ENH-05: a count you cannot open is trivia. When the server gives the metric a
+ * destination, the whole card becomes a link to exactly the records it counted —
+ * and because the destination is a filtered list, the user lands somewhere they
+ * can keep working rather than on a number.
+ *
+ * Metrics with no list behind them — a percentage, a ratio — render as before.
+ * A link that lands somewhere approximate is worse than no link.
+ */
+export function Stat({ label, value, sub, tone, to }) {
+  const body = (
+    <>
       <div className="stat-label">{label}</div>
-      <div className="stat-value">{value}</div>
+      <div className="stat-value">{value}{to && <Icon name="arrow_forward" size={15} className="stat-go" />}</div>
       {sub && <div className="stat-sub">{sub}</div>}
-    </div>
+    </>
+  );
+
+  if (!to) return <div className={`card stat ${tone ? `tone-${tone}` : ''}`}>{body}</div>;
+
+  return (
+    <Link to={to} className={`card stat is-linked ${tone ? `tone-${tone}` : ''}`}>
+      {body}
+    </Link>
   );
 }
 

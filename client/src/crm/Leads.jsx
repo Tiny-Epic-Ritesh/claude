@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, money, shortDate, STATE_LABEL } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty, Modal, Spinner, CardStrip, AgeBadge } from '../components/ui.jsx';
 import ActionMenu, { BulkBar } from '../components/ActionMenu.jsx';
@@ -10,7 +10,34 @@ import AdvancedSearch from '../components/AdvancedSearch.jsx';
 const BANDS = ['Fresh', 'Active', 'Ageing', 'At Risk', 'Cold'];
 
 export default function Leads({ session }) {
-  const [filters, setFilters] = useState({ q: '', stage: '', band: '', card_state: '', product_id: '' });
+  /**
+   * Filters seed from the URL, so a drill-through lands filtered.
+   *
+   * ENH-05 sends people here from a cockpit figure — `/leads?card_state=WARM`
+   * has to arrive showing those leads, not the whole book. Reading the query
+   * also means the filtered view is a real URL: shareable, bookmarkable, and
+   * survives a refresh.
+   */
+  const [search] = useSearchParams();
+  const [filters, setFilters] = useState(() => ({
+    q: search.get('q') ?? '',
+    stage: search.get('stage') ?? '',
+    band: search.get('band') ?? '',
+    card_state: search.get('card_state') ?? '',
+    product_id: search.get('product_id') ?? '',
+  }));
+
+  // A second drill-through while already on this page changes the query but
+  // not the component, so the filters have to follow the URL.
+  useEffect(() => {
+    setFilters({
+      q: search.get('q') ?? '',
+      stage: search.get('stage') ?? '',
+      band: search.get('band') ?? '',
+      card_state: search.get('card_state') ?? '',
+      product_id: search.get('product_id') ?? '',
+    });
+  }, [search]);
   const query = useMemo(() => {
     const params = new URLSearchParams();
     for (const [k, v] of Object.entries(filters)) if (v) params.set(k, v);
