@@ -248,6 +248,26 @@ the tenant**:
 With those five, every **NEEDS DATA** above closes and this becomes a build
 specification rather than a proposal.
 
+### How to produce them
+
+There is no need to write the queries. Export leads to CSV — the pattern the
+audit records as already routine in this tenant — and run:
+
+```
+node src/analyze-export.js path/to/leads-export.csv
+```
+
+It streams the file and writes `migration-data-quality.md` containing fill
+rates, distinct counts, and value lists for every field that behaves like a
+controlled list. It has a section answering each of the five questions above by
+name.
+
+**The output is safe to share; the input is not.** Value lists are produced only
+for fields with few enough distinct values to be a picklist, and never for a
+column whose name suggests an identifier — so names, PANs, mobiles, emails,
+notes and client codes are counted but never printed. Delete the CSV once the
+script has read it.
+
 ### What can proceed without it
 
 The consent widening (item 3 in the sequence) is a schema change justified by

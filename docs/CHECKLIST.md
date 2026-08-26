@@ -225,8 +225,12 @@ own capability and every export is logged with row count and the filter used.
 - [x] Per-channel consent — the one migration blocker that needed no export.
       Legacy holds four independent withdrawals (DoNotCall/Email/SMS/Track);
       the CRM had one boolean, which could only over- or under-block.
-- [ ] LeadSquared data-quality export — five aggregate queries, no client rows.
-      Closes every **NEEDS DATA** marker in the migration map.
+- [x] Data-quality analyser — `server/src/analyze-export.js`. Turns a raw CSV
+      export into the five aggregates, and cannot leak PII: value lists are
+      produced only for picklist-shaped fields and never for identifier-named
+      columns. Verified against a synthetic export — zero PII in the output.
+- [ ] **Blocked on the user:** run the export from LeadSquared and the analyser
+      over it. Only Bonanza has tenant access.
 
 ---
 

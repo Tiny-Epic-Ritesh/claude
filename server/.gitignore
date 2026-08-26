@@ -1,0 +1,7 @@
+
+
+# The data-quality report is aggregates only and safe to share, but it is an
+# artefact of one export rather than source. Regenerate it, do not commit it.
+migration-data-quality.md
+# Never commit a raw export — it carries every client's PII.
+*-export.csv
