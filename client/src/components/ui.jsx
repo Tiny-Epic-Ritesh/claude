@@ -110,15 +110,66 @@ export function CardDot({ colour, state, showLabel }) {
   );
 }
 
-export function CardStrip({ cards = [], max = 12 }) {
+/**
+ * Product engagement, readable without hovering.
+ *
+ * ENH-10a. This was a row of coloured dots — one per product, meaning nothing
+ * until you hovered each one individually. With eleven products that is eleven
+ * hovers to answer "what is happening with this lead", which is not a summary,
+ * it is a puzzle.
+ *
+ * Now it groups by state and labels the count. A lead with two warm products
+ * and one active reads as "2 Warm · 1 Active" at a glance, and the states that
+ * matter are ordered first. Products nobody has touched are counted, not
+ * listed — INACTIVE is the default for every product on every lead, so showing
+ * eight of them would bury the three that matter.
+ */
+const STATE_ORDER = ['AT_RISK', 'WARM', 'PRODUCT_RM_ENGAGED', 'EXPLORING', 'KYC_IN_PROGRESS', 'ACTIVE', 'ON_HOLD', 'LOST'];
+
+export function CardStrip({ cards = [], max = 4 }) {
+  const engaged = cards.filter((c) => c.state && c.state !== 'INACTIVE');
+
+  if (engaged.length === 0) {
+    return <span className="tiny muted">No product interest yet</span>;
+  }
+
+  const byState = new Map();
+  for (const c of engaged) {
+    if (!byState.has(c.state)) byState.set(c.state, []);
+    byState.get(c.state).push(c.name || c.product_name || c.code);
+  }
+
+  const groups = [...byState.entries()]
+    .sort((a, b) => STATE_ORDER.indexOf(a[0]) - STATE_ORDER.indexOf(b[0]));
+
   return (
-    <span className="row" style={{ gap: 3 }}>
-      {cards.slice(0, max).map((c) => (
-        <span key={c.code || c.id} className={`dot dot-${c.colour || 'grey'}`} title={`${c.name}: ${STATE_LABEL[c.state] || c.state}`} />
+    <span className="card-summary">
+      {groups.slice(0, max).map(([state, names]) => (
+        <span
+          key={state}
+          className={`state-pill ${PILL_BY_STATE[state] ?? ''}`}
+          /* The product names stay on the title for anyone who wants them,
+             but nobody has to hover to get the shape of it. */
+          title={names.join(', ')}
+        >
+          {names.length} {STATE_LABEL[state] || state}
+        </span>
       ))}
+      {groups.length > max && <span className="tiny muted">+{groups.length - max}</span>}
     </span>
   );
 }
+
+const PILL_BY_STATE = {
+  ACTIVE: 'state-active',
+  WARM: 'state-warm',
+  PRODUCT_RM_ENGAGED: 'state-warm',
+  EXPLORING: 'state-exploring',
+  KYC_IN_PROGRESS: 'state-exploring',
+  AT_RISK: 'state-risk',
+  ON_HOLD: 'state-risk',
+  LOST: 'state-lost',
+};
 
 export const AgeBadge = ({ band, days }) => {
   const tone = band === 'Cold' ? 'red' : band === 'At Risk' ? 'red' : band === 'Ageing' ? 'amber' : band === 'Fresh' ? 'green' : '';

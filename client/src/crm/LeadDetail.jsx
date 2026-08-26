@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, money, rupees, shortDate, dateTime, mins, STATE_LABEL, ROLE_LABEL, appUrl } from '../api.js';
-import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, AgeBadge, PriorityBadge, Progress, CardDot, Icon } from '../components/ui.jsx';
+import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, AgeBadge, PriorityBadge, Progress, CardDot, CardStrip, Icon } from '../components/ui.jsx';
 import ActivityComposer from './ActivityComposer.jsx';
 import InCall from './InCall.jsx';
 import ProductCard from '../components/ProductCard.jsx';
@@ -81,16 +81,24 @@ export default function LeadDetail({ session }) {
               KYC: {lead.kyc_status}
             </span>
             {lead.open_tickets > 0 && <span className="badge badge-red">{lead.open_tickets} open ticket</span>}
-            <span className="row" style={{ gap: 3, marginLeft: 4 }}>
-              {lead.cards.map((c) => <span key={c.id} className={`dot dot-${c.colour}`} title={`${c.product_name}: ${STATE_LABEL[c.state]}`} />)}
-            </span>
+            {/* ENH-10a: was a row of dots needing one hover each. */}
+            <CardStrip cards={lead.cards.map((c) => ({ ...c, name: c.product_name }))} />
           </div>
         </div>
 
-        <div className="row wrap">
+        {/* ENH-11: these sat loose against the page with nothing separating
+            them from the content. Grouped into one toolbar so they read as a
+            set, matching the Actions button they sit beside. */}
+        <div className="record-toolbar">
           {readOnly && <span className="badge badge-amber">Read-only for {ROLE_LABEL[session.role]}</span>}
-          {can('lead.contact') && <button className="btn-accent" onClick={() => setInCall(true)}>Start call</button>}
-          <button onClick={askNextAction} disabled={nbaBusy}>{nbaBusy ? <Spinner /> : 'Next best action'}</button>
+          {can('lead.contact') && (
+            <button className="btn btn-accent" onClick={() => setInCall(true)}>
+              <Icon name="call" /> Start call
+            </button>
+          )}
+          <button className="btn" onClick={askNextAction} disabled={nbaBusy}>
+            {nbaBusy ? <Spinner /> : <><Icon name="auto_awesome" /> Next best action</>}
+          </button>
           {!readOnly && (
             <ActionMenu
               lead={lead}
@@ -127,6 +135,12 @@ export default function LeadDetail({ session }) {
       )}
 
       {/* Snapshot */}
+      {/* ENH-17: the tab strip used to sit below the summary boxes, the detail
+          block and the buttons — far enough down that people did not find it.
+          It is now the first thing under the header, where a record's
+          navigation belongs. */}
+      <Tabs tabs={tabs} active={tab} onChange={setTab} />
+
       <div className="metrics">
         <Snap label="Lead score" value={lead.score} />
         <Snap label="AUM" value={lead.aum ? money(lead.aum) : '—'} sub={lead.aum_as_of ? `as of ${lead.aum_as_of}` : 'no active products'} />
@@ -134,8 +148,6 @@ export default function LeadDetail({ session }) {
         <Snap label="Last contact" value={lead.days_since_contact == null ? 'never' : `${lead.days_since_contact}d ago`} sub={shortDate(lead.last_activity_at)} />
         <Snap label="Risk profile" value={lead.risk_profile || '—'} />
       </div>
-
-      <Tabs tabs={tabs} active={tab} onChange={setTab} />
 
       {tab === 'cards' && <Cards lead={lead} session={session} reload={reload} onError={setActionError} />}
       {tab === 'details' && <DetailsTab lead={lead} session={session} onEdit={() => setEditing(true)} />}

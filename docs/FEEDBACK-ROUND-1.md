@@ -42,17 +42,17 @@ HTML** because the SPA fallback caught them. An unbuilt endpoint must 404.
 | ENH-08 | Role→tab matrix | P1 | Blocked | matrix sent, awaiting mark-up |
 | ENH-09 | Market items link out | P2 | Not started | |
 | ENH-10 | Rename to Products | P2 | Not started | needs Q-10 |
-| ENH-10a | Replace status dots | P1 | Not started | |
+| ENH-10a | Replace status dots | P1 | **Done** — "1 Warm · 2 Active"; hover still gives product names | |
 | ENH-10b | Directive actions | P1 | Not started | stage model sent |
 | ENH-10c | Richer View popup | P1 | Not started | |
 | ENH-10d | Start Engaging actions | P1 | Not started | |
-| ENH-11 | Group NBA + Start Call | P2 | Not started | |
+| ENH-11 | Group NBA + Start Call | P2 | **Done** — grouped into a record toolbar | |
 | ENH-12 | Warm card meaning | P1 | **Done** — "Products marked Warm", clickable, lands filtered | needs Q-12 |
 | BUG-13 | Quick Actions dead | P0 | **Done** — were spans, not buttons; server now declares each destination | |
 | ENH-14 | Contextual AI help | P1 | Not started | one assistant |
 | ENH-15 | Advanced Search UX | P1 | Not started | |
 | ENH-16 | Unmask + config | P1 | Not started | Admin/Superadmin only |
-| ENH-17 | Tabs above summary | P1 | Not started | |
+| ENH-17 | Tabs above summary | P1 | **Done** — tabs sit directly under the header, above the summary | |
 | BUG-18 | Dark theme audit | P1 | **Done** — same root cause, verified across the lead edit form | |
 | ENH-19 | Input styling | P2 | **Done** — all 45 untyped inputs now inherit the design system | |
 | BUG-20 | Pipeline | P0 | Not started | **module, not a fix** |
