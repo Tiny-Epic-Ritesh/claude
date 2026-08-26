@@ -212,7 +212,11 @@ own capability and every export is logged with row count and the filter used.
 - [x] Polymorphic owner + Queue entity — `owner_queue_id`, role-based membership, claim/place, assignment falls back to a queue rather than to nobody, 16 tests
 - [x] OWD Private floor + sharing rules — manager chain at any depth, grant-only layers, one role's reach genuinely reduced, 12 tests
 - [x] Approvals engine — all four scopes, generic engine, record locked while pending, self-approval refused, rollback on failure, 23 tests
-- [~] Automation builder UI — **backend done** (failure queue, static conflict detection, ambiguous-priority report, retry/resolve). The visual IF/THEN builder screen is the remaining piece.
+- [x] Automation builder UI — visual IF/THEN builder shipped. Condition and action
+      vocabulary comes from the server, so a new field or action type appears in
+      the form with no client change. Rules are always created **disabled**, and
+      the primary button is *Save and dry-run*, not Save — a rule that fires on
+      495k leads is one you want to have tested first.
 - [x] Drop `leads.kyc_status` mirror — derived from the journeys and the eKYC portal; **it had already drifted on 2 of the 6 seeded leads with a journey**, column now dropped
 - [x] Holiday calendars (office + NSE/BSE) — two calendars, half-days, wired into the SLA clock and follow-up scheduling, 20 tests
 - [~] LeadSquared data-quality export → `docs/migration-map.md` — **deferred at the user's request, 22 Aug 2026**

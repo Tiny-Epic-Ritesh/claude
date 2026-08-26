@@ -3252,3 +3252,66 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
   .qrow .qfield { grid-column: 1 / -1; }
   .qrow .btn-icon { grid-column: 2; justify-self: end; }
 }
+
+/* ======================================================== rule builder
+ *
+ * IF / THEN as rows of controls rather than a JSON blob. The keyword sits in
+ * the gutter so the shape of the rule is legible before any of the words are
+ * read — which is the whole reason to build this rather than expose the JSON.
+ */
+
+.rule-block {
+  border: 1px solid var(--hairline);
+  border-radius: var(--r);
+  padding: 14px;
+  background: var(--glass-2);
+  display: grid;
+  gap: 9px;
+}
+
+.rule-block-head { display: flex; align-items: center; gap: 10px; }
+
+.rule-kw {
+  display: inline-grid;
+  place-items: center;
+  min-width: 52px;
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+}
+.rule-kw.is-then { background: var(--info); color: #fff; }
+
+.rule-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.rule-row select, .rule-row input { flex: 1 1 130px; min-width: 0; }
+.rule-row .btn-icon { flex: 0 0 auto; }
+
+/* The join word is narrow and quiet — it is punctuation, not a field. */
+.rule-join {
+  flex: 0 0 74px !important;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+.rule-join.is-first {
+  display: inline-grid;
+  place-items: center;
+  color: var(--ink-4);
+  font-weight: 500;
+  font-size: 12px;
+}
+
+.rule-row.is-action select:first-child { flex: 1 1 180px; }
+
+@media (max-width: 640px) {
+  .rule-row select, .rule-row input { flex: 1 1 100%; }
+  .rule-join { flex: 1 1 100% !important; }
+}
