@@ -214,9 +214,22 @@ export function Progress({ pct, label }) {
  * matching it means every icon name in that design maps across unchanged.
  * Ligature-based, so `<Icon name="trending_up" />` renders the glyph.
  */
+/**
+ * One glyph, two class names.
+ *
+ * Half this codebase renders `<Icon>`, which emitted only `mi`, and half writes
+ * `<span className="material-symbols-rounded">` by hand. Stylesheet rules were
+ * written against whichever the author happened to be looking at, so a rule
+ * like `.waffle .material-symbols-rounded` silently matched nothing when the
+ * button used `<Icon>` -- the icon simply kept its default size and nobody
+ * could see why the CSS "did not apply".
+ *
+ * Emitting both is one line and fixes every such rule at once, present and
+ * future, without touching the eight files that use the raw class.
+ */
 export const Icon = ({ name, size = 18, fill = 0, weight = 400, style, className = '' }) => (
   <span
-    className={`mi ${className}`}
+    className={`mi material-symbols-rounded ${className}`}
     aria-hidden="true"
     style={{
       fontSize: size,

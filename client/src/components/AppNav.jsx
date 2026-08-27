@@ -38,7 +38,7 @@ export function AppLauncher({ apps = [], activeApp, onPick }) {
         aria-expanded={open}
         title="App Launcher"
       >
-        <Icon name="apps" size={22} />
+        <Icon name="apps" size={26} />
       </button>
 
       {open && (

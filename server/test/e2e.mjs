@@ -3974,6 +3974,90 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     assert(!/\u2022/.test(String(data.mobile ?? '')), 'an explicit unmask did not reveal the value');
   });
 
+  /* ============================================================ 39 */
+  suite('39 Market ticker and navigation (ENH-03, ENH-04, ENH-09, ENH-23b)');
+
+  const featuresFor = async (token) => {
+    const { data } = await req('/api/apps', { token, expect: 200 });
+    return data.features ?? {};
+  };
+
+  await check('the ticker is a feature roles can be granted or denied', async () => {
+    const rm = await featuresFor(T.sales_rm);
+    eq(rm.market_ticker, true, 'a Sales RM should see the ticker');
+    // A service agent offering a view on a price move is unsolicited advice.
+    const care = await featuresFor(T.customer_care);
+    eq(care.market_ticker, false, 'Customer Care should not see the ticker');
+    const marketing = await featuresFor(T.marketing_manager);
+    eq(marketing.market_ticker, true, 'Marketing times campaigns off market events');
+  });
+
+  await check('the ticker can be switched off for a role and switched back', async () => {
+    await req('/api/setup/tab-visibility/role', {
+      method: 'POST', token: T.superadmin, expect: 200,
+      body: { role: 'sales_rm', tab_id: 'market_ticker', visible: false },
+    });
+    eq((await featuresFor(await login('salesrm@bonanza.test'))).market_ticker, false,
+      'turning it off at role level did nothing');
+
+    await req('/api/setup/tab-visibility/role', {
+      method: 'POST', token: T.superadmin, expect: 200,
+      body: { role: 'sales_rm', tab_id: 'market_ticker', visible: null },
+    });
+    eq((await featuresFor(await login('salesrm@bonanza.test'))).market_ticker, true,
+      'reset did not restore the default');
+  });
+
+  await check('one person can be excepted from their role', async () => {
+    const { data: users } = await req('/api/setup/users', { token: T.superadmin });
+    const list = Array.isArray(users) ? users : users?.users ?? [];
+    const rm = list.find((u) => u.email === 'salesrm@bonanza.test');
+
+    await req(`/api/setup/users/${rm.id}/tabs`, {
+      method: 'POST', token: T.superadmin, expect: 200,
+      body: { tab_id: 'market_ticker', visible: false },
+    });
+    eq((await featuresFor(await login('salesrm@bonanza.test'))).market_ticker, false,
+      'the per-user exception did not apply');
+
+    await req(`/api/setup/users/${rm.id}/tabs`, {
+      method: 'POST', token: T.superadmin, expect: 200,
+      body: { tab_id: 'market_ticker', visible: null },
+    });
+  });
+
+  await check('the ticker appears in the Setup grid, marked as a feature', async () => {
+    const { data } = await req('/api/setup/tab-visibility', { token: T.superadmin, expect: 200 });
+    const row = data.tabs.find((t) => t.id === 'market_ticker');
+    assert(row, 'the ticker is not configurable in Setup');
+    eq(row.kind, 'feature', 'it should be marked a feature, not a destination');
+    // …and it must not be offered as somewhere to navigate.
+    const { data: apps } = await req('/api/apps', { token: T.superadmin, expect: 200 });
+    assert(!(apps.all_tabs ?? []).some((t) => t.id === 'market_ticker'),
+      'the ticker was offered as a tab - it has no page');
+  });
+
+  await check('every news item carries a link field for the live feed', async () => {
+    const { data } = await req('/api/market/news', { token: T.admin, expect: 200 });
+    assert(Array.isArray(data.news) && data.news.length > 0, 'no news served');
+    // Simulated items have no article to point at, and say so by being null
+    // rather than by carrying a URL that goes nowhere.
+    assert(data.news.every((n) => 'url' in n), 'news items have no url field at all');
+  });
+
+  await check('the App Launcher only ever offers what the role can open (ENH-23b)', async () => {
+    for (const role of ['caller', 'customer_care', 'marketing_manager']) {
+      // eslint-disable-next-line no-await-in-loop
+      const { data } = await req('/api/apps', { token: T[role], expect: 200 });
+      const ids = (data.all_tabs ?? []).map((t) => t.id);
+      assert(!ids.includes('setup'), `${role} was offered Setup`);
+      // Every tab offered must belong to an app that was also offered.
+      const fromApps = new Set(data.apps.flatMap((a) => a.tabs.map((t) => t.id)));
+      assert(ids.every((id) => fromApps.has(id)),
+        `${role} was offered a tab that belongs to no app they have`);
+    }
+  });
+
   /* ------------------------------------------------------------- report */
   report();
 }

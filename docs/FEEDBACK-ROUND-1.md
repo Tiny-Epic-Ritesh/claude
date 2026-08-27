@@ -33,14 +33,14 @@ HTML** because the SPA fallback caught them. An unbuilt endpoint must 404.
 |---|---|---|---|---|
 | BUG-01 | Login field alignment | P2 | **Done** — root cause was the input selector, see below | |
 | BUG-02 | Dark theme, login email | P1 | **Done** — same root cause | with BUG-18 |
-| ENH-03 | Scrolling ticker | P2 | Not started | |
-| ENH-04 | Ticker role control | P2 | Not started | needs Q-04 |
+| ENH-03 | Scrolling ticker | P2 | **Done** - continuous marquee, seamless loop, pauses on hover, on every page | |
+| ENH-04 | Ticker role control | P2 | **Done** - role + per-user toggle in Setup > Navigation, audited | Q-03/Q-04 confirmed |
 | ENH-05 | Summary-card drill-through | P1 | **Done** — metrics carry a destination; 5 of 6 linked per cockpit | needs Q-05 |
 | ENH-05a | Drill-through per role | P1 | **Done** — same mechanism, every role, filters respect data scope | |
 | ENH-06 | Email composer | P1 | Not started | simulate until SMTP set |
 | BUG-07 | Copilot breaks layout | P0 | **Done** — `.copilot` had no CSS at all | |
 | ENH-08 | Role→tab matrix | P1 | **Done** - confirmed matrix seeded, editable in Setup > Navigation, per-user overrides, audited | Q-08 confirmed |
-| ENH-09 | Market items link out | P2 | Not started | |
+| ENH-09 | Market items link out | P2 | **Done** - headline links to source; simulated items say the link arrives with the live feed | needs Global Datafeed |
 | ENH-10 | Rename to Products | P2 | **Done** - display labels only; API names untouched | Q-10 confirmed |
 | ENH-10a | Replace status dots | P1 | **Done** — "1 Warm · 2 Active"; hover still gives product names | |
 | ENH-10b | Directive actions | P1 | Not started | stage model sent |
@@ -60,10 +60,10 @@ HTML** because the SPA fallback caught them. An unbuilt endpoint must 404.
 | ENH-21a | Highlight connected | P1 | **Done** — Connected/Not Connected are now the first, largest choice | |
 | ENH-21b | Log Activity UX | P1 | **Done** — two-step picker, keyboard shortcuts, 0 chips until you choose | |
 | ENH-21c | Dispositions in Setup | P1 | **Done** - editable in Setup > Call outcomes; effects shown beside each label; edits survive a deploy | Q-21c confirmed |
-| ENH-22 | Setup in main nav | P2 | Not started | |
-| ENH-23 | Launcher animation | P2 | Not started | |
-| ENH-23a | Launcher icon size | P2 | Not started | |
-| ENH-23b | Launcher by role | P1 | Not started | |
+| ENH-22 | Setup in main nav | P2 | **Done** - Setup in the header for anyone who has it | |
+| ENH-23 | Launcher animation | P2 | **Done** - tint, lift and a quarter-turn on hover | |
+| ENH-23a | Launcher icon size | P2 | **Done** - 44px target, 26px glyph, its own resting tint | |
+| ENH-23b | Launcher by role | P1 | **Done** - already enforced server-side; now covered by a test | |
 | ENH-24 | Dashboard | P1 | **Done** — per-role tiles, alerts first, every tile drills through | Q-24 confirmed |
 | ENH-24a | Date range | P1 | **Done** — Today / Month / Quarter / FY, FY starts 1 April | |
 | ENH-24b | Placement | P1 | **Done** — on the homepage, same component backs the tab | |

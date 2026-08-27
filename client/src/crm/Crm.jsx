@@ -63,6 +63,7 @@ export default function Crm() {
   const [copilotOpen, setCopilotOpen] = useState(false);
   const [orgs, setOrgs] = useState([]);
   const [apps, setApps] = useState([]);
+  const [features, setFeatures] = useState({});
   const [appId, setAppId] = useState(() => {
     try { return localStorage.getItem('bnz_app') || null; } catch { return null; }
   });
@@ -98,9 +99,10 @@ export default function Crm() {
     api.get('/apps')
       .then((d) => {
         setApps(d.apps || []);
+        setFeatures(d.features || {});
         if (!d.apps?.some((a) => a.id === appId)) setAppId(d.default_app);
       })
-      .catch(() => setApps([]));
+      .catch(() => { setApps([]); setFeatures({}); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, activeOrg]);
 
@@ -158,6 +160,16 @@ export default function Crm() {
           <OrgSwitcher orgs={orgs} value={activeOrg} onChange={switchOrg} />
           <ThemeToggle />
 
+          {/* ENH-22: Setup sits in the header for anyone who has it, rather
+              than only inside the App Launcher. It is the destination an
+              administrator returns to most, and hiding it behind a grid of
+              nine apps cost a click every time. */}
+          {session.permissions.some((p) => ['admin.users', 'admin.products', 'admin.rules', 'admin.system'].includes(p)) && (
+            <NavLink to="/admin" className="btn-ghost btn-sm" title="Setup">
+              <Icon name="settings" size={18} />
+            </NavLink>
+          )}
+
           <button className="btn-ghost btn-sm copilot-trigger" onClick={() => setCopilotOpen(true)} title="Ask the copilot">
             <Icon name="auto_awesome" size={18} />
           </button>
@@ -167,8 +179,11 @@ export default function Crm() {
 
         <TabBar app={apps.find((a) => a.id === appId)} />
 
+        {/* ENH-03 / ENH-04: on every page rather than the cockpit alone, and
+            only for roles and people configured to see it. */}
+        {features.market_ticker && <MarketStrip className="on-shell" />}
+
         <div className="page">
-          <MarketStrip className="on-cockpit" />
 
           <Routes>
             <Route path="/" element={<Cockpit session={session} />} />

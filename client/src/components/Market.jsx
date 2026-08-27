@@ -92,10 +92,30 @@ export function MarketStrip({ publicMode = false, className = '' }) {
   if (failed && !data) return null;
   if (!data) return <div className={`market-strip is-loading ${className}`}><Spinner /></div>;
 
+  /**
+   * A continuously scrolling ticker (ENH-03).
+   *
+   * The old strip was a horizontally scrollable row, which meant only the first
+   * few indices were ever seen — anything past the fold required a deliberate
+   * drag that nobody performs on a strip they are not looking at.
+   *
+   * The track is rendered twice and translated by exactly -50%, so the second
+   * copy arrives in the first one's place and the loop has no seam. Duplicating
+   * is what makes it seamless; a single copy has to jump back.
+   *
+   * `aria-hidden` on the clone keeps a screen reader from announcing every
+   * index twice, and the whole thing pauses on hover so a price can actually be
+   * read.
+   */
+  const track = data.indices.map((ix) => <IndexPill key={ix.code} ix={ix} />);
+
   return (
     <div className={`market-strip ${className}`}>
-      <div className="ix-scroll">
-        {data.indices.map((ix) => <IndexPill key={ix.code} ix={ix} />)}
+      <div className="ticker" role="marquee" aria-label="Market indices">
+        <div className="ticker-track">
+          <div className="ticker-run">{track}</div>
+          <div className="ticker-run" aria-hidden="true">{track}</div>
+        </div>
       </div>
       <MarketStamp data={data} compact />
     </div>
@@ -218,7 +238,22 @@ export default function MarketTab() {
                     {n.source} · {new Date(n.published_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
                   </span>
                 </div>
-                <strong>{n.headline}</strong>
+                {/* ENH-09: the headline opens the source article.
+                    `url` is null while the feed is simulated -- Global Datafeed
+                    credentials are still outstanding -- so the item stays plain
+                    text and says why on hover rather than pretending to be a
+                    link that goes nowhere. A dead link is worse than none. */}
+                {n.url ? (
+                  <a className="news-link" href={n.url}
+                    target="_blank" rel="noopener noreferrer">
+                    <strong>{n.headline}</strong>
+                    <Icon name="open_in_new" size={13} />
+                  </a>
+                ) : (
+                  <strong title="The source link arrives with the live market feed">
+                    {n.headline}
+                  </strong>
+                )}
               </li>
             ))}
           </ul>

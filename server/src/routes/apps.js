@@ -20,7 +20,7 @@
 
 import { Router } from 'express';
 import { requireUser, can, orgsFor, activeOrg } from '../auth.js';
-import { visibleTabs } from '../engine/tabs.js';
+import { visibleTabs, FEATURE_KEYS, resolveTab } from '../engine/tabs.js';
 
 const router = Router();
 router.use(requireUser);
@@ -193,6 +193,12 @@ router.get('/', (req, res) => {
     // for global search to know what it may return.
     all_tabs: [...new Map(apps.flatMap((a) => a.tabs).map((t) => [t.id, t])).values()],
     default_app: apps[0]?.id ?? null,
+    // Features are not destinations, so they travel beside the tabs rather than
+    // inside them (ENH-04). The client asks "may I show the ticker?" instead of
+    // hunting for a tab that was never going to be there.
+    features: Object.fromEntries(
+      FEATURE_KEYS.map((key) => [key, resolveTab(req.user, key).visible]),
+    ),
   });
 });
 

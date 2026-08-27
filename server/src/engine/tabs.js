@@ -104,6 +104,32 @@ export const DEFAULT_VISIBILITY = {
   data: ['superadmin', 'admin', 'sales_supervisor', 'marketing_manager'],
 
   setup: ['superadmin', 'admin'],
+
+  /* Not a tab -- a feature, carried on the same mechanism (ENH-04).
+   *
+   * The market ticker appears on every page, so it has no tab of its own to
+   * hang visibility from. Rather than build a second configuration surface with
+   * its own table, its own audit path and its own bugs, it is a row here: the
+   * resolution order, the per-user override and the audit trail are all already
+   * correct, and an administrator learns one screen instead of two.
+   *
+   * Same default as the Market tab. A service desk does not get it, for the
+   * same reason: an agent who glances at a price move and offers a view has
+   * given unsolicited investment advice. */
+  market_ticker: ['superadmin', 'admin', 'caller', 'dealer', 'sales_rm', 'sales_supervisor',
+    'partner_rm', 'product_rm', 'product_supervisor', 'marketing_manager'],
+};
+
+/**
+ * Keys that are features rather than tabs.
+ *
+ * They resolve through exactly the same rules; they simply have no destination,
+ * so navigation must not try to render them as somewhere to go.
+ */
+export const FEATURE_KEYS = ['market_ticker'];
+
+export const FEATURE_LABEL = {
+  market_ticker: 'Market ticker (all pages)',
 };
 
 /** The shipped answer for one role and tab, before any configuration. */

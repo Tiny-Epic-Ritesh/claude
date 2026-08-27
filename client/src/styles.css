@@ -945,16 +945,64 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
 /* ------------------------------------------------- app launcher & tabs */
 
 /** The waffle. Small, quiet, and always in the same corner. */
+/* The App Launcher button (ENH-23, ENH-23a).
+ *
+ * Salesforce gives the waffle real presence -- it is the way into everything,
+ * and at 38px with a 22px glyph this one read as a minor icon button sitting
+ * among the other minor icon buttons. Larger, with its own resting tint so it
+ * is findable before you know what it does, and a spring on hover so it
+ * answers back.
+ *
+ * The nine dots are drawn rather than lettered: a radial-gradient grid lets
+ * them shift colour and spacing on hover, which a font glyph cannot do.
+ */
 .waffle {
+  position: relative;
   display: grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
   border-radius: var(--r-sm);
   color: var(--ink-2);
-  transition: background 0.14s ease, color 0.14s ease;
+  background: var(--glass-2);
+  border: 1px solid transparent;
+  transition:
+    background 0.18s ease,
+    color 0.18s ease,
+    border-color 0.18s ease,
+    transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
 }
-.waffle:hover { background: var(--hairline-2); color: var(--ink); }
+
+/* Size comes from the component's own `size` prop, because Icon sets
+   font-size inline and an inline style beats any stylesheet rule. Only
+   the transform is CSS's to own here. */
+.waffle .material-symbols-rounded { transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1); }
+
+.waffle:hover {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  color: var(--accent-dark, var(--accent));
+  transform: translateY(-1px);
+}
+/* A quarter turn: enough to feel alive, not enough to look like a spinner. */
+.waffle:hover .material-symbols-rounded { transform: rotate(90deg) scale(1.04); }
+
+.waffle[aria-expanded='true'] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-dark, var(--accent));
+}
+.waffle[aria-expanded='true'] .material-symbols-rounded { transform: rotate(90deg); }
+
+.waffle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .waffle, .waffle .material-symbols-rounded { transition: none; }
+  .waffle:hover { transform: none; }
+  .waffle:hover .material-symbols-rounded,
+  .waffle[aria-expanded='true'] .material-symbols-rounded { transform: none; }
+}
 
 .launcher {
   top: calc(100% + 8px);
@@ -3909,3 +3957,66 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
    not look like something anyone should pick. */
 .is-retired { opacity: 0.55; }
 .is-retired strong { text-decoration: line-through; }
+
+/* ==================================================== scrolling ticker (ENH-03)
+ *
+ * The strip used to be an overflow-x row: everything past the fold required a
+ * deliberate drag, so on a 1280px screen only the first four indices were ever
+ * seen. Now it runs continuously.
+ *
+ * The track holds the same run twice and translates by exactly -50%. At the end
+ * of the animation the second copy sits precisely where the first began, so the
+ * reset is invisible — a single copy would visibly snap back.
+ */
+.ticker {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  /* Fade the ends so items enter and leave rather than being chopped. */
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+}
+
+.ticker-track {
+  display: flex;
+  width: max-content;
+  animation: ticker-run 42s linear infinite;
+}
+
+.ticker-run {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding-right: 20px;
+  flex: 0 0 auto;
+}
+
+@keyframes ticker-run {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+/* Stop the moment somebody reaches for it — a moving number cannot be read. */
+.market-strip:hover .ticker-track,
+.ticker-track:focus-within { animation-play-state: paused; }
+
+/* Motion that never stops is the clearest case there is for honouring this.
+   Falls back to the old scrollable row rather than a frozen half-view. */
+@media (prefers-reduced-motion: reduce) {
+  .ticker-track { animation: none; width: 100%; overflow-x: auto; }
+  .ticker-run + .ticker-run { display: none; }
+}
+
+/* A news headline that opens its source (ENH-09). The icon only appears on
+   hover so a list of ten does not read as a wall of arrows. */
+.news-link {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  color: inherit;
+  text-decoration: none;
+}
+.news-link:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.news-link .material-symbols-rounded { opacity: 0; transition: opacity 0.14s ease; }
+.news-link:hover .material-symbols-rounded { opacity: 0.75; }
+.news-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }

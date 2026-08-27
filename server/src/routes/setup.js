@@ -40,6 +40,7 @@ import {
 import {
   matrix as tabMatrix, setRoleTab, clearRoleTab, setUserTab, clearUserTab,
   overridesFor, resolveTab, shippedDefault, overrideCount,
+  FEATURE_KEYS, FEATURE_LABEL,
 } from '../engine/tabs.js';
 import { TABS } from './apps.js';
 import {
@@ -930,7 +931,13 @@ router.get('/field-usage/:entity', requirePermission('admin.objects'), (req, res
  * hiding a tab and believing they have restricted data.
  */
 
-const TAB_LIST = () => Object.values(TABS).map((t) => ({ id: t.id, label: t.label, icon: t.icon }));
+const TAB_LIST = () => [
+  ...Object.values(TABS).map((t) => ({ id: t.id, label: t.label, icon: t.icon, kind: 'tab' })),
+  // Features ride the same mechanism and appear in the same grid, marked so an
+  // administrator can see that turning one off hides a banner rather than a
+  // destination (ENH-04).
+  ...FEATURE_KEYS.map((k) => ({ id: k, label: FEATURE_LABEL[k] ?? k, icon: 'monitoring', kind: 'feature' })),
+];
 
 router.get('/tab-visibility', requirePermission('admin.roles'), (_req, res) => {
   const roles = all('SELECT code, name FROM roles ORDER BY sort_order, code');
@@ -947,7 +954,7 @@ router.get('/tab-visibility', requirePermission('admin.roles'), (_req, res) => {
 router.post('/tab-visibility/role', requirePermission('admin.roles'), (req, res) => {
   const { role, tab_id: tabId, visible } = req.body ?? {};
   if (!role || !tabId) return res.status(400).json({ error: 'Give a role and a tab' });
-  if (!TABS[tabId]) return res.status(400).json({ error: `There is no tab called "${tabId}"` });
+  if (!TABS[tabId] && !FEATURE_KEYS.includes(tabId)) return res.status(400).json({ error: `There is no tab called "${tabId}"` });
 
   const before = shippedDefault(role, tabId);
 
@@ -990,7 +997,7 @@ router.post('/users/:id/tabs', requirePermission('admin.roles'), (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   const { tab_id: tabId, visible } = req.body ?? {};
-  if (!TABS[tabId]) return res.status(400).json({ error: `There is no tab called "${tabId}"` });
+  if (!TABS[tabId] && !FEATURE_KEYS.includes(tabId)) return res.status(400).json({ error: `There is no tab called "${tabId}"` });
 
   const before = resolveTab(user, tabId);
   if (visible === null) clearUserTab(user.id, tabId);
