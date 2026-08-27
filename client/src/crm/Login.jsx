@@ -23,7 +23,7 @@ const ROLES = [
   ['caller@bonanza.test', 'caller', 'call', 'Dial list only — qualifies and hands over'],
   ['dealer@bonanza.test', 'dealer', 'candlestick_chart', 'Trading desk view of active clients'],
   ['productrm@bonanza.test', 'product_rm', 'inventory_2', 'Leads carrying their own product'],
-  ['productsupervisor@bonanza.test', 'product_supervisor', 'inventory', 'All product cards across the desk'],
+  ['productsupervisor@bonanza.test', 'product_supervisor', 'inventory', 'All products across the desk'],
   ['partnerrm@bonanza.test', 'partner_rm', 'handshake', 'Partners, onboarding and commissions'],
   ['care@bonanza.test', 'customer_care', 'headset_mic', 'Cases, SLA and the service queue'],
   ['marketing@bonanza.test', 'marketing_manager', 'campaign', 'Campaigns, lists and templates — no client PII'],

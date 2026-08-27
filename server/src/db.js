@@ -635,6 +635,15 @@ const COLUMNS = [
    * `refresh_error` exists because a refresh that fails silently is worse
    * than one that fails loudly -- the list simply looks stale and nobody
    * knows why. */
+  /* Dispositions an administrator has edited (ENH-21c).
+   *
+   * seedDispositions() runs on every boot and previously overwrote every
+   * column from the code matrix, so anything changed in Setup would revert at
+   * the next restart -- which would have made the whole screen a lie. These
+   * mark a row as owned by the business, and the seeder leaves those alone. */
+  ["dispositions", "edited_at", "TEXT"],
+  ["dispositions", "edited_by", "INTEGER"],
+  ["dispositions", "is_custom", "INTEGER NOT NULL DEFAULT 0"],
   ["lead_lists", "description", "TEXT"],
   ["lead_lists", "created_by", "INTEGER"],
   ["lead_lists", "last_refreshed_at", "TEXT"],

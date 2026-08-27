@@ -68,7 +68,7 @@ export default function Pipeline() {
         <div className="card stat tone-good">
           <div className="stat-label">Won</div>
           <div className="stat-value">{rupeesCompact(data.won_value)}</div>
-          <div className="stat-sub">Active product cards</div>
+          <div className="stat-sub">Active products</div>
         </div>
         <div className="card stat">
           <div className="stat-label">Opportunities</div>

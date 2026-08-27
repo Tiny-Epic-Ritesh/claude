@@ -20,7 +20,7 @@
  */
 
 import { Router } from 'express';
-import { all, one, run, audit, transact, SALES_ORGS } from '../db.js';
+import { all, one, run, audit, transact, SALES_ORGS, CARD_STATES } from '../db.js';
 import {
   requireUser, requirePermission, orgsFor, mayUseOrg, can, permissionsFor,
 } from '../auth.js';
@@ -998,6 +998,119 @@ router.post('/users/:id/tabs', requirePermission('admin.roles'), (req, res) => {
     before, after, req.user.id);
 
   res.json({ ok: true, ...after });
+});
+
+
+/* ================================================== dispositions (ENH-21c)
+ *
+ * The Connected / Not Connected values, and what each one obliges the RM to do
+ * next. These drive the follow-up engine, so editing one is a business decision
+ * rather than a cosmetic rename -- which is why the screen shows the effects
+ * beside the label rather than hiding them behind an Advanced section.
+ *
+ * A shipped row that gets edited is marked, and seedDispositions() then leaves
+ * it alone on every subsequent boot.
+ */
+
+const DISPOSITION_FIELDS = [
+  'label', 'outcome', 'next_step', 'follow_up_hours', 'requires_datetime',
+  'requires_reason', 'sets_card_state', 'flags_mobile_invalid',
+  'suppress_marketing', 'score_delta', 'hint', 'sort_order', 'active',
+];
+
+router.get('/dispositions', requirePermission('admin.rules'), (_req, res) => {
+  const rows = all('SELECT * FROM dispositions ORDER BY activity_type, sort_order');
+  res.json({
+    dispositions: rows,
+    outcomes: [...new Set(rows.map((r) => r.outcome))],
+    activity_types: [...new Set(rows.map((r) => r.activity_type))],
+    card_states: CARD_STATES,
+    next_steps: ['follow_up', 'meeting', 'retry', 'none'],
+    note: 'These decide what happens after a call is logged. Changing an obligation changes what the follow-up engine creates.',
+  });
+});
+
+router.patch('/dispositions/:id', requirePermission('admin.rules'), (req, res) => {
+  const row = one('SELECT * FROM dispositions WHERE id = ?', [req.params.id]);
+  if (!row) return res.status(404).json({ error: 'Disposition not found' });
+
+  const sets = [];
+  const params = [];
+  for (const f of DISPOSITION_FIELDS) {
+    if (!(f in req.body)) continue;
+    sets.push(`${f} = ?`);
+    params.push(typeof req.body[f] === 'boolean' ? (req.body[f] ? 1 : 0) : req.body[f]);
+  }
+  if (!sets.length) return res.status(400).json({ error: 'Nothing to change' });
+
+  // A card state that does not exist would fail silently at apply time, long
+  // after whoever typed it has moved on.
+  if (req.body.sets_card_state && !CARD_STATES.includes(req.body.sets_card_state)) {
+    return res.status(400).json({ error: `Card state must be one of: ${CARD_STATES.join(', ')}` });
+  }
+
+  sets.push("edited_at = datetime('now')", 'edited_by = ?');
+  params.push(req.user.id);
+
+  run(`UPDATE dispositions SET ${sets.join(', ')} WHERE id = ?`, [...params, row.id]);
+  const after = one('SELECT * FROM dispositions WHERE id = ?', [row.id]);
+
+  auditConfig('dispositions', row.code, 'updated', row, after, req.user.id);
+  res.json(after);
+});
+
+router.post('/dispositions', requirePermission('admin.rules'), (req, res) => {
+  const { code, label, activity_type: type, outcome } = req.body ?? {};
+  if (!code || !label || !type || !outcome) {
+    return res.status(400).json({ error: 'A disposition needs a code, a label, an activity type and an outcome' });
+  }
+  if (one('SELECT id FROM dispositions WHERE code = ?', [code])) {
+    return res.status(409).json({ error: `"${code}" already exists` });
+  }
+
+  const next = one('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM dispositions WHERE activity_type = ?', [type]).n;
+  const r = run(
+    `INSERT INTO dispositions
+       (code, activity_type, outcome, label, next_step, follow_up_hours,
+        requires_datetime, requires_reason, sets_card_state, score_delta, hint,
+        sort_order, is_custom, edited_at, edited_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1, datetime('now'), ?)`,
+    [code, type, outcome, label, req.body.next_step ?? 'none',
+      req.body.follow_up_hours ?? null,
+      req.body.requires_datetime ? 1 : 0, req.body.requires_reason ? 1 : 0,
+      req.body.sets_card_state ?? null, req.body.score_delta ?? 0,
+      req.body.hint ?? null, next, req.user.id],
+  );
+
+  const created = one('SELECT * FROM dispositions WHERE id = ?', [Number(r.lastInsertRowid)]);
+  auditConfig('dispositions', code, 'created', null, created, req.user.id);
+  res.status(201).json(created);
+});
+
+/**
+ * Retire rather than delete.
+ *
+ * Activities already logged reference the code, and deleting the row would
+ * leave those records describing an outcome nobody can look up. Deactivating
+ * takes it out of the picker and leaves the history readable.
+ */
+router.delete('/dispositions/:id', requirePermission('admin.rules'), (req, res) => {
+  const row = one('SELECT * FROM dispositions WHERE id = ?', [req.params.id]);
+  if (!row) return res.status(404).json({ error: 'Disposition not found' });
+
+  const used = one('SELECT COUNT(*) n FROM activities WHERE sub_disposition = ?', [row.code]).n;
+  run("UPDATE dispositions SET active = 0, edited_at = datetime('now'), edited_by = ? WHERE id = ?",
+    [req.user.id, row.id]);
+  auditConfig('dispositions', row.code, 'retired', row, { ...row, active: 0 }, req.user.id);
+
+  res.json({
+    ok: true,
+    retired: true,
+    used_by: used,
+    note: used
+      ? `Kept for ${used} logged ${used === 1 ? 'activity' : 'activities'} that reference it, and removed from the picker.`
+      : 'Removed from the picker.',
+  });
 });
 
 export default router;

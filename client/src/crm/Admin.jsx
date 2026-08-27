@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import TabVisibility from './TabVisibility.jsx';
+import Dispositions from './Dispositions.jsx';
 import { api, rupees, dateTime, shortDate, ROLE_LABEL } from '../api.js';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, Icon } from '../components/ui.jsx';
 import ObjectManager from './ObjectManager.jsx';
@@ -14,6 +15,7 @@ export default function Admin({ session }) {
     has('admin.products') && { key: 'products', label: 'Products' },
     has('admin.kyc.journeys') && { key: 'journeys', label: 'KYC journeys' },
     has('admin.rules') && { key: 'rules', label: 'Rule builder' },
+    has('admin.rules') && { key: 'outcomes', label: 'Call outcomes' },
     has('admin.sla') && { key: 'sla', label: 'SLA & categories' },
     has('admin.sla') && { key: 'calendars', label: 'Working calendars' },
     has('admin.templates') && { key: 'templates', label: 'Templates' },
@@ -44,6 +46,7 @@ export default function Admin({ session }) {
       {tab === 'products' && <Products />}
       {tab === 'journeys' && <Journeys />}
       {tab === 'rules' && <Rules />}
+      {tab === 'outcomes' && <Dispositions />}
       {tab === 'sla' && <Sla />}
       {tab === 'calendars' && <Calendars />}
       {tab === 'templates' && <Templates />}

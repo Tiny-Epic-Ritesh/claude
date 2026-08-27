@@ -534,6 +534,15 @@ for (const [leadIdx, code, state, value] of [...CARD_PLAN, ...BIGUL_CARD_PLAN]) 
  * list of identical rows.
  */
 
+/* Reset outcomes to the shipped matrix.
+ *
+ * A seed restores a known state, and the edited_at guard in seedDispositions()
+ * deliberately preserves customisations across a RESTART -- which would also
+ * have preserved them across a reseed, leaving each run starting from whatever
+ * the last one happened to change. Clearing first keeps those two things
+ * separate: a restart keeps your edits, a reseed gives you the shipped set. */
+db.exec('DELETE FROM dispositions');
+db.exec("DELETE FROM sqlite_sequence WHERE name = 'dispositions'");
 seedDispositions();
 
 /* ------------------------------------------------------------- teams */

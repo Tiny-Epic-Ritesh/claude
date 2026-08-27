@@ -46,7 +46,7 @@ export default function LeadDetail({ session }) {
   }
 
   const tabs = [
-    { key: 'cards', label: 'Product cards', count: lead.cards.length },
+    { key: 'cards', label: 'Products', count: lead.cards.length },
     { key: 'details', label: 'Details' },
     { key: 'market', label: 'Market' },
     { key: 'activity', label: 'Activity', count: lead.activities.length },

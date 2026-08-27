@@ -98,7 +98,7 @@ export const CONDITION_FIELDS = [
   { field: 'lead_stage', label: 'Lead stage', type: 'enum', options: ['New', 'Contacted', 'Qualified', 'In Progress', 'Won', 'Lost'] },
   { field: 'lead_score', label: 'Lead score', type: 'number' },
   { field: 'lead_source', label: 'Lead source', type: 'text' },
-  { field: 'product_card_state', label: 'Product card state', type: 'card' },
+  { field: 'product_card_state', label: 'Product state', type: 'card' },
   { field: 'contact_flag', label: 'Contact flag', type: 'enum', options: ['Direct Contact', 'No Direct Contact', 'Schedule Joint Call'] },
   { field: 'kyc_status', label: 'KYC status', type: 'enum', options: ['Not Started', 'In Progress', 'Stalled', 'Abandoned', 'Complete'] },
   { field: 'kyc_journey_status', label: 'KYC journey status', type: 'enum', options: ['In Progress', 'Stalled', 'Abandoned', 'Complete'] },

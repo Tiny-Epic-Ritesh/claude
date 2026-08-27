@@ -3758,6 +3758,98 @@ await check('a per-channel withdrawal closes only that channel', async () => {
       `${orphans.length} leftover test roles - seed.js should clear non-system roles`);
   });
 
+  /* ============================================================ 37 */
+  suite('37 Dispositions in Setup (ENH-21c)');
+
+  await check('the outcomes are configuration, with their effects visible', async () => {
+    const { data } = await req('/api/setup/dispositions', { token: T.admin, expect: 200 });
+    assert(data.dispositions.length >= 20, 'the shipped matrix is missing');
+    eq(data.outcomes.includes('Connected'), true, 'Connected is missing');
+    eq(data.outcomes.includes('Not Connected'), true, 'Not Connected is missing');
+    // The effects are what make this a business decision rather than a rename.
+    const callback = data.dispositions.find((d) => d.code === 'CALL_CALLBACK');
+    eq(callback.requires_datetime, 1, 'Callback Requested must compel a date');
+  });
+
+  await check('an edit is recorded as the business owning that row', async () => {
+    const { data: before } = await req('/api/setup/dispositions', { token: T.admin, expect: 200 });
+    const row = before.dispositions.find((d) => d.code === 'CALL_PITCH_DONE');
+    eq(row.edited_at, null, 'a shipped row should start unedited');
+
+    const { data } = await req(`/api/setup/dispositions/${row.id}`, {
+      method: 'PATCH', token: T.admin, expect: 200,
+      body: { label: `Pitch delivered ${RUN}`, hint: 'Say what they pushed back on.' },
+    });
+    eq(data.label, `Pitch delivered ${RUN}`, 'the label did not change');
+    assert(data.edited_at, 'the row was not marked as edited');
+  });
+
+  await check('re-running the seeder does not revert an edit', async () => {
+    // The whole point of ENH-21c: seedDispositions() runs on every boot, and
+    // before this it overwrote every column -- so a change made in Setup would
+    // silently revert at the next restart and the screen would be a lie.
+    const { data: check1 } = await req('/api/setup/dispositions', { token: T.admin, expect: 200 });
+    const row = check1.dispositions.find((d) => d.code === 'CALL_PITCH_DONE');
+    assert(row.label.startsWith('Pitch delivered'), 'the edit did not persist');
+
+    const untouched = check1.dispositions.find((d) => d.code !== 'CALL_PITCH_DONE' && !d.edited_at);
+    assert(untouched, 'every row is marked edited - the seeder is not managing any of them');
+  });
+
+  await check('a disposition drives what the RM is actually asked for', async () => {
+    // The obligation is enforced where it matters, not only displayed in Setup.
+    const { data: leads } = await req('/api/leads?limit=1', { token: T.admin, expect: 200 });
+    const leadId = leads[0].id;
+    await req('/api/activities', {
+      method: 'POST', token: T.admin, expect: 400,
+      body: { lead_id: leadId, type: 'Call', outcome: 'Connected', sub_disposition: 'CALL_CALLBACK' },
+    });
+  });
+
+  await check('an unknown card state is refused rather than stored', async () => {
+    const { data } = await req('/api/setup/dispositions', { token: T.admin, expect: 200 });
+    const row = data.dispositions[0];
+    await req(`/api/setup/dispositions/${row.id}`, {
+      method: 'PATCH', token: T.admin, expect: 400,
+      body: { sets_card_state: 'NOT_A_STATE' },
+    });
+  });
+
+  await check('a new outcome can be added and appears in the picker', async () => {
+    const code = `E2E_OUTCOME_${RUN}`;
+    const { data } = await req('/api/setup/dispositions', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: {
+        code, label: 'Asked for a brochure', activity_type: 'Call',
+        outcome: 'Connected', requires_datetime: false,
+      },
+    });
+    eq(data.is_custom, 1, 'a hand-made outcome should be marked as yours');
+
+    const { data: meta } = await req('/api/activities/meta', { token: T.admin, expect: 200 });
+    const calls = meta.dispositions?.Call ?? [];
+    const connected = calls.find((g) => g.outcome === 'Connected');
+    assert(connected.options.some((o) => o.code === code), 'the new outcome never reached the picker');
+  });
+
+  await check('retiring keeps history readable instead of deleting it', async () => {
+    const { data } = await req('/api/setup/dispositions', { token: T.admin, expect: 200 });
+    const row = data.dispositions.find((d) => d.code === `E2E_OUTCOME_${RUN}`);
+    const { data: gone } = await req(`/api/setup/dispositions/${row.id}`, {
+      method: 'DELETE', token: T.admin, expect: 200,
+    });
+    eq(gone.retired, true, 'it should retire, not delete');
+
+    const { data: after } = await req('/api/setup/dispositions', { token: T.admin, expect: 200 });
+    const still = after.dispositions.find((d) => d.code === `E2E_OUTCOME_${RUN}`);
+    assert(still, 'the row was deleted - activities referencing it would be unreadable');
+    eq(still.active, 0, 'it should be inactive');
+  });
+
+  await check('editing outcomes needs admin.rules', async () => {
+    await req('/api/setup/dispositions', { token: T.sales_rm, expect: 403 });
+  });
+
   /* ------------------------------------------------------------- report */
   report();
 }

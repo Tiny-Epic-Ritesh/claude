@@ -27,7 +27,7 @@ const MODULES = {
     icon: 'people',
     title: 'Clients',
     blurb: 'Converted clients by segment — Retail, HNI, Ultra-HNI — with AUM, dormancy bands and the onboarding funnel.',
-    built: ['Active product cards and AUM per lead', 'Dormancy and ageing bands', 'Client-level activity history'],
+    built: ['Active products and AUM per lead', 'Dormancy and ageing bands', 'Client-level activity history'],
     ready: '/leads',
     readyLabel: 'Records are live in Leads',
   },

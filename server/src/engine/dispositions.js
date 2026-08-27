@@ -88,6 +88,18 @@ export const DISPOSITION_MATRIX = [
 ];
 
 /** Load the matrix into the database. Idempotent — safe on every boot. */
+/**
+ * Load the shipped matrix.
+ *
+ * Runs on every boot, and deliberately skips any row the business has edited:
+ * the WHERE on the upsert means a disposition changed in Setup keeps its
+ * change. Without it this function would quietly revert every customisation at
+ * the next restart, and the Setup screen would be describing a state that only
+ * survived until someone deployed.
+ *
+ * New shipped rows still arrive normally, because the conflict only fires on a
+ * code that already exists.
+ */
 export function seedDispositions() {
   DISPOSITION_MATRIX.forEach((row, i) => {
     const [code, type, outcome, label, nextStep, hours, needsDt, needsReason, cardState, flags, score, hint] = row;
@@ -107,7 +119,8 @@ export function seedDispositions() {
          flags_mobile_invalid = excluded.flags_mobile_invalid,
          suppress_marketing = excluded.suppress_marketing,
          score_delta = excluded.score_delta, hint = excluded.hint,
-         sort_order = excluded.sort_order`,
+         sort_order = excluded.sort_order
+       WHERE dispositions.edited_at IS NULL`,
       [code, type, outcome, label, nextStep, hours, needsDt, needsReason, cardState,
         flags.flags_mobile_invalid ?? 0, flags.suppress_marketing ?? 0, score, hint, i],
     );

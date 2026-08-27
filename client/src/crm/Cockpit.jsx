@@ -153,7 +153,7 @@ function WorkList({ list, navigate, session }) {
 function LeadRows({ rows, navigate }) {
   return (
     <table>
-      <thead><tr><th>Lead</th><th>Stage</th><th>Product cards</th><th>Age</th><th>Last contact</th><th className="num">Score</th></tr></thead>
+      <thead><tr><th>Lead</th><th>Stage</th><th>Products</th><th>Age</th><th>Last contact</th><th className="num">Score</th></tr></thead>
       <tbody>
         {rows.map((l) => (
           <tr key={l.id} className="row-link" onClick={() => navigate(`/leads/${l.id}`)}>

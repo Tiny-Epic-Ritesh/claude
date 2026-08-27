@@ -3904,3 +3904,8 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
 }
 
 @media (prefers-reduced-motion: reduce) { .vis { transition: none; } .vis:hover { transform: none; } }
+
+/* A retired disposition stays visible so history is still readable, but must
+   not look like something anyone should pick. */
+.is-retired { opacity: 0.55; }
+.is-retired strong { text-decoration: line-through; }

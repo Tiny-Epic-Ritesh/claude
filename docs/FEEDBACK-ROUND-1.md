@@ -41,7 +41,7 @@ HTML** because the SPA fallback caught them. An unbuilt endpoint must 404.
 | BUG-07 | Copilot breaks layout | P0 | **Done** — `.copilot` had no CSS at all | |
 | ENH-08 | Role→tab matrix | P1 | **Done** - confirmed matrix seeded, editable in Setup > Navigation, per-user overrides, audited | Q-08 confirmed |
 | ENH-09 | Market items link out | P2 | Not started | |
-| ENH-10 | Rename to Products | P2 | Not started | needs Q-10 |
+| ENH-10 | Rename to Products | P2 | **Done** - display labels only; API names untouched | Q-10 confirmed |
 | ENH-10a | Replace status dots | P1 | **Done** — "1 Warm · 2 Active"; hover still gives product names | |
 | ENH-10b | Directive actions | P1 | Not started | stage model sent |
 | ENH-10c | Richer View popup | P1 | Not started | |
@@ -59,7 +59,7 @@ HTML** because the SPA fallback caught them. An unbuilt endpoint must 404.
 | BUG-21 | Log Activity opens | P0 | **Done** — modal host had no case for it; composer existed but was unreachable | |
 | ENH-21a | Highlight connected | P1 | **Done** — Connected/Not Connected are now the first, largest choice | |
 | ENH-21b | Log Activity UX | P1 | **Done** — two-step picker, keyboard shortcuts, 0 chips until you choose | |
-| ENH-21c | Dispositions in Setup | P1 | Not started | 22 values sent |
+| ENH-21c | Dispositions in Setup | P1 | **Done** - editable in Setup > Call outcomes; effects shown beside each label; edits survive a deploy | Q-21c confirmed |
 | ENH-22 | Setup in main nav | P2 | Not started | |
 | ENH-23 | Launcher animation | P2 | Not started | |
 | ENH-23a | Launcher icon size | P2 | Not started | |

@@ -137,9 +137,9 @@ export default function InCall({ lead, session, onClose }) {
                   </div>
                 </div>
 
-                {/* Centre — product cards + pitch */}
+                {/* Centre — products + pitch */}
                 <div>
-                  <h3>Product cards</h3>
+                  <h3>Products</h3>
                   <div className="pcards" style={{ marginTop: 8, gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))' }}>
                     {lead.cards.map((c) => (
                       <div key={c.id} className={`pcard ${selected === c.id ? 'sel' : ''}`} onClick={() => setSelected(c.id)}>

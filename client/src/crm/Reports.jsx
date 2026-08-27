@@ -123,7 +123,7 @@ function Funnel() {
   const [d, { loading, error }] = useApi('/reports/funnel');
   if (loading) return <Loading />;
   if (error) return <ErrorBanner error={error} />;
-  if (!d?.products?.length) return <Empty>No product cards yet.</Empty>;
+  if (!d?.products?.length) return <Empty>No products yet.</Empty>;
 
   const stages = d.states.filter((s) => s !== 'INACTIVE');
 
