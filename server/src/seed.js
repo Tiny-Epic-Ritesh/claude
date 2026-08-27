@@ -15,6 +15,7 @@ import { db, run, one, all } from './db.js';
 import { MASTER_STEPS } from './engine/kyc.js';
 import { ONBOARDING_STEPS, LMS_MODULES } from './routes/partners.js';
 import { seedDispositions, applyEffects } from './engine/dispositions.js';
+import { seedKra, seedIncentives } from './engine/kra.js';
 import { createFollowUp } from './engine/followups.js';
 import { DEFAULT_SLA } from './engine/sla.js';
 import { ticketSummary } from './ai/mock.js';
@@ -69,6 +70,18 @@ db.exec("DELETE FROM field_masking");
 db.exec("DELETE FROM incentive_slabs");
 db.exec("DELETE FROM incentive_plans");
 db.exec("DELETE FROM kra_metrics");
+for (const t of ['kra_metrics', 'incentive_plans', 'incentive_slabs']) {
+  db.exec(`DELETE FROM sqlite_sequence WHERE name = '${t}'`);
+}
+
+/* Put the worked example back.
+ *
+ * seedKra() and seedIncentives() also run on boot, but the server under test --
+ * and the one running on the UAT box -- is already up when a reseed happens. It
+ * will not call them again, so clearing without reseeding here leaves every
+ * scorecard and every payout plan empty until somebody restarts the process. */
+seedKra();
+seedIncentives();
 
 /* ------------------------------------------------------------- products */
 
