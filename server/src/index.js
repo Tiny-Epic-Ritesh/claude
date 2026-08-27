@@ -160,8 +160,23 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const clientDist = join(__dirname, '..', '..', 'client', 'dist');
 
 if (existsSync(clientDist)) {
-  // Serve hashed JS/CSS/image assets with a long cache
-  app.use(express.static(clientDist, { maxAge: '1y', immutable: true }));
+  /**
+   * Serve the built assets under BOTH paths.
+   *
+   * The client is built with base "/ai-crm/", so index.html asks for
+   * /ai-crm/assets/index-*.js. In production nginx strips that prefix before
+   * Express ever sees it, so a root mount was enough — but hit this server
+   * directly, with no nginx in front, and every asset request fell through to
+   * the SPA catch-all and came back as index.html. The browser then refused it
+   * for having a text/html MIME type and rendered a blank page, with the only
+   * clue in the console.
+   *
+   * Mounting both means the same build works behind nginx and standalone,
+   * which is what anyone running it locally to try it actually needs.
+   */
+  const assets = express.static(clientDist, { maxAge: '1y', immutable: true });
+  app.use(assets);
+  app.use('/ai-crm', assets);
 
   // SPA fallback — nginx strips the /ai-crm/ prefix so Express always
   // receives the bare path (/, /leads, /lists etc.).  Return index.html for
