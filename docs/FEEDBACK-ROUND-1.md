@@ -39,7 +39,7 @@ HTML** because the SPA fallback caught them. An unbuilt endpoint must 404.
 | ENH-05a | Drill-through per role | P1 | **Done** — same mechanism, every role, filters respect data scope | |
 | ENH-06 | Email composer | P1 | Not started | simulate until SMTP set |
 | BUG-07 | Copilot breaks layout | P0 | **Done** — `.copilot` had no CSS at all | |
-| ENH-08 | Role→tab matrix | P1 | Blocked | matrix sent, awaiting mark-up |
+| ENH-08 | Role→tab matrix | P1 | **Done** - confirmed matrix seeded, editable in Setup > Navigation, per-user overrides, audited | Q-08 confirmed |
 | ENH-09 | Market items link out | P2 | Not started | |
 | ENH-10 | Rename to Products | P2 | Not started | needs Q-10 |
 | ENH-10a | Replace status dots | P1 | **Done** — "1 Warm · 2 Active"; hover still gives product names | |
