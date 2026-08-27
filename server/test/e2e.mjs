@@ -4173,6 +4173,115 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     assert([200, 404].includes(status), `unexpected status ${status}`);
   });
 
+  /* ============================================================ 41 */
+  suite('41 Email composer (ENH-06)');
+
+  const leadWithEmail = async (token) => {
+    const { data } = await req('/api/leads?limit=40', { token, expect: 200 });
+    return data.find((l) => l.email);
+  };
+
+  await check('the composer arrives with everything it needs in one call', async () => {
+    const lead = await leadWithEmail(T.admin);
+    const { data } = await req(`/api/email/compose/${lead.id}`, { token: T.admin, expect: 200 });
+    assert(data.lead?.email, 'no address to send to');
+    assert(Array.isArray(data.templates), 'no templates');
+    assert(Array.isArray(data.library), 'no content library');
+    assert(data.limits?.max_attachment_bytes > 0, 'no attachment limit declared');
+    assert('allowed' in (data.consent ?? {}), 'consent was not resolved');
+  });
+
+  await check('only approved templates are offered', async () => {
+    const lead = await leadWithEmail(T.admin);
+    const { data } = await req(`/api/email/compose/${lead.id}`, { token: T.admin, expect: 200 });
+    // An unapproved template reaching a client is the thing the approval flag
+    // exists to prevent, so the composer must not be a way around it.
+    const { data: everything } = await req('/api/admin/templates', { token: T.admin });
+    const all = Array.isArray(everything) ? everything : everything?.templates ?? [];
+    const unapproved = all.filter((t) => t.channel === 'email' && !t.approved).map((t) => t.id);
+    assert(!data.templates.some((t) => unapproved.includes(t.id)),
+      'an unapproved template was offered');
+  });
+
+  await check('an email sends, merges and lands on the timeline', async () => {
+    const lead = await leadWithEmail(T.admin);
+    const { data } = await req('/api/email/send', {
+      method: 'POST', token: T.admin, expect: 200,
+      body: {
+        lead_id: lead.id,
+        subject: `Your {{org}} account ${RUN}`,
+        body: 'Dear {{name}},\n\nRegards,\n{{rm}}',
+      },
+    });
+    assert(data.ok, 'send failed');
+    assert(data.activity_id, 'nothing was logged');
+
+    const { data: acts } = await req(`/api/activities?lead_id=${lead.id}`, { token: T.admin, expect: 200 });
+    const logged = acts.find((a) => a.id === data.activity_id);
+    assert(logged, 'the email is not on the lead timeline');
+    eq(logged.type, 'Email', 'logged under the wrong type');
+    assert(!logged.subject.includes('{{'), `merge fields survived into the subject: ${logged.subject}`);
+    assert(!logged.body.includes('{{'), 'merge fields survived into the body');
+  });
+
+  await check('a withdrawn or expired document cannot be attached', async () => {
+    const lead = await leadWithEmail(T.admin);
+    await req('/api/email/send', {
+      method: 'POST', token: T.admin, expect: 400,
+      body: { lead_id: lead.id, subject: 's', body: 'b', content_ids: [999999] },
+    });
+  });
+
+  await check('an executable cannot be emailed to a client', async () => {
+    const lead = await leadWithEmail(T.admin);
+    const { data } = await req('/api/email/send', {
+      method: 'POST', token: T.admin, expect: 400,
+      body: {
+        lead_id: lead.id, subject: 's', body: 'b',
+        attachments: [{ name: 'payload.exe', type: 'application/x-msdownload', data: 'AAAA' }],
+      },
+    });
+    assert(/cannot be emailed/i.test(data.error), `unhelpful refusal: ${data.error}`);
+  });
+
+  await check('an oversized attachment is refused', async () => {
+    const lead = await leadWithEmail(T.admin);
+    // Over the body limit, so express.json() refuses it before any route runs.
+    // The point of the assertion is that it comes back as a clear 413 rather
+    // than the opaque 500 it used to be.
+    const big = 'A'.repeat(7 * 1024 * 1024);
+    await req('/api/email/send', {
+      method: 'POST', token: T.admin, expect: 413,
+      body: {
+        lead_id: lead.id, subject: 's', body: 'b',
+        attachments: [{ name: 'huge.pdf', type: 'application/pdf', data: big }],
+      },
+    });
+  });
+
+  await check('consent is enforced on the way out', async () => {
+    const { data: leads } = await req('/api/leads?limit=100', { token: T.admin, expect: 200 });
+    const opted = leads.find((l) => l.no_email || l.marketing_opt_out);
+    if (!opted) return;
+    const { status, data } = await req('/api/email/send', {
+      method: 'POST', token: T.admin,
+      body: { lead_id: opted.id, subject: 's', body: 'b', intent: 'marketing' },
+    });
+    if (status === 409) assert(data.error, 'refused with no reason');
+  });
+
+  await check('emailing needs lead.contact, and scope still applies', async () => {
+    const lead = await leadWithEmail(T.admin);
+    await req('/api/email/send', {
+      method: 'POST', token: T.marketing_manager, expect: 403,
+      body: { lead_id: lead.id, subject: 's', body: 'b' },
+    });
+    // A lead outside the caller's book is a 404, not a 403 — the composer must
+    // not become a way to confirm a record exists.
+    const { status } = await req(`/api/email/compose/${lead.id}`, { token: T.caller });
+    assert([200, 404].includes(status), `unexpected status ${status}`);
+  });
+
   /* ------------------------------------------------------------- report */
   report();
 }

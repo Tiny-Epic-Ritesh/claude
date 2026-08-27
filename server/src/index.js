@@ -29,6 +29,7 @@ import advancedSearch from './routes/search-advanced.js';
 import approvals from './routes/approvals.js';
 import clients from './routes/clients.js';
 import lists from './routes/lists.js';
+import email from './routes/email.js';
 import dashboard from './routes/dashboard.js';
 import pipeline from './routes/pipeline.js';
 import { backfillClients } from './engine/clients.js';
@@ -122,6 +123,7 @@ app.use('/api/apps', apps);
 app.use('/api/search', search);
 app.use('/api/clients', clients);
 app.use('/api/lists', lists);
+app.use('/api/email', email);
 app.use('/api/dashboard', dashboard);
 app.use('/api/pipeline', pipeline);
 app.use('/api/activities', activities);
@@ -197,6 +199,20 @@ app.use((err, _req, res, _next) => {
       error: err.message,
       residency_blocked: true,
       route: err.route ?? null,
+    });
+  }
+
+  /**
+   * A payload past the body limit is a user mistake, not a server fault.
+   *
+   * express.json() rejects it before any route runs, so the friendly
+   * "that file is larger than 5 MB" check inside the email composer never gets
+   * a chance. Left alone this surfaced as a 500 reading "request entity too
+   * large", which tells somebody attaching a holiday photo nothing at all.
+   */
+  if (err.type === 'entity.too.large' || err.status === 413) {
+    return res.status(413).json({
+      error: 'That is too large to send. Attachments are limited to 5 MB each — try a smaller file, or attach it from the Content Library instead.',
     });
   }
 

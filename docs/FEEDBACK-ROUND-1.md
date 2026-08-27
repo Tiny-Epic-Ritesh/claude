@@ -37,7 +37,7 @@ HTML** because the SPA fallback caught them. An unbuilt endpoint must 404.
 | ENH-04 | Ticker role control | P2 | **Done** - role + per-user toggle in Setup > Navigation, audited | Q-03/Q-04 confirmed |
 | ENH-05 | Summary-card drill-through | P1 | **Done** — metrics carry a destination; 5 of 6 linked per cockpit | needs Q-05 |
 | ENH-05a | Drill-through per role | P1 | **Done** — same mechanism, every role, filters respect data scope | |
-| ENH-06 | Email composer | P1 | Not started | simulate until SMTP set |
+| ENH-06 | Email composer | P1 | **Done** - composer opens from the address; templates, free text, collateral, files, consent-checked | simulates until SMTP is configured |
 | BUG-07 | Copilot breaks layout | P0 | **Done** — `.copilot` had no CSS at all | |
 | ENH-08 | Role→tab matrix | P1 | **Done** - confirmed matrix seeded, editable in Setup > Navigation, per-user overrides, audited | Q-08 confirmed |
 | ENH-09 | Market items link out | P2 | **Done** - headline links to source; simulated items say the link arrives with the live feed | needs Global Datafeed |

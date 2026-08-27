@@ -6,10 +6,11 @@ import ActivityComposer from './ActivityComposer.jsx';
 import InCall from './InCall.jsx';
 import ProductCard from '../components/ProductCard.jsx';
 import ProductPanel from './ProductPanel.jsx';
+import EmailComposer from './EmailComposer.jsx';
 import ActionMenu from '../components/ActionMenu.jsx';
 import ActionModal from './ActionModals.jsx';
 import { LeadMarketContext } from '../components/Market.jsx';
-import { useLeadActions, CallNumber } from './leadActions.jsx';
+import { useLeadActions, CallNumber, EmailLink } from './leadActions.jsx';
 
 /**
  * The lead record. Sections and the action bar vary by role (BRD §11) — the
@@ -29,6 +30,7 @@ export default function LeadDetail({ session }) {
   // Declared after the setters it closes over — `const` bindings are in the
   // temporal dead zone until initialised, so hoisting this above them renders
   // a blank page rather than failing at build time.
+  const [emailing, setEmailing] = useState(null);
   const actions = useLeadActions({
     session, reload, onError: setActionError, onNotice: setNotice,
   });
@@ -73,7 +75,10 @@ export default function LeadDetail({ session }) {
               onCall={(l) => actions.run('call', l)}
               dialling={actions.dialling === lead.id}
             />
-            {lead.email && <span>· {lead.email}</span>}
+            {lead.email && (
+              <span>· <EmailLink lead={lead} permissions={session.permissions}
+                onEmail={() => setEmailing(lead.id)} masked={lead._pii_masked} /></span>
+            )}
             <span>· {lead.city || 'City unknown'}</span>
             <span>· {lead.language}</span>
             <span className="badge">{lead.stage}</span>
@@ -163,6 +168,15 @@ export default function LeadDetail({ session }) {
       {tab === 'kyc' && <KycTab lead={lead} session={session} reload={reload} onError={setActionError} />}
 
       {inCall && <InCall lead={lead} session={session} onClose={() => { setInCall(false); reload(); }} />}
+
+      {emailing && (
+        <EmailComposer
+          leadId={emailing}
+          onClose={() => setEmailing(null)}
+          onSent={(msg) => { setEmailing(null); setNotice(msg); reload(); }}
+          onError={setActionError}
+        />
+      )}
       <ActionModal
         state={actions.modal}
         session={session}

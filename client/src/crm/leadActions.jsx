@@ -175,3 +175,36 @@ export function CallNumber({ lead, permissions, onCall, dialling, masked }) {
     </button>
   );
 }
+
+/**
+ * A lead's email address, as a control (ENH-06).
+ *
+ * Deliberately shaped like CallNumber: the two sit next to each other on every
+ * lead, and an RM should not have to learn that one of them is a button and the
+ * other is decoration.
+ *
+ * Consent is reflected in the control rather than enforced after the click, for
+ * the same reason it is everywhere else -- a disabled control with a reason
+ * teaches something, and a failing one teaches distrust.
+ */
+export function EmailLink({ lead, permissions, onEmail, masked }) {
+  const can = (permissions ?? []).includes('lead.contact');
+  const blocked = lead.contactability?.email && !lead.contactability.email.service;
+
+  if (!lead.email) return <span className="muted">no email</span>;
+  if (!can) return <span className="phone-plain">{lead.email}</span>;
+
+  return (
+    <button
+      type="button"
+      className={`phone-link ${blocked ? 'is-blocked' : ''}`}
+      disabled={blocked}
+      title={blocked ? lead.contactability.email.reason : `Email ${lead.name}`}
+      onClick={(e) => { e.stopPropagation(); e.preventDefault(); onEmail(lead); }}
+    >
+      <Icon name={blocked ? 'unsubscribe' : 'mail'} size={14} />
+      <span>{lead.email}</span>
+      {masked && <Icon name="lock" size={11} />}
+    </button>
+  );
+}
