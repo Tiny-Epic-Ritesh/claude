@@ -220,6 +220,26 @@ if (existsSync(clientDist)) {
     error: `No such endpoint: ${req.method} ${req.originalUrl}`,
   }));
 
+  /**
+   * A missing asset must 404, not return the app.
+   *
+   * Same defect as the API one above, and a worse symptom. Asset filenames are
+   * content-hashed, so a request for one that is not on disk means the browser
+   * is holding an index.html from a different build -- which happens for a few
+   * seconds during every container swap.
+   *
+   * Falling through to the SPA handler answered those with 200 and text/html.
+   * The browser then refused the file as a stylesheet and rendered the whole
+   * application unstyled, while the JavaScript -- already cached -- ran
+   * normally. A page that looks catastrophically broken, with a 200 on every
+   * request and nothing in the server log.
+   *
+   * A 404 makes the same moment self-correcting: the reference is plainly
+   * stale, one reload fetches the current index.html, and the mismatch is over.
+   */
+  app.use(['/assets', '/ai-crm/assets'], (req, res) => res.status(404).type('text/plain')
+    .send(`Not found: ${req.originalUrl}`));
+
   app.get('*', (_req, res) => {
     // The SPA fallback serves index.html for every client route, so it carries
     // the same rule: always revalidate, never pin a browser to an old build.
