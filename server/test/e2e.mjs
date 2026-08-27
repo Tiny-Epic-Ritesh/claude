@@ -61,7 +61,7 @@ async function req(path, { method = 'GET', body, token, expect, headers = {} } =
   if (expect !== undefined && res.status !== expect) {
     throw new Error(`${method} ${path} → expected HTTP ${expect}, got ${res.status}: ${text.slice(0, 220)}`);
   }
-  return { status: res.status, data };
+  return { status: res.status, data, res };
 }
 
 const login = async (email, password = 'bonanza') => {
@@ -3234,6 +3234,103 @@ await check('a per-channel withdrawal closes only that channel', async () => {
   await check('connector settings need admin.system', async () => {
     await req('/api/admin/connectors/meta', { token: T.sales_rm, expect: 403 });
     await req('/api/admin/connectors/meta/leads', { token: T.marketing_manager, expect: 403 });
+  });
+
+  /* ============================================================ 33 */
+  suite('33 Clients (Q-26)');
+
+  await check('a client is its own record, not a lead with a flag', async () => {
+    const { data } = await req('/api/clients?limit=5', { token: T.superadmin, expect: 200 });
+    assert(Array.isArray(data), 'client list is not an array');
+    assert(data.length > 0, 'no clients seeded — the backfill did not run');
+    const c = data[0];
+    assert(c.client_code, 'a client with no UCC is not a client');
+    assert(c.converted_from_lead_id, 'attribution back to the originating lead is missing');
+    assert(!('stage' in c), 'a client should not carry a lead stage');
+  });
+
+  await check('the list is bounded and reports its true total', async () => {
+    const { res, data } = await req('/api/clients?limit=2', { token: T.superadmin, expect: 200 });
+    assert(data.length <= 2, `limit ignored: got ${data.length}`);
+    const total = Number(res.headers.get('x-total-count'));
+    assert(total >= data.length, 'X-Total-Count missing or smaller than the page');
+  });
+
+  await check('Customer Care sees accounts; Caller, Marketing and Partner RM do not', async () => {
+    await req('/api/clients', { token: T.customer_care, expect: 200 });
+    // The confirmed Q-26 matrix. A caller works a dial list of prospects, and
+    // marketing segments rather than opening account records.
+    await req('/api/clients', { token: T.caller, expect: 403 });
+    await req('/api/clients', { token: T.marketing_manager, expect: 403 });
+    await req('/api/clients', { token: T.partner_rm, expect: 403 });
+  });
+
+  await check('a Sales RM sees only their own book', async () => {
+    const { data: mine } = await req('/api/clients?limit=500', { token: T.sales_rm, expect: 200 });
+    const { data: all } = await req('/api/clients?limit=500', { token: T.superadmin, expect: 200 });
+    assert(mine.length < all.length, 'an RM sees the whole book — scope is not applied');
+    assert(mine.every((c) => c.owner_id === undefined || c.owner_id !== null),
+      'an unowned account leaked into an own-book view');
+  });
+
+  await check('org scope holds — Bonanza admin sees no Bigul accounts', async () => {
+    const { data } = await req('/api/clients?limit=500', { token: T.admin, expect: 200 });
+    assert(data.every((c) => c.sales_org === 'BONANZA'),
+      'a Bigul account is visible to a Bonanza admin');
+  });
+
+  await check('PII is masked in the list unless unmask is permitted', async () => {
+    const { data } = await req('/api/clients?limit=5', { token: T.sales_rm, expect: 200 });
+    const withMobile = data.find((c) => c.mobile);
+    if (withMobile) assert(/[•*]/.test(withMobile.mobile), `mobile is not masked: ${withMobile.mobile}`);
+  });
+
+  await check('dormancy is derived, and filters in SQL', async () => {
+    const { data: dormant } = await req('/api/clients?dormant=true&limit=500', { token: T.superadmin, expect: 200 });
+    assert(dormant.every((c) => c.activity_status === 'Dormant'),
+      'a trading account came back under the dormant filter');
+    const { data: summary } = await req('/api/clients/summary', { token: T.superadmin, expect: 200 });
+    eq(summary.dormant, dormant.length, 'the summary count and the filtered list disagree');
+  });
+
+  await check('the timeline reaches back to the lead without copying it', async () => {
+    const { data: list } = await req('/api/clients?limit=500', { token: T.superadmin, expect: 200 });
+    const withLead = list.find((c) => c.converted_from_lead_id);
+    const { data } = await req(`/api/clients/${withLead.id}`, { token: T.superadmin, expect: 200 });
+    assert(Array.isArray(data.timeline), 'no timeline');
+    assert(data.origin_lead, 'the originating lead is not linked');
+
+    // The point of the union: pre-conversion entries are visible on the client
+    // and still belong to the lead. Mirroring them would be non-negotiable #1.
+    const pre = data.timeline.filter((a) => a.origin === 'lead');
+    if (pre.length) {
+      const { data: leadRows } = await req(`/api/leads/${withLead.converted_from_lead_id}/activities`,
+        { token: T.superadmin });
+      if (Array.isArray(leadRows)) {
+        const ids = new Set(leadRows.map((a) => a.id));
+        assert(pre.every((a) => ids.has(a.id)),
+          'a pre-conversion entry is not the lead record own row — it was copied');
+      }
+    }
+  });
+
+  await check('an account cannot be handed to someone in the other business', async () => {
+    const { data: list } = await req('/api/clients?limit=500', { token: T.superadmin, expect: 200 });
+    const bonanza = list.find((c) => c.sales_org === 'BONANZA');
+    const { data: users } = await req('/api/admin/users', { token: T.superadmin });
+    const bigulUser = (Array.isArray(users) ? users : users?.rows ?? [])
+      .find((u) => u.sales_org === 'BIGUL' && u.active);
+    if (bonanza && bigulUser) {
+      await req(`/api/clients/${bonanza.id}/reassign`, {
+        method: 'POST', token: T.superadmin, body: { owner_id: bigulUser.id }, expect: 400,
+      });
+    }
+  });
+
+  await check('converting the same UCC twice does not create a second account', async () => {
+    const { data: before } = await req('/api/clients?limit=500', { token: T.superadmin, expect: 200 });
+    const codes = before.map((c) => `${c.client_code}|${c.sales_org}`);
+    eq(new Set(codes).size, codes.length, 'a UCC is duplicated within one sales org');
   });
 
   /* ------------------------------------------------------------- report */

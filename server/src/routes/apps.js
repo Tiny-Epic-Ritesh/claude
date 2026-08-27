@@ -32,7 +32,7 @@ router.use(requireUser);
 export const TABS = {
   home:       { id: 'home',       label: 'Home',            icon: 'home',                  to: '/' },
   leads:      { id: 'leads',      label: 'Leads',           icon: 'group_add',             to: '/leads',      needs: ['lead.view.all', 'lead.view.own', 'lead.view.product'] },
-  clients:    { id: 'clients',    label: 'Clients',         icon: 'people',                to: '/clients',    needs: ['lead.view.all', 'lead.view.own'] },
+  clients:    { id: 'clients',    label: 'Clients',         icon: 'people',                to: '/clients',    needs: ['client.view.all', 'client.view.own'] },
   pipeline:   { id: 'pipeline',   label: 'Pipeline',        icon: 'view_kanban',           to: '/pipeline',   needs: ['lead.view.all', 'lead.view.own', 'lead.view.product'] },
   tasks:      { id: 'tasks',      label: 'Tasks',           icon: 'assignment_turned_in',  to: '/tasks' },
   // No capability gate: delayed index levels, a results calendar and the

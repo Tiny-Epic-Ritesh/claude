@@ -8,6 +8,8 @@ import Login from './Login.jsx';
 import Cockpit from './Cockpit.jsx';
 import Leads from './Leads.jsx';
 import LeadDetail from './LeadDetail.jsx';
+import Clients from './Clients.jsx';
+import ClientDetail from './ClientDetail.jsx';
 import Tickets from './Tickets.jsx';
 import Partners from './Partners.jsx';
 import PartnerProfile from './PartnerProfile.jsx';
@@ -34,7 +36,7 @@ const NAV = [
     { to: '/', label: 'Overview', icon: 'dashboard', end: true },
     { to: '/revenue', label: 'Revenue Board', icon: 'leaderboard', needs: ['report.team', 'report.system'] },
     { to: '/leads', label: 'Lead Board', icon: 'group_add', needs: ['lead.view.all', 'lead.view.own', 'lead.view.product'] },
-    { to: '/clients', label: 'Clients Board', icon: 'people', needs: ['lead.view.all', 'lead.view.own'] },
+    { to: '/clients', label: 'Clients Board', icon: 'people', needs: ['client.view.all', 'client.view.own'] },
     { to: '/tickets', label: 'Query Management', icon: 'support_agent', needs: ['ticket.create'] },
     { to: '/tasks', label: 'Tasks', icon: 'assignment_turned_in' },
     // Every role, no capability gate: delayed index levels and a results
@@ -168,6 +170,8 @@ export default function Crm() {
             <Route path="/" element={<Cockpit session={session} />} />
             <Route path="/leads" element={<Leads session={session} />} />
             <Route path="/leads/:id" element={<LeadDetail session={session} />} />
+            <Route path="/clients" element={<Clients session={session} />} />
+            <Route path="/clients/:id" element={<ClientDetail session={session} />} />
             <Route path="/tickets" element={<Tickets session={session} />} />
             <Route path="/tickets/:id" element={<Tickets session={session} />} />
             <Route path="/partners" element={<Partners session={session} />} />
@@ -182,7 +186,7 @@ export default function Crm() {
 
             {/* Advertised in the launcher, surface not built yet. Each states
                 what it will hold and points at the part that already works. */}
-            {['pipeline', 'clients', 'calendar', 'products', 'ccm', 'team',
+            {['pipeline', 'calendar', 'products', 'ccm', 'team',
               'revenue', 'kra', 'incentives', 'campaigns', 'content', 'lists',
               'dashboards'].map((key) => (
                 <Route key={key} path={`/${key}`} element={<Placeholder moduleKey={key} />} />

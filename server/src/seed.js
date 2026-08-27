@@ -18,6 +18,7 @@ import { seedDispositions, applyEffects } from './engine/dispositions.js';
 import { createFollowUp } from './engine/followups.js';
 import { DEFAULT_SLA } from './engine/sla.js';
 import { ticketSummary } from './ai/mock.js';
+import { convertLead } from './engine/clients.js';
 import { hashPassword, encryptField } from './security.js';
 
 const ago = (d, h = 0) => new Date(Date.now() - d * 864e5 - h * 36e5).toISOString().slice(0, 19).replace('T', ' ');
@@ -29,6 +30,11 @@ for (const t of [
   'sessions', 'notifications', 'audit_log', 'rule_runs', 'rules', 'campaigns', 'lead_list_members', 'lead_lists',
   'kyc_journey_progress', 'kyc_journeys', 'kyc_journey_steps', 'kyc_steps_master',
   'commissions', 'partner_lms', 'partner_steps', 'ticket_replies', 'tickets',
+  // Clients before leads: converted_from_lead_id is ON DELETE SET NULL, so
+  // clearing leads first would silently orphan every account instead of
+  // removing it — and the next convert would then find the orphan, treat it as
+  // already converted, and never restore the link.
+  'client_segments', 'clients',
   'notes', 'tasks', 'activities', 'card_audit', 'product_cards', 'leads', 'partners',
   'content_items', 'templates', 'sla_policies', 'ticket_categories', 'product_types', 'users',
   'reminders', 'assignment_rules', 'team_members', 'teams',
@@ -703,6 +709,74 @@ logActivity({ leadIdx: 10, type: 'Call', code: 'CALL_CALLBACK', duration: 140,
 for (const l of all("SELECT lead_id, SUM(value) v FROM product_cards WHERE state = 'ACTIVE' GROUP BY lead_id")) {
   run('UPDATE leads SET aum = ?, aum_as_of = date(\'now\') WHERE id = ?', [l.v, l.lead_id]);
 }
+
+/* ---------------------------------------------------------------- clients
+ *
+ * A lead holding at least one ACTIVE product card is not a prospect any more --
+ * the account is open and trading. That is the conversion trigger, so those
+ * leads get a UCC and a client record, and the rest stay leads.
+ *
+ * Some are deliberately left cold, with no trade for months, so the Dormant
+ * derivation has something real to find. A seed where every account looks
+ * healthy tests nothing.
+ */
+const SEGMENT_FOR = {
+  EQD: 'Derivatives', 'BG-TRADE': 'Equity', 'BG-ALGO': 'Derivatives',
+  MF: 'Mutual Fund', 'BG-SIP': 'Mutual Fund', 'BG-BASKET': 'Equity',
+  DP: 'Equity', PMS: 'Equity', RES: 'Equity', INS: 'Mutual Fund',
+  'BG-JARVIS': 'Derivatives', 'BG-CONNECT': 'Equity', COMM: 'Commodity',
+};
+
+const convertedLeads = all(`
+  SELECT l.id, l.sales_org, l.aum, GROUP_CONCAT(pt.code) AS codes
+    FROM leads l
+    JOIN product_cards pc ON pc.lead_id = l.id AND pc.state = 'ACTIVE'
+    JOIN product_types pt ON pt.id = pc.product_type_id
+   GROUP BY l.id
+   ORDER BY l.id`);
+
+convertedLeads.forEach((row, i) => {
+  const prefix = row.sales_org === 'BIGUL' ? 'BG' : 'BZ';
+  const code = prefix + String(100234 + i * 37).padStart(6, '0');
+
+  const segments = [...new Set(
+    String(row.codes || '').split(',').map((c) => SEGMENT_FOR[c]).filter(Boolean),
+  )];
+  if (!segments.includes('Equity')) segments.push('Equity');
+
+  const openedDaysAgo = 40 + (i * 23) % 900;
+  const dormant = i % 7 === 3;
+  const lastTradedDaysAgo = dormant ? 130 + (i % 5) * 40 : (i * 3) % 25;
+
+  const r = convertLead(row.id, {
+    clientCode: code,
+    dematId: 'IN30' + String(1000000 + i * 1237).slice(0, 8),
+    activatedAt: new Date(Date.now() - openedDaysAgo * 864e5).toISOString().slice(0, 19).replace('T', ' '),
+    segments,
+  });
+  if (!r.ok || !r.client) return;
+
+  run(`UPDATE clients
+          SET first_traded_at = datetime('now', ?),
+              last_traded_at  = datetime('now', ?),
+              trades_last_year = ?, brokerage_ytd = ?, ledger_balance = ?,
+              holding_value = ?, margin_available = ?, nominee_name = ?
+        WHERE id = ?`,
+    [
+      '-' + (openedDaysAgo - 5) + ' days',
+      '-' + lastTradedDaysAgo + ' days',
+      dormant ? (i % 4) : 40 + (i * 17) % 300,
+      Math.round((row.aum || 50000) * 0.012),
+      Math.round((row.aum || 0) * 0.05),
+      row.aum || 0,
+      Math.round((row.aum || 0) * 0.15),
+      ['Meera Nair', 'Rohit Sharma', 'Anita Desai', 'Vikram Rao'][i % 4],
+      r.client.id,
+    ]);
+});
+
+console.log('  clients: ' + convertedLeads.length + ' accounts converted from leads with an ACTIVE card');
+
 
 /* ------------------------------------------------------------ activities */
 

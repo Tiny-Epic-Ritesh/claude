@@ -50,6 +50,18 @@ export const PERMISSIONS = {
   'lead.delete':          ['superadmin', 'admin'],
   'lead.contact':         ['superadmin', 'admin', 'caller', 'dealer', 'sales_rm', 'sales_supervisor', 'customer_care'],
 
+  /* Clients — per the confirmed Q-26 matrix.
+   *
+   * Caller is absent by design: a caller works a dial list of prospects, and a
+   * live account appearing in it is a mis-dial waiting to happen. Marketing is
+   * absent because it segments and sends rather than opening account records.
+   * Partner RM reads a partner's clients inside the partner record, not here. */
+  'client.view.all':      ['superadmin', 'admin', 'customer_care', 'product_supervisor'],
+  'client.view.own':      ['sales_rm', 'sales_supervisor', 'dealer', 'product_rm'],
+  'client.edit':          ['superadmin', 'admin', 'sales_rm', 'dealer', 'customer_care'],
+  'client.reassign':      ['superadmin', 'admin', 'sales_supervisor'],
+  'client.export':        ['superadmin', 'admin'],
+
   // Product cards
   'card.mark.exploring':  ['caller', 'dealer', 'sales_rm', 'superadmin', 'admin'],
   'card.mark.warm':       ['dealer', 'sales_rm', 'superadmin', 'admin'],
@@ -350,6 +362,68 @@ export function leadScope(user, alias = 'l', active = null) {
   };
 }
 
+/**
+ * The client-visibility rule.
+ *
+ * Deliberately a sibling of leadScope rather than a reuse of it. The two answer
+ * different questions and are allowed to diverge: Customer Care sees every
+ * client because servicing requires it, but no leads at all, because a service
+ * agent works accounts and not prospects. Folding clients into leadScope would
+ * force those two answers to be the same one.
+ *
+ * What it does keep identical is the shape — one restrictive floor, then
+ * grant-only layers, then org entitlement ANDed on top. A rule that reads the
+ * same as the lead rule is a rule an administrator can reason about.
+ */
+export function clientScope(user, alias = 'c', active = null) {
+  const org = orgScope(user, alias, active);
+
+  const role = (() => {
+    if (can(user.role, 'client.view.all')) return { sql: '1=1', params: [] };
+
+    switch (dataScope(user.role)) {
+      case 'org':
+        // An org-scoped role without client.view.all has not been granted sight
+        // of accounts. Marketing sits here, and fails closed rather than open.
+        return can(user.role, 'client.view.own')
+          ? { sql: `${alias}.owner_id = ?`, params: [user.id] }
+          : { sql: '1=0', params: [] };
+
+      case 'product':
+        // A Product RM sees an account that holds their product, which is the
+        // client-side equivalent of the product card test on leads.
+        return {
+          sql: `EXISTS (SELECT 1 FROM product_cards pc
+                        JOIN leads pl ON pl.id = pc.lead_id
+                        WHERE pl.id = ${alias}.converted_from_lead_id
+                          AND pc.product_type_id = ?)`,
+          params: [user.product_type_id ?? -1],
+        };
+
+      case 'team':
+      case 'own':
+      default:
+        return can(user.role, 'client.view.own')
+          ? { sql: `${alias}.owner_id = ?`, params: [user.id] }
+          : { sql: '1=0', params: [] };
+    }
+  })();
+
+  const grants = [role];
+  const manager = managerScopeSql(user, alias);
+  if (manager) grants.push(manager);
+
+  const reach = {
+    sql: `(${grants.map((g) => `(${g.sql})`).join(' OR ')})`,
+    params: grants.flatMap((g) => g.params),
+  };
+
+  return {
+    sql: `(${reach.sql}) AND (${org.sql})`,
+    params: [...reach.params, ...org.params],
+  };
+}
+
 /* --------------------------------------------------------- sales orgs */
 
 /**
@@ -408,6 +482,9 @@ export const mayUseOrg = (user, org) => orgsFor(user).includes(org);
  * drops the switcher, which is how "?org= does nothing" bugs happen.
  */
 export const reqScope = (req, alias = 'l') => leadScope(req.user, alias, activeOrg(req));
+
+/** The same, for clients. Bigul users never see Bonanza accounts, and back. */
+export const reqClientScope = (req, alias = 'c') => clientScope(req.user, alias, activeOrg(req));
 
 /** Product RMs never get write access to a lead record (BRD §3.2). */
 export const isReadOnlyOnLeads = (role) => ['product_rm', 'marketing_manager'].includes(role);

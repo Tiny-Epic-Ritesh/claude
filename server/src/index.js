@@ -27,6 +27,8 @@ import setup from './routes/setup.js';
 import market, { publicIndices } from './routes/market.js';
 import advancedSearch from './routes/search-advanced.js';
 import approvals from './routes/approvals.js';
+import clients from './routes/clients.js';
+import { backfillClients } from './engine/clients.js';
 
 import { sweepSla } from './engine/sla.js';
 import { sweepKyc } from './engine/kyc.js';
@@ -114,6 +116,7 @@ app.use('/api/kyc', kycInternal);
 app.use('/api/orgs', orgs);
 app.use('/api/apps', apps);
 app.use('/api/search', search);
+app.use('/api/clients', clients);
 app.use('/api/activities', activities);
 app.use('/api/setup', setup);
 app.use('/api/market', market);
@@ -221,6 +224,17 @@ setInterval(() => { try { runEnabledRules(); } catch (e) { console.error('[rules
    score overnight. Rebuilding on a schedule is what keeps a derived value
    honest without anyone remembering to refresh it. */
 setInterval(() => { try { sweepMetrics(); } catch (e) { console.error('[metrics]', e.message); } }, 15 * MINUTE);
+
+/* Every lead already carrying a UCC is an account that exists, so it belongs in
+   the client book. Without this the Clients tab opens empty on a database that
+   is full of clients — which is the exact confusion this split exists to end.
+   Idempotent, so it is a no-op on every boot after the first. */
+try {
+  const { scanned, created } = backfillClients();
+  if (created) console.log(`[clients] backfilled ${created} of ${scanned} accounts carrying a UCC`);
+} catch (e) {
+  console.error('[clients] backfill failed', e.message);
+}
 
 app.listen(PORT, () => {
   console.log(`[server] Bonanza CRM API on http://localhost:${PORT}`);

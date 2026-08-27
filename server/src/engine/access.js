@@ -48,6 +48,13 @@ export const CAPABILITY_CATALOGUE = [
   ['lead.delete', 'Delete leads', 'Leads', 'Soft delete, recoverable from the recycle bin', 1],
   ['lead.contact', 'Contact leads', 'Leads', 'Call, message and log activities', 0],
 
+  // Clients
+  ['client.view.all', 'View all clients', 'Clients', 'See every client in the sales org', 0],
+  ['client.view.own', 'View own clients', 'Clients', 'See only clients they own', 0],
+  ['client.edit', 'Edit clients', 'Clients', 'Change servicing detail on an account', 0],
+  ['client.reassign', 'Reassign clients', 'Clients', 'Move an account to a different owner', 0],
+  ['client.export', 'Export clients', 'Clients', 'Bulk export of client records. The main exfiltration path in a broking CRM.', 1],
+
   // Product cards
   ['card.mark.exploring', 'Mark card Exploring', 'Products', null, 0],
   ['card.mark.warm', 'Mark card Warm', 'Products', null, 0],

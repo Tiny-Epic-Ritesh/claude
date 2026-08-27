@@ -185,6 +185,80 @@ CREATE TABLE IF NOT EXISTS card_audit (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+/* ------------------------------------------------------------- clients
+ *
+ * A client is not a lead with a flag on it.
+ *
+ * The legacy tenant modelled it that way and the cost is visible in
+ * docs/legacy-leadsquared/lead-fields.md: roughly forty trading and financial
+ * attributes — mx_Equity_active, mx_Brokerage_Amount, mx_Ledger_Balance,
+ * mx_Last_Traded_Date and the rest — hang off the Lead object, describing an
+ * account that exists rather than a prospect that might. Three consequences,
+ * each of which we inherit if we copy the shape:
+ *
+ *   1. Retention. A client record must survive years past account closure; a
+ *      prospect can be erased on request. One row cannot honour both.
+ *   2. Cardinality. The same PAN may enquire twice, and one enquiry may open
+ *      equity and commodity, or an account on Bonanza *and* on Bigul. A status
+ *      column cannot express that; a linked row can.
+ *   3. Hygiene. While a converted client is still a lead row it keeps matching
+ *      prospecting segments — which is how a firm mails acquisition offers to
+ *      its own customers.
+ *
+ * Conversion fires when the account activates and the UCC exists, not when KYC
+ * starts: a KYC in progress is not yet a customer.
+ *
+ * converted_from_lead_id is attribution, not ownership. It keeps the partner
+ * and campaign that sourced the account answerable long after the lead stops
+ * being worked, and it is what lets the client timeline reach back to the
+ * pre-conversion conversation without copying a single activity row.
+ */
+CREATE TABLE IF NOT EXISTS clients (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_code     TEXT NOT NULL,          -- UCC
+  name            TEXT NOT NULL,
+  pan             TEXT,                   -- encrypted at rest, as on leads
+  mobile          TEXT,
+  email           TEXT,
+  demat_id        TEXT,                   -- DP ID
+  sales_org       TEXT NOT NULL DEFAULT 'BONANZA',
+  owner_id        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  partner_id      INTEGER REFERENCES partners(id) ON DELETE SET NULL,
+  converted_from_lead_id INTEGER REFERENCES leads(id) ON DELETE SET NULL,
+  status          TEXT NOT NULL DEFAULT 'Active',  -- Active / Dormant / Suspended / Closed
+  risk_profile    TEXT,
+  nominee_name    TEXT,
+  activated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  first_traded_at TEXT,
+  last_traded_at  TEXT,
+  trades_last_year INTEGER NOT NULL DEFAULT 0,
+  brokerage_ytd   REAL NOT NULL DEFAULT 0,
+  ledger_balance  REAL NOT NULL DEFAULT 0,
+  holding_value   REAL NOT NULL DEFAULT 0,
+  margin_available REAL NOT NULL DEFAULT 0,
+  closed_at       TEXT,
+  deleted_at      TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  -- A UCC is unique within a broking entity, not across the group. Bonanza and
+  -- Bigul are separate registrations and may legitimately issue the same code.
+  UNIQUE (client_code, sales_org)
+);
+
+/* One row per segment the client is enabled for.
+ *
+ * The legacy shape was a column per segment — mx_Equity_active,
+ * mx_Derivatives_active, mx_FO_Currency_Active, mx_MF_active, mx_GI_active,
+ * each with its own activation-date twin. Adding a segment there is a schema
+ * migration and a form change. Here it is an INSERT. */
+CREATE TABLE IF NOT EXISTS client_segments (
+  client_id    INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  segment      TEXT NOT NULL,             -- Equity / Derivatives / Commodity / Currency / Mutual Fund / Global
+  active       INTEGER NOT NULL DEFAULT 1,
+  activated_at TEXT,
+  PRIMARY KEY (client_id, segment)
+);
+
 CREATE TABLE IF NOT EXISTS activities (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   lead_id    INTEGER REFERENCES leads(id) ON DELETE CASCADE,
@@ -508,6 +582,10 @@ const COLUMNS = [
   ['partners', 'kyc_shortcode', 'TEXT'],       // partner attribution, drives commission
   ['activities', 'external_id', 'TEXT'],       // vendor call/message id, for de-duplication
   ['activities', 'recording_url', 'TEXT'],     // QuickCall voice-logger file
+  /* An interaction logged against the account after conversion. The lead's own
+     activities stay on the lead — the client timeline unions the two rather
+     than copying, per non-negotiable #1. */
+  ['activities', 'client_id', 'INTEGER'],
   ['leads', 'client_code', 'TEXT'],            // UCC once the account is opened
   ['leads', 'kyc_external_ref', 'TEXT'],       // our correlation id echoed by the portal
   ['leads', 'kyc_portal_stage', 'TEXT'],       // raw stage reported by the eKYC portal
@@ -600,6 +678,12 @@ CREATE INDEX IF NOT EXISTS idx_partners_org ON partners(sales_org);
 CREATE INDEX IF NOT EXISTS idx_products_org ON product_types(sales_org);
 CREATE INDEX IF NOT EXISTS idx_tickets_org ON tickets(sales_org);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_empcode ON users(employee_code) WHERE employee_code IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_clients_org ON clients(sales_org);
+CREATE INDEX IF NOT EXISTS idx_clients_owner ON clients(owner_id);
+CREATE INDEX IF NOT EXISTS idx_clients_code ON clients(client_code);
+CREATE INDEX IF NOT EXISTS idx_clients_lead ON clients(converted_from_lead_id);
+CREATE INDEX IF NOT EXISTS idx_clients_status ON clients(status);
+CREATE INDEX IF NOT EXISTS idx_activities_client ON activities(client_id);
 `);
 
 /* ------------------------------------------------------- sales orgs */
