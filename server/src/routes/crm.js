@@ -270,9 +270,9 @@ router.get('/leads/:id', (req, res) => {
   if (!visible) return res.status(403).json({ error: 'This lead is outside your visibility scope' });
 
   const id = req.params.id;
-  const unmask = unmaskRequested(req, 'lead', Number(id));
+  const masking = maskFor(req, 'lead', Number(id));
   res.json({
-    ...maskRecord(decorate(lead), { unmask }),
+    ...maskRecord(decorate(lead), masking),
     read_only: isReadOnlyOnLeads(req.user.role),
     // Metadata open, content restricted: the fact and outcome of every
     // interaction stay visible; notes and recordings need ownership or

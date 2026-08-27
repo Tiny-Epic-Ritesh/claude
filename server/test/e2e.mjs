@@ -3883,13 +3883,24 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     return data[0];
   };
 
-  await check('Admin, Superadmin and Marketing see identifiers in the clear', async () => {
-    for (const token of [T.superadmin, T.admin, T.marketing_manager]) {
+  await check('Admin and Superadmin see every identifier in the clear', async () => {
+    for (const token of [T.superadmin, T.admin]) {
       // eslint-disable-next-line no-await-in-loop
       const lead = await firstLead(token);
       assert(!/\u2022/.test(String(lead.mobile ?? '')), `mobile is masked: ${lead.mobile}`);
       assert(!/\u2022/.test(String(lead.email ?? '')), `email is masked: ${lead.email}`);
     }
+  });
+
+  await check('Marketing gets the email it needs and nothing it does not', async () => {
+    // The default was reconsidered: this role segments and sends, so it needs an
+    // address to run a campaign and no reason to read a PAN or ring anybody.
+    const lead = await firstLead(T.marketing_manager);
+    assert(!/\u2022/.test(String(lead.email ?? '')), `email should be clear: ${lead.email}`);
+    if (lead.mobile) assert(/\u2022/.test(lead.mobile), `mobile should be masked: ${lead.mobile}`);
+
+    const { data: detail } = await req(`/api/leads/${lead.id}`, { token: T.marketing_manager, expect: 200 });
+    if (detail.pan) assert(/[\u2022*]/.test(detail.pan), `PAN should be masked: ${detail.pan}`);
   });
 
   await check('everybody else still sees dots', async () => {
@@ -3903,22 +3914,32 @@ await check('a per-channel withdrawal closes only that channel', async () => {
   await check('the matrix reports where each answer came from', async () => {
     const { data } = await req('/api/setup/field-masking', { token: T.admin, expect: 200 });
     const marketing = data.matrix.find((m) => m.role === 'marketing_manager');
-    eq(marketing.fields.pan.masked, false, 'marketing should start unmasked');
+    eq(marketing.fields.pan.masked, true, 'marketing should not see a PAN by default');
+    eq(marketing.fields.mobile.masked, true, 'marketing should not see a mobile by default');
+    eq(marketing.fields.email.masked, false, 'marketing needs the email address to send');
     eq(marketing.fields.pan.source, 'default', 'nothing has been configured yet');
     const caller = data.matrix.find((m) => m.role === 'caller');
     eq(caller.fields.pan.masked, true, 'a caller should start masked');
   });
 
   await check('masking one field for one role takes effect immediately', async () => {
+    // Unmasking, this time: mobile is masked for Marketing by default, so this
+    // proves the configuration can open a field as well as close one.
     await req('/api/setup/field-masking', {
       method: 'POST', token: T.admin, expect: 200,
-      body: { role: 'marketing_manager', field: 'mobile', masked: true },
+      body: { role: 'marketing_manager', field: 'mobile', masked: false },
     });
 
     const lead = await firstLead(await login('marketing@bonanza.test'));
-    assert(/\u2022/.test(String(lead.mobile ?? '')), 'the mobile should now be masked');
-    // …and only that field. A blunt on/off would have taken the email too.
-    assert(!/\u2022/.test(String(lead.email ?? '')), `email should still be clear: ${lead.email}`);
+    assert(!/\u2022/.test(String(lead.mobile ?? '')), 'the mobile should now be visible');
+    // …and only that field. A blunt on/off would have opened the PAN too.
+    const { data: detail } = await req(`/api/leads/${lead.id}`, { token: await login('marketing@bonanza.test'), expect: 200 });
+    if (detail.pan) assert(/[\u2022*]/.test(detail.pan), `PAN should still be masked: ${detail.pan}`);
+
+    await req('/api/setup/field-masking', {
+      method: 'POST', token: T.admin, expect: 200,
+      body: { role: 'marketing_manager', field: 'mobile', masked: null },
+    });
   });
 
   await check('resetting returns the field to the shipped default', async () => {
@@ -3927,28 +3948,29 @@ await check('a per-channel withdrawal closes only that channel', async () => {
       body: { role: 'marketing_manager', field: 'mobile', masked: null },
     });
     const lead = await firstLead(await login('marketing@bonanza.test'));
-    assert(!/\u2022/.test(String(lead.mobile ?? '')), 'reset did not restore the default');
+    // The shipped default for this role and field is now MASKED, so a reset has
+    // to return it to masked -- not to visible. Reset means "follow the
+    // default", whatever the default happens to be.
+    if (lead.mobile) assert(/\u2022/.test(lead.mobile), 'reset did not restore the default');
   });
 
   await check('masking applies everywhere a lead is served, not only the list', async () => {
-    await req('/api/setup/field-masking', {
-      method: 'POST', token: T.admin, expect: 200,
-      body: { role: 'marketing_manager', field: 'mobile', masked: true },
-    });
     const token = await login('marketing@bonanza.test');
-
     const lead = await firstLead(token);
     const { data: detail } = await req(`/api/leads/${lead.id}`, { token, expect: 200 });
+
+    // Both halves, deliberately. Asserting only that a masked field is masked
+    // is satisfied by an endpoint that masks EVERYTHING -- which is exactly what
+    // the lead detail route was doing, so this test passed while the per-field
+    // rules were not reaching it at all. The clear field is the real check.
     assert(/\u2022/.test(String(detail.mobile ?? '')), 'the detail view leaked an unmasked mobile');
+    assert(!/\u2022/.test(String(detail.email ?? '')),
+      `the detail view masked a field this role should see: ${detail.email}`);
 
     const { data: search } = await req('/api/search?q=a', { token, expect: 200 });
     const hit = (search.groups?.Leads ?? []).find((l) => l.mobile);
     if (hit) assert(/\u2022/.test(hit.mobile), 'global search leaked an unmasked mobile');
 
-    await req('/api/setup/field-masking', {
-      method: 'POST', token: T.admin, expect: 200,
-      body: { role: 'marketing_manager', field: 'mobile', masked: null },
-    });
   });
 
   await check('an unmaskable field is refused', async () => {

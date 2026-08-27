@@ -37,18 +37,42 @@ export const FIELD_LABEL = {
 };
 
 /**
- * Roles that see everything in the clear by default.
+ * What each role sees in the clear, before any configuration.
  *
- * Marketing Manager is here because the requirement says so. Worth recording
- * that it is the one entry with a tension behind it: this role segments and
- * sends rather than opening individual records, so under data minimisation it
- * is the least obvious candidate for clear-text PII. It is configurable on this
- * very screen, which is the right place for that argument to be settled.
+ * Per field rather than per role, because the interesting answer is rarely
+ * all-or-nothing. Marketing Manager is the case that forced it: they need an
+ * email address to run a campaign, and have no business reading a client's PAN
+ * or mobile. A blanket "unmasked role" flag could express neither half of that.
+ *
+ * `'ALL'` means every maskable field. An array names the exceptions. A role
+ * absent from this map sees nothing in the clear, which is the safe default for
+ * anything added later.
  */
-export const UNMASKED_BY_DEFAULT = new Set(['superadmin', 'admin', 'marketing_manager']);
+export const UNMASKED_BY_DEFAULT = {
+  superadmin: 'ALL',
+  admin: 'ALL',
 
-export const defaultMasked = (role, field) =>
-  MASKABLE.includes(field) && !UNMASKED_BY_DEFAULT.has(role);
+  /**
+   * Marketing segments and sends; it does not open individual records.
+   *
+   * Email only. PAN and mobile are masked on Ritesh's decision, and it is the
+   * right one under data minimisation: a role that never needs to phone a
+   * client has no reason to hold their number in the clear, and a PAN is the
+   * single most sensitive identifier in the system.
+   *
+   * Campaign sends are unaffected -- the send path reads the stored value
+   * server-side and never depends on what reached the browser.
+   */
+  marketing_manager: ['email'],
+};
+
+export function defaultMasked(role, field) {
+  if (!MASKABLE.includes(field)) return false;
+  const rule = UNMASKED_BY_DEFAULT[role];
+  if (rule === 'ALL') return false;
+  if (Array.isArray(rule)) return !rule.includes(field);
+  return true;
+}
 
 const configured = () => {
   const map = new Map();
