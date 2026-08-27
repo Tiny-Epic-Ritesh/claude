@@ -32,6 +32,7 @@ import lists from './routes/lists.js';
 import email from './routes/email.js';
 import dashboard from './routes/dashboard.js';
 import pipeline from './routes/pipeline.js';
+import products from './routes/products.js';
 import { backfillClients } from './engine/clients.js';
 import { sweepListRefresh } from './engine/leadlists.js';
 
@@ -126,6 +127,7 @@ app.use('/api/lists', lists);
 app.use('/api/email', email);
 app.use('/api/dashboard', dashboard);
 app.use('/api/pipeline', pipeline);
+app.use('/api/products', products);
 app.use('/api/activities', activities);
 app.use('/api/setup', setup);
 app.use('/api/market', market);

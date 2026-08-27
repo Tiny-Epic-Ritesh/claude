@@ -4568,6 +4568,78 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     await req('/api/portal/dashboard', { token: T.admin, expect: 401 });
   });
 
+  /* ============================================================ 45 */
+  suite('45 Product desks');
+
+  await check('the catalogue reports how each product is moving', async () => {
+    const { data } = await req('/api/products', { token: T.admin, expect: 200 });
+    assert(data.products.length > 0, 'no products');
+    assert(data.categories.length > 0, 'no categories');
+    const p = data.products[0];
+    for (const k of ['in_play', 'active', 'lost', 'open_value', 'won_value']) {
+      assert(k in p, `the catalogue does not report ${k}`);
+    }
+  });
+
+  await check('a product nobody has decided on has no conversion rate', async () => {
+    const { data } = await req('/api/products', { token: T.admin, expect: 200 });
+    const untouched = data.products.find((x) => x.active === 0 && x.lost === 0);
+    if (untouched) {
+      // null, not 0. Zero reads as failure; null reads as "not yet answered".
+      eq(untouched.conversion_pct, null, 'an undecided product was given a 0% conversion');
+    }
+  });
+
+  await check('the desk funnel can only narrow', async () => {
+    const { data: list } = await req('/api/products', { token: T.admin, expect: 200 });
+    const withWork = list.products.find((x) => x.in_play > 0) ?? list.products[0];
+    const { data } = await req(`/api/products/${withWork.id}`, { token: T.admin, expect: 200 });
+
+    assert(data.funnel.length >= 4, 'the funnel has too few stages to be one');
+    for (let i = 1; i < data.funnel.length; i += 1) {
+      assert(data.funnel[i].value <= data.funnel[i - 1].value,
+        `the funnel widens at ${data.funnel[i].label} — that is not a funnel`);
+    }
+  });
+
+  await check('the desk carries what to say as well as how it is doing', async () => {
+    const { data: list } = await req('/api/products', { token: T.admin, expect: 200 });
+    const { data } = await req(`/api/products/${list.products[0].id}`, { token: T.admin, expect: 200 });
+    assert(Array.isArray(data.pitch_points), 'pitch points did not parse');
+    assert(Array.isArray(data.objections), 'objections did not parse');
+    assert(Array.isArray(data.stalled), 'no stalled list — the thing the page is opened to find');
+  });
+
+  await check('everything on the desk is scoped to the reader', async () => {
+    const totalFor = async (token) => {
+      const { data } = await req('/api/products', { token, expect: 200 });
+      return data.products.reduce((s, x) => s + x.in_play + x.active, 0);
+    };
+    const admin = await totalFor(T.admin);
+    const rm = await totalFor(T.sales_rm);
+    assert(rm <= admin, `an RM counted more cards (${rm}) than an admin (${admin})`);
+  });
+
+  await check('a product in the other business is not readable', async () => {
+    const { data: all } = await req('/api/products', { token: T.superadmin, expect: 200 });
+    const { data: mine } = await req('/api/products', { token: T.admin, expect: 200 });
+    const mineIds = new Set(mine.products.map((x) => x.id));
+    const foreign = all.products.find((x) => !mineIds.has(x.id));
+    if (foreign) await req(`/api/products/${foreign.id}`, { token: T.admin, expect: 404 });
+  });
+
+  await check('stalled means over a fortnight, and says how long', async () => {
+    const { data: list } = await req('/api/products', { token: T.superadmin, expect: 200 });
+    for (const p of list.products.slice(0, 6)) {
+      // eslint-disable-next-line no-await-in-loop
+      const { data } = await req(`/api/products/${p.id}`, { token: T.superadmin, expect: 200 });
+      for (const c of data.stalled) {
+        assert(c.days_in_state > 14, `"${c.lead_name}" is listed as stalled at ${c.days_in_state} days`);
+        assert(c.lead_id, 'a stalled row with no lead to open');
+      }
+    }
+  });
+
   /* ------------------------------------------------------------- report */
   report();
 }

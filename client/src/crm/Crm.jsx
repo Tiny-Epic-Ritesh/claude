@@ -12,6 +12,7 @@ import Clients from './Clients.jsx';
 import LeadLists from './LeadLists.jsx';
 import Dashboard from './Dashboard.jsx';
 import Pipeline from './Pipeline.jsx';
+import Products from './Products.jsx';
 import ListDetail from './ListDetail.jsx';
 import ClientDetail from './ClientDetail.jsx';
 import Tickets from './Tickets.jsx';
@@ -194,6 +195,7 @@ export default function Crm() {
             <Route path="/lists" element={<LeadLists session={session} />} />
             <Route path="/lists/:id" element={<ListDetail session={session} />} />
             <Route path="/pipeline" element={<Pipeline session={session} />} />
+            <Route path="/products" element={<Products session={session} />} />
             {/* ENH-24b: the dashboard lives on the homepage, which was the
                 stated preference. This tab renders the same component so
                 the launcher entry works without a second implementation. */}
@@ -212,7 +214,7 @@ export default function Crm() {
 
             {/* Advertised in the launcher, surface not built yet. Each states
                 what it will hold and points at the part that already works. */}
-            {['calendar', 'products', 'ccm', 'team',
+            {['calendar', 'ccm', 'team',
               'revenue', 'kra', 'incentives', 'campaigns', 'content'].map((key) => (
                 <Route key={key} path={`/${key}`} element={<Placeholder moduleKey={key} />} />
               ))}
