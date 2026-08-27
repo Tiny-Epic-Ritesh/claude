@@ -13,6 +13,7 @@ import { derivedValues, describeFormula, describeRollup } from '../engine/formul
 import { assignLead } from '../engine/assignment.js';
 import { metricsFor } from '../engine/metrics.js';
 import { kycStatusSql, kycStatusFor } from '../engine/kycstatus.js';
+import { nextAction } from '../engine/nextaction.js';
 import {
   listQueues, membersOf, mayTakeFrom, workIn, claimFromQueue, assignToQueue,
   setMembers, ownerOf,
@@ -659,6 +660,86 @@ router.post('/cards/:id/request-product-rm', requirePermission('card.request.pro
   ]);
   audit(req.user.id, 'product_rm_requested', 'product_card', card.id, { reason: req.body.reason });
   res.json({ requested: true, notified: rms.length });
+});
+
+/**
+ * Everything about one product against one lead (ENH-10b, ENH-10c).
+ *
+ * The View pop-up used to show a pitch list and a row of state buttons. That is
+ * a reference card, not a working surface: it did not say how long the card had
+ * been sitting, what had already been tried, whether the client could lawfully
+ * be contacted, or what to do next.
+ *
+ * One request rather than five, because the pop-up opens on a click and five
+ * round trips is how a modal comes up empty and then jumps.
+ */
+router.get('/cards/:id/detail', (req, res) => {
+  const scope = reqScope(req, 'l');
+  const card = one(
+    `SELECT pc.*, pt.name AS product_name, pt.code AS product_code,
+            pt.category AS product_category, pt.pitch_points, pt.objections,
+            pt.min_investment, pt.lock_in, pt.risk_category, pt.brochure_url,
+            l.id AS lead_id, l.name AS lead_name, l.stage AS lead_stage,
+            l.mobile, l.email, l.sales_org, l.marketing_opt_out,
+            l.no_call, l.no_sms, l.no_email, l.no_whatsapp, l.mobile_invalid,
+            rm.name AS product_rm_name,
+            CAST(julianday('now') - julianday(pc.last_state_at) AS INTEGER) AS days_in_state
+       FROM product_cards pc
+       JOIN product_types pt ON pt.id = pc.product_type_id
+       JOIN leads l ON l.id = pc.lead_id
+       LEFT JOIN users rm ON rm.id = pc.product_rm_id
+      WHERE pc.id = ? AND l.deleted_at IS NULL AND ${scope.sql}`,
+    [req.params.id, ...scope.params],
+  );
+  if (!card) return res.status(404).json({ error: 'Product not found' });
+
+  const parse = (v) => {
+    if (!v) return [];
+    if (Array.isArray(v)) return v;
+    try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; }
+  };
+
+  /* What has actually been tried on this product, rather than on this lead.
+     A rep about to pitch needs to know they pitched it a fortnight ago. */
+  const activities = all(
+    `SELECT a.id, a.type, a.subject, a.body, a.outcome, a.sub_disposition,
+            a.created_at, u.name AS user_name
+       FROM activities a LEFT JOIN users u ON u.id = a.user_id
+      WHERE a.card_id = ?
+      ORDER BY a.created_at DESC LIMIT 20`,
+    [card.id],
+  );
+
+  const history = all(
+    `SELECT ca.from_state, ca.to_state, ca.note, ca.created_at, u.name AS user_name
+       FROM card_audit ca LEFT JOIN users u ON u.id = ca.user_id
+      WHERE ca.card_id = ? ORDER BY ca.created_at DESC LIMIT 20`,
+    [card.id],
+  );
+
+  const journey = one(
+    `SELECT id, status, resume_token, current_step FROM kyc_journeys
+      WHERE card_id = ? ORDER BY id DESC LIMIT 1`,
+    [card.id],
+  );
+
+  /* Contactability, per channel, on the card itself -- so the quick actions
+     below can be offered honestly rather than failing after the click. */
+  const channels = ['call', 'whatsapp', 'sms', 'email'].map((channel) => {
+    const verdict = checkConsent(card, channel, 'service');
+    return { channel, allowed: verdict.allowed, reason: verdict.reason };
+  });
+
+  res.json({
+    ...maskRecord(card, maskFor(req, 'card_detail', Number(req.params.id))),
+    pitch_points: parse(card.pitch_points),
+    objections: parse(card.objections),
+    next: nextAction(card, req.caps ?? new Set(), { daysInState: card.days_in_state ?? 0 }),
+    channels,
+    activities,
+    history,
+    kyc: journey ?? null,
+  });
 });
 
 router.get('/cards/:id/audit', (req, res) => {

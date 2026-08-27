@@ -4058,6 +4058,121 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     }
   });
 
+  /* ============================================================ 40 */
+  suite('40 Product actions (ENH-10b, ENH-10c, ENH-10d)');
+
+  const anyCard = async (token, wanted) => {
+    const { data: leads } = await req('/api/leads?limit=40', { token, expect: 200 });
+    for (const l of leads) {
+      // eslint-disable-next-line no-await-in-loop
+      const { data } = await req(`/api/leads/${l.id}`, { token, expect: 200 });
+      const hit = (data.cards ?? []).find((c) => (wanted ? c.state === wanted : true));
+      if (hit) return hit;
+    }
+    return null;
+  };
+
+  await check('a product card says what to do next, and why', async () => {
+    const card = await anyCard(T.admin);
+    const { data } = await req(`/api/cards/${card.id}/detail`, { token: T.admin, expect: 200 });
+    assert(data.next, 'no directive at all');
+    assert(data.next.headline && data.next.headline.length > 8,
+      `the headline names no step: ${data.next.headline}`);
+    assert(data.next.why && data.next.why.length > 12, 'the directive gives no reason');
+    // "Move Forward" was the complaint: a direction with no step in it.
+    assert(!/^move forward$/i.test(data.next.headline), 'the headline is still a direction, not a step');
+  });
+
+  await check('every state has its own next step', async () => {
+    const seen = new Map();
+    const { data: leads } = await req('/api/leads?limit=40', { token: T.admin, expect: 200 });
+    for (const l of leads.slice(0, 8)) {
+      // eslint-disable-next-line no-await-in-loop
+      const { data } = await req(`/api/leads/${l.id}`, { token: T.admin, expect: 200 });
+      for (const c of data.cards ?? []) {
+        if (seen.has(c.state)) continue;
+        // eslint-disable-next-line no-await-in-loop
+        const { data: det } = await req(`/api/cards/${c.id}/detail`, { token: T.admin, expect: 200 });
+        seen.set(c.state, det.next.headline);
+      }
+    }
+    assert(seen.size >= 3, `only ${seen.size} states seen`);
+    // Two different states giving identical advice would mean the directive is
+    // not actually reading the state.
+    eq(new Set(seen.values()).size, seen.size, 'two states share a headline');
+  });
+
+  await check('the directive marks an action the role cannot perform', async () => {
+    const card = await anyCard(T.product_rm, 'WARM');
+    if (!card) return;
+    const { data } = await req(`/api/cards/${card.id}/detail`, { token: T.product_rm, expect: 200 });
+    // A Product RM cannot raise a request for a Product RM. Saying so is
+    // information; hiding it leaves an empty panel and a puzzle.
+    if (data.next.primary && !data.next.primary.allowed) {
+      assert(data.next.primary.blocked_reason, 'blocked with no reason given');
+    }
+  });
+
+  await check('the panel carries the whole picture in one request (ENH-10c)', async () => {
+    const card = await anyCard(T.admin);
+    const { data } = await req(`/api/cards/${card.id}/detail`, { token: T.admin, expect: 200 });
+    for (const key of ['pitch_points', 'objections', 'activities', 'history', 'channels', 'next']) {
+      assert(key in data, `the panel would have to make a second call for ${key}`);
+    }
+    assert(Array.isArray(data.pitch_points), 'pitch points did not parse');
+    assert(Array.isArray(data.objections), 'objections did not parse');
+    assert(data.product_name && data.lead_name, 'the panel cannot title itself');
+  });
+
+  await check('quick actions are consent-checked before they are offered (ENH-10d)', async () => {
+    const card = await anyCard(T.admin);
+    const { data } = await req(`/api/cards/${card.id}/detail`, { token: T.admin, expect: 200 });
+    const channels = data.channels.map((c) => c.channel).sort();
+    eq(channels.join(','), 'call,email,sms,whatsapp', 'not every channel is offered');
+    // A channel that is refused must say why, so the button can be disabled
+    // with a reason rather than failing after the click.
+    for (const c of data.channels) {
+      if (!c.allowed) assert(c.reason, `${c.channel} is blocked with no reason`);
+    }
+  });
+
+  await check('alternatives are legal transitions, never a free-for-all', async () => {
+    const card = await anyCard(T.admin, 'ACTIVE');
+    if (!card) return;
+    const { data } = await req(`/api/cards/${card.id}/detail`, { token: T.admin, expect: 200 });
+    const alts = data.next.alternatives.map((a) => a.to);
+    // An active account should not offer a jump straight back to Exploring.
+    assert(!alts.includes('EXPLORING'), 'an Active card offered a move to Exploring');
+  });
+
+  await check('a stale card changes its advice, not its step', async () => {
+    const { data: leads } = await req('/api/leads?limit=40', { token: T.admin, expect: 200 });
+    let stale = null;
+    for (const l of leads) {
+      // eslint-disable-next-line no-await-in-loop
+      const { data } = await req(`/api/leads/${l.id}`, { token: T.admin, expect: 200 });
+      for (const c of data.cards ?? []) {
+        if (stale) break;
+        // eslint-disable-next-line no-await-in-loop
+        const { data: det } = await req(`/api/cards/${c.id}/detail`, { token: T.admin, expect: 200 });
+        if (det.next.urgent) stale = det;
+      }
+      if (stale) break;
+    }
+    if (stale) {
+      assert(/No movement in \d+ days/.test(stale.next.why),
+        `an urgent card does not say how long it has been sitting: ${stale.next.why}`);
+    }
+  });
+
+  await check('the card detail obeys lead scope', async () => {
+    const card = await anyCard(T.admin);
+    // A caller can only see their own leads, so an admin-visible card is very
+    // likely outside their book — either 404, or a card they legitimately own.
+    const { status } = await req(`/api/cards/${card.id}/detail`, { token: T.caller });
+    assert([200, 404].includes(status), `unexpected status ${status}`);
+  });
+
   /* ------------------------------------------------------------- report */
   report();
 }

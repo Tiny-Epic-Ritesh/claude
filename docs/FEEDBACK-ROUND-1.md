@@ -43,9 +43,9 @@ HTML** because the SPA fallback caught them. An unbuilt endpoint must 404.
 | ENH-09 | Market items link out | P2 | **Done** - headline links to source; simulated items say the link arrives with the live feed | needs Global Datafeed |
 | ENH-10 | Rename to Products | P2 | **Done** - display labels only; API names untouched | Q-10 confirmed |
 | ENH-10a | Replace status dots | P1 | **Done** — "1 Warm · 2 Active"; hover still gives product names | |
-| ENH-10b | Directive actions | P1 | Not started | stage model sent |
-| ENH-10c | Richer View popup | P1 | Not started | |
-| ENH-10d | Start Engaging actions | P1 | Not started | |
+| ENH-10b | Directive actions | P1 | **Done** - each state names its step and why; server-declared; alternatives kept beside it | stage model sent |
+| ENH-10c | Richer View popup | P1 | **Done** - one request carries pitch, objections, history, what was tried, KYC and consent | |
+| ENH-10d | Start Engaging actions | P1 | **Done** - Call / WhatsApp / SMS / Email, each consent-checked before it is offered | |
 | ENH-11 | Group NBA + Start Call | P2 | **Done** — grouped into a record toolbar | |
 | ENH-12 | Warm card meaning | P1 | **Done** — "Products marked Warm", clickable, lands filtered | needs Q-12 |
 | BUG-13 | Quick Actions dead | P0 | **Done** — were spans, not buttons; server now declares each destination | |

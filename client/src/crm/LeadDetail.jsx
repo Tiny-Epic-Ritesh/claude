@@ -5,6 +5,7 @@ import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, AgeBadge, Pr
 import ActivityComposer from './ActivityComposer.jsx';
 import InCall from './InCall.jsx';
 import ProductCard from '../components/ProductCard.jsx';
+import ProductPanel from './ProductPanel.jsx';
 import ActionMenu from '../components/ActionMenu.jsx';
 import ActionModal from './ActionModals.jsx';
 import { LeadMarketContext } from '../components/Market.jsx';
@@ -149,7 +150,10 @@ export default function LeadDetail({ session }) {
         <Snap label="Risk profile" value={lead.risk_profile || '—'} />
       </div>
 
-      {tab === 'cards' && <Cards lead={lead} session={session} reload={reload} onError={setActionError} />}
+      {tab === 'cards' && (
+          <Cards lead={lead} session={session} reload={reload} onError={setActionError}
+            onContact={(channel) => actions.run(channel, lead)} />
+        )}
       {tab === 'details' && <DetailsTab lead={lead} session={session} onEdit={() => setEditing(true)} />}
       {tab === 'market' && <LeadMarketContext leadId={lead.id} />}
       {tab === 'activity' && <ActivityTab lead={lead} session={session} reload={reload} />}
@@ -196,17 +200,29 @@ const Snap = ({ label, value, sub }) => (
  * button names it — and the panel behind it still shows every legal transition,
  * because the obvious move is not always the right one.
  */
+/**
+ * What the button on each card should say.
+ *
+ * "Move Forward" was the complaint: it named a direction without naming a step,
+ * so the person clicking it still had to work out what forward meant here. Each
+ * label is now the actual next move, and the panel behind it repeats it with
+ * the reason and the button that performs it.
+ *
+ * These mirror engine/nextaction.js on the server, which is the authority. They
+ * exist here only so the card face can be labelled before the panel is opened.
+ */
 const NEXT_MOVE = {
   INACTIVE: 'Start engaging',
   EXPLORING: 'Mark warm',
-  WARM: 'Move forward',
-  PRODUCT_RM_ENGAGED: 'Update',
-  ON_HOLD: 'Resume',
+  WARM: 'Bring in Product RM',
+  PRODUCT_RM_ENGAGED: 'Start KYC',
+  KYC_IN_PROGRESS: 'Chase KYC',
+  ON_HOLD: 'Review the hold',
   ACTIVE: 'View',
   LOST: 'Review',
 };
 
-function Cards({ lead, session, reload, onError }) {
+function Cards({ lead, session, reload, onError, onContact }) {
   const [open, setOpen] = useState(null);
   const [showAll, setShowAll] = useState(false);
   const can = (p) => session.permissions.includes(p);
@@ -270,149 +286,27 @@ function Cards({ lead, session, reload, onError }) {
       )}
 
       {open && (
-        <CardPanel
-          card={open}
-          lead={lead}
-          session={session}
-          canWarm={can('card.mark.warm')}
-          canExplore={can('card.mark.exploring')}
-          canEngage={can('card.engage')}
-          canRequest={can('card.request.productrm')}
-          canKyc={can('kyc.manage')}
+        <ProductPanel
+          cardId={open.id}
           onClose={() => setOpen(null)}
           onDone={() => { setOpen(null); reload(); }}
           onError={onError}
+          onContact={(channel) => { setOpen(null); onContact?.(channel); }}
         />
       )}
     </>
   );
 }
 
-function CardPanel({ card, lead, session, canWarm, canExplore, canEngage, canRequest, canKyc, onClose, onDone, onError }) {
-  const [product] = useApi(`/meta`);
-  const [busy, setBusy] = useState(false);
-  const [flag, setFlag] = useState('Direct Contact');
-  const [note, setNote] = useState('');
-
-  const def = (product?.products || []).find((p) => p.id === card.product_type_id);
-  const pitch = def?.pitch_points ? JSON.parse(def.pitch_points) : [];
-  const objections = def?.objections ? JSON.parse(def.objections) : [];
-
-  async function setState(state, extra = {}) {
-    setBusy(true);
-    try {
-      await api.post(`/cards/${card.id}/state`, { state, note: note || undefined, ...extra });
-      onDone();
-    } catch (err) { onError(err.message); setBusy(false); }
-  }
-
-  async function requestProductRm() {
-    setBusy(true);
-    try {
-      await api.post(`/cards/${card.id}/request-product-rm`, { reason: note || 'Sales RM requested product expertise' });
-      onDone();
-    } catch (err) { onError(err.message); setBusy(false); }
-  }
-
-  async function startKyc() {
-    setBusy(true);
-    try {
-      const j = await api.post('/kyc/journeys', { lead_id: lead.id, card_id: card.id });
-      window.open(appUrl(`/dkyc/resume/${j.resume_token}`), '_blank');
-      onDone();
-    } catch (err) { onError(err.message); setBusy(false); }
-  }
-
-  return (
-    <Modal title={card.product_name} subtitle={`Current state: ${STATE_LABEL[card.state]}`} onClose={onClose} wide>
-      <div className="grid grid-2">
-        <div>
-          <h3>Pitch — use this on the call</h3>
-          <ul className="small" style={{ marginTop: 6, paddingLeft: 18 }}>
-            {pitch.map((p, i) => <li key={i} style={{ marginBottom: 4 }}>{p}</li>)}
-          </ul>
-          {def && (
-            <div className="row wrap small muted" style={{ marginTop: 8 }}>
-              {def.min_investment > 0 && <span className="badge">Min {rupees(def.min_investment)}</span>}
-              {def.lock_in && <span className="badge">Lock-in: {def.lock_in}</span>}
-              {def.risk_category && <span className="badge">{def.risk_category} risk</span>}
-            </div>
-          )}
-          {objections.length > 0 && (
-            <>
-              <h3 style={{ marginTop: 14 }}>Common objections</h3>
-              {objections.map((o, i) => (
-                <details key={i} className="small" style={{ marginTop: 6 }}>
-                  <summary style={{ cursor: 'pointer', fontWeight: 560 }}>{o.objection}</summary>
-                  <p style={{ margin: '4px 0 0', color: 'var(--muted)' }}>{o.response}</p>
-                </details>
-              ))}
-            </>
-          )}
-        </div>
-
-        <div>
-          <h3>Move this card</h3>
-          <div className="field" style={{ marginTop: 6 }}>
-            <label>Note (recorded in the card audit trail)</label>
-            <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="What did the lead say?" style={{ minHeight: 64 }} />
-          </div>
-
-          {canWarm && (
-            <div className="field">
-              <label>Contact flag (set when marking Warm)</label>
-              <select value={flag} onChange={(e) => setFlag(e.target.value)}>
-                {['Direct Contact', 'No Direct Contact', 'Schedule Joint Call'].map((f) => <option key={f}>{f}</option>)}
-              </select>
-            </div>
-          )}
-
-          <div className="row wrap" style={{ gap: 6 }}>
-            {canExplore && card.state === 'INACTIVE' && <button onClick={() => setState('EXPLORING')} disabled={busy}>Mark Exploring</button>}
-            {canWarm && ['INACTIVE', 'EXPLORING'].includes(card.state) && (
-              <button className="btn-primary" onClick={() => setState('WARM', { contact_flag: flag })} disabled={busy}>Mark Warm</button>
-            )}
-            {canRequest && ['WARM', 'EXPLORING'].includes(card.state) && (
-              <button onClick={requestProductRm} disabled={busy}>Request Product RM</button>
-            )}
-            {canEngage && card.state === 'WARM' && <button onClick={() => setState('PRODUCT_RM_ENGAGED')} disabled={busy}>Accept & engage</button>}
-            {canKyc && ['WARM', 'PRODUCT_RM_ENGAGED'].includes(card.state) && (
-              <button className="btn-accent" onClick={startKyc} disabled={busy}>Start KYC journey</button>
-            )}
-            {canWarm && !['INACTIVE', 'LOST', 'ACTIVE'].includes(card.state) && <button onClick={() => setState('ON_HOLD')} disabled={busy}>Put on hold</button>}
-            {(canWarm || canEngage) && card.state !== 'LOST' && <button className="btn-danger" onClick={() => setState('LOST', { lost_reason: note })} disabled={busy}>Mark Lost</button>}
-          </div>
-
-          {!canExplore && !canWarm && !canEngage && (
-            <p className="small muted" style={{ marginTop: 10 }}>
-              Your role can view this card but not change its state.
-            </p>
-          )}
-
-          <CardAudit cardId={card.id} />
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-function CardAudit({ cardId }) {
-  const [rows] = useApi(`/cards/${cardId}/audit`);
-  if (!rows?.length) return null;
-  return (
-    <>
-      <h3 style={{ marginTop: 16 }}>Card audit trail</h3>
-      <div className="stack small" style={{ marginTop: 6 }}>
-        {rows.slice(0, 6).map((a) => (
-          <div key={a.id} className="row-between">
-            <span>{STATE_LABEL[a.from_state] || a.from_state} → <strong>{STATE_LABEL[a.to_state] || a.to_state}</strong>{a.note ? ` — ${a.note}` : ''}</span>
-            <span className="tiny muted" style={{ whiteSpace: 'nowrap' }}>{a.user_name || 'system'} · {shortDate(a.created_at)}</span>
-          </div>
-        ))}
-      </div>
-    </>
-  );
-}
+/* CardPanel and CardAudit lived here and are gone.
+ *
+ * They were the old View pop-up: a pitch list and a row of state buttons,
+ * with the card history bolted underneath. ProductPanel.jsx replaces both,
+ * and it reads its whole picture from one endpoint rather than three.
+ *
+ * Deleted rather than left dormant. A second implementation of the same panel
+ * is a second thing to keep correct, and the one nobody is looking at is the
+ * one that drifts. */
 
 /* ---------------------------------------------------------------- tabs */
 

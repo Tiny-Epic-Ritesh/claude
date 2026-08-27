@@ -4020,3 +4020,51 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
 .news-link .material-symbols-rounded { opacity: 0; transition: opacity 0.14s ease; }
 .news-link:hover .material-symbols-rounded { opacity: 0.75; }
 .news-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+/* ================================================= next best action (ENH-10b)
+ *
+ * The one block on the product panel that answers the complaint: "Move Forward"
+ * named a direction, not a step. This names the step, says why it is the right
+ * one now, and carries the button that performs it — so the answer and the
+ * means sit in the same place.
+ *
+ * Given an accent edge and a tinted ground so it reads as the panel's
+ * conclusion rather than one more section competing with the pitch beside it.
+ */
+.next-step {
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--r-sm);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+/* Ageing changes the tone, not the layout: a card that has not moved in a
+   fortnight is the thing a supervisor most wants pointed at. */
+.next-step.is-urgent {
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+  border-left-color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.next-step-head { display: flex; align-items: center; gap: 8px; }
+.next-step-head .material-symbols-rounded { color: var(--accent-dark, var(--accent)); flex-shrink: 0; }
+.next-step.is-urgent .next-step-head .material-symbols-rounded { color: var(--warn); }
+
+.next-step-title {
+  font-size: 15.5px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.35;
+}
+
+.next-step-why {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  max-width: 68ch;
+}
