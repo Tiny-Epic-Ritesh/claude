@@ -159,6 +159,9 @@ app.use('/api', crm);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const clientDist = join(__dirname, '..', '..', 'client', 'dist');
 
+/** index.html must always be revalidated — it names which bundle to load. */
+const noStore = (res) => res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+
 if (existsSync(clientDist)) {
   /**
    * Serve the built assets under BOTH paths.
@@ -174,7 +177,26 @@ if (existsSync(clientDist)) {
    * Mounting both means the same build works behind nginx and standalone,
    * which is what anyone running it locally to try it actually needs.
    */
-  const assets = express.static(clientDist, { maxAge: '1y', immutable: true });
+  /**
+   * Two caching rules, because two different kinds of file live here.
+   *
+   * Asset filenames carry a content hash, so a given URL can never change
+   * meaning. Those are safe to cache for a year and marked immutable.
+   *
+   * index.html is the opposite and must never be. It is the file that names
+   * which hashed bundle to load, so caching it pins a browser to whatever build
+   * it first saw. That is exactly what happened here: index.html went out with
+   * max-age=31536000, immutable, every deploy for three days landed correctly on
+   * the origin, and every returning visitor kept being handed the 24 August
+   * bundle -- with the CI runs all green, because they were.
+   */
+  const oneYear = { maxAge: '1y', immutable: true, index: false };
+  const assets = express.static(clientDist, {
+    ...oneYear,
+    setHeaders(res, filePath) {
+      if (filePath.endsWith('.html')) noStore(res);
+    },
+  });
   app.use(assets);
   app.use('/ai-crm', assets);
 
@@ -198,7 +220,12 @@ if (existsSync(clientDist)) {
     error: `No such endpoint: ${req.method} ${req.originalUrl}`,
   }));
 
-  app.get('*', (_req, res) => res.sendFile(join(clientDist, 'index.html')));
+  app.get('*', (_req, res) => {
+    // The SPA fallback serves index.html for every client route, so it carries
+    // the same rule: always revalidate, never pin a browser to an old build.
+    noStore(res);
+    res.sendFile(join(clientDist, 'index.html'));
+  });
 } else {
   app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 }
