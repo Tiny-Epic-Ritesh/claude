@@ -37,6 +37,11 @@ import {
   validateFormula, validateRollup, describeFormula, describeRollup, catalogue,
 } from '../engine/formulas.js';
 
+import {
+  matrix as tabMatrix, setRoleTab, clearRoleTab, setUserTab, clearUserTab,
+  overridesFor, resolveTab, shippedDefault, overrideCount,
+} from '../engine/tabs.js';
+import { TABS } from './apps.js';
 const router = Router();
 router.use(requireUser);
 
@@ -908,6 +913,91 @@ router.get('/field-usage/:entity', requirePermission('admin.objects'), (req, res
     unused: rows.filter((r) => r.fill_rate === 0 && r.is_custom).map((r) => r.label),
     unowned: rows.filter((r) => r.is_custom && !r.owner).map((r) => r.label),
   });
+});
+
+
+/* ================================================== tab visibility (ENH-08)
+ *
+ * Role-level defaults with a per-user override, which is the model confirmed
+ * for this. Every change is written to the configuration audit log, so
+ * "who gave them Setup?" has an answer.
+ *
+ * The screen states plainly that this is navigation and not security, because
+ * the single most expensive misunderstanding available here is an administrator
+ * hiding a tab and believing they have restricted data.
+ */
+
+const TAB_LIST = () => Object.values(TABS).map((t) => ({ id: t.id, label: t.label, icon: t.icon }));
+
+router.get('/tab-visibility', requirePermission('admin.roles'), (_req, res) => {
+  const roles = all('SELECT code, name FROM roles ORDER BY sort_order, code');
+  const tabs = TAB_LIST();
+  res.json({
+    tabs,
+    roles,
+    matrix: tabMatrix(roles.map((r) => r.code), tabs.map((t) => t.id)),
+    user_overrides: overrideCount(),
+    note: 'Hiding a tab is navigation, not security. The API enforces capability separately, so a hidden tab tidies a screen and protects nothing on its own.',
+  });
+});
+
+router.post('/tab-visibility/role', requirePermission('admin.roles'), (req, res) => {
+  const { role, tab_id: tabId, visible } = req.body ?? {};
+  if (!role || !tabId) return res.status(400).json({ error: 'Give a role and a tab' });
+  if (!TABS[tabId]) return res.status(400).json({ error: `There is no tab called "${tabId}"` });
+
+  const before = shippedDefault(role, tabId);
+
+  // `null` means 'stop deciding' -- fall back to the shipped default, which is
+  // a different thing from choosing the same value the default happens to have.
+  if (visible === null) clearRoleTab(role, tabId);
+  else setRoleTab(role, tabId, Boolean(visible), req.user.id);
+
+  auditConfig('tabs', `${role}.${tabId}`, visible === null ? 'reset' : 'set',
+    { visible: before }, { visible: visible === null ? shippedDefault(role, tabId) : Boolean(visible) },
+    req.user.id);
+
+  res.json({ ok: true });
+});
+
+router.get('/users/:id/tabs', requirePermission('admin.roles'), (req, res) => {
+  const user = one('SELECT id, name, role FROM users WHERE id = ?', [req.params.id]);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  const overrides = new Map(overridesFor(user.id).map((o) => [o.tab_id, Boolean(o.visible)]));
+  res.json({
+    user,
+    tabs: TAB_LIST().map((t) => {
+      const r = resolveTab(user, t.id);
+      return {
+        ...t,
+        visible: r.visible,
+        // Where the answer came from, so an administrator can see WHY this
+        // person sees a tab rather than only that they do.
+        source: r.source,
+        overridden: overrides.has(t.id),
+        role_default: resolveTab({ id: -1, role: user.role }, t.id).visible,
+      };
+    }),
+  });
+});
+
+router.post('/users/:id/tabs', requirePermission('admin.roles'), (req, res) => {
+  const user = one('SELECT id, name, role FROM users WHERE id = ?', [req.params.id]);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  const { tab_id: tabId, visible } = req.body ?? {};
+  if (!TABS[tabId]) return res.status(400).json({ error: `There is no tab called "${tabId}"` });
+
+  const before = resolveTab(user, tabId);
+  if (visible === null) clearUserTab(user.id, tabId);
+  else setUserTab(user.id, tabId, Boolean(visible), req.user.id);
+  const after = resolveTab(user, tabId);
+
+  auditConfig('tabs', `user:${user.id}.${tabId}`, visible === null ? 'reset' : 'set',
+    before, after, req.user.id);
+
+  res.json({ ok: true, ...after });
 });
 
 export default router;

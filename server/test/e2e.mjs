@@ -3611,6 +3611,153 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     if (withMobile) assert(/[•*]/.test(withMobile.mobile), `mobile is not masked: ${withMobile.mobile}`);
   });
 
+  /* ============================================================ 36 */
+  suite('36 Tab visibility (ENH-08)');
+
+  const tabsOf = async (token) => {
+    const { data } = await req('/api/apps', { token, expect: 200 });
+    return (data.all_tabs ?? []).map((t) => t.id);
+  };
+
+  await check('the confirmed matrix is what the app actually serves', async () => {
+    const { data } = await req('/api/setup/tab-visibility', { token: T.superadmin, expect: 200 });
+    const cell = (role, tab) => data.matrix.find((m) => m.role === role)?.tabs[tab]?.visible;
+
+    // The seven cells that were open questions, now confirmed.
+    eq(cell('marketing_manager', 'leads'), true, 'marketing should see Leads');
+    eq(cell('sales_supervisor', 'partners'), true, 'a supervisor should see Partners');
+    eq(cell('customer_care', 'market'), false, 'a service agent offering a market view is unsolicited advice');
+    eq(cell('marketing_manager', 'market'), true, 'marketing times campaigns off market events');
+    eq(cell('customer_care', 'team'), false, 'customer_care is an agent role, not a supervisor');
+    eq(cell('customer_care', 'incentives'), false, 'a service agent would see zero forever');
+    eq(cell('customer_care', 'kra'), true, 'service is measured on CSAT and response time');
+    eq(cell('sales_rm', 'revenue'), true, 'an RM sees their own numbers');
+    eq(cell('sales_rm', 'reports'), true, 'an RM sees their own reports');
+  });
+
+  await check('four roles approve, and Partner RM only watches', async () => {
+    const { data } = await req('/api/setup/tab-visibility', { token: T.superadmin, expect: 200 });
+    const sees = (role) => data.matrix.find((m) => m.role === role)?.tabs.approvals?.visible;
+    for (const role of ['superadmin', 'admin', 'sales_supervisor', 'product_supervisor']) {
+      eq(sees(role), true, `${role} should see Approvals`);
+    }
+    // Partner RM raises and tracks, but the capability to approve is separate.
+    eq(sees('partner_rm'), true, 'Partner RM should still track their own requests');
+    eq(sees('caller'), false, 'a caller approves nothing');
+  });
+
+  await check('the screen says plainly that this is not security', async () => {
+    const { data } = await req('/api/setup/tab-visibility', { token: T.superadmin, expect: 200 });
+    assert(/not security/i.test(data.note), `the note does not say it: ${data.note}`);
+  });
+
+  await check('a role-level change reaches the navigation payload', async () => {
+    const before = await tabsOf(T.customer_care);
+    assert(before.includes('tickets'), 'Customer Care should start with Cases');
+
+    await req('/api/setup/tab-visibility/role', {
+      method: 'POST', token: T.superadmin, expect: 200,
+      body: { role: 'customer_care', tab_id: 'tickets', visible: false },
+    });
+
+    const after = await tabsOf(await login('care@bonanza.test'));
+    assert(!after.includes('tickets'), 'hiding Cases at role level did nothing');
+  });
+
+  await check('a per-user override beats the role', async () => {
+    const { data: users } = await req('/api/setup/users', { token: T.superadmin });
+    const list = Array.isArray(users) ? users : users?.users ?? users?.rows ?? [];
+    const care = list.find((u) => u.email === 'care@bonanza.test');
+
+    await req(`/api/setup/users/${care.id}/tabs`, {
+      method: 'POST', token: T.superadmin, expect: 200,
+      body: { tab_id: 'tickets', visible: true },
+    });
+
+    const tabs = await tabsOf(await login('care@bonanza.test'));
+    assert(tabs.includes('tickets'), 'the per-user override did not win over the role');
+
+    const { data: detail } = await req(`/api/setup/users/${care.id}/tabs`, { token: T.superadmin, expect: 200 });
+    const cell = detail.tabs.find((t) => t.id === 'tickets');
+    eq(cell.source, 'user', 'the source should name the override');
+    eq(cell.role_default, false, 'the role default should still read hidden');
+  });
+
+  await check('resetting an override falls back to the role, not to visible', async () => {
+    const { data: users } = await req('/api/setup/users', { token: T.superadmin });
+    const list = Array.isArray(users) ? users : users?.users ?? users?.rows ?? [];
+    const care = list.find((u) => u.email === 'care@bonanza.test');
+
+    await req(`/api/setup/users/${care.id}/tabs`, {
+      method: 'POST', token: T.superadmin, expect: 200,
+      body: { tab_id: 'tickets', visible: null },
+    });
+
+    const tabs = await tabsOf(await login('care@bonanza.test'));
+    assert(!tabs.includes('tickets'),
+      'reset restored the tab instead of following the role - reset and grant are different decisions');
+
+    // Put the role back so later suites see the shipped world.
+    await req('/api/setup/tab-visibility/role', {
+      method: 'POST', token: T.superadmin, expect: 200,
+      body: { role: 'customer_care', tab_id: 'tickets', visible: null },
+    });
+  });
+
+  await check('every change is written to the configuration audit log', async () => {
+    const { data } = await req('/api/setup/config-audit?limit=50', { token: T.superadmin, expect: 200 });
+    const rows = Array.isArray(data) ? data : data?.rows ?? [];
+    const tabRows = rows.filter((r) => r.area === 'tabs');
+    assert(tabRows.length > 0, 'no tab change was audited');
+    assert(tabRows.some((r) => r.before_json && r.after_json),
+      'an audit row with no before and after cannot answer "who changed this"');
+  });
+
+  await check('hiding a tab does not restrict the API behind it', async () => {
+    // The point the Setup screen makes in words, proven in behaviour: navigation
+    // is not access control, and the capability check is what actually holds.
+    await req('/api/setup/tab-visibility/role', {
+      method: 'POST', token: T.superadmin, expect: 200,
+      body: { role: 'sales_rm', tab_id: 'leads', visible: false },
+    });
+
+    const rmToken = await login('salesrm@bonanza.test');
+    const tabs = await tabsOf(rmToken);
+    assert(!tabs.includes('leads'), 'the tab should be hidden');
+    // …and the endpoint still works, because it was never the tab protecting it.
+    await req('/api/leads?limit=1', { token: rmToken, expect: 200 });
+
+    await req('/api/setup/tab-visibility/role', {
+      method: 'POST', token: T.superadmin, expect: 200,
+      body: { role: 'sales_rm', tab_id: 'leads', visible: null },
+    });
+  });
+
+  await check('an unknown tab is refused rather than stored', async () => {
+    await req('/api/setup/tab-visibility/role', {
+      method: 'POST', token: T.superadmin, expect: 400,
+      body: { role: 'sales_rm', tab_id: 'not_a_tab', visible: true },
+    });
+  });
+
+  await check('editing the matrix needs admin.roles', async () => {
+    await req('/api/setup/tab-visibility', { token: T.sales_rm, expect: 403 });
+    await req('/api/setup/tab-visibility/role', {
+      method: 'POST', token: T.sales_rm, expect: 403,
+      body: { role: 'caller', tab_id: 'setup', visible: true },
+    });
+  });
+
+  await check('the roles table is not full of test leftovers', async () => {
+    // Every e2e run creates a custom role to prove it can; nothing removed them,
+    // and 76 had accumulated - which the ENH-08 grid would have rendered.
+    const { data } = await req('/api/setup/roles', { token: T.superadmin, expect: 200 });
+    const roles = Array.isArray(data) ? data : data?.roles ?? [];
+    const orphans = roles.filter((r) => /^regional_sup_\d+$/.test(r.code));
+    assert(orphans.length <= 1,
+      `${orphans.length} leftover test roles - seed.js should clear non-system roles`);
+  });
+
   /* ------------------------------------------------------------- report */
   report();
 }

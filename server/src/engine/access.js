@@ -49,6 +49,7 @@ export const CAPABILITY_CATALOGUE = [
   ['lead.contact', 'Contact leads', 'Leads', 'Call, message and log activities', 0],
 
   // Clients
+  ['report.self', 'View own performance', 'Reports', 'See reports and dashboards covering only their own records', 0],
   ['client.view.all', 'View all clients', 'Clients', 'See every client in the sales org', 0],
   ['client.view.own', 'View own clients', 'Clients', 'See only clients they own', 0],
   ['client.edit', 'Edit clients', 'Clients', 'Change servicing detail on an account', 0],

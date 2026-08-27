@@ -43,6 +43,21 @@ for (const t of [
   db.exec(`DELETE FROM sqlite_sequence WHERE name = '${t}'`);
 }
 
+/* Roles the test suite invented, and the tab choices attached to them.
+ *
+ * Every e2e run creates a `regional_sup_<n>` role to prove a custom role can be
+ * built, and nothing ever removed it -- so the roles table had accumulated 76
+ * of them. Harmless while nothing listed roles; not harmless now that the
+ * ENH-08 matrix renders one row per role and would have shown a grid 87 rows
+ * deep.
+ *
+ * System roles are re-seeded from code on boot, so only the custom ones are
+ * cleared here, along with their grants.
+ */
+db.exec("DELETE FROM role_capabilities WHERE role_code IN (SELECT code FROM roles WHERE is_system = 0)");
+db.exec("DELETE FROM roles WHERE is_system = 0");
+db.exec("DELETE FROM tab_visibility");
+
 /* ------------------------------------------------------------- products */
 
 const PRODUCTS = [

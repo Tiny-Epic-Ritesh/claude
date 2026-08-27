@@ -3824,3 +3824,83 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
 @media (prefers-reduced-motion: reduce) {
   .board-card { transition: none; }
 }
+
+/* ================================================ role → tab matrix (ENH-08)
+ *
+ * Twenty-four rows by eleven columns. The tab name column is sticky, because a
+ * grid where you cannot see which row you are on while scrolling sideways is a
+ * grid where people set the wrong cell.
+ */
+.matrix { border-collapse: separate; border-spacing: 0; }
+
+.matrix th,
+.matrix td { border-bottom: 1px solid var(--hairline); }
+
+.matrix-corner,
+.matrix-tab {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--surface, var(--glass-2));
+  text-align: left;
+  white-space: nowrap;
+  font-weight: 500;
+  padding-right: 14px;
+}
+/* The corner sits above both the sticky column and the header row. */
+.matrix-corner { z-index: 3; }
+
+/* Role names are long and columns are narrow, so they read vertically. */
+.matrix-role {
+  vertical-align: bottom;
+  padding: 6px 4px;
+  height: 118px;
+  white-space: nowrap;
+}
+.matrix-role > span {
+  display: inline-block;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+}
+
+.matrix-cell { text-align: center; padding: 4px; }
+
+/* The cell control. Square, so a column of them reads as a column. */
+.vis {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: var(--r-xs, 5px);
+  border: 1px solid var(--hairline);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
+}
+.vis:hover { transform: scale(1.12); border-color: var(--accent); }
+.vis:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.vis-on { background: var(--accent-soft); color: var(--accent-dark, var(--accent)); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.vis-off { background: transparent; color: var(--ink-3); }
+
+/* An administrator decided this one. The ring is what separates "we shipped
+   this" from "somebody chose this", which is the difference that matters when
+   you are working out why a role can see something. */
+.vis-set { box-shadow: 0 0 0 2px var(--warn) inset; }
+
+.vis-key {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  border: 1px solid var(--hairline);
+  vertical-align: -1px;
+  margin-right: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) { .vis { transition: none; } .vis:hover { transform: none; } }

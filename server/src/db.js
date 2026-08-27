@@ -696,6 +696,29 @@ CREATE INDEX IF NOT EXISTS idx_partners_org ON partners(sales_org);
 CREATE INDEX IF NOT EXISTS idx_products_org ON product_types(sales_org);
 CREATE INDEX IF NOT EXISTS idx_tickets_org ON tickets(sales_org);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_empcode ON users(employee_code) WHERE employee_code IS NOT NULL;
+
+/* ------------------------------------------------------- tab visibility
+ *
+ * ENH-08. Which tabs a role sees, and the per-user exceptions on top.
+ *
+ * One table rather than two, keyed by scope: a role row is the default, a
+ * user row is the override, and the override wins. Two tables would mean two
+ * shapes to query, two to audit and two to keep in step.
+ *
+ * A row is only written when someone makes a decision -- absence means "use
+ * the shipped default". That is what lets the shipped matrix change in a
+ * later release without silently overwriting what an administrator chose.
+ */
+CREATE TABLE IF NOT EXISTS tab_visibility (
+  scope_type TEXT NOT NULL,             -- 'role' | 'user'
+  scope_key  TEXT NOT NULL,             -- role code, or user id as text
+  tab_id     TEXT NOT NULL,
+  visible    INTEGER NOT NULL DEFAULT 1,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (scope_type, scope_key, tab_id)
+);
+CREATE INDEX IF NOT EXISTS idx_tabvis_scope ON tab_visibility(scope_type, scope_key);
 CREATE INDEX IF NOT EXISTS idx_clients_org ON clients(sales_org);
 CREATE INDEX IF NOT EXISTS idx_clients_owner ON clients(owner_id);
 CREATE INDEX IF NOT EXISTS idx_clients_code ON clients(client_code);

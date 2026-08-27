@@ -20,13 +20,28 @@
 
 import { Router } from 'express';
 import { all, one, CARD_STATES } from '../db.js';
-import { requireUser, requirePermission, reqScope } from '../auth.js';
+import { requireUser, requirePermission, reqScope, can } from '../auth.js';
 
 const router = Router();
 router.use(requireUser);
 
-/** Reports are a supervisory function; team-level is the minimum bar. */
-const canReport = requirePermission('report.team');
+/**
+ * Who may open a report.
+ *
+ * `report.team` is the supervisory grant. `report.self` is the narrower one an
+ * RM holds, and it is safe here because every query below is wrapped in the
+ * caller's own leadScope -- so the same endpoint returns the team's numbers to
+ * a supervisor and only their own to an RM, without the route knowing which.
+ */
+const canReport = (req, res, next) => {
+  if (!req.user) return res.status(401).json({ error: 'Sign in required' });
+  if (can(req.user.role, 'report.team') || can(req.user.role, 'report.system')
+      || can(req.user.role, 'report.self')) return next();
+  return res.status(403).json({
+    error: `Your role (${req.user.role}) cannot open reports`,
+    required: 'report.self',
+  });
+};
 
 /**
  * Build a scoped WHERE fragment plus params.

@@ -20,6 +20,7 @@
 
 import { Router } from 'express';
 import { requireUser, can, orgsFor, activeOrg } from '../auth.js';
+import { visibleTabs } from '../engine/tabs.js';
 
 const router = Router();
 router.use(requireUser);
@@ -45,7 +46,7 @@ export const TABS = {
   calendar:   { id: 'calendar',   label: 'Calendar',        icon: 'calendar_month',        to: '/calendar' },
   kyc:        { id: 'kyc',        label: 'KYC Console',     icon: 'verified_user',         to: '/kyc',        needs: ['kyc.view'] },
   products:   { id: 'products',   label: 'Products',        icon: 'inventory_2',           to: '/products' },
-  revenue:    { id: 'revenue',    label: 'Revenue',         icon: 'leaderboard',           to: '/revenue',    needs: ['report.team', 'report.system'] },
+  revenue:    { id: 'revenue',    label: 'Revenue',         icon: 'leaderboard',           to: '/revenue',    needs: ['report.team', 'report.system', 'report.self'] },
   kra:        { id: 'kra',        label: 'KRA Scorecard',   icon: 'article',               to: '/kra' },
   incentives: { id: 'incentives', label: 'Incentives',      icon: 'account_balance_wallet', to: '/incentives' },
 
@@ -59,8 +60,8 @@ export const TABS = {
   content:    { id: 'content',    label: 'Marketing Hub',   icon: 'auto_stories',          to: '/content',    needs: ['admin.content', 'campaign.manage'] },
   lists:      { id: 'lists',      label: 'Lead Lists',      icon: 'format_list_bulleted',  to: '/lists',      needs: ['list.create'] },
 
-  reports:    { id: 'reports',    label: 'Reports',         icon: 'assessment',            to: '/reports',    needs: ['report.team', 'report.system'] },
-  dashboards: { id: 'dashboards', label: 'Dashboards',      icon: 'space_dashboard',       to: '/dashboards', needs: ['report.team', 'report.system'] },
+  reports:    { id: 'reports',    label: 'Reports',         icon: 'assessment',            to: '/reports',    needs: ['report.team', 'report.system', 'report.self'] },
+  dashboards: { id: 'dashboards', label: 'Dashboards',      icon: 'space_dashboard',       to: '/dashboards', needs: ['report.team', 'report.system', 'report.self'] },
 
   data:       { id: 'data',       label: 'Data Tools',      icon: 'swap_vert',             to: '/data',       needs: ['lead.create', 'lead.delete'] },
   setup:      { id: 'setup',      label: 'Setup',           icon: 'settings',              to: '/admin',      needs: ['admin.users', 'admin.products', 'admin.rules', 'admin.system'] },
@@ -109,7 +110,7 @@ export const APPS = [
     icon: 'leaderboard',
     colour: '#c98a1e',
     tabs: ['home', 'revenue', 'kra', 'incentives', 'team', 'market'],
-    needs: ['report.team', 'report.system'],
+    needs: ['report.team', 'report.system', 'report.self'],
   },
   {
     id: 'marketing',
@@ -127,7 +128,7 @@ export const APPS = [
     icon: 'insights',
     colour: '#2f8f8a',
     tabs: ['home', 'reports', 'dashboards'],
-    needs: ['report.team', 'report.system'],
+    needs: ['report.team', 'report.system', 'report.self'],
   },
   {
     id: 'setup',
@@ -149,13 +150,27 @@ const permitted = (user, needs) => !needs || needs.some((p) => can(user.role, p)
 const inOrg = (entry, orgs) => !entry.orgs || entry.orgs.some((o) => orgs.includes(o));
 
 export function appsFor(user, orgs) {
+  /**
+   * Three independent gates, and the order matters for what each one means.
+   *
+   *   capability  — can the API serve this at all? Enforced there too; this is
+   *                 only stopping us from advertising a door that is locked.
+   *   org         — Bigul has no PMS desk, so the tab has no meaning there.
+   *   visibility  — the administrator's ENH-08 choice. Navigation, not security:
+   *                 it tidies a screen and protects nothing on its own.
+   *
+   * Resolved once per request rather than per tab, so this is two extra queries
+   * for the whole navigation payload.
+   */
+  const visible = visibleTabs(user, Object.keys(TABS));
+
   return APPS
     .filter((app) => permitted(user, app.needs))
     .map((app) => {
       const tabs = app.tabs
         .map((id) => TABS[id])
         .filter(Boolean)
-        .filter((t) => permitted(user, t.needs) && inOrg(t, orgs));
+        .filter((t) => permitted(user, t.needs) && inOrg(t, orgs) && visible.has(t.id));
       return { ...app, tabs, primary: tabs[0]?.to ?? '/' };
     })
     // An app whose every tab was filtered away is not an app — showing it would

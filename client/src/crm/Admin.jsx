@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import TabVisibility from './TabVisibility.jsx';
 import { api, rupees, dateTime, shortDate, ROLE_LABEL } from '../api.js';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, Icon } from '../components/ui.jsx';
 import ObjectManager from './ObjectManager.jsx';
@@ -8,6 +9,7 @@ export default function Admin({ session }) {
   const tabs = [
     has('admin.users') && { key: 'users', label: 'Users' },
     { key: 'roles', label: 'Roles & permissions' },
+    has('admin.roles') && { key: 'navigation', label: 'Navigation' },
     has('admin.objects') && { key: 'objects', label: 'Objects & fields' },
     has('admin.products') && { key: 'products', label: 'Products' },
     has('admin.kyc.journeys') && { key: 'journeys', label: 'KYC journeys' },
@@ -37,6 +39,7 @@ export default function Admin({ session }) {
 
       {tab === 'users' && <Users />}
       {tab === 'roles' && <Roles />}
+      {tab === 'navigation' && <TabVisibility />}
       {tab === 'objects' && <ObjectManager />}
       {tab === 'products' && <Products />}
       {tab === 'journeys' && <Journeys />}

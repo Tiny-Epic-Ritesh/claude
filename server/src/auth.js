@@ -117,6 +117,24 @@ export const PERMISSIONS = {
   'audit.read':           ['superadmin', 'admin'],
 
   // Reporting
+  /* Seeing your own numbers is not a supervisory act.
+   *
+   * The confirmed ENH-08 matrix gives Sales RM, Partner RM and Customer Care
+   * the Reports and Dashboards tabs, and none of them held a reporting
+   * capability -- so the tab would have been hidden by the capability gate no
+   * matter what the matrix said, and the Setup screen would have been telling
+   * an administrator something the app did not do.
+   *
+   * Safe to grant because reports.js already wraps every query in the caller's
+   * own leadScope: this opens the door, it does not widen the room. Whether a
+   * role actually sees the tab is then the matrix's decision, not this one. */
+  'report.self':          ['sales_rm', 'partner_rm', 'product_rm', 'dealer',
+    'customer_care', 'marketing_manager', 'sales_supervisor', 'product_supervisor',
+    'superadmin', 'admin'],
+  /* Caller is deliberately absent. The confirmed matrix gives them none of
+   * Revenue, Reports or Dashboards -- their screen should be almost entirely
+   * the work list -- so granting the capability would only create a door the
+   * matrix then has to keep shut. */
   'report.team':          ['superadmin', 'admin', 'sales_supervisor', 'product_supervisor'],
   'report.system':        ['superadmin', 'admin'],
 };
