@@ -49,7 +49,7 @@ HTML** because the SPA fallback caught them. An unbuilt endpoint must 404.
 | ENH-11 | Group NBA + Start Call | P2 | **Done** — grouped into a record toolbar | |
 | ENH-12 | Warm card meaning | P1 | **Done** — "Products marked Warm", clickable, lands filtered | needs Q-12 |
 | BUG-13 | Quick Actions dead | P0 | **Done** — were spans, not buttons; server now declares each destination | |
-| ENH-14 | Contextual AI help | P1 | Not started | one assistant |
+| ENH-14 | Contextual AI help | P1 | **Done** - one assistant, page-aware, returns links only to records the reader can already open | answer quality needs an AI key |
 | ENH-15 | Advanced Search UX | P1 | **Done** - Match all/any wording, inline help, four starter filters, live plain-English readback | |
 | ENH-16 | Unmask + config | P1 | **Done** - Admin/Superadmin/Marketing unmasked; per-field per-role config in Setup > Field masking | Q-16 confirmed |
 | ENH-17 | Tabs above summary | P1 | **Done** — tabs sit directly under the header, above the summary | |

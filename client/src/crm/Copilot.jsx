@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { api } from '../api.js';
 import { Spinner } from '../components/ui.jsx';
 
@@ -23,6 +24,22 @@ export default function Copilot({ open, onClose, session }) {
   const [busy, setBusy] = useState(false);
   const [meta, setMeta] = useState(null);
   const logRef = useRef(null);
+  const location = useLocation();
+
+  /**
+   * Where the user is standing (ENH-14).
+   *
+   * Read from the route rather than passed down through every screen: the
+   * assistant is mounted once in the shell, and threading a context prop
+   * through nine pages would mean nine places to forget it.
+   */
+  const context = useMemo(() => {
+    const parts = location.pathname.split('/').filter(Boolean);
+    const tab = parts[0] || 'home';
+    const id = parts[1] && /^\d+$/.test(parts[1]) ? Number(parts[1]) : null;
+    const entity = { leads: 'lead', clients: 'client', tickets: 'ticket', partners: 'partner' }[tab] ?? null;
+    return { tab, entity, id };
+  }, [location.pathname]);
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: 'smooth' });
@@ -36,8 +53,8 @@ export default function Copilot({ open, onClose, session }) {
     setMessages((m) => [...m, { role: 'user', content: q }]);
     setBusy(true);
     try {
-      const res = await api.post('/ai/copilot', { question: q, history: messages.slice(-8) });
-      setMessages((m) => [...m, { role: 'assistant', content: res.reply }]);
+      const res = await api.post('/ai/copilot', { question: q, history: messages.slice(-8), context });
+      setMessages((m) => [...m, { role: 'assistant', content: res.reply, links: res.links ?? [] }]);
       setMeta(res);
     } catch (err) {
       setMessages((m) => [...m, { role: 'assistant', content: `Couldn't answer that: ${err.message}` }]);
@@ -56,6 +73,7 @@ export default function Copilot({ open, onClose, session }) {
           <h2>Copilot</h2>
           <div className="tiny muted">
             Answers only from what your role can see
+            {meta?.context_used && ' · reading this page'}
             {meta && ` · ${meta.grounded_in.leads} leads, ${meta.grounded_in.tickets} tickets`}
           </div>
         </div>
@@ -65,12 +83,40 @@ export default function Copilot({ open, onClose, session }) {
       <div className="copilot-log" ref={logRef}>
         {messages.length === 0 && (
           <div className="stack">
-            <p className="small muted" style={{ margin: 0 }}>Ask about your book of work.</p>
+            <p className="small muted" style={{ margin: 0 }}>
+              {context.id
+                ? 'Ask about this record, or about anything else you can see.'
+                : 'Ask about your book of work.'}
+            </p>
+            {/* When the user is standing on a record, the openers are about
+                that record. A generic "who should I call today?" on a lead
+                someone has deliberately opened is a wasted suggestion. */}
+            {context.id && context.entity === 'lead' && (
+              ['What should I do next with this lead?',
+                'What has already been tried here?',
+                'Which of our products would suit them?'].map((s) => (
+                  <button key={s} className="suggestion" onClick={() => ask(s)}>{s}</button>
+                ))
+            )}
             {suggestions.map((s) => <button key={s} className="suggestion" onClick={() => ask(s)}>{s}</button>)}
           </div>
         )}
         {messages.map((m, i) => (
-          <div key={i} className={`bubble bubble-${m.role === 'user' ? 'user' : 'ai'}`}>{m.content}</div>
+          <div key={i} className={`bubble bubble-${m.role === 'user' ? 'user' : 'ai'}`}>
+            {m.content}
+            {/* Links come from the server, drawn only from records already in
+                this user's scoped snapshot -- so the assistant cannot offer a
+                door to something it invented or something they cannot open. */}
+            {m.links?.length > 0 && (
+              <div className="copilot-links">
+                {m.links.map((l) => (
+                  <Link key={l.to} to={l.to} className="chip" onClick={onClose}>
+                    {l.label}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
         ))}
         {busy && <div className="bubble bubble-ai row"><Spinner /> <span className="muted">Reading your pipeline…</span></div>}
       </div>

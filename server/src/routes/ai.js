@@ -4,7 +4,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
-import { requireUser, can } from '../auth.js';
+import { requireUser, can, leadScope } from '../auth.js';
 import { applyScore } from '../engine/rules.js';
 import * as ai from '../ai/index.js';
 
@@ -167,16 +167,87 @@ router.get('/leads/:id/next-action', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+
+/**
+ * Turn an answer into clickable destinations (ENH-14).
+ *
+ * Deliberately NOT done by asking the model for links, and not by parsing URLs
+ * out of its prose. Both let it invent a record that does not exist, or link to
+ * one this user cannot open -- and a link that 404s in a CRM reads as data loss.
+ *
+ * Instead the snapshot is the allowlist. It was already built under the
+ * caller's own leadScope, so a record can only become a link if it is both
+ * named in the reply and already visible to the person reading it. Nothing else
+ * can be linked, however confidently the model writes about it.
+ */
+function linksFor(reply, snapshot) {
+  const text = String(reply || '');
+  const seen = new Set();
+  const links = [];
+
+  const add = (label, to) => {
+    if (!label || seen.has(to)) return;
+    seen.add(to);
+    links.push({ label, to });
+  };
+
+  for (const l of snapshot.leads ?? []) {
+    // Whole-name match. A first name alone would link "Priya the RM" to a
+    // client called Priya, which is worse than no link.
+    if (l.name && text.includes(l.name)) add(l.name, `/leads/${l.id}`);
+  }
+  for (const t of snapshot.tickets ?? []) {
+    if (t.ref && text.includes(t.ref)) add(t.ref, `/tickets/${t.id}`);
+    else if (t.subject && text.includes(t.subject)) add(t.subject, `/tickets/${t.id}`);
+  }
+
+  return links.slice(0, 8);
+}
+
+/**
+ * Where the user is standing, as a sentence the model can use.
+ *
+ * The assistant is one assistant, per the confirmed answer to Q-14 -- it is the
+ * Copilot, told what page it was opened from. A second assistant would mean two
+ * prompts, two grounding paths and two sets of behaviour to keep honest.
+ */
+function contextLine(context, user) {
+  if (!context?.tab) return null;
+  const where = `The user is currently on the ${context.tab} screen.`;
+  if (!context.entity || !context.id) return where;
+
+  if (context.entity === 'lead') {
+    const scope = leadScope(user, 'l');
+    const lead = one(
+      `SELECT l.id, l.name, l.stage, l.source, l.city FROM leads l
+        WHERE l.id = ? AND l.deleted_at IS NULL AND ${scope.sql}`,
+      [context.id, ...scope.params],
+    );
+    if (lead) {
+      return `${where} They are looking at the lead "${lead.name}" (id ${lead.id}, stage ${lead.stage}, source ${lead.source || 'unknown'}). Answer about this lead unless they clearly ask about something else.`;
+    }
+  }
+  return where;
+}
+
 router.post('/copilot', async (req, res, next) => {
   try {
-    const { question, history = [] } = req.body;
+    const { question, history = [], context = null } = req.body;
     if (!question?.trim()) return res.status(400).json({ error: 'A question is required' });
 
     const snapshot = ai.copilotSnapshot(req.user);
-    const result = await ai.copilot({ question, snapshot, history: history.slice(-8) });
+    const where = contextLine(context, req.user);
+
+    const result = await ai.copilot({
+      question: where ? `${where}\n\n${question}` : question,
+      snapshot,
+      history: history.slice(-8),
+    });
 
     res.json({
       ...result,
+      links: linksFor(result.reply, snapshot),
+      context_used: Boolean(where),
       provider: ai.providerName,
       grounded_in: {
         leads: snapshot.leads.length,

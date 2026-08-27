@@ -4373,6 +4373,86 @@ await check('a per-channel withdrawal closes only that channel', async () => {
       `unhelpful validation message: ${data.error}`);
   });
 
+  /* ============================================================ 43 */
+  suite('43 Contextual AI help (ENH-14)');
+
+  await check('the assistant accepts where the user is standing', async () => {
+    const { data: leads } = await req('/api/leads?limit=1', { token: T.sales_rm, expect: 200 });
+    const { data } = await req('/api/ai/copilot', {
+      method: 'POST', token: T.sales_rm, expect: 200,
+      body: {
+        question: 'What should I do next with this lead?',
+        context: { tab: 'leads', entity: 'lead', id: leads[0].id },
+      },
+    });
+    eq(data.context_used, true, 'the page context was ignored');
+    assert(data.reply, 'no answer');
+  });
+
+  await check('it is one assistant, not two', async () => {
+    // Q-14 was answered "one assistant". A second endpoint would mean two
+    // prompts, two grounding paths and two sets of behaviour to keep honest.
+    const { data } = await req('/api/ai/copilot', {
+      method: 'POST', token: T.sales_rm, expect: 200,
+      body: { question: 'Who should I call today?' },
+    });
+    eq(data.context_used, false, 'context was invented where none was given');
+    assert(data.grounded_in, 'the answer does not say what it was grounded on');
+  });
+
+  await check('links are records, resolved rather than written by the model', async () => {
+    const { data } = await req('/api/ai/copilot', {
+      method: 'POST', token: T.sales_rm, expect: 200,
+      body: { question: 'Who should I call today?' },
+    });
+    assert(Array.isArray(data.links), 'no links array at all');
+    for (const l of data.links) {
+      assert(l.label && l.to, 'a link with no label or destination');
+      assert(/^\/(leads|tickets)\/\d+$/.test(l.to), `a link points somewhere odd: ${l.to}`);
+    }
+  });
+
+  await check('a link can only be a record the reader may already open', async () => {
+    // The snapshot is the allowlist, and it is built under the caller's own
+    // scope -- so the assistant cannot hand somebody a door to a record they
+    // are not entitled to, however confidently it writes about one.
+    const { data } = await req('/api/ai/copilot', {
+      method: 'POST', token: T.sales_rm, expect: 200,
+      body: { question: 'Who should I call today?' },
+    });
+    const { data: mine } = await req('/api/leads?limit=500', { token: T.sales_rm, expect: 200 });
+    const visible = new Set(mine.map((l) => `/leads/${l.id}`));
+
+    for (const l of data.links.filter((x) => x.to.startsWith('/leads/'))) {
+      assert(visible.has(l.to), `the assistant linked ${l.to}, which this RM cannot open`);
+    }
+  });
+
+  await check('context for a lead outside your scope is quietly ignored', async () => {
+    const { data: all } = await req('/api/leads?limit=500', { token: T.superadmin, expect: 200 });
+    const { data: mine } = await req('/api/leads?limit=500', { token: T.caller, expect: 200 });
+    const mineIds = new Set(mine.map((l) => l.id));
+    const foreign = all.find((l) => !mineIds.has(l.id));
+    if (!foreign) return;
+
+    // It must not confirm the record exists, and must not fail either -- the
+    // question is still answerable, just without that grounding.
+    const { data } = await req('/api/ai/copilot', {
+      method: 'POST', token: T.caller, expect: 200,
+      body: { question: 'What is going on here?', context: { tab: 'leads', entity: 'lead', id: foreign.id } },
+    });
+    assert(data.reply, 'the assistant refused rather than answering generally');
+    assert(!String(data.reply).includes(foreign.name),
+      'the assistant named a lead this caller cannot see');
+  });
+
+  await check('a question is still required', async () => {
+    await req('/api/ai/copilot', {
+      method: 'POST', token: T.sales_rm, expect: 400,
+      body: { question: '   ', context: { tab: 'leads' } },
+    });
+  });
+
   /* ------------------------------------------------------------- report */
   report();
 }

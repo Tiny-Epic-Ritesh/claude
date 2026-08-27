@@ -4113,3 +4113,15 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
 
 /* The join switch now carries words rather than AND/OR, so it needs room. */
 .join-switch button { white-space: nowrap; }
+
+/* Links the assistant returns (ENH-14). Drawn only from records already in the
+   reader's scoped snapshot, so every one of them opens. */
+.copilot-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hairline);
+}
+.copilot-links .chip { text-decoration: none; }
