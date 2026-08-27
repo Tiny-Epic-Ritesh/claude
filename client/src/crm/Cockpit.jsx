@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { money, rupees, shortDate, dateTime, mins, STATE_LABEL, ROLE_LABEL } from '../api.js';
 import { useApi, Loading, ErrorBanner, Stat, Empty, CardStrip, AgeBadge, PriorityBadge, Progress, Tabs, Icon } from '../components/ui.jsx';
+import Dashboard from './Dashboard.jsx';
 
 /**
  * One component renders all eleven cockpits.
@@ -33,10 +34,29 @@ export default function Cockpit({ session }) {
         </div>
       </div>
 
-      {/* Zone 1 — metrics strip */}
-      <div className="metrics">
-        {data.metrics.map((m) => <Stat key={m.label} {...m} />)}
-      </div>
+      {/*
+        Zone 1 — the numbers (ENH-24 / ENH-24b).
+
+        This was a fixed strip of cockpit metrics. It is now the Dashboard,
+        because the homepage was the stated preference for it and two metric
+        strips on one page is exactly the "does not fit cleanly" case: the
+        dashboard's tiles are the same figures with a date range, an alert
+        ordering and a working drill-through on each one, so keeping both would
+        have meant showing the worse version above the better one.
+
+        The cockpit's distinctive zones — the action pane and the role's work
+        lists — are untouched below.
+      */}
+      <Dashboard embedded />
+
+      {/* Zone 1b — the role's own headline figures, which are not date-ranged:
+          queue depth, integration health and the like are present-tense facts
+          about the desk rather than a period measure. */}
+      {data.metrics?.length > 0 && (
+        <div className="metrics">
+          {data.metrics.map((m) => <Stat key={m.label} {...m} />)}
+        </div>
+      )}
 
       <div className="grid grid-2" style={{ marginBottom: 14 }}>
         {/* Zone 3 — action pane. Actions are the role's most frequent moves. */}

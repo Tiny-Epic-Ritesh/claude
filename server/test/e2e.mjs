@@ -3489,6 +3489,128 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     await req(`/api/lists/${refreshableList.id}`, { method: 'DELETE', token: T.admin, expect: 409 });
   });
 
+  /* ============================================================ 35 */
+  suite('35 Dashboard (ENH-24) and Pipeline (BUG-20)');
+
+  await check('the dashboard defaults to month to date', async () => {
+    const { data } = await req('/api/dashboard', { token: T.admin, expect: 200 });
+    eq(data.range.code, 'mtd', 'default range');
+    assert(data.range.from.endsWith('-01'), `MTD must start on the 1st, got ${data.range.from}`);
+  });
+
+  await check('the financial year starts in April, not January', async () => {
+    const { data } = await req('/api/dashboard?range=fytd', { token: T.admin, expect: 200 });
+    const month = data.range.from.slice(5, 7);
+    eq(month, '04', `FYTD started in month ${month} - the Indian financial year starts in April`);
+  });
+
+  await check('every range resolves and narrows correctly', async () => {
+    const seen = {};
+    for (const code of ['today', 'mtd', 'qtd', 'fytd']) {
+      // eslint-disable-next-line no-await-in-loop
+      const { data } = await req(`/api/dashboard?range=${code}`, { token: T.admin, expect: 200 });
+      eq(data.range.code, code, `range ${code}`);
+      seen[code] = data.range.from;
+    }
+    assert(seen.today >= seen.mtd, 'today should start no earlier than the month');
+    assert(seen.mtd >= seen.qtd, 'the month should start no earlier than the quarter');
+    assert(seen.qtd >= seen.fytd, 'the quarter should start no earlier than the financial year');
+  });
+
+  await check('a wider range cannot show fewer new leads', async () => {
+    const count = async (code) => {
+      const { data } = await req(`/api/dashboard?range=${code}`, { token: T.admin, expect: 200 });
+      return data.tiles.find((t) => t.label === 'New leads')?.value ?? 0;
+    };
+    const mtd = await count('mtd');
+    const fytd = await count('fytd');
+    assert(fytd >= mtd, `FYTD (${fytd}) is smaller than MTD (${mtd}) - the range is not widening`);
+  });
+
+  await check('tiles that need attention are sorted first', async () => {
+    const { data } = await req('/api/dashboard', { token: T.admin, expect: 200 });
+    const firstNonAlert = data.tiles.findIndex((t) => !t.alert);
+    const lastAlert = data.tiles.map((t) => t.alert).lastIndexOf(true);
+    if (firstNonAlert !== -1 && lastAlert !== -1) {
+      assert(lastAlert < firstNonAlert, 'an alert tile is sorted below a calm one');
+    }
+  });
+
+  await check('every dashboard figure is scoped to the reader', async () => {
+    const leadsFor = async (token) => {
+      const { data } = await req('/api/dashboard?range=fytd', { token, expect: 200 });
+      return data.tiles.find((t) => t.label === 'New leads')?.value ?? 0;
+    };
+    const admin = await leadsFor(T.admin);
+    const rm = await leadsFor(T.sales_rm);
+    assert(rm <= admin, `an RM saw more leads (${rm}) than an admin (${admin})`);
+  });
+
+  await check('each role gets its own layout, and a caller gets the shortest', async () => {
+    const tilesFor = async (token) => {
+      const { data } = await req('/api/dashboard', { token, expect: 200 });
+      return data.tiles.length;
+    };
+    const caller = await tilesFor(T.caller);
+    const admin = await tilesFor(T.admin);
+    assert(caller < admin, 'a caller has as many tiles as an admin - the layout is not per role');
+    assert(caller > 0, 'a caller got no dashboard at all');
+  });
+
+  await check('a linked tile drills through to something real', async () => {
+    const { data } = await req('/api/dashboard', { token: T.admin, expect: 200 });
+    const linked = data.tiles.filter((t) => t.to);
+    assert(linked.length > 0, 'no tile is clickable');
+    assert(linked.every((t) => t.to.startsWith('/')), 'a tile points somewhere that is not a route');
+  });
+
+  /* ------------------------------------------------------------ pipeline */
+
+  await check('the pipeline returns columns rather than an empty page', async () => {
+    // BUG-20: there was no /api/pipeline at all, so the SPA fallback answered
+    // the fetch with index.html and the tab rendered nothing.
+    const { data } = await req('/api/pipeline', { token: T.admin, expect: 200 });
+    assert(Array.isArray(data.columns) && data.columns.length === 5, 'expected five working columns');
+    assert(data.total_cards > 0, 'the pipeline is empty - the tab would look broken again');
+  });
+
+  await check('the pipeline excludes cards nobody has started', async () => {
+    const { data } = await req('/api/pipeline', { token: T.admin, expect: 200 });
+    assert(!data.columns.some((c) => c.code === 'INACTIVE'),
+      'INACTIVE is the resting state of the whole catalogue and would bury the real pipeline');
+  });
+
+  await check('column counts describe the book, not the page', async () => {
+    const { data } = await req('/api/pipeline?per_column=1', { token: T.admin, expect: 200 });
+    const capped = data.columns.find((c) => c.count > 1);
+    if (capped) {
+      eq(capped.cards.length, 1, 'per_column was ignored');
+      assert(capped.count > capped.cards.length, 'the header count shrank to the page size');
+    }
+  });
+
+  await check('the pipeline is scoped like everything else', async () => {
+    const { data: admin } = await req('/api/pipeline', { token: T.admin, expect: 200 });
+    const { data: rm } = await req('/api/pipeline', { token: T.sales_rm, expect: 200 });
+    assert(rm.total_cards <= admin.total_cards, 'an RM saw more of the pipeline than an admin');
+    assert(admin.columns.every((c) => c.cards.every((card) => card.sales_org === 'BONANZA')),
+      'a Bigul card is visible to a Bonanza admin');
+  });
+
+  await check('open pipeline excludes what has already converted', async () => {
+    const { data } = await req('/api/pipeline', { token: T.admin, expect: 200 });
+    const active = data.columns.find((c) => c.code === 'ACTIVE');
+    eq(data.won_value, active.value, 'won value does not match the Active column');
+    const openSum = data.columns.filter((c) => c.code !== 'ACTIVE').reduce((s, c) => s + c.value, 0);
+    eq(data.open_value, openSum, 'open value includes converted cards');
+  });
+
+  await check('pipeline cards mask PII', async () => {
+    const { data } = await req('/api/pipeline', { token: T.admin, expect: 200 });
+    const withMobile = data.columns.flatMap((c) => c.cards).find((c) => c.mobile);
+    if (withMobile) assert(/[•*]/.test(withMobile.mobile), `mobile is not masked: ${withMobile.mobile}`);
+  });
+
   /* ------------------------------------------------------------- report */
   report();
 }

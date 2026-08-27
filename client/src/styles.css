@@ -3711,3 +3711,116 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
 
 /* Keyboard focus has to be visible on the block, not just the hidden radio. */
 .pick:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The one figure on a dashboard that means "do something today" (ENH-24).
+   Sized to sit inline with the label without pushing it. */
+.stat-alert { color: var(--warn); vertical-align: -2px; margin-right: 4px; }
+
+/* ======================================================= pipeline board
+ *
+ * BUG-20. A horizontally scrolling column board — the columns scroll as a
+ * group, and each column scrolls its own cards vertically, so a long column
+ * never stretches the page and the headers stay comparable.
+ *
+ * `min-width: 0` on the track matters: without it a grid child refuses to
+ * shrink below its content and the whole page gains a horizontal scrollbar
+ * instead of the board.
+ */
+.board {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(232px, 1fr);
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  min-width: 0;
+}
+
+.board-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--glass-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r);
+  padding: 11px;
+  min-width: 0;
+}
+
+.board-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--hairline);
+}
+.board-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.board-count {
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+  background: var(--glass-3, var(--glass-2));
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+
+/* The only part that scrolls. Capped so five columns of wildly different
+   lengths still line up. */
+.board-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  overflow-y: auto;
+  max-height: 62vh;
+  min-height: 0;
+}
+
+.board-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  background: var(--surface, var(--card-bg, transparent));
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  padding: 9px 10px;
+  transition: border-color 0.14s ease, transform 0.14s ease, box-shadow 0.14s ease;
+}
+.board-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: var(--lift-1, var(--lift-2));
+}
+.board-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.board-card-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.board-card-name {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-card-value {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-dark, var(--accent));
+  white-space: nowrap;
+}
+
+@media (max-width: 700px) {
+  .board { grid-auto-columns: minmax(200px, 78vw); }
+  .board-cards { max-height: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .board-card { transition: none; }
+}

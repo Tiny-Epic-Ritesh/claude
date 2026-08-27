@@ -710,6 +710,41 @@ for (const l of all("SELECT lead_id, SUM(value) v FROM product_cards WHERE state
   run('UPDATE leads SET aum = ?, aum_as_of = date(\'now\') WHERE id = ?', [l.v, l.lead_id]);
 }
 
+/* Expected value on in-flight cards.
+ *
+ * A pipeline board is a forecasting tool, and every card that is not yet ACTIVE
+ * was seeded at zero -- so the headline "open pipeline" figure was a confident
+ * Rs 0 across a board with twenty-five live opportunities on it. That is not a
+ * demo problem; it is what the number would do in production if nobody ever set
+ * an expected value, and the board should show something worth forecasting.
+ *
+ * Sized off the product's own typical ticket, scaled by how far the card has
+ * travelled: an Exploring card is worth less in expectation than one already in
+ * KYC, which is the whole point of weighting a pipeline.
+ */
+const STATE_WEIGHT = {
+  EXPLORING: 0.35, WARM: 0.6, PRODUCT_RM_ENGAGED: 0.75, KYC_IN_PROGRESS: 0.9,
+};
+
+const TYPICAL = {
+  EQD: 850000, MF: 220000, PMS: 2500000, DP: 60000, INS: 140000, RES: 45000,
+  COMM: 500000, 'BG-TRADE': 400000, 'BG-ALGO': 300000, 'BG-SIP': 90000,
+  'BG-BASKET': 210000, 'BG-JARVIS': 260000, 'BG-CONNECT': 150000,
+};
+
+for (const card of all(`
+  SELECT pc.id, pc.state, pt.code
+    FROM product_cards pc
+    JOIN product_types pt ON pt.id = pc.product_type_id
+   WHERE pc.value = 0 AND pc.state IN ('EXPLORING','WARM','PRODUCT_RM_ENGAGED','KYC_IN_PROGRESS')`)) {
+  const base = TYPICAL[card.code] ?? 200000;
+  // Deterministic spread, so a reseed produces the same board rather than a
+  // different one every run -- which would make any figure impossible to verify.
+  const spread = 0.7 + ((card.id % 7) * 0.1);
+  const value = Math.round((base * STATE_WEIGHT[card.state] * spread) / 1000) * 1000;
+  run('UPDATE product_cards SET value = ? WHERE id = ?', [value, card.id]);
+}
+
 /* ---------------------------------------------------------------- clients
  *
  * A lead holding at least one ACTIVE product card is not a prospect any more --

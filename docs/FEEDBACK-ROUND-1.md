@@ -55,7 +55,7 @@ HTML** because the SPA fallback caught them. An unbuilt endpoint must 404.
 | ENH-17 | Tabs above summary | P1 | **Done** — tabs sit directly under the header, above the summary | |
 | BUG-18 | Dark theme audit | P1 | **Done** — same root cause, verified across the lead edit form | |
 | ENH-19 | Input styling | P2 | **Done** — all 45 untyped inputs now inherit the design system | |
-| BUG-20 | Pipeline | P0 | Not started | **module, not a fix** |
+| BUG-20 | Pipeline | P0 | **Done** — card board by state, weighted open value, scoped | |
 | BUG-21 | Log Activity opens | P0 | **Done** — modal host had no case for it; composer existed but was unreachable | |
 | ENH-21a | Highlight connected | P1 | **Done** — Connected/Not Connected are now the first, largest choice | |
 | ENH-21b | Log Activity UX | P1 | **Done** — two-step picker, keyboard shortcuts, 0 chips until you choose | |
@@ -64,9 +64,9 @@ HTML** because the SPA fallback caught them. An unbuilt endpoint must 404.
 | ENH-23 | Launcher animation | P2 | Not started | |
 | ENH-23a | Launcher icon size | P2 | Not started | |
 | ENH-23b | Launcher by role | P1 | Not started | |
-| ENH-24 | Dashboard | P1 | Not started | **module** · needs Q-24 |
-| ENH-24a | Date range | P1 | Not started | |
-| ENH-24b | Placement | P1 | Not started | |
+| ENH-24 | Dashboard | P1 | **Done** — per-role tiles, alerts first, every tile drills through | Q-24 confirmed |
+| ENH-24a | Date range | P1 | **Done** — Today / Month / Quarter / FY, FY starts 1 April | |
+| ENH-24b | Placement | P1 | **Done** — on the homepage, same component backs the tab | |
 | BUG-25 | Lead Lists | P0 | **Done** — three kinds, 06:00 IST refresh, bulk actions with consent preview | Q-25 confirmed |
 | BUG-26 | Clients | P0 | **Done** — clients is its own object; list, detail, unified timeline, dormancy | Q-26 confirmed |
 | BUG-27 | Portal/DKYC URLs | P0 | **Done** — both resolve to /ai-crm/… | confirmed |

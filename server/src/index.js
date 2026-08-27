@@ -29,6 +29,8 @@ import advancedSearch from './routes/search-advanced.js';
 import approvals from './routes/approvals.js';
 import clients from './routes/clients.js';
 import lists from './routes/lists.js';
+import dashboard from './routes/dashboard.js';
+import pipeline from './routes/pipeline.js';
 import { backfillClients } from './engine/clients.js';
 import { sweepListRefresh } from './engine/leadlists.js';
 
@@ -120,6 +122,8 @@ app.use('/api/apps', apps);
 app.use('/api/search', search);
 app.use('/api/clients', clients);
 app.use('/api/lists', lists);
+app.use('/api/dashboard', dashboard);
+app.use('/api/pipeline', pipeline);
 app.use('/api/activities', activities);
 app.use('/api/setup', setup);
 app.use('/api/market', market);
