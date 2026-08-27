@@ -33,7 +33,10 @@ import email from './routes/email.js';
 import dashboard from './routes/dashboard.js';
 import pipeline from './routes/pipeline.js';
 import products from './routes/products.js';
-import { backfillClients } from './engine/clients.js';
+import ccm from './routes/ccm.js';
+import team from './routes/team.js';
+import revenue from './routes/revenue.js';
+import { backfillClients, backfillPanIndex } from './engine/clients.js';
 import { sweepListRefresh } from './engine/leadlists.js';
 
 import { sweepSla } from './engine/sla.js';
@@ -128,6 +131,9 @@ app.use('/api/email', email);
 app.use('/api/dashboard', dashboard);
 app.use('/api/pipeline', pipeline);
 app.use('/api/products', products);
+app.use('/api/ccm', ccm);
+app.use('/api/team', team);
+app.use('/api/revenue', revenue);
 app.use('/api/activities', activities);
 app.use('/api/setup', setup);
 app.use('/api/market', market);
@@ -321,6 +327,13 @@ setInterval(() => { try { sweepListRefresh(); } catch (e) { console.error('[list
    the client book. Without this the Clients tab opens empty on a database that
    is full of clients — which is the exact confusion this split exists to end.
    Idempotent, so it is a no-op on every boot after the first. */
+try {
+  const idx = backfillPanIndex();
+  if (idx.indexed) console.log(`[leads] indexed ${idx.indexed} PANs for duplicate search`);
+} catch (e) {
+  console.error('[leads] PAN index backfill failed', e.message);
+}
+
 try {
   const { scanned, created } = backfillClients();
   if (created) console.log(`[clients] backfilled ${created} of ${scanned} accounts carrying a UCC`);

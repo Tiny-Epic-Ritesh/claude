@@ -644,6 +644,16 @@ const COLUMNS = [
   ["dispositions", "edited_at", "TEXT"],
   ["dispositions", "edited_by", "INTEGER"],
   ["dispositions", "is_custom", "INTEGER NOT NULL DEFAULT 0"],
+  /* A searchable fingerprint of the PAN.
+   *
+   * PAN is encrypted at rest, and ciphertext cannot be compared -- the same
+   * PAN encrypts differently every time, so an equality search finds nothing.
+   * A blind index is a deterministic keyed hash of the value: it matches
+   * exactly, reveals nothing on its own, and is what makes the duplicate check
+   * in the Common Client Master possible at all.
+   *
+   * Backfilled on boot for rows that predate it. */
+  ["leads", "pan_bidx", "TEXT"],
   ["lead_lists", "description", "TEXT"],
   ["lead_lists", "created_by", "INTEGER"],
   ["lead_lists", "last_refreshed_at", "TEXT"],
@@ -701,6 +711,7 @@ CREATE INDEX IF NOT EXISTS idx_activities_external ON activities(external_id);
 CREATE INDEX IF NOT EXISTS idx_leads_client_code ON leads(client_code);
 CREATE INDEX IF NOT EXISTS idx_leads_kyc_ref ON leads(kyc_external_ref);
 CREATE INDEX IF NOT EXISTS idx_leads_org ON leads(sales_org);
+CREATE INDEX IF NOT EXISTS idx_leads_pan_bidx ON leads(pan_bidx) WHERE pan_bidx IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_partners_org ON partners(sales_org);
 CREATE INDEX IF NOT EXISTS idx_products_org ON product_types(sales_org);
 CREATE INDEX IF NOT EXISTS idx_tickets_org ON tickets(sales_org);

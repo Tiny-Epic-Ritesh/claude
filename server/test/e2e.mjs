@@ -4640,6 +4640,102 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     }
   });
 
+  /* ============================================================ 46 */
+  suite('46 CCM, Team and Revenue');
+
+  await check('CCM finds a record the searcher does not own', async () => {
+    // The whole point. A duplicate check confined to your own book cannot find
+    // the duplicate, because the duplicate is by definition somebody else's.
+    const { data: all } = await req('/api/leads?limit=200&unmask=true', { token: T.superadmin, expect: 200 });
+    const { data: mine } = await req('/api/leads?limit=500', { token: T.sales_rm, expect: 200 });
+    const mineIds = new Set(mine.map((l) => l.id));
+    const foreign = all.find((l) => !mineIds.has(l.id) && l.mobile);
+    assert(foreign, 'no lead outside the RM book to test with');
+
+    const { data } = await req(`/api/ccm/search?q=${encodeURIComponent(foreign.mobile)}`,
+      { token: T.sales_rm, expect: 200 });
+    assert(data.matches.length > 0, 'the duplicate check missed a record it should have found');
+    assert(data.matches[0].owner_name, 'a match that does not say who holds them is useless');
+  });
+
+  await check('CCM never hands over a contact detail', async () => {
+    const { data: all } = await req('/api/leads?limit=200&unmask=true', { token: T.superadmin, expect: 200 });
+    const target = all.find((l) => l.mobile);
+    const { data } = await req(`/api/ccm/search?q=${encodeURIComponent(target.name)}`,
+      { token: T.sales_rm, expect: 200 });
+
+    for (const m of data.matches) {
+      assert(!('email' in m), 'CCM returned a client email address');
+      assert(!('pan' in m), 'CCM returned a PAN');
+      assert(/[\u2022*]/.test(String(m.mobile ?? '')),
+        `CCM returned an unmasked mobile: ${m.mobile}`);
+    }
+  });
+
+  await check('CCM finds by PAN, which needs the blind index', async () => {
+    const { data: all } = await req('/api/leads?limit=200&unmask=true', { token: T.superadmin, expect: 200 });
+    const withPan = all.find((l) => /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(String(l.pan ?? '')));
+    if (!withPan) return;
+    const { data } = await req(`/api/ccm/search?q=${withPan.pan}`, { token: T.sales_rm, expect: 200 });
+    eq(data.matched_on, 'PAN', 'a PAN was not recognised as one');
+    assert(data.matches.some((m) => m.id === withPan.id),
+      'PAN search missed the record holding that PAN — the blind index is not being written');
+  });
+
+  await check('CCM needs the capability to create leads', async () => {
+    // Only somebody who can create a lead has a reason to check first.
+    await req('/api/ccm/search?q=test', { token: T.marketing_manager, expect: 403 });
+  });
+
+  await check('Team resolves the reporting chain, at any depth', async () => {
+    const { data: sup } = await req('/api/team', { token: T.sales_supervisor, expect: 200 });
+    eq(sup.scope, 'chain', 'a supervisor should see their chain, not the org');
+    assert(sup.members.length > 1, 'a supervisor with reports saw only themselves');
+    assert(sup.tree.length >= 1, 'no tree was assembled');
+
+    const { data: rm } = await req('/api/team', { token: T.sales_rm, expect: 200 });
+    // Not an error and not empty: "My Team" for somebody with no reports is
+    // themselves, and a blank page would read as broken.
+    assert(rm.members.length >= 1, 'an RM with no reports got nothing at all');
+  });
+
+  await check('an administrator sees the whole business', async () => {
+    const { data } = await req('/api/team', { token: T.admin, expect: 200 });
+    eq(data.scope, 'org', 'an admin should not be limited to a chain');
+    assert(data.members.every((m) => m.sales_org === 'BONANZA'),
+      'a Bigul user appeared in a Bonanza admin team');
+  });
+
+  await check('Revenue is scoped, and ranks only against real peers', async () => {
+    const { data: rm } = await req('/api/revenue', { token: T.sales_rm, expect: 200 });
+    const { data: admin } = await req('/api/revenue', { token: T.admin, expect: 200 });
+    assert(rm.earned.active_value <= admin.earned.active_value,
+      'an RM counted more value than an admin');
+
+    if (rm.rank) {
+      assert(rm.rank.of >= 3, 'a rank was published against fewer than three peers');
+      assert(rm.rank.position >= 1 && rm.rank.position <= rm.rank.of, 'the rank is out of range');
+      eq(rm.rank.role, 'sales_rm', 'ranked against the wrong role');
+    }
+  });
+
+  await check('untapped means a client who already holds something else', async () => {
+    const { data } = await req('/api/revenue', { token: T.superadmin, expect: 200 });
+    // A lead holding nothing is a prospecting job, not a cross-sell one, and
+    // mixing the two makes the number useless for either.
+    for (const u of data.untapped) {
+      assert(u.opportunity > 0, `${u.name} is listed as untapped with nobody to sell it to`);
+      assert(u.id, 'an untapped row with no product to open');
+    }
+  });
+
+  await check('the range picker changes the revenue window', async () => {
+    const { data: mtd } = await req('/api/revenue?range=mtd', { token: T.admin, expect: 200 });
+    const { data: fytd } = await req('/api/revenue?range=fytd', { token: T.admin, expect: 200 });
+    assert(fytd.range.from <= mtd.range.from, 'the financial year started after the month');
+    eq(fytd.range.from.slice(5, 7), '04', 'the financial year must start in April');
+  });
+
   /* ------------------------------------------------------------- report */
   report();
 }

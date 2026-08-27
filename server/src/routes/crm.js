@@ -5,7 +5,7 @@
 import { Router } from 'express';
 import { all, one, run, audit, notify, daysSince, ageBand, AGE_BANDS, CARD_COLOUR, LEAD_STAGES, CARD_STATES } from '../db.js';
 import { can, requireUser, requirePermission, reqScope, isReadOnlyOnLeads, unmaskRequested, maskFor, orgsFor, activeOrg, mayUseOrg } from '../auth.js';
-import { encryptField, decryptField, maskRecord, maskRecords, validate } from '../security.js';
+import { encryptField, decryptField, maskRecord, maskRecords, validate, blindIndex } from '../security.js';
 import { applyScore } from '../engine/rules.js';
 import { click2call, pushToAutodialler, send, logCall } from '../integrations.js';
 import { checkConsent, contactability } from '../engine/consent.js';
@@ -326,9 +326,13 @@ router.post('/leads', requirePermission('lead.create'), (req, res) => {
   }
 
   const result = run(
-    `INSERT INTO leads (sales_org, name, mobile, email, source, pan, city, state, risk_profile, language, owner_id, partner_id)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [org, name, mobile || null, email || null, source || 'Manual', encryptField(pan ? String(pan).toUpperCase() : null),
+    `INSERT INTO leads (sales_org, name, mobile, email, source, pan, pan_bidx, city, state, risk_profile, language, owner_id, partner_id)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [org, name, mobile || null, email || null, source || 'Manual',
+      encryptField(pan ? String(pan).toUpperCase() : null),
+      // The searchable fingerprint, written alongside the ciphertext so the two
+      // can never describe different PANs.
+      pan ? blindIndex(String(pan).toUpperCase()) : null,
       city || null, state || null,
       risk_profile || null, language || 'English', owner_id || req.user.id, partner_id || null],
   );
@@ -450,6 +454,12 @@ router.patch('/leads/:id', (req, res) => {
     const raw = body[f] === '' ? null : body[f];
     sets.push(`${f} = ?`);
     params.push(f === 'pan' ? encryptField(raw ? String(raw).toUpperCase() : null) : raw);
+    // A PAN that changes without its index changing would be findable under the
+    // old value and invisible under the new one.
+    if (f === 'pan') {
+      sets.push('pan_bidx = ?');
+      params.push(raw ? blindIndex(String(raw).toUpperCase()) : null);
+    }
   }
   // Custom fields declared in Setup, validated by the metadata layer. Their
   // cascade and requiredness are enforced there, so an API caller gets the same

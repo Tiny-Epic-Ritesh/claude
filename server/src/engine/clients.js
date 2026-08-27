@@ -12,7 +12,7 @@
  */
 
 import { all, one, run } from '../db.js';
-import { encryptField } from '../security.js';
+import { encryptField, decryptField, blindIndex } from '../security.js';
 
 /**
  * The segments an account can be enabled for.
@@ -177,4 +177,29 @@ export function backfillClients() {
     if (r.ok && r.created) created += 1;
   }
   return { scanned: pending.length, created };
+}
+
+/**
+ * Give existing leads a searchable PAN fingerprint.
+ *
+ * Rows created before the blind index existed hold ciphertext and nothing to
+ * match on, so the duplicate check would silently miss every one of them --
+ * which is worse than not offering PAN search at all, because it answers
+ * "no match" with apparent confidence.
+ *
+ * Decrypts and re-hashes only the rows that need it, so it is a no-op on every
+ * boot after the first.
+ */
+export function backfillPanIndex() {
+  const pending = all(
+    "SELECT id, pan FROM leads WHERE pan IS NOT NULL AND TRIM(pan) <> '' AND pan_bidx IS NULL",
+  );
+  let done = 0;
+  for (const row of pending) {
+    const plain = decryptField(row.pan);
+    if (!plain) continue;
+    run('UPDATE leads SET pan_bidx = ? WHERE id = ?', [blindIndex(String(plain).toUpperCase()), row.id]);
+    done += 1;
+  }
+  return { scanned: pending.length, indexed: done };
 }
