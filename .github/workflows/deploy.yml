@@ -1,18 +1,37 @@
 name: Build & Deploy to UAT
 
+# Manual runs matter as much as automatic ones. Without workflow_dispatch the
+# only way to retry a failed deploy is to push a commit, which is how a repo
+# ends up with a trail of "trigger ci" commits and no way to test a fix.
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      skip_deploy:
+        description: 'Build the image but do not deploy'
+        type: boolean
+        default: false
+
+# Fifteen pushes in a morning previously queued fifteen deploys, each pulling
+# and restarting the same container behind the one in front of it. Only the last
+# one is wanted; the rest are noise that can leave the box mid-restart.
+concurrency:
+  group: uat-deploy
+  cancel-in-progress: true
 
 env:
   REGISTRY: ghcr.io
+  # GHCR requires a lowercase path. The owner is "Tiny-Epic-Ritesh", so this is
+  # hardcoded rather than derived from github.repository, which is mixed case
+  # and was the cause of an earlier round of failures.
   IMAGE_NAME: tiny-epic-ritesh/claude
 
 jobs:
   # ────────────────────────────────────────────────────────────────────────────
   build-and-push:
-    name: Build Docker image → GHCR
+    name: Build image → GHCR
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -58,22 +77,56 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Proves the push actually landed. Without this the job can go green while
+      # the registry holds nothing — which is exactly the state this repo was in,
+      # and it took a manual check of the packages page to notice.
+      - name: Confirm the image is in the registry
+        run: |
+          set -e
+          TAG="sha-${{ steps.sha.outputs.short }}"
+          echo "Looking for ${{ env.IMAGE_NAME }}:$TAG"
+          docker buildx imagetools inspect \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG" > /dev/null
+          echo "Image is present in GHCR."
+
   # ────────────────────────────────────────────────────────────────────────────
   deploy:
-    name: Deploy to UAT server
+    name: Deploy to UAT
     runs-on: ubuntu-latest
     needs: build-and-push
+    if: ${{ github.event_name == 'push' || inputs.skip_deploy != true }}
     environment: uat
     permissions:
       contents: read
       packages: read
 
     steps:
+      # A missing secret otherwise surfaces as an scp timeout against an empty
+      # host, which reads like a network fault and sends people to the firewall.
+      # Name the actual problem instead.
+      - name: Check the deploy secrets exist
+        env:
+          UAT_HOST: ${{ secrets.UAT_HOST }}
+          UAT_USER: ${{ secrets.UAT_USER }}
+          UAT_SSH_KEY: ${{ secrets.UAT_SSH_KEY }}
+        run: |
+          missing=""
+          [ -z "$UAT_HOST" ]    && missing="$missing UAT_HOST"
+          [ -z "$UAT_USER" ]    && missing="$missing UAT_USER"
+          [ -z "$UAT_SSH_KEY" ] && missing="$missing UAT_SSH_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing"
+            echo "Add them under Settings → Secrets and variables → Actions."
+            echo "If they are set on the 'uat' environment rather than the repo,"
+            echo "check Settings → Environments → uat."
+            exit 1
+          fi
+          echo "All three deploy secrets are present."
+
       - name: Checkout (for docker-compose.yml)
         uses: actions/checkout@v4
 
-      # scp-action runs in Docker — uses inline key (key:)
-      - name: Copy docker-compose.yml to EC2
+      - name: Copy docker-compose.yml to the server
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.UAT_HOST }}
@@ -84,7 +137,6 @@ jobs:
           overwrite: true
           timeout: 30s
 
-      # ssh-action runs as a binary — also uses inline key (key:)
       - name: Pull image and restart container
         uses: appleboy/ssh-action@v1
         env:
@@ -101,17 +153,54 @@ jobs:
           script: |
             set -e
 
-            # Log into GHCR — no manual PAT needed, workflow token is used
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
 
             cd /www/wwwroot/labs.tinyepic.in
 
+            # server/.env holds CRM_MASTER_KEY and lives only on the box -- it is
+            # never committed. Without it the container starts on the development
+            # key and every encrypted field becomes unreadable, which is a far
+            # worse outcome than refusing to start.
+            if [ ! -f ./server/.env ]; then
+              echo "::error::/www/wwwroot/labs.tinyepic.in/server/.env is missing."
+              echo "Create it on the server before deploying, or encrypted data will be unreadable."
+              exit 1
+            fi
+
+            # Back up the SQLite database before swapping the container. It is
+            # three seconds against the one action here that cannot be undone.
+            if docker ps -a --format '{{.Names}}' | grep -q '^bonanza_app$'; then
+              mkdir -p ./backups
+              docker cp bonanza_app:/app/server/data/bonanza.db \
+                "./backups/bonanza-$(date +%F-%H%M).db" || true
+              ls -1t ./backups/*.db 2>/dev/null | tail -n +11 | xargs -r rm --
+            fi
+
             echo "IMAGE_TAG=$IMAGE_TAG" > .env.deploy
 
             docker compose --env-file .env.deploy pull app
-
             docker compose --env-file .env.deploy up -d --remove-orphans
-
             docker image prune -f
 
-            echo "✅ Deployed $IMAGE_TAG"
+            echo "Deployed $IMAGE_TAG"
+
+      # A green deploy step means the commands ran, not that the site works. The
+      # container can start and then exit on a bad env file, and nobody would
+      # know until they opened the page.
+      - name: Verify the site is actually serving
+        run: |
+          set -e
+          for i in $(seq 1 12); do
+            code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' \
+              https://labs.tinyepic.in/api/health || true)
+            if [ "$code" = "200" ]; then
+              echo "Health check passed on attempt $i."
+              curl -s -m 10 https://labs.tinyepic.in/api/health
+              exit 0
+            fi
+            echo "Attempt $i: got '$code', waiting…"
+            sleep 5
+          done
+          echo "::error::The site did not return a healthy response after 60s."
+          echo "Check container logs on the box: docker logs --tail 50 bonanza_app"
+          exit 1
