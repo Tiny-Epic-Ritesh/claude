@@ -4282,6 +4282,97 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     assert([200, 404].includes(status), `unexpected status ${status}`);
   });
 
+  /* ============================================================ 42 */
+  suite('42 Advanced Search usability (ENH-15)');
+
+  await check('ready-made filters are offered, and every one of them works', async () => {
+    const { data } = await req('/api/search-advanced/fields/lead', { token: T.admin, expect: 200 });
+    assert(Array.isArray(data.starters) && data.starters.length >= 3,
+      'no starter filters offered - an empty builder is the thing people got stuck on');
+
+    // A starter that does not run is worse than no starter: it is a suggestion
+    // that fails the moment somebody trusts it. Two of the first four written
+    // referenced operators that did not exist, which is why this exists.
+    for (const st of data.starters) {
+      assert(st.name && st.why, `starter "${st.name}" does not say what it is for`);
+      // eslint-disable-next-line no-await-in-loop
+      const { data: c } = await req('/api/search-advanced/lead/count', {
+        method: 'POST', token: T.admin, expect: 200, body: { where: st.tree },
+      });
+      assert(typeof c.total === 'number', `starter "${st.name}" did not run`);
+      assert(c.described, `starter "${st.name}" cannot be read back in English`);
+    }
+  });
+
+  await check('the builder can always say what it has built, in English', async () => {
+    const { data } = await req('/api/search-advanced/lead/count', {
+      method: 'POST', token: T.admin, expect: 200,
+      body: {
+        where: {
+          op: 'AND',
+          children: [
+            { field: 'stage', operator: 'in', value: ['Qualified'] },
+            { op: 'OR', children: [
+              { field: 'source', operator: 'contains', value: 'Facebook' },
+              { field: 'source', operator: 'contains', value: 'Referral' },
+            ] },
+          ],
+        },
+      },
+    });
+    assert(data.described, 'a nested tree came back with no description');
+    // Unreadable to most people even when they built it themselves, so the
+    // sentence has to carry both halves and the joining word.
+    assert(/ and /i.test(data.described) && / or /i.test(data.described),
+      `the description loses the nesting: ${data.described}`);
+  });
+
+  await check('an empty filter reads as everything, not as nothing', async () => {
+    const { data } = await req('/api/search-advanced/lead/count', {
+      method: 'POST', token: T.admin, expect: 200, body: { where: null },
+    });
+    assert(/everything/i.test(data.described), `an empty filter reads badly: ${data.described}`);
+  });
+
+  await check('the readback matches what a saved segment is labelled with', async () => {
+    const where = { op: 'AND', children: [{ field: 'mobile', operator: 'is_blank' }] };
+    const { data: counted } = await req('/api/search-advanced/lead/count', {
+      method: 'POST', token: T.admin, expect: 200, body: { where },
+    });
+    const { data: saved } = await req('/api/search-advanced/lead/save', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: { name: `Readback ${RUN}`, where },
+    });
+    const { data: list } = await req('/api/search-advanced/saved/lead', { token: T.admin, expect: 200 });
+    const row = (Array.isArray(list) ? list : list?.saved ?? []).find((s) => s.id === saved.id);
+    if (row) {
+      eq(row.described, counted.described,
+        'what the builder showed and what the segment stored are different sentences');
+    }
+  });
+
+  await check('starters never reference a field the user cannot search', async () => {
+    // Field-level security can remove a field; a starter depending on it must
+    // disappear with it rather than becoming a broken suggestion.
+    for (const role of ['sales_rm', 'caller']) {
+      // eslint-disable-next-line no-await-in-loop
+      const { data } = await req('/api/search-advanced/fields/lead', { token: T[role], expect: 200 });
+      const names = new Set(data.fields.map((f) => f.api_name));
+      const used = (node) => (node.children ? node.children.every(used) : names.has(node.field));
+      assert((data.starters ?? []).every((s) => used(s.tree)),
+        `${role} was offered a starter using a field they cannot search`);
+    }
+  });
+
+  await check('an invalid filter is refused with a reason, not a stack trace', async () => {
+    const { data } = await req('/api/search-advanced/lead/count', {
+      method: 'POST', token: T.admin, expect: 400,
+      body: { where: { op: 'AND', children: [{ field: 'not_a_field', operator: 'eq', value: 'x' }] } },
+    });
+    assert(data.error && !/undefined|\[object/i.test(data.error),
+      `unhelpful validation message: ${data.error}`);
+  });
+
   /* ------------------------------------------------------------- report */
   report();
 }

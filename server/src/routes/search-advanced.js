@@ -55,6 +55,77 @@ function scopeFor(entity, req) {
 /** What can be searched, and with which operators. */
 router.get('/objects', (_req, res) => res.json(searchableObjects()));
 
+
+/**
+ * Ready-made filters (ENH-15).
+ *
+ * The complaint was that nobody knew what to do with an empty builder. A
+ * starter is not a shortcut around learning it -- it loads a real tree into the
+ * builder, so the first thing somebody sees is a working example of the thing
+ * they were being asked to construct from nothing. Editing one is how most
+ * people will learn the grammar.
+ *
+ * Only starters whose fields actually exist for this user are offered, so a
+ * field hidden by field-level security never appears as a broken suggestion.
+ */
+const STARTERS = {
+  lead: [
+    {
+      name: 'Qualified, no follow-up booked',
+      why: 'Interest with nothing scheduled behind it -- the most common way a warm lead goes cold.',
+      tree: { op: 'AND', children: [
+        { field: 'stage', operator: 'in', value: ['Qualified'] },
+        { field: 'next_follow_up_at', operator: 'is_blank' },
+      ] },
+    },
+    {
+      name: 'Arrived in the last 30 days',
+      why: 'Everything new, whoever owns it.',
+      tree: { op: 'AND', children: [
+        { field: 'created_at', operator: 'in_last_days', value: 30 },
+      ] },
+    },
+    {
+      name: 'No mobile on record',
+      why: 'Data to fix before a calling campaign.',
+      tree: { op: 'AND', children: [
+        { field: 'mobile', operator: 'is_blank' },
+      ] },
+    },
+    {
+      name: 'Must be excluded from a send',
+      why: 'Opted out of marketing, or the number is flagged bad.',
+      tree: { op: 'OR', children: [
+        { field: 'marketing_opt_out', operator: 'is_true' },
+        { field: 'mobile_invalid', operator: 'is_true' },
+      ] },
+    },
+  ],
+};
+
+/**
+ * Offer only starters that actually work for this user.
+ *
+ * Validated against the live registry rather than eyeballed, because a starter
+ * naming a field that does not exist, or an operator that does not apply to its
+ * type, is worse than no starter at all -- it is a suggestion that fails the
+ * moment somebody trusts it. Two of the first four written here did exactly
+ * that, and this is what caught them.
+ *
+ * It also means a field hidden from this user by field-level security silently
+ * removes the starters that depend on it, rather than showing them a broken one.
+ */
+function startersFor(entity, registry) {
+  return (STARTERS[entity] ?? []).filter((s) => {
+    const problem = validateTree(s.tree, registry);
+    if (problem) {
+      console.warn(`[search] starter "${s.name}" is not valid and was not offered: ${problem}`);
+      return false;
+    }
+    return true;
+  });
+}
+
 router.get('/fields/:entity', (req, res) => {
   const registry = registryFor(req.params.entity, req.user, req.caps);
   if (!registry) return res.status(404).json({ error: `${req.params.entity} cannot be searched` });
@@ -79,6 +150,7 @@ router.get('/fields/:entity', (req, res) => {
     entity: req.params.entity,
     label: SEARCHABLE[req.params.entity].label,
     fields: fields.sort((a, b) => Number(a.custom) - Number(b.custom) || a.label.localeCompare(b.label)),
+    starters: startersFor(req.params.entity, registry),
   });
 });
 
@@ -127,7 +199,13 @@ router.post('/:entity/count', (req, res) => {
   const { total } = runSearch(req.params.entity, tree, {
     registry, scopeSql: scope.sql, scopeParams: scope.params, limit: 1,
   });
-  return res.json({ total });
+  // The plain-English reading travels with the count (ENH-15). The builder
+  // shows both together, so somebody who cannot parse a nested AND/OR tree can
+  // still read what they have built and see how many it finds.
+  return res.json({
+    total,
+    described: tree ? describe(tree, registry) : 'Everything you can see',
+  });
 });
 
 /* ------------------------------------------------------ saved segments */

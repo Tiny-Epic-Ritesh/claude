@@ -4068,3 +4068,48 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
   color: var(--ink-2);
   max-width: 68ch;
 }
+
+/* ============================================== advanced search (ENH-15)
+ *
+ * The complaint was that nobody understood what they were being asked to
+ * build. Three additions answer it: a sentence of explanation before any
+ * control, ready-made filters to open and edit, and a plain-English readback of
+ * whatever has been assembled.
+ */
+.as-help {
+  margin: 0 0 12px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  max-width: 72ch;
+}
+.as-help em { font-style: normal; color: var(--ink); background: var(--glass-2); padding: 1px 5px; border-radius: 3px; }
+
+.as-starters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+/* The readback. Given the accent edge because it is the answer to "what have I
+   actually built", which is the question the whole panel exists to make
+   answerable — and it is the same sentence the saved segment will carry. */
+.as-readback {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 10px 13px;
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+.as-readback .material-symbols-rounded { color: var(--accent-dark, var(--accent)); flex-shrink: 0; margin-top: 1px; }
+
+/* The join switch now carries words rather than AND/OR, so it needs room. */
+.join-switch button { white-space: nowrap; }

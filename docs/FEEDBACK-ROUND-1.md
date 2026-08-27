@@ -50,7 +50,7 @@ HTML** because the SPA fallback caught them. An unbuilt endpoint must 404.
 | ENH-12 | Warm card meaning | P1 | **Done** — "Products marked Warm", clickable, lands filtered | needs Q-12 |
 | BUG-13 | Quick Actions dead | P0 | **Done** — were spans, not buttons; server now declares each destination | |
 | ENH-14 | Contextual AI help | P1 | Not started | one assistant |
-| ENH-15 | Advanced Search UX | P1 | Not started | |
+| ENH-15 | Advanced Search UX | P1 | **Done** - Match all/any wording, inline help, four starter filters, live plain-English readback | |
 | ENH-16 | Unmask + config | P1 | **Done** - Admin/Superadmin/Marketing unmasked; per-field per-role config in Setup > Field masking | Q-16 confirmed |
 | ENH-17 | Tabs above summary | P1 | **Done** — tabs sit directly under the header, above the summary | |
 | BUG-18 | Dark theme audit | P1 | **Done** — same root cause, verified across the lead edit form | |

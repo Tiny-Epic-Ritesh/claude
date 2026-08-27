@@ -53,10 +53,18 @@ function Group({ node, fields, onChange, onRemove, depth = 0 }) {
   return (
     <div className={`qgroup depth-${Math.min(depth, 3)}`}>
       <div className="qgroup-head">
-        {/* The join is a two-state switch, not a dropdown: with two options a
-            select costs a click to open and a click to choose, for nothing. */}
-        <div className="join-switch" role="radiogroup" aria-label="Join conditions with">
-          {['AND', 'OR'].map((op) => (
+        {/*
+          AND and OR are the two words the feedback said nobody understood, so
+          the control says what they do instead of naming them. "Match all" and
+          "Match any" need no explanation and cannot be read backwards, which
+          "AND" routinely is: people hear "leads that are new AND qualified" and
+          expect a wider set, not a narrower one.
+
+          Still a two-state switch rather than a dropdown -- with two options a
+          select costs a click to open and a click to choose, for nothing.
+        */}
+        <div className="join-switch" role="radiogroup" aria-label="How these rules combine">
+          {[['AND', 'Match all'], ['OR', 'Match any']].map(([op, label]) => (
             <button
               key={op}
               type="button"
@@ -65,12 +73,14 @@ function Group({ node, fields, onChange, onRemove, depth = 0 }) {
               className={node.op === op ? 'is-on' : ''}
               onClick={() => onChange({ ...node, op })}
             >
-              {op}
+              {label}
             </button>
           ))}
         </div>
         <span className="tiny muted">
-          {node.op === 'AND' ? 'every condition must match' : 'any condition may match'}
+          {node.op === 'AND'
+            ? 'a lead has to satisfy every rule below'
+            : 'a lead only has to satisfy one of the rules below'}
         </span>
         {onRemove && (
           <button type="button" className="btn btn-ghost btn-icon" onClick={onRemove} aria-label="Remove group">
@@ -105,12 +115,19 @@ function Group({ node, fields, onChange, onRemove, depth = 0 }) {
       <div className="qgroup-foot">
         <button type="button" className="btn btn-ghost btn-sm"
           onClick={() => onChange({ ...node, children: [...node.children, emptyRow()] })}>
-          <Icon name="add" size={16} /> Add condition
+          <Icon name="add" size={16} /> Add a rule
         </button>
         {depth < 3 && (
+          /* "Add group" meant nothing to anyone. What it actually does is let
+             you nest a different kind of match inside this one -- so the label
+             says that, and the tooltip gives the example that makes it land. */
           <button type="button" className="btn btn-ghost btn-sm"
+            title={node.op === 'AND'
+              ? 'For rules where only one has to match — e.g. source is Facebook OR Referral, but they must also be Qualified.'
+              : 'For rules that must all match together inside this "any" group.'}
             onClick={() => onChange({ ...node, children: [...node.children, emptyGroup(node.op === 'AND' ? 'OR' : 'AND')] })}>
-            <Icon name="account_tree" size={16} /> Add group
+            <Icon name="account_tree" size={16} />
+            {node.op === 'AND' ? ' Add a "match any" sub-group' : ' Add a "match all" sub-group'}
           </button>
         )}
       </div>
@@ -213,6 +230,7 @@ export default function AdvancedSearch({ entity = 'lead', session, onResults, on
   const [saving, setSaving] = useState(false);
   const timer = useRef(null);
 
+  const [described, setDescribed] = useState(null);
   const pruned = useMemo(() => prune(tree), [tree]);
   const can = (p) => session?.permissions?.includes(p);
 
@@ -224,7 +242,8 @@ export default function AdvancedSearch({ entity = 'lead', session, onResults, on
       try {
         const r = await api.post(`/search-advanced/${entity}/count`, { where: pruned });
         setCount(r.total);
-      } catch (err) { setError(err.message); setCount(null); }
+        setDescribed(r.described ?? null);
+      } catch (err) { setError(err.message); setCount(null); setDescribed(null); }
       finally { setCounting(false); }
     }, 400);
     return () => clearTimeout(timer.current);
@@ -254,6 +273,31 @@ export default function AdvancedSearch({ entity = 'lead', session, onResults, on
         )}
       </div>
 
+      {/*
+        The explainer, once, at the top. The feedback was that people did not
+        know what they were being asked to build -- so the panel says it in a
+        sentence before showing them any controls.
+      */}
+      <p className="as-help">
+        Build a filter by adding rules. Each rule is a field, a test and a value —
+        for example <em>Source is Facebook</em>. Choose whether a lead has to
+        satisfy <strong>all</strong> of your rules or just <strong>any one</strong> of them.
+      </p>
+
+      {/* Ready-made filters. The fastest way to learn the grammar is to open
+          something that already works and change one thing in it. */}
+      {meta.starters?.length > 0 && (
+        <div className="as-starters">
+          <span className="tiny muted">Start from:</span>
+          {meta.starters.map((st) => (
+            <button key={st.name} type="button" className="chip" title={st.why}
+              onClick={() => setTree(st.tree)}>
+              {st.name}
+            </button>
+          ))}
+        </div>
+      )}
+
       {saved?.length > 0 && (
         <div className="saved-row">
           <span className="tiny muted">Saved:</span>
@@ -274,6 +318,17 @@ export default function AdvancedSearch({ entity = 'lead', session, onResults, on
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
 
       <Group node={tree} fields={meta.fields} onChange={setTree} />
+
+      {/*
+        What you have built, in a sentence.
+        A nested AND/OR tree is unreadable to most people even when they built
+        it themselves, and this is the same describe() the saved segment will be
+        labelled with -- so what you read here is exactly what gets stored.
+      */}
+      <div className="as-readback">
+        <Icon name="filter_alt" size={15} />
+        <span>{described ?? (pruned ? 'Working it out…' : 'Everything you can see')}</span>
+      </div>
 
       <div className="qfoot">
         <span className="qcount">
