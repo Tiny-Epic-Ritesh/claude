@@ -59,6 +59,17 @@ db.exec("DELETE FROM roles WHERE is_system = 0");
 db.exec("DELETE FROM tab_visibility");
 db.exec("DELETE FROM field_masking");
 
+/* KRA targets and incentive plans reset to the shipped worked example.
+ *
+ * Same reasoning as the dispositions above: the edited_at guard deliberately
+ * preserves customisations across a RESTART, and would otherwise preserve them
+ * across a reseed too -- leaving every run starting from whatever the last one
+ * happened to change. A restart keeps your edits; a reseed gives you the
+ * example back. */
+db.exec("DELETE FROM incentive_slabs");
+db.exec("DELETE FROM incentive_plans");
+db.exec("DELETE FROM kra_metrics");
+
 /* ------------------------------------------------------------- products */
 
 const PRODUCTS = [

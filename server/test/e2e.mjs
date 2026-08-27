@@ -4847,6 +4847,136 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     assert(/worked example/i.test(data.note), 'the config does not say these are placeholders');
   });
 
+  /* ============================================================ 48 */
+  suite('48 Targets and incentives in Setup');
+
+  await check('every shipped role weights to exactly 100', async () => {
+    const { data } = await req('/api/kra/config', { token: T.admin, expect: 200 });
+    const byRole = new Map();
+    for (const m of data.metrics.filter((x) => x.active)) {
+      byRole.set(m.role_code, (byRole.get(m.role_code) ?? 0) + m.weight);
+    }
+    for (const [role, total] of byRole) {
+      // A card weighted to 85 still produces a number; it is just not the
+      // number anyone reading it assumes.
+      eq(total, 100, `${role} weights to ${total}, not 100`);
+    }
+  });
+
+  await check('editing a metric marks it as the business own', async () => {
+    const { data: before } = await req('/api/kra/config', { token: T.admin, expect: 200 });
+    const m = before.metrics.find((x) => x.role_code === 'sales_rm' && !x.edited_at);
+    assert(m, 'no unedited metric to test with');
+
+    const { data } = await req(`/api/kra/config/metrics/${m.id}`, {
+      method: 'PATCH', token: T.admin, expect: 200, body: { target: 99 },
+    });
+    eq(data.target, 99, 'the target did not change');
+    assert(data.edited_at, 'the row was not marked as edited, so the seeder will revert it');
+  });
+
+  await check('a metric edit survives the seeder re-running', async () => {
+    // seedKra() runs on every boot. Its upsert is guarded on edited_at, and
+    // without that guard every customisation would revert at the next deploy.
+    const { data } = await req('/api/kra/config', { token: T.admin, expect: 200 });
+    const edited = data.metrics.find((x) => x.target === 99);
+    assert(edited, 'the edit did not persist');
+  });
+
+  await check('a gap between bands is refused, and says where', async () => {
+    const { data: cfg } = await req('/api/kra/config', { token: T.admin, expect: 200 });
+    const plan = cfg.plans[0];
+    const { data } = await req(`/api/kra/config/plans/${plan.id}`, {
+      method: 'PATCH', token: T.admin, expect: 400,
+      body: {
+        slabs: [
+          { basis: 'brokerage', from_value: 0, to_value: 100000, rate: 10, rate_kind: 'percent' },
+          { basis: 'brokerage', from_value: 200000, to_value: null, rate: 15, rate_kind: 'percent' },
+        ],
+      },
+    });
+    // Production landing in the gap would earn nothing, silently, until payday.
+    assert(/nothing is paid between 100000 and 200000/.test(data.error),
+      `the refusal does not name the gap: ${data.error}`);
+  });
+
+  await check('overlapping bands are refused — that portion would pay twice', async () => {
+    const { data: cfg } = await req('/api/kra/config', { token: T.admin, expect: 200 });
+    const { data } = await req(`/api/kra/config/plans/${cfg.plans[0].id}`, {
+      method: 'PATCH', token: T.admin, expect: 400,
+      body: {
+        slabs: [
+          { basis: 'brokerage', from_value: 0, to_value: 150000, rate: 10, rate_kind: 'percent' },
+          { basis: 'brokerage', from_value: 100000, to_value: null, rate: 15, rate_kind: 'percent' },
+        ],
+      },
+    });
+    assert(/overlap/i.test(data.error), `the refusal does not mention the overlap: ${data.error}`);
+  });
+
+  await check('a capped top band is refused', async () => {
+    const { data: cfg } = await req('/api/kra/config', { token: T.admin, expect: 200 });
+    const { data } = await req(`/api/kra/config/plans/${cfg.plans[0].id}`, {
+      method: 'PATCH', token: T.admin, expect: 400,
+      body: { slabs: [{ basis: 'brokerage', from_value: 0, to_value: 100000, rate: 10, rate_kind: 'percent' }] },
+    });
+    // Anything above the top band would earn nothing — a cliff nobody intended.
+    assert(/earns nothing/i.test(data.error), `unhelpful refusal: ${data.error}`);
+  });
+
+  await check('bands that do not start at zero are refused', async () => {
+    const { data: cfg } = await req('/api/kra/config', { token: T.admin, expect: 200 });
+    await req(`/api/kra/config/plans/${cfg.plans[0].id}`, {
+      method: 'PATCH', token: T.admin, expect: 400,
+      body: { slabs: [{ basis: 'brokerage', from_value: 50000, to_value: null, rate: 10, rate_kind: 'percent' }] },
+    });
+  });
+
+  await check('a valid set of bands saves and applies marginally', async () => {
+    const { data: cfg } = await req('/api/kra/config', { token: T.admin, expect: 200 });
+    const plan = cfg.plans.find((p) => p.role_code === 'sales_rm');
+    const slabs = [
+      { basis: 'brokerage', from_value: 0, to_value: 100000, rate: 10, rate_kind: 'percent' },
+      { basis: 'brokerage', from_value: 100000, to_value: null, rate: 15, rate_kind: 'percent' },
+    ];
+    const { data } = await req(`/api/kra/config/plans/${plan.id}`, {
+      method: 'PATCH', token: T.admin, expect: 200, body: { slabs },
+    });
+    eq(data.slabs.length, 2, 'the bands did not save');
+
+    const { data: pv } = await req('/api/kra/config/preview', {
+      method: 'POST', token: T.admin, expect: 200,
+      body: { slabs, value: 250000, basis: 'brokerage' },
+    });
+    // 10% of the first 100,000 plus 15% of the next 150,000.
+    eq(pv.total, 10000 + 22500, `marginal arithmetic is wrong: got ${pv.total}`);
+  });
+
+  await check('the preview never pays less for producing more', async () => {
+    const slabs = [
+      { basis: 'brokerage', from_value: 0, to_value: 100000, rate: 20, rate_kind: 'percent' },
+      { basis: 'brokerage', from_value: 100000, to_value: null, rate: 5, rate_kind: 'percent' },
+    ];
+    let last = -1;
+    for (const value of [0, 50000, 99999, 100000, 100001, 500000]) {
+      // eslint-disable-next-line no-await-in-loop
+      const { data } = await req('/api/kra/config/preview', {
+        method: 'POST', token: T.admin, expect: 200, body: { slabs, value, basis: 'brokerage' },
+      });
+      assert(data.total >= last,
+        `payout fell from ${last} to ${data.total} at ${value} — that is a cliff, not a marginal band`);
+      last = data.total;
+    }
+  });
+
+  await check('configuring targets needs admin.rules', async () => {
+    await req('/api/kra/config', { token: T.sales_rm, expect: 403 });
+    await req('/api/kra/config/metrics', {
+      method: 'POST', token: T.sales_rm, expect: 403,
+      body: { role_code: 'sales_rm', code: 'x', label: 'x' },
+    });
+  });
+
   /* ------------------------------------------------------------- report */
   report();
 }
