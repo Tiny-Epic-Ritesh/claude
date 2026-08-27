@@ -42,6 +42,9 @@ import {
   overridesFor, resolveTab, shippedDefault, overrideCount,
 } from '../engine/tabs.js';
 import { TABS } from './apps.js';
+import {
+  MASKABLE, FIELD_LABEL, maskingMatrix, setMasking, clearMasking, maskedFieldsFor,
+} from '../engine/masking.js';
 const router = Router();
 router.use(requireUser);
 
@@ -1111,6 +1114,50 @@ router.delete('/dispositions/:id', requirePermission('admin.rules'), (req, res) 
       ? `Kept for ${used} logged ${used === 1 ? 'activity' : 'activities'} that reference it, and removed from the picker.`
       : 'Removed from the picker.',
   });
+});
+
+
+/* =================================================== field masking (ENH-16)
+ *
+ * Which PII fields each role sees in the clear.
+ *
+ * Gated on admin.users rather than admin.roles: deciding who may read a
+ * client's PAN is a people decision, and it belongs with the screen that
+ * manages people.
+ */
+
+router.get('/field-masking', requirePermission('admin.users'), (_req, res) => {
+  const roles = all('SELECT code, name FROM roles ORDER BY sort_order, code');
+  res.json({
+    fields: MASKABLE.map((f) => ({ field: f, label: FIELD_LABEL[f] ?? f })),
+    roles,
+    matrix: maskingMatrix(roles.map((r) => r.code)),
+    note: 'Masking is the standing state for a role. Someone who holds the unmask capability can still reveal a single record, and that act is logged.',
+  });
+});
+
+router.post('/field-masking', requirePermission('admin.users'), (req, res) => {
+  const { role, field, masked } = req.body ?? {};
+  if (!role || !field) return res.status(400).json({ error: 'Give a role and a field' });
+  if (!MASKABLE.includes(field)) {
+    return res.status(400).json({ error: `"${field}" is not a maskable field` });
+  }
+  if (!one('SELECT code FROM roles WHERE code = ?', [role])) {
+    return res.status(400).json({ error: `There is no role called "${role}"` });
+  }
+
+  const before = maskedFieldsFor(role).has(field);
+
+  // null means stop deciding and follow the shipped default -- a different
+  // thing from choosing the value the default currently happens to have.
+  if (masked === null) clearMasking(role, field);
+  else setMasking(role, field, Boolean(masked), req.user.id);
+
+  const after = maskedFieldsFor(role).has(field);
+  auditConfig('masking', `${role}.${field}`, masked === null ? 'reset' : 'set',
+    { masked: before }, { masked: after }, req.user.id);
+
+  res.json({ ok: true, masked: after });
 });
 
 export default router;

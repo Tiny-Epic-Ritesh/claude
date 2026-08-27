@@ -1195,11 +1195,14 @@ async function run() {
   });
 
   await check('a role without pii.unmask stays masked even when asking', async () => {
-    // Marketing has lead.view.all but not pii.unmask.
-    const { data } = await req('/api/leads?unmask=true', { token: T.marketing_manager, expect: 200 });
+    // A Caller is masked by default (ENH-16) and does not hold pii.unmask, so
+    // asking for it changes nothing. Marketing used to be the subject here and
+    // no longer is: the confirmed requirement gives that role clear values, so
+    // it has nothing to unmask.
+    const { data } = await req('/api/leads?unmask=true', { token: T.caller, expect: 200 });
     const withMobile = data.find((l) => l.mobile);
     assert(withMobile, 'no lead with a mobile to check');
-    assert(String(withMobile.mobile).includes('•'), `marketing should not be able to unmask: ${withMobile.mobile}`);
+    assert(String(withMobile.mobile).includes('•'), `a caller should not be able to unmask: ${withMobile.mobile}`);
   });
 
   await check('PAN is not recoverable from the raw database file', async () => {
@@ -1578,11 +1581,31 @@ async function run() {
     });
     await req(`/api/leads/${created.id}`, { method: 'DELETE', token: T.admin, expect: 204 });
 
+    // Admin now sees identifiers in the clear by default (ENH-16), so the
+    // regression is expressed the way it actually matters: turn masking ON for
+    // this role and prove the recycle bin HONOURS it rather than bypassing it,
+    // which is what the original defect did.
+    for (const field of ['mobile', 'pan']) {
+      // eslint-disable-next-line no-await-in-loop
+      await req('/api/setup/field-masking', {
+        method: 'POST', token: T.superadmin, expect: 200,
+        body: { role: 'admin', field, masked: true },
+      });
+    }
+
     const { data: bin } = await req('/api/recycle-bin', { token: T.admin, expect: 200 });
     const row = bin.find((l) => l.id === created.id);
     assert(row, 'the deleted lead is not in the recycle bin');
     assert(String(row.mobile).includes('•'), `recycle bin exposed a mobile: ${row.mobile}`);
     assert(!JSON.stringify(bin).includes('RCYCL1234R'), 'recycle bin exposed a PAN');
+
+    for (const field of ['mobile', 'pan']) {
+      // eslint-disable-next-line no-await-in-loop
+      await req('/api/setup/field-masking', {
+        method: 'POST', token: T.superadmin, expect: 200,
+        body: { role: 'admin', field, masked: null },
+      });
+    }
 
     REF.recycledLeadId = created.id;
   });
@@ -3606,7 +3629,9 @@ await check('a per-channel withdrawal closes only that channel', async () => {
   });
 
   await check('pipeline cards mask PII', async () => {
-    const { data } = await req('/api/pipeline', { token: T.admin, expect: 200 });
+    // A Sales RM, not an admin: admins see identifiers in the clear by default
+    // (ENH-16), so they are the wrong subject for a masking assertion.
+    const { data } = await req('/api/pipeline', { token: T.sales_rm, expect: 200 });
     const withMobile = data.columns.flatMap((c) => c.cards).find((c) => c.mobile);
     if (withMobile) assert(/[•*]/.test(withMobile.mobile), `mobile is not masked: ${withMobile.mobile}`);
   });
@@ -3848,6 +3873,105 @@ await check('a per-channel withdrawal closes only that channel', async () => {
 
   await check('editing outcomes needs admin.rules', async () => {
     await req('/api/setup/dispositions', { token: T.sales_rm, expect: 403 });
+  });
+
+  /* ============================================================ 38 */
+  suite('38 Field masking (ENH-16)');
+
+  const firstLead = async (token) => {
+    const { data } = await req('/api/leads?limit=1', { token, expect: 200 });
+    return data[0];
+  };
+
+  await check('Admin, Superadmin and Marketing see identifiers in the clear', async () => {
+    for (const token of [T.superadmin, T.admin, T.marketing_manager]) {
+      // eslint-disable-next-line no-await-in-loop
+      const lead = await firstLead(token);
+      assert(!/\u2022/.test(String(lead.mobile ?? '')), `mobile is masked: ${lead.mobile}`);
+      assert(!/\u2022/.test(String(lead.email ?? '')), `email is masked: ${lead.email}`);
+    }
+  });
+
+  await check('everybody else still sees dots', async () => {
+    for (const token of [T.sales_rm, T.caller]) {
+      // eslint-disable-next-line no-await-in-loop
+      const lead = await firstLead(token);
+      if (lead?.mobile) assert(/\u2022/.test(lead.mobile), `mobile is not masked: ${lead.mobile}`);
+    }
+  });
+
+  await check('the matrix reports where each answer came from', async () => {
+    const { data } = await req('/api/setup/field-masking', { token: T.admin, expect: 200 });
+    const marketing = data.matrix.find((m) => m.role === 'marketing_manager');
+    eq(marketing.fields.pan.masked, false, 'marketing should start unmasked');
+    eq(marketing.fields.pan.source, 'default', 'nothing has been configured yet');
+    const caller = data.matrix.find((m) => m.role === 'caller');
+    eq(caller.fields.pan.masked, true, 'a caller should start masked');
+  });
+
+  await check('masking one field for one role takes effect immediately', async () => {
+    await req('/api/setup/field-masking', {
+      method: 'POST', token: T.admin, expect: 200,
+      body: { role: 'marketing_manager', field: 'mobile', masked: true },
+    });
+
+    const lead = await firstLead(await login('marketing@bonanza.test'));
+    assert(/\u2022/.test(String(lead.mobile ?? '')), 'the mobile should now be masked');
+    // …and only that field. A blunt on/off would have taken the email too.
+    assert(!/\u2022/.test(String(lead.email ?? '')), `email should still be clear: ${lead.email}`);
+  });
+
+  await check('resetting returns the field to the shipped default', async () => {
+    await req('/api/setup/field-masking', {
+      method: 'POST', token: T.admin, expect: 200,
+      body: { role: 'marketing_manager', field: 'mobile', masked: null },
+    });
+    const lead = await firstLead(await login('marketing@bonanza.test'));
+    assert(!/\u2022/.test(String(lead.mobile ?? '')), 'reset did not restore the default');
+  });
+
+  await check('masking applies everywhere a lead is served, not only the list', async () => {
+    await req('/api/setup/field-masking', {
+      method: 'POST', token: T.admin, expect: 200,
+      body: { role: 'marketing_manager', field: 'mobile', masked: true },
+    });
+    const token = await login('marketing@bonanza.test');
+
+    const lead = await firstLead(token);
+    const { data: detail } = await req(`/api/leads/${lead.id}`, { token, expect: 200 });
+    assert(/\u2022/.test(String(detail.mobile ?? '')), 'the detail view leaked an unmasked mobile');
+
+    const { data: search } = await req('/api/search?q=a', { token, expect: 200 });
+    const hit = (search.groups?.Leads ?? []).find((l) => l.mobile);
+    if (hit) assert(/\u2022/.test(hit.mobile), 'global search leaked an unmasked mobile');
+
+    await req('/api/setup/field-masking', {
+      method: 'POST', token: T.admin, expect: 200,
+      body: { role: 'marketing_manager', field: 'mobile', masked: null },
+    });
+  });
+
+  await check('an unmaskable field is refused', async () => {
+    await req('/api/setup/field-masking', {
+      method: 'POST', token: T.admin, expect: 400,
+      body: { role: 'caller', field: 'name', masked: true },
+    });
+  });
+
+  await check('configuring masking needs admin.users', async () => {
+    await req('/api/setup/field-masking', { token: T.sales_rm, expect: 403 });
+    await req('/api/setup/field-masking', {
+      method: 'POST', token: T.sales_rm, expect: 403,
+      body: { role: 'caller', field: 'pan', masked: false },
+    });
+  });
+
+  await check('an explicit unmask is still audited for a masked role', async () => {
+    const lead = await firstLead(T.sales_rm);
+    const { data } = await req(`/api/leads/${lead.id}?unmask=true`, { token: T.sales_rm, expect: 200 });
+    // Sales RM holds pii.unmask, so the request succeeds and leaves a trail --
+    // which is the point of keeping the two mechanisms separate.
+    assert(!/\u2022/.test(String(data.mobile ?? '')), 'an explicit unmask did not reveal the value');
   });
 
   /* ------------------------------------------------------------- report */

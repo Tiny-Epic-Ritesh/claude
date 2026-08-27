@@ -170,7 +170,7 @@ export const maskAccount = (v) => {
 };
 
 /** Which masker applies to which field name. */
-const MASKERS = {
+export const MASKERS = {
   mobile: maskMobile,
   alt_contact: maskMobile,
   phone: maskMobile,
@@ -185,12 +185,15 @@ const MASKERS = {
  * Adds `_pii_masked: true` so the client can render an "unmask" affordance
  * rather than silently showing dots.
  */
-export function maskRecord(row, { unmask = false } = {}) {
+export function maskRecord(row, { unmask = false, fields = null } = {}) {
   if (!row || typeof row !== 'object' || unmask) return row;
 
   const out = { ...row };
   let masked = false;
   for (const [field, mask] of Object.entries(MASKERS)) {
+    // `fields` is the role's masked set (ENH-16). Omitted means mask
+    // everything, which keeps every existing caller behaving as before.
+    if (fields && !fields.has(field)) continue;
     if (out[field]) { out[field] = mask(out[field]); masked = true; }
   }
   if (masked) out._pii_masked = true;

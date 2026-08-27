@@ -12,6 +12,7 @@
 
 import { one, run, audit, SALES_ORGS } from './db.js';
 import { queueScopeSql } from './engine/queues.js';
+import { maskedFieldsFor } from './engine/masking.js';
 import { managerScopeSql, explainVisibility } from './engine/sharing.js';
 import {
   seedAccessModel, roleCapabilities, effectiveCapabilities, dataScope,
@@ -509,6 +510,20 @@ export const isReadOnlyOnLeads = (role) => ['product_rm', 'marketing_manager'].i
 
 /** May this request see unmasked client identifiers? */
 export const mayUnmask = (req) => Boolean(req.user && can(req.user.role, 'pii.unmask'));
+
+/**
+ * Masking options for a request (ENH-16).
+ *
+ * One call rather than two, so a route cannot remember the unmask check and
+ * forget the per-role field set -- which would silently mask everything for a
+ * role the business had configured to see it, and look like a caching bug.
+ */
+export function maskFor(req, entity, entityId) {
+  return {
+    unmask: unmaskRequested(req, entity, entityId),
+    fields: maskedFieldsFor(req.user?.role),
+  };
+}
 
 /**
  * An explicit unmask is a deliberate act and is recorded as one.

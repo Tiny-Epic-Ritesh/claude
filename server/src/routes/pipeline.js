@@ -21,6 +21,7 @@ import { Router } from 'express';
 import { all, one } from '../db.js';
 import { requireUser, leadScope, activeOrg } from '../auth.js';
 import { maskRecords } from '../security.js';
+import { maskedFieldsFor } from '../engine/masking.js';
 import { CARD_STATES, CARD_COLOUR } from '../db.js';
 
 const router = Router();
@@ -120,7 +121,7 @@ router.get('/', (req, res) => {
   );
 
   const grouped = new Map();
-  for (const c of maskRecords(cards, { unmask: false })) {
+  for (const c of maskRecords(cards, { unmask: false, fields: maskedFieldsFor(req.user.role) })) {
     if (!grouped.has(c.state)) grouped.set(c.state, []);
     grouped.get(c.state).push(c);
   }

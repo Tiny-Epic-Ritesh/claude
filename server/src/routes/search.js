@@ -21,6 +21,7 @@ import { Router } from 'express';
 import { all } from '../db.js';
 import { requireUser, reqScope, orgScope, can } from '../auth.js';
 import { maskRecords } from '../security.js';
+import { maskedFieldsFor } from '../engine/masking.js';
 
 const router = Router();
 router.use(requireUser);
@@ -47,7 +48,7 @@ router.get('/', (req, res) => {
   );
 
   if (leads.length) {
-    groups.Leads = maskRecords(leads, { unmask: false }).map((l) => ({
+    groups.Leads = maskRecords(leads, { unmask: false, fields: maskedFieldsFor(req.user.role) }).map((l) => ({
       id: l.id,
       title: l.name,
       subtitle: [l.city, l.mobile].filter(Boolean).join(' · '),

@@ -728,6 +728,27 @@ CREATE TABLE IF NOT EXISTS tab_visibility (
   PRIMARY KEY (scope_type, scope_key, tab_id)
 );
 CREATE INDEX IF NOT EXISTS idx_tabvis_scope ON tab_visibility(scope_type, scope_key);
+
+/* ------------------------------------------------------- field masking
+ *
+ * ENH-16. Which PII fields are obscured, for which roles.
+ *
+ * Distinct from pii.unmask, which is the audited act of revealing ONE record
+ * to someone whose role is otherwise masked. This table decides the standing
+ * state; that capability decides the exception. Both exist because "show me
+ * this number" and "show me every number" should not cost the same.
+ *
+ * A row exists only where an administrator has decided something, so absence
+ * means "use the shipped default".
+ */
+CREATE TABLE IF NOT EXISTS field_masking (
+  role_code  TEXT NOT NULL,
+  field      TEXT NOT NULL,
+  masked     INTEGER NOT NULL DEFAULT 1,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (role_code, field)
+);
 CREATE INDEX IF NOT EXISTS idx_clients_org ON clients(sales_org);
 CREATE INDEX IF NOT EXISTS idx_clients_owner ON clients(owner_id);
 CREATE INDEX IF NOT EXISTS idx_clients_code ON clients(client_code);

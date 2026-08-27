@@ -8,7 +8,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit, notify, daysSince, PARTNER_STATES } from '../db.js';
-import { requireUser, requirePermission, can, unmaskRequested } from '../auth.js';
+import { requireUser, requirePermission, can, unmaskRequested, maskFor } from '../auth.js';
 import { encryptField, decryptField, maskRecord, maskRecords, validate } from '../security.js';
 import { send, lmsSync } from '../integrations.js';
 import { hashPassword } from '../security.js';
@@ -67,7 +67,7 @@ router.get('/', requirePermission('partner.view'), (req, res) => {
   if (req.query.mine === 'true' || req.user.role === 'partner_rm') { where.push('owner_id = ?'); params.push(req.user.id); }
 
   const rows = all(`SELECT * FROM partners ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC`, params).map(decorate);
-  res.json(maskRecords(rows, { unmask: unmaskRequested(req, 'partner_list') }));
+  res.json(maskRecords(rows, maskFor(req, 'partner_list')));
 });
 
 router.get('/:id', requirePermission('partner.view'), (req, res) => {
@@ -75,7 +75,7 @@ router.get('/:id', requirePermission('partner.view'), (req, res) => {
   if (!partner) return res.status(404).json({ error: 'Partner not found' });
 
   res.json({
-    ...maskRecord(decorate(partner), { unmask: unmaskRequested(req, 'partner', Number(req.params.id)) }),
+    ...maskRecord(decorate(partner), maskFor(req, 'partner', Number(req.params.id))),
     steps: all('SELECT * FROM partner_steps WHERE partner_id = ? ORDER BY sort_order', [req.params.id]),
     lms: all('SELECT * FROM partner_lms WHERE partner_id = ?', [req.params.id]),
     sourced_leads: all(

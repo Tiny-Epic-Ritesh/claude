@@ -11,7 +11,7 @@
 import { Router } from 'express';
 import { all, one, run, audit } from '../db.js';
 import {
-  can, requireUser, requirePermission, reqClientScope, unmaskRequested,
+  can, requireUser, requirePermission, reqClientScope, unmaskRequested, maskFor,
 } from '../auth.js';
 import { maskRecord, maskRecords, validate } from '../security.js';
 import {
@@ -101,10 +101,9 @@ router.get('/', (req, res) => {
     byClient.get(s.client_id).push(s.segment);
   }
 
-  const unmask = unmaskRequested(req, 'client.list');
   res.json(maskRecords(
     rows.map((r) => ({ ...r, segments: byClient.get(r.id) || [] })),
-    { unmask },
+    maskFor(req, 'client.list'),
   ));
 });
 
@@ -163,13 +162,13 @@ router.get('/:id', (req, res) => {
   const client = load(req);
   if (!client) return res.status(404).json({ error: 'Client not found' });
 
-  const unmask = unmaskRequested(req, 'client.detail');
+  const masking = maskFor(req, 'client.detail');
   const lead = client.converted_from_lead_id
     ? one('SELECT id, name, source, stage, created_at FROM leads WHERE id = ?', [client.converted_from_lead_id])
     : null;
 
   res.json({
-    ...maskRecord(client, { unmask }),
+    ...maskRecord(client, masking),
     segments: segmentsFor(client.id),
     // Attribution: the enquiry that became this account, and the campaign or
     // partner it arrived through. Long after the lead stops being worked, this

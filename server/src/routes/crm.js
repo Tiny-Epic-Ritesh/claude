@@ -4,7 +4,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit, notify, daysSince, ageBand, AGE_BANDS, CARD_COLOUR, LEAD_STAGES, CARD_STATES } from '../db.js';
-import { can, requireUser, requirePermission, reqScope, isReadOnlyOnLeads, unmaskRequested, orgsFor, activeOrg, mayUseOrg } from '../auth.js';
+import { can, requireUser, requirePermission, reqScope, isReadOnlyOnLeads, unmaskRequested, maskFor, orgsFor, activeOrg, mayUseOrg } from '../auth.js';
 import { encryptField, decryptField, maskRecord, maskRecords, validate } from '../security.js';
 import { applyScore } from '../engine/rules.js';
 import { click2call, pushToAutodialler, send, logCall } from '../integrations.js';
@@ -253,7 +253,7 @@ router.get('/leads', (req, res) => {
   });
 
   res.set('X-Total-Count', String(total));
-  return res.json(maskRecords(leads, { unmask: unmaskRequested(req, 'lead_list') }));
+  return res.json(maskRecords(leads, maskFor(req, 'lead_list')));
 });
 
 router.get('/leads/:id', (req, res) => {
@@ -498,7 +498,7 @@ router.get('/recycle-bin', requirePermission('lead.delete'), (req, res) => {
             ${kycStatusSql('l')} AS kyc_status, l.created_at, l.deleted_at
      FROM leads l WHERE l.deleted_at IS NOT NULL ORDER BY l.deleted_at DESC`,
   );
-  res.json(maskRecords(rows, { unmask: unmaskRequested(req, 'recycle_bin') }));
+  res.json(maskRecords(rows, maskFor(req, 'recycle_bin')));
 });
 
 router.post('/leads/:id/restore', requirePermission('lead.delete'), (req, res) => {

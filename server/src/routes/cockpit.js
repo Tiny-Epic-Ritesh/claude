@@ -12,8 +12,9 @@
 
 import { Router } from 'express';
 import { all, one, daysSince, ageBand, CARD_COLOUR } from '../db.js';
-import { requireUser, leadScope, unmaskRequested, activeOrg, orgScope } from '../auth.js';
+import { requireUser, leadScope, unmaskRequested, maskFor, activeOrg, orgScope } from '../auth.js';
 import { maskRecords } from '../security.js';
+import { maskedFieldsFor } from '../engine/masking.js';
 import { kycHealth } from '../engine/kyc.js';
 import { integrationRegistry } from '../integrations.js';
 
@@ -466,15 +467,20 @@ const COCKPITS = {
  */
 const CLIENT_BEARING = new Set(['leads', 'cards', 'kyc', 'partners', 'tickets']);
 
-function maskRows(rows, unmask) {
-  return Array.isArray(rows) ? maskRecords(rows, { unmask }) : rows;
+function maskRows(rows, masking) {
+  return Array.isArray(rows) ? maskRecords(rows, masking) : rows;
 }
 
-function maskWorklist(worklist, unmask) {
+/**
+ * `masking` carries both the audited unmask decision and the role's own masked
+ * field set (ENH-16), threaded together so a caller cannot apply one and forget
+ * the other.
+ */
+function maskWorklist(worklist, masking) {
   if (!worklist) return worklist;
   const out = { ...worklist };
-  if (CLIENT_BEARING.has(worklist.type)) out.rows = maskRows(worklist.rows, unmask);
-  if (worklist.secondary) out.secondary = maskWorklist(worklist.secondary, unmask);
+  if (CLIENT_BEARING.has(worklist.type)) out.rows = maskRows(worklist.rows, masking);
+  if (worklist.secondary) out.secondary = maskWorklist(worklist.secondary, masking);
   return out;
 }
 
@@ -595,14 +601,14 @@ router.get('/', (req, res) => {
   if (!build) return res.status(400).json({ error: `No cockpit configured for role "${req.user.role}"` });
 
   const cockpit = build(req.user, activeOrg(req));
-  const unmask = unmaskRequested(req, 'cockpit');
+  const masking = maskFor(req, 'cockpit');
 
   res.json({
     ...cockpit,
     // Resolved here rather than in each cockpit builder, so every role gets the
     // same treatment and a new action only has to be declared once.
     actions: resolveActions(cockpit.actions ?? [], req.caps ?? new Set()),
-    worklist: maskWorklist(cockpit.worklist, unmask),
+    worklist: maskWorklist(cockpit.worklist, masking),
     role: req.user.role,
     user: { id: req.user.id, name: req.user.name },
     tasks: tasksDue(req.user.id),

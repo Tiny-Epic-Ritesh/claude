@@ -57,6 +57,7 @@ for (const t of [
 db.exec("DELETE FROM role_capabilities WHERE role_code IN (SELECT code FROM roles WHERE is_system = 0)");
 db.exec("DELETE FROM roles WHERE is_system = 0");
 db.exec("DELETE FROM tab_visibility");
+db.exec("DELETE FROM field_masking");
 
 /* ------------------------------------------------------------- products */
 
