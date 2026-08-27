@@ -86,6 +86,8 @@ function Dashboard({ partner, onSignOut }) {
   const [error, setError] = useState(null);
   const [tab, setTab] = useState('overview');
   const [refer, setRefer] = useState(false);
+  const [openClient, setOpenClient] = useState(null);
+  const [openModule, setOpenModule] = useState(null);
   const [raise, setRaise] = useState(false);
 
   const load = () => api.get('/portal/dashboard', 'partner').then(setData).catch((e) => setError(e.message));
@@ -133,15 +135,23 @@ function Dashboard({ partner, onSignOut }) {
         <Tabs tabs={tabs} active={tab} onChange={setTab} />
 
         {tab === 'overview' && <Overview data={data} onRefer={() => setRefer(true)} onRaise={() => setRaise(true)} />}
-        {tab === 'clients' && <Clients data={data} onRefer={() => setRefer(true)} />}
+        {tab === 'clients' && <Clients data={data} onRefer={() => setRefer(true)} onOpen={setOpenClient} />}
         {tab === 'earnings' && <Earnings data={data} />}
         {tab === 'products' && <ProductCatalogue data={data} onRefer={() => setRefer(true)} />}
-        {tab === 'onboarding' && <Onboarding data={data} />}
+        {tab === 'onboarding' && <Onboarding data={data} onOpenModule={setOpenModule} />}
         {tab === 'support' && <Support data={data} onRaise={() => setRaise(true)} />}
       </div>
 
       {refer && <ReferModal products={data.products} onClose={() => setRefer(false)} onDone={() => { setRefer(false); load(); }} />}
       {raise && <RaiseModal onClose={() => setRaise(false)} onDone={() => { setRaise(false); load(); }} />}
+      {openClient && <ClientDetailModal leadId={openClient} onClose={() => setOpenClient(null)} />}
+      {openModule && (
+        <ModuleModal
+          module={openModule}
+          onClose={() => setOpenModule(null)}
+          onDone={() => { setOpenModule(null); load(); }}
+        />
+      )}
     </div>
   );
 }
@@ -155,12 +165,57 @@ function Overview({ data, onRefer, onRaise }) {
   // The commission series arrives newest-first for the table; a trend has to
   // read left-to-right in time or the line means the opposite of what it shows.
   const series = [...data.commissions].reverse();
-  const trend = series.map((c) => ({ label: c.period?.slice(5) ?? '', value: c.payout || 0 }));
+
+  /**
+   * Month labels, not "05" (ENH-28a).
+   *
+   * The axis read 01, 02, 03 with no year and no month name, which is not a
+   * time axis so much as a row of numbers -- and it broke entirely across a
+   * year boundary, where 12 sat to the left of 01 with nothing saying why.
+   */
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const monthLabel = (period) => {
+    const [y, m] = String(period ?? '').split('-');
+    const name = MONTHS[Number(m) - 1];
+    if (!name) return period ?? '';
+    // The year appears only in January, where it is the thing that disambiguates.
+    return Number(m) === 1 ? `${name} ${String(y).slice(2)}` : name;
+  };
+  const trend = series.map((c) => ({ label: monthLabel(c.period), value: c.payout || 0 }));
 
   const lastTwo = series.slice(-2);
   const delta = lastTwo.length === 2 && lastTwo[0].payout
     ? Math.round(((lastTwo[1].payout - lastTwo[0].payout) / lastTwo[0].payout) * 100)
     : null;
+
+  /**
+   * The trend, in a sentence.
+   *
+   * A partner opening this wants one answer -- is my commission going up? -- and
+   * a bar chart makes them work it out. The sentence says it, then names what
+   * moved, because "down 18%" without a cause is just something to worry about.
+   */
+  const topProduct = (() => {
+    const totals = new Map();
+    for (const c of data.commissions ?? []) {
+      if (!c.product_name) continue;
+      totals.set(c.product_name, (totals.get(c.product_name) ?? 0) + (c.payout || 0));
+    }
+    return [...totals].sort((a, b) => b[1] - a[1])[0] ?? null;
+  })();
+
+  const trendSentence = (() => {
+    if (series.length < 2) return 'Your commission history builds up here month by month.';
+    const last = series[series.length - 1];
+    const prev = series[series.length - 2];
+    const dir = delta == null ? 'steady'
+      : delta > 4 ? 'up' : delta < -4 ? 'down' : 'steady';
+    const head = dir === 'steady'
+      ? `Broadly flat on ${monthLabel(prev.period)}.`
+      : `${dir === 'up' ? 'Up' : 'Down'} ${Math.abs(delta)}% on ${monthLabel(prev.period)}.`;
+    const driver = topProduct ? ` Most of it comes from ${topProduct[0]}.` : '';
+    return `${rupees(last.payout || 0)} for ${monthLabel(last.period)}. ${head}${driver}`;
+  })();
 
   /**
    * The referral journey, as a funnel.
@@ -242,12 +297,17 @@ function Overview({ data, onRefer, onRaise }) {
           <div className="section-head">
             <div>
               <h2>Commission trend</h2>
-              <p>Last {series.length || 0} periods</p>
+              <p>Paid out by month, at {p.commission_pct}%</p>
             </div>
             <span className="stat-tile-value" style={{ fontSize: 20 }}>{rupees(m.commission_month)}</span>
           </div>
           {trend.length >= 2
-            ? <BarChart data={trend} height={168} format={compactMoney} />
+            ? (
+              <>
+                <p className="trend-summary">{trendSentence}</p>
+                <BarChart data={trend} height={168} format={compactMoney} />
+              </>
+            )
             : <div className="chart-empty">Commission history appears here once your first payout is processed.</div>}
         </div>
       </div>
@@ -298,7 +358,7 @@ function Overview({ data, onRefer, onRaise }) {
 
 /* ------------------------------------------------------------- clients */
 
-function Clients({ data, onRefer }) {
+function Clients({ data, onRefer, onOpen }) {
   const [q, setQ] = useState('');
   const [stage, setStage] = useState('all');
 
@@ -341,7 +401,9 @@ function Clients({ data, onRefer }) {
               .map((pair) => { const [code, state] = pair.split(':'); return { code, state }; });
             const trading = cards.some((c) => c.state === 'ACTIVE');
             return (
-              <article key={l.id} className={`glass client-card ${trading ? 'is-active' : ''}`}>
+              <button type="button" key={l.id}
+                className={`glass client-card is-clickable ${trading ? 'is-active' : ''}`}
+                onClick={() => onOpen?.(l.id)}>
                 <div className="client-head">
                   <span className="avatar" aria-hidden>{(l.name || '?').slice(0, 1).toUpperCase()}</span>
                   <div style={{ minWidth: 0, flex: 1 }}>
@@ -376,7 +438,8 @@ function Clients({ data, onRefer }) {
                     <dd>{l.aum ? money(l.aum) : '—'}</dd>
                   </div>
                 </div>
-              </article>
+                <span className="client-more"><span className="material-symbols-rounded">arrow_forward</span></span>
+              </button>
             );
           })}
         </div>
@@ -523,7 +586,7 @@ function ProductCatalogue({ data, onRefer }) {
 
 /* ---------------------------------------------------------- onboarding */
 
-function Onboarding({ data }) {
+function Onboarding({ data, onOpenModule }) {
   const steps = data.onboarding ?? [];
   const done = steps.filter((s) => s.status === 'DONE' || s.completed_at).length;
 
@@ -577,7 +640,8 @@ function Onboarding({ data }) {
             {lms.map((l) => {
               const complete = l.status === 'COMPLETED' || l.completed_at;
               return (
-                <div key={l.module} className="module-row">
+                <button type="button" key={l.module} className="module-row is-clickable"
+                  onClick={() => onOpenModule?.(l.module)}>
                   <span className={`material-symbols-rounded ${complete ? 'is-done' : ''}`}>
                     {complete ? 'task_alt' : 'school'}
                   </span>
@@ -586,7 +650,7 @@ function Onboarding({ data }) {
                     <div className="tiny muted">{complete ? `Passed ${shortDate(l.completed_at)}` : (l.status || 'Not started')}</div>
                   </div>
                   {l.score != null && <span className="score-pill">{l.score}%</span>}
-                </div>
+                </button>
               );
             })}
           </div>
@@ -735,5 +799,179 @@ function RaiseModal({ onClose, onDone }) {
         </div>
       </form>
     </Modal>
+  );
+}
+
+/* ------------------------------------------------------- client detail */
+
+/**
+ * One referred client, opened from their card (ENH-28b).
+ *
+ * What is deliberately absent is as considered as what is here. A partner sees
+ * how their referral is progressing and what it has earned; they do not see the
+ * client's mobile, email or PAN. They are not a CRM user, this is an external
+ * portal, and a partner does not need live client identifiers to be paid.
+ * The panel says so plainly rather than leaving them to notice an absence.
+ */
+function ClientDetailModal({ leadId, onClose }) {
+  const [d, setD] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.get(`/portal/clients/${leadId}`, 'partner')
+      .then((r) => { if (!cancelled) setD(r); })
+      .catch((e) => { if (!cancelled) setError(e.message); });
+    return () => { cancelled = true; };
+  }, [leadId]);
+
+  return (
+    <div className="backdrop" onClick={onClose}>
+      <div className="popover modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="section-head">
+          <div>
+            <h2>{d?.name ?? 'Client'}</h2>
+            <p>{d ? `${d.city || 'Location not recorded'} · referred ${shortDate(d.created_at)}` : 'Loading…'}</p>
+          </div>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>Close</button>
+        </div>
+
+        {error && <div className="notice notice-warn"><span>{error}</span></div>}
+
+        {d && (
+          <div className="stack" style={{ gap: 14 }}>
+            <div className="stat-strip">
+              <StatTile label="Stage" value={d.stage} icon="timeline" />
+              <StatTile label="KYC" value={(d.kyc?.status ?? 'Not started').replace(/_/g, ' ')} icon="verified_user" />
+              <StatTile label="You have earned" value={rupees(d.commission_total)} icon="payments" tone="ok" />
+            </div>
+
+            <div>
+              <h3 style={{ fontSize: 14, margin: '0 0 7px' }}>Products they hold or are considering</h3>
+              {d.cards.length === 0
+                ? <p className="tiny muted">No product interest recorded yet.</p>
+                : (
+                  <div className="module-list">
+                    {d.cards.map((c) => (
+                      <div key={c.product_code} className="module-row">
+                        <span className="material-symbols-rounded">inventory_2</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <strong className="truncate">{c.product_name}</strong>
+                          <div className="tiny muted">
+                            {c.state.replace(/_/g, ' ').toLowerCase()}
+                            {c.days_in_state > 0 ? ` · ${c.days_in_state} days at this stage` : ''}
+                          </div>
+                        </div>
+                        {c.value > 0 && <span className="score-pill">{money(c.value)}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+            </div>
+
+            {d.commissions.length > 0 && (
+              <div>
+                <h3 style={{ fontSize: 14, margin: '0 0 7px' }}>What this client has paid you</h3>
+                <div className="module-list">
+                  {d.commissions.map((c, i) => (
+                    <div key={`${c.period}-${i}`} className="module-row">
+                      <span className="material-symbols-rounded">payments</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <strong>{c.period}</strong>
+                        <div className="tiny muted">{c.product_name ?? 'All products'} · {c.status}</div>
+                      </div>
+                      <span className="score-pill">{rupees(c.payout)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <p className="tiny muted">{d.privacy_note}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------ module detail */
+
+/**
+ * One training module (ENH-28c).
+ *
+ * The list said "3 of 5 complete", which tells a partner they are behind
+ * without telling them on what. This says what the module covers, how long it
+ * takes, and whether it is mandatory -- the three things somebody deciding
+ * whether to do it now actually needs.
+ */
+function ModuleModal({ module, onClose, onDone }) {
+  const [d, setD] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.get(`/portal/training/${encodeURIComponent(module)}`, 'partner')
+      .then((r) => { if (!cancelled) setD(r); })
+      .catch((e) => { if (!cancelled) setError(e.message); });
+    return () => { cancelled = true; };
+  }, [module]);
+
+  const complete = async () => {
+    setBusy(true);
+    try { await api.post(`/portal/training/${encodeURIComponent(module)}/complete`, {}, 'partner'); onDone(); }
+    catch (e) { setError(e.message); setBusy(false); }
+  };
+
+  return (
+    <div className="backdrop" onClick={onClose}>
+      <div className="popover modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="section-head">
+          <div>
+            <h2>{d?.title ?? module}</h2>
+            <p>
+              {d
+                ? `${d.minutes ? `${d.minutes} minutes` : 'Self-paced'}${d.mandatory ? ' · required' : ' · optional'}`
+                : 'Loading…'}
+            </p>
+          </div>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>Close</button>
+        </div>
+
+        {error && <div className="notice notice-warn"><span>{error}</span></div>}
+
+        {d && (
+          <div className="stack" style={{ gap: 13 }}>
+            {d.complete && (
+              <div className="notice notice-ok">
+                <span className="material-symbols-rounded">task_alt</span>
+                <span>Completed{d.completed_at ? ` on ${shortDate(d.completed_at)}` : ''}.</span>
+              </div>
+            )}
+
+            {d.summary && <p style={{ margin: 0 }}>{d.summary}</p>}
+
+            {d.covers?.length > 0 && (
+              <div>
+                <h3 style={{ fontSize: 14, margin: '0 0 6px' }}>What it covers</h3>
+                <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>
+                  {d.covers.map((c) => <li key={c} style={{ marginBottom: 3 }}>{c}</li>)}
+                </ul>
+              </div>
+            )}
+
+            {!d.complete && (
+              <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+                <button type="button" className="btn btn-ghost" onClick={onClose}>Not now</button>
+                <button type="button" className="btn btn-primary" disabled={busy} onClick={complete}>
+                  {busy ? 'Saving…' : 'Mark as complete'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

@@ -4453,6 +4453,99 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     });
   });
 
+  /* ============================================================ 44 */
+  suite('44 Partner Portal interactivity (ENH-28)');
+
+  await check('a partner can open one of their referred clients', async () => {
+    const token = need(REF.portalToken, 'the partner portal token');
+    const { data: dash } = await req('/api/portal/dashboard', { token, expect: 200 });
+    const lead = (dash.sourced_leads ?? [])[0];
+    assert(lead, 'this partner has sourced nobody, so there is nothing to open');
+    REF.portalLeadId = lead.id;
+
+    const { data } = await req(`/api/portal/clients/${lead.id}`, { token, expect: 200 });
+    assert(data.name, 'no client returned');
+    assert(Array.isArray(data.cards), 'no product interest');
+    assert('commission_total' in data, 'the partner cannot see what this client earned them');
+  });
+
+  await check('the client panel does not put PII on an external portal', async () => {
+    const token = need(REF.portalToken, 'the partner portal token');
+    const { data } = await req(`/api/portal/clients/${REF.portalLeadId}`, { token, expect: 200 });
+    // A partner is paid on what their client buys. They are not a CRM user, and
+    // live client identifiers do not belong on a portal outside the firm.
+    for (const field of ['mobile', 'email', 'pan', 'alt_contact']) {
+      assert(!(field in data), `the portal exposed ${field} to a partner`);
+    }
+    const blob = JSON.stringify(data);
+    assert(!/\b[6-9]\d{9}\b/.test(blob), 'a mobile number leaked into the payload');
+    assert(data.privacy_note, 'the panel does not explain why contact details are absent');
+  });
+
+  await check('a partner cannot open a client they did not source', async () => {
+    const token = need(REF.portalToken, 'the partner portal token');
+    const { data: all } = await req('/api/leads?limit=500', { token: T.superadmin, expect: 200 });
+    const { data: dash } = await req('/api/portal/dashboard', { token, expect: 200 });
+    const mine = new Set((dash.sourced_leads ?? []).map((l) => l.id));
+    const foreign = all.find((l) => !mine.has(l.id));
+    if (foreign) await req(`/api/portal/clients/${foreign.id}`, { token, expect: 404 });
+  });
+
+  await check('training modules carry real detail, not just a name', async () => {
+    const token = need(REF.portalToken, 'the partner portal token');
+    const { data: dash } = await req('/api/portal/dashboard', { token, expect: 200 });
+    const mod = (dash.lms ?? [])[0];
+    assert(mod, 'no training assigned');
+
+    const { data } = await req(`/api/portal/training/${encodeURIComponent(mod.module)}`, { token, expect: 200 });
+    // "3 of 5 complete" told a partner they were behind without saying on what.
+    assert(data.summary, `module "${mod.module}" has no summary`);
+    assert(Array.isArray(data.covers) && data.covers.length > 0, 'the module does not say what it covers');
+    assert(typeof data.mandatory === 'boolean', 'it does not say whether it is required');
+  });
+
+  await check('every assigned module has detail copy', async () => {
+    // A module keyed on the wrong name renders an empty panel, which is the
+    // exact problem this was meant to fix. The first four written here were
+    // keyed on invented names and every one would have shown nothing.
+    const token = need(REF.portalToken, 'the partner portal token');
+    const { data: dash } = await req('/api/portal/dashboard', { token, expect: 200 });
+    for (const m of dash.lms ?? []) {
+      // eslint-disable-next-line no-await-in-loop
+      const { data } = await req(`/api/portal/training/${encodeURIComponent(m.module)}`, { token, expect: 200 });
+      assert(data.summary && data.covers?.length,
+        `"${m.module}" would open an empty panel`);
+    }
+  });
+
+  await check('a module can be completed, and completing is idempotent', async () => {
+    const token = need(REF.portalToken, 'the partner portal token');
+    const { data: dash } = await req('/api/portal/dashboard', { token, expect: 200 });
+    const mod = (dash.lms ?? [])[0];
+
+    await req(`/api/portal/training/${encodeURIComponent(mod.module)}/complete`, {
+      method: 'POST', token, expect: 200,
+    });
+    const { data: again } = await req(`/api/portal/training/${encodeURIComponent(mod.module)}/complete`, {
+      method: 'POST', token, expect: 200,
+    });
+    assert(again.ok, 'completing twice failed');
+
+    const { data: after } = await req(`/api/portal/training/${encodeURIComponent(mod.module)}`, { token, expect: 200 });
+    eq(after.complete, true, 'the module did not stay complete');
+  });
+
+  await check('a module that is not assigned to you is not readable', async () => {
+    const token = need(REF.portalToken, 'the partner portal token');
+    await req('/api/portal/training/Not%20A%20Module', { token, expect: 404 });
+  });
+
+  await check('the portal is still closed to a CRM token', async () => {
+    // Two session kinds share one table; a CRM user must not walk into the
+    // partner surface just because they hold a valid token.
+    await req('/api/portal/dashboard', { token: T.admin, expect: 401 });
+  });
+
   /* ------------------------------------------------------------- report */
   report();
 }

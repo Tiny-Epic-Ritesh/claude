@@ -10,6 +10,7 @@ import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
 import { requirePartner } from '../auth.js';
 import { applySla } from '../engine/sla.js';
+import { LMS_MODULES } from './partners.js';
 import { generateCards } from './crm.js';
 import { kycStatusSql } from '../engine/kycstatus.js';
 
@@ -163,6 +164,158 @@ router.post('/tickets/:id/replies', (req, res) => {
 });
 
 /* ---------------------------------------------------------- statements */
+
+
+/**
+ * What each training module actually contains.
+ *
+ * Here rather than in the database because it is copy, not configuration --
+ * the module codes are seeded from routes/partners.js and this is the text that
+ * explains them. When the business wants to edit it without a deploy it moves
+ * to content_items; today it would be a table with one editor and no editors.
+ */
+const LMS_DETAIL = {
+  'Bonanza product suite': {
+    summary: 'The full product shelf, who each one suits, and the minimum for each.',
+    covers: ['Broking, demat and derivatives', 'Mutual funds and SIPs', 'PMS and the SEBI minimum', 'Insurance and bonds'],
+    minutes: 30,
+    mandatory: false,
+  },
+  'SEBI code of conduct & compliance': {
+    summary: 'What you may and may not say to a prospective client, and the records you must keep.',
+    covers: ['Fair dealing and suitability', 'What counts as investment advice', 'Record-keeping obligations', 'Prohibited inducements'],
+    minutes: 25,
+    mandatory: true,
+  },
+  'Client onboarding and KYC': {
+    summary: 'The documents a client needs, and the mistakes that send an application back.',
+    covers: ['PAN and Aadhaar checks', 'In-person verification', 'The six most common rejections', 'Nominee requirements'],
+    minutes: 25,
+    mandatory: true,
+  },
+  'Trading platforms — MyEtrade & Bigul': {
+    summary: 'What each platform does, so you can answer the question before it reaches support.',
+    covers: ['MyEtrade for full-service clients', 'Bigul for self-directed traders', 'Margin and payout timelines'],
+    minutes: 20,
+    mandatory: false,
+  },
+  'Risk management basics': {
+    summary: 'How to talk about risk without straying into advice.',
+    covers: ['Risk profiling', 'Suitability by product', 'Language that stays on the right side of the line'],
+    minutes: 20,
+    mandatory: true,
+  },
+};
+
+/**
+ * A module with no copy would render an empty detail panel, which is the exact
+ * problem ENH-28c exists to fix. Said at boot rather than discovered by a
+ * partner: the first four written here were keyed on invented names and every
+ * one of them would have silently shown nothing.
+ */
+for (const m of LMS_MODULES) {
+  if (!LMS_DETAIL[m]) console.warn(`[portal] training module "${m}" has no detail copy`);
+}
+
+
+/**
+ * One referred client, in the detail a partner is entitled to (ENH-28b).
+ *
+ * Scoped to leads this partner actually sourced -- partner_id is the whole
+ * access rule here, and it is applied in SQL rather than checked afterwards.
+ *
+ * What is deliberately NOT returned: mobile, email, PAN. A partner is paid on
+ * what their client buys and needs to see how that is progressing; they are not
+ * a CRM user and the data policy does not put live client identifiers on an
+ * external portal. Product interest, KYC progress and commission earned answer
+ * every question they legitimately have.
+ */
+router.get('/clients/:leadId', (req, res) => {
+  const lead = one(
+    `SELECT l.id, l.name, l.city, l.state, l.stage, l.source, l.created_at,
+            COALESCE(lm.aum, 0) AS aum
+       FROM leads l
+       LEFT JOIN lead_metrics lm ON lm.lead_id = l.id
+      WHERE l.id = ? AND l.partner_id = ? AND l.deleted_at IS NULL`,
+    [req.params.leadId, req.partner.id],
+  );
+  if (!lead) return res.status(404).json({ error: 'That client is not one of yours' });
+
+  const cards = all(
+    `SELECT pc.state, pc.value, pt.name AS product_name, pt.code AS product_code,
+            CAST(julianday('now') - julianday(pc.last_state_at) AS INTEGER) AS days_in_state
+       FROM product_cards pc
+       JOIN product_types pt ON pt.id = pc.product_type_id
+      WHERE pc.lead_id = ? AND pc.state != 'INACTIVE'
+      ORDER BY pt.sort_order`,
+    [lead.id],
+  );
+
+  const journey = one(
+    `SELECT status, current_step, started_at FROM kyc_journeys
+      WHERE lead_id = ? ORDER BY id DESC LIMIT 1`,
+    [lead.id],
+  );
+
+  const commissions = all(
+    `SELECT c.period, c.gross, c.payout, c.status, pt.name AS product_name
+       FROM commissions c
+       LEFT JOIN product_types pt ON pt.id = c.product_type_id
+      WHERE c.partner_id = ? AND c.lead_id = ?
+      ORDER BY c.period DESC LIMIT 12`,
+    [req.partner.id, lead.id],
+  );
+
+  res.json({
+    ...lead,
+    cards,
+    kyc: journey ?? null,
+    commissions,
+    commission_total: commissions.reduce((sum, c) => sum + (c.payout || 0), 0),
+    /* Said plainly rather than left for the partner to infer from an absence. */
+    privacy_note: 'Contact details are held by the Bonanza relationship manager. Raise a support request if you need them to reach this client.',
+  });
+});
+
+/**
+ * One training module (ENH-28c).
+ *
+ * The list said "3 of 7 complete" and stopped there, which tells a partner they
+ * are behind without telling them on what.
+ */
+router.get('/training/:module', (req, res) => {
+  const row = one(
+    'SELECT * FROM partner_lms WHERE partner_id = ? AND module = ?',
+    [req.partner.id, req.params.module],
+  );
+  if (!row) return res.status(404).json({ error: 'That module is not assigned to you' });
+
+  const meta = LMS_DETAIL[row.module] ?? {};
+  res.json({
+    ...row,
+    complete: Boolean(row.completed_at) || row.status === 'COMPLETED',
+    title: row.module,
+    summary: meta.summary ?? null,
+    covers: meta.covers ?? [],
+    minutes: meta.minutes ?? null,
+    mandatory: meta.mandatory ?? false,
+  });
+});
+
+router.post('/training/:module/complete', (req, res) => {
+  const row = one(
+    'SELECT * FROM partner_lms WHERE partner_id = ? AND module = ?',
+    [req.partner.id, req.params.module],
+  );
+  if (!row) return res.status(404).json({ error: 'That module is not assigned to you' });
+  if (row.completed_at) return res.json({ ok: true, already: true });
+
+  run(
+    "UPDATE partner_lms SET status = 'COMPLETED', completed_at = datetime('now') WHERE partner_id = ? AND module = ?",
+    [req.partner.id, row.module],
+  );
+  res.json({ ok: true });
+});
 
 router.get('/commissions', (req, res) => {
   res.json(all(

@@ -4125,3 +4125,69 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
   border-top: 1px solid var(--hairline);
 }
 .copilot-links .chip { text-decoration: none; }
+
+/* ================================================ partner portal (ENH-28)
+ *
+ * The complaint was that nothing on the page was interactive. Client cards and
+ * training rows are real buttons now, so they need to look like things that
+ * open — and a button carries browser defaults a card must shed.
+ */
+.client-card.is-clickable,
+.module-row.is-clickable {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border: 1px solid var(--hairline);
+  background: var(--glass-2);
+  transition: border-color 0.14s ease, transform 0.14s ease, box-shadow 0.14s ease;
+}
+.client-card.is-clickable:hover,
+.module-row.is-clickable:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: var(--lift-2);
+}
+.client-card.is-clickable:focus-visible,
+.module-row.is-clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The arrow appears on hover only — a grid of twenty cards each showing one
+   permanently reads as clutter rather than as an affordance. */
+.client-more {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+  color: var(--accent-dark, var(--accent));
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.client-card.is-clickable:hover .client-more,
+.client-card.is-clickable:focus-visible .client-more { opacity: 1; transform: none; }
+
+/* The detail panels. `.popover` is already near-opaque; this gives it the width
+   and scroll a record panel needs. */
+.modal-card {
+  width: min(680px, calc(100vw - 32px));
+  max-height: min(86vh, 820px);
+  overflow-y: auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ENH-28a: the trend, in a sentence, above the bars that evidence it. */
+.trend-summary {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  max-width: 68ch;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .client-card.is-clickable, .module-row.is-clickable, .client-more { transition: none; }
+  .client-card.is-clickable:hover, .module-row.is-clickable:hover { transform: none; }
+}

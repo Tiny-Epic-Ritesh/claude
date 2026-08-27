@@ -70,8 +70,8 @@ HTML** because the SPA fallback caught them. An unbuilt endpoint must 404.
 | BUG-25 | Lead Lists | P0 | **Done** — three kinds, 06:00 IST refresh, bulk actions with consent preview | Q-25 confirmed |
 | BUG-26 | Clients | P0 | **Done** — clients is its own object; list, detail, unified timeline, dormancy | Q-26 confirmed |
 | BUG-27 | Portal/DKYC URLs | P0 | **Done** — both resolve to /ai-crm/… | confirmed |
-| ENH-28 | Partner Portal usable | P1 | Not started | |
-| ENH-28a | Commission trend | P1 | Not started | |
-| ENH-28b | Client drill-down | P1 | Not started | |
-| ENH-28c | Training detail | P1 | Not started | |
+| ENH-28 | Partner Portal usable | P1 | **Done** - client cards and training rows are real buttons that open detail | |
+| ENH-28a | Commission trend | P1 | **Done** - month names on the axis, plus a sentence saying the direction and what drove it | |
+| ENH-28b | Client drill-down | P1 | **Done** - client detail panel; products, KYC, commission earned, no PII | |
+| ENH-28c | Training detail | P1 | **Done** - module detail with summary, contents, duration, and mark-complete | |
 | — | API 404 not HTML | P1 | **Done** | unknown /api routes now 404 with JSON |
