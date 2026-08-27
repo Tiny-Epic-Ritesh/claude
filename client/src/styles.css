@@ -3680,3 +3680,34 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
 @media (prefers-reduced-motion: reduce) {
   .outcome-options { animation: none; }
 }
+
+/* ==================================================== kind picker (BUG-25)
+ *
+ * Choosing a list kind is choosing when membership is decided, and that is not
+ * self-evident from three words. So each option carries its own explanation at
+ * the point of choice rather than in help text nobody opens.
+ *
+ * A label wrapping its input, so the whole block is the hit target — three
+ * words of radio label is a tiny thing to ask someone to hit accurately.
+ */
+.pick {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 11px 13px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--glass-2);
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+.pick:hover { border-color: var(--accent); }
+.pick.is-on { border-color: var(--accent); background: var(--accent-soft); }
+.pick input { margin-top: 3px; flex: 0 0 auto; }
+.pick > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+.pick-title { font-weight: 600; font-size: 13.5px; color: var(--ink); }
+.pick-help { font-size: 12.5px; line-height: 1.5; color: var(--ink-2); }
+
+/* Keyboard focus has to be visible on the block, not just the hidden radio. */
+.pick:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }

@@ -67,7 +67,7 @@ HTML** because the SPA fallback caught them. An unbuilt endpoint must 404.
 | ENH-24 | Dashboard | P1 | Not started | **module** · needs Q-24 |
 | ENH-24a | Date range | P1 | Not started | |
 | ENH-24b | Placement | P1 | Not started | |
-| BUG-25 | Lead Lists | P0 | Not started | **module** · needs Q-25 |
+| BUG-25 | Lead Lists | P0 | **Done** — three kinds, 06:00 IST refresh, bulk actions with consent preview | Q-25 confirmed |
 | BUG-26 | Clients | P0 | **Done** — clients is its own object; list, detail, unified timeline, dormancy | Q-26 confirmed |
 | BUG-27 | Portal/DKYC URLs | P0 | **Done** — both resolve to /ai-crm/… | confirmed |
 | ENH-28 | Partner Portal usable | P1 | Not started | |

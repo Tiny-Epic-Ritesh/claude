@@ -623,6 +623,24 @@ const COLUMNS = [
   ["tickets", "sales_org", "TEXT NOT NULL DEFAULT 'BONANZA'"],
   ["campaigns", "sales_org", "TEXT NOT NULL DEFAULT 'BONANZA'"],
   ["lead_lists", "sales_org", "TEXT NOT NULL DEFAULT 'BONANZA'"],
+
+  /* Lead Lists (BUG-25).
+   *
+   * `description` and `created_by` were already being written by the
+   * save-a-search route and had never existed, so that endpoint answered 500
+   * every time anyone used it. Adding the columns is the fix, not a feature.
+   *
+   * A refreshable list is only trustworthy if it says when it last ran, so
+   * `last_refreshed_at` is shown on screen rather than kept for diagnostics.
+   * `refresh_error` exists because a refresh that fails silently is worse
+   * than one that fails loudly -- the list simply looks stale and nobody
+   * knows why. */
+  ["lead_lists", "description", "TEXT"],
+  ["lead_lists", "created_by", "INTEGER"],
+  ["lead_lists", "last_refreshed_at", "TEXT"],
+  ["lead_lists", "last_refreshed_by", "INTEGER"],
+  ["lead_lists", "refresh_error", "TEXT"],
+  ["lead_lists", "updated_at", "TEXT"],
   ["content_items", "sales_org", "TEXT NOT NULL DEFAULT 'BONANZA'"],
 
   // The disposition loop. `follow_up_at` is what turns a logged call into a

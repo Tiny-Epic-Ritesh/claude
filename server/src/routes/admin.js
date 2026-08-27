@@ -11,6 +11,7 @@ import { MASTER_STEPS } from '../engine/kyc.js';
 import { integrationRegistry, getOutbox, syncTradingDb, vendorStatus } from '../integrations.js';
 import { DEFAULT_SLA } from '../engine/sla.js';
 import { checkConsent } from '../engine/consent.js';
+import { MAY_RECEIVE_CAMPAIGN, normaliseKind } from '../engine/leadlists.js';
 import * as meta from '../vendors/meta.js';
 import { healthReport } from '../engine/conflicts.js';
 import {
@@ -589,6 +590,23 @@ router.post('/campaigns/:id/send', requirePermission('campaign.manage'), async (
   if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
   if (isSent(campaign)) {
     return res.status(409).json({ error: `"${campaign.name}" has already been sent` });
+  }
+
+  /**
+   * A campaign may not send to a dynamic list (Q-25).
+   *
+   * A dynamic list is re-evaluated on every read, so its membership can change
+   * between the moment the send starts and the moment it ends. The send log and
+   * the list would then disagree, and the firm loses the ability to state
+   * exactly who was contacted. For a SEBI-regulated broker that is not a
+   * preference — so it is refused here rather than warned about.
+   */
+  const list = campaign.list_id
+    ? one('SELECT * FROM lead_lists WHERE id = ?', [campaign.list_id]) : null;
+  if (list && !MAY_RECEIVE_CAMPAIGN.has(normaliseKind(list.kind))) {
+    return res.status(409).json({
+      error: `"${list.name}" is a dynamic list — its membership changes as it is read, so a send could not be evidenced afterwards. Convert it to Refreshable, or snapshot it to a static list first.`,
+    });
   }
 
   const template = campaign.template_id

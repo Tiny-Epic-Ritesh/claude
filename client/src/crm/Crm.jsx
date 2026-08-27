@@ -9,6 +9,8 @@ import Cockpit from './Cockpit.jsx';
 import Leads from './Leads.jsx';
 import LeadDetail from './LeadDetail.jsx';
 import Clients from './Clients.jsx';
+import LeadLists from './LeadLists.jsx';
+import ListDetail from './ListDetail.jsx';
 import ClientDetail from './ClientDetail.jsx';
 import Tickets from './Tickets.jsx';
 import Partners from './Partners.jsx';
@@ -172,6 +174,8 @@ export default function Crm() {
             <Route path="/leads/:id" element={<LeadDetail session={session} />} />
             <Route path="/clients" element={<Clients session={session} />} />
             <Route path="/clients/:id" element={<ClientDetail session={session} />} />
+            <Route path="/lists" element={<LeadLists session={session} />} />
+            <Route path="/lists/:id" element={<ListDetail session={session} />} />
             <Route path="/tickets" element={<Tickets session={session} />} />
             <Route path="/tickets/:id" element={<Tickets session={session} />} />
             <Route path="/partners" element={<Partners session={session} />} />
@@ -187,7 +191,7 @@ export default function Crm() {
             {/* Advertised in the launcher, surface not built yet. Each states
                 what it will hold and points at the part that already works. */}
             {['pipeline', 'calendar', 'products', 'ccm', 'team',
-              'revenue', 'kra', 'incentives', 'campaigns', 'content', 'lists',
+              'revenue', 'kra', 'incentives', 'campaigns', 'content',
               'dashboards'].map((key) => (
                 <Route key={key} path={`/${key}`} element={<Placeholder moduleKey={key} />} />
               ))}

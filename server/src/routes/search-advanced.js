@@ -221,8 +221,10 @@ router.post('/lead/to-list', requirePermission('list.create'), (req, res) => {
   });
 
   const list = run(
-    'INSERT INTO lead_lists (name, description, created_by) VALUES (?,?,?)',
-    [name.trim(), where ? describe(where, registry) : 'Everything visible', req.user.id],
+    `INSERT INTO lead_lists (name, description, created_by, owner_id, kind, sales_org)
+     VALUES (?,?,?,?, 'static', ?)`,
+    [name.trim(), where ? describe(where, registry) : 'Everything visible',
+      req.user.id, req.user.id, req.user.sales_org],
   );
   for (const id of ids) {
     run('INSERT OR IGNORE INTO lead_list_members (list_id, lead_id) VALUES (?,?)', [list.lastInsertRowid, id]);

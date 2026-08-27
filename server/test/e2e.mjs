@@ -3333,6 +3333,162 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     eq(new Set(codes).size, codes.length, 'a UCC is duplicated within one sales org');
   });
 
+  /* ============================================================ 34 */
+  suite('34 Lead Lists (BUG-25)');
+
+  let staticList; let dynamicList; let refreshableList;
+
+  await check('the three kinds are declared with what each one means', async () => {
+    const { data } = await req('/api/lists/meta', { token: T.admin, expect: 200 });
+    const codes = data.kinds.map((k) => k.code).sort();
+    eq(codes.join(','), 'dynamic,refreshable,static', 'kinds');
+    assert(data.kinds.every((k) => k.help && k.help.length > 20),
+      'a kind with no explanation is a kind nobody picks correctly');
+  });
+
+  await check('saving a search as a list works', async () => {
+    // This answered 500 for its whole life: the route inserted description and
+    // created_by, and neither column existed.
+    const { data } = await req('/api/search-advanced/lead/to-list', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: { name: `Saved search ${RUN}` },
+    });
+    assert(data.id, 'no list created');
+    assert(data.members > 0, 'the saved search captured nobody');
+  });
+
+  await check('a filter-driven list refuses to be created without a filter', async () => {
+    await req('/api/lists', {
+      method: 'POST', token: T.admin, expect: 400,
+      body: { name: `No filter ${RUN}`, kind: 'dynamic' },
+    });
+  });
+
+  await check('static, refreshable and dynamic lists can be created', async () => {
+    const mk = async (kind, criteria) => {
+      const { data } = await req('/api/lists', {
+        method: 'POST', token: T.admin, expect: 201,
+        body: { name: `${kind} ${RUN}`, kind, criteria },
+      });
+      return data;
+    };
+    staticList = await mk('static', null);
+    dynamicList = await mk('dynamic', { op: 'AND', children: [{ field: 'stage', operator: 'in', value: ['Qualified'] }] });
+    refreshableList = await mk('refreshable', { op: 'AND', children: [{ field: 'stage', operator: 'in', value: ['Qualified'] }] });
+    assert(refreshableList.member_count > 0, 'refreshable list was created empty');
+  });
+
+  await check('a dynamic list re-evaluates, a static one does not', async () => {
+    const { data: dyn } = await req(`/api/lists/${dynamicList.id}`, { token: T.admin, expect: 200 });
+    const { data: stat } = await req(`/api/lists/${staticList.id}`, { token: T.admin, expect: 200 });
+    assert(dyn.member_count > 0, 'dynamic list resolved to nothing');
+    eq(stat.member_count, 0, 'a static list created empty should stay empty');
+    assert(dyn.criteria_text, 'a dynamic list must be able to say what it matches');
+  });
+
+  await check('refresh applies to refreshable lists only', async () => {
+    await req(`/api/lists/${refreshableList.id}/refresh`, { method: 'POST', token: T.admin, expect: 200 });
+    await req(`/api/lists/${dynamicList.id}/refresh`, { method: 'POST', token: T.admin, expect: 400 });
+    await req(`/api/lists/${staticList.id}/refresh`, { method: 'POST', token: T.admin, expect: 400 });
+  });
+
+  await check('a refresh records when it ran', async () => {
+    const { data } = await req(`/api/lists/${refreshableList.id}`, { token: T.admin, expect: 200 });
+    assert(data.last_refreshed_at, 'a refreshable list that cannot say when it last ran is not trustworthy');
+    eq(data.refresh_error, null, 'refresh recorded an error');
+  });
+
+  await check('a list is not visible to someone it was never shared with', async () => {
+    await req(`/api/lists/${dynamicList.id}`, { token: T.sales_rm, expect: 404 });
+  });
+
+  await check('sharing a list shows the list, never widens what it yields', async () => {
+    // The distinction that matters: sharing grants sight of the QUESTION, and
+    // the reader own scope still decides the ANSWER. An RM and an admin
+    // opening the same shared list correctly get different row counts.
+    const { data: shared } = await req('/api/lists', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: {
+        name: `Shared ${RUN}`, kind: 'dynamic',
+        criteria: { op: 'AND', children: [{ field: 'stage', operator: 'in', value: ['Qualified'] }] },
+        shared_with: ['sales_rm'],
+      },
+    });
+
+    const { data: asAdmin } = await req(`/api/lists/${shared.id}`, { token: T.admin, expect: 200 });
+    const { data: asRm } = await req(`/api/lists/${shared.id}`, { token: T.sales_rm, expect: 200 });
+
+    assert(asRm.member_count < asAdmin.member_count,
+      'an RM saw as much as an admin through a shared list - scope is not composed');
+    assert(asRm.members.every((m) => m.owner_name === null || m.owner_name !== undefined),
+      'member rows are malformed');
+  });
+
+  await check('membership cannot be edited on a dynamic list', async () => {
+    await req(`/api/lists/${dynamicList.id}/members`, {
+      method: 'POST', token: T.admin, expect: 400, body: { lead_ids: [1] },
+    });
+  });
+
+  await check('a campaign may not send to a dynamic list', async () => {
+    const { data: campaign } = await req('/api/admin/campaigns', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: { name: `Dynamic guard ${RUN}`, channel: 'sms', list_id: dynamicList.id },
+    });
+    const { data } = await req(`/api/admin/campaigns/${campaign.id}/send`, {
+      method: 'POST', token: T.admin, expect: 409,
+    });
+    assert(/dynamic/i.test(data.error), `the refusal does not explain itself: ${data.error}`);
+  });
+
+  await check('a campaign may send to a refreshable list', async () => {
+    const { data: campaign } = await req('/api/admin/campaigns', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: { name: `Refreshable ok ${RUN}`, channel: 'sms', list_id: refreshableList.id },
+    });
+    await req(`/api/admin/campaigns/${campaign.id}/send`, { method: 'POST', token: T.admin, expect: 200 });
+  });
+
+  await check('a bulk send states its consent-filtered count before it runs', async () => {
+    const { data } = await req(`/api/lists/${refreshableList.id}/preview`, {
+      method: 'POST', token: T.admin, expect: 200, body: { action: 'message', channel: 'sms' },
+    });
+    eq(data.will_apply + data.suppressed, data.total, 'the preview does not add up');
+    assert(data.reasons.every((r) => r.code && r.count > 0), 'suppression reasons are not grouped by code');
+  });
+
+  await check('a bulk send suppresses exactly what the preview said it would', async () => {
+    const { data: preview } = await req(`/api/lists/${refreshableList.id}/preview`, {
+      method: 'POST', token: T.admin, expect: 200, body: { action: 'message', channel: 'sms' },
+    });
+    const { data: sent } = await req(`/api/lists/${refreshableList.id}/bulk/message`, {
+      method: 'POST', token: T.admin, expect: 200,
+      body: { channel: 'sms', body: `Suite ${RUN}` },
+    });
+    eq(sent.sent, preview.will_apply, 'the send reached a different number than the preview promised');
+    eq(sent.suppressed, preview.suppressed, 'suppression differed from the preview');
+  });
+
+  await check('a bulk stage change applies to every member', async () => {
+    const { data } = await req(`/api/lists/${refreshableList.id}/bulk/stage`, {
+      method: 'POST', token: T.admin, expect: 200, body: { stage: 'Contacted' },
+    });
+    assert(data.applied > 0, 'nothing was changed');
+  });
+
+  await check('bulk actions respect capability', async () => {
+    await req(`/api/lists/${refreshableList.id}/bulk/reassign`, {
+      method: 'POST', token: T.caller, expect: 403, body: { owner_id: 1 },
+    });
+    await req(`/api/lists/${refreshableList.id}/bulk/stage`, {
+      method: 'POST', token: T.caller, expect: 403, body: { stage: 'Contacted' },
+    });
+  });
+
+  await check('a list used by a campaign cannot be deleted out from under it', async () => {
+    await req(`/api/lists/${refreshableList.id}`, { method: 'DELETE', token: T.admin, expect: 409 });
+  });
+
   /* ------------------------------------------------------------- report */
   report();
 }

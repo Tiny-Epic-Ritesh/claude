@@ -821,34 +821,10 @@ router.post('/notes/:id/pin', (req, res) => {
   res.json({ pinned: !note.pinned });
 });
 
-/* --------------------------------------------------------------- lists */
-
-router.get('/lists', (req, res) => {
-  const lists = all(
-    `SELECT ll.*, u.name AS owner_name,
-            (SELECT COUNT(*) FROM lead_list_members m WHERE m.list_id = ll.id) AS member_count
-     FROM lead_lists ll LEFT JOIN users u ON u.id = ll.owner_id`,
-  ).filter((l) => l.owner_id === req.user.id || (JSON.parse(l.shared_with || '[]')).some((s) => s === req.user.role || s === req.user.id));
-  res.json(lists);
-});
-
-router.post('/lists', requirePermission('list.create'), (req, res) => {
-  const { name, kind = 'static', criteria, shared_with = [] } = req.body;
-  if (!name?.trim()) return res.status(400).json({ error: 'List name is required' });
-
-  const result = run('INSERT INTO lead_lists (name, kind, criteria, owner_id, shared_with) VALUES (?,?,?,?,?)', [
-    name, kind, criteria ? JSON.stringify(criteria) : null, req.user.id, JSON.stringify(shared_with),
-  ]);
-  res.status(201).json(one('SELECT * FROM lead_lists WHERE id = ?', [Number(result.lastInsertRowid)]));
-});
-
-router.post('/lists/:id/members', (req, res) => {
-  const ids = req.body.lead_ids || [];
-  for (const leadId of ids) {
-    run('INSERT OR IGNORE INTO lead_list_members (list_id, lead_id) VALUES (?,?)', [req.params.id, leadId]);
-  }
-  res.json({ added: ids.length });
-});
+/* Lists moved to routes/lists.js (BUG-25), which is mounted at /api/lists
+ * ahead of this router. Three routes lived here -- list, create, add
+ * members -- with no kinds, no refresh, no scope composition and no bulk
+ * actions. They are gone rather than left as a second way in. */
 
 /* ------------------------------------------------------- notifications */
 
