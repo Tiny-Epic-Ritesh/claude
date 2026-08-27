@@ -4736,6 +4736,117 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     eq(fytd.range.from.slice(5, 7), '04', 'the financial year must start in April');
   });
 
+  /* ============================================================ 47 */
+  suite('47 Calendar, KRA and Incentives');
+
+  await check('the calendar unions Outlook with CRM due work', async () => {
+    const { data } = await req('/api/calendar?days=7', { token: T.sales_rm, expect: 200 });
+    assert(Array.isArray(data.days) && data.days.length === 7, 'seven days were not returned');
+    assert(data.counts, 'no counts');
+    const kinds = new Set(data.days.flatMap((d) => d.items.map((i) => i.kind)));
+    assert(kinds.size > 0, 'the calendar is entirely empty');
+    for (const k of kinds) {
+      assert(['meeting', 'task', 'callback'].includes(k), `unknown item kind: ${k}`);
+    }
+  });
+
+  await check('the calendar says where its meetings came from', async () => {
+    const { data } = await req('/api/calendar', { token: T.sales_rm, expect: 200 });
+    assert('live' in data.source, 'the source does not declare whether it is live');
+    if (!data.source.live) {
+      // A calendar that quietly invents meetings would be the most damaging
+      // thing in the product, so an unconfigured one has to say so.
+      assert(data.source.needs.length > 0, 'a simulated calendar does not say what it needs');
+      eq(data.source.mode, 'simulated', 'mode should be simulated without credentials');
+    }
+  });
+
+  await check('a meeting belongs to one person, not the desk', async () => {
+    const { data: rm } = await req('/api/calendar', { token: T.sales_rm, expect: 200 });
+    const { data: caller } = await req('/api/calendar', { token: T.caller, expect: 200 });
+    const ids = (d) => new Set(d.days.flatMap((x) => x.items)
+      .filter((i) => i.kind === 'meeting').map((i) => i.external_id));
+    const a = ids(rm); const b = ids(caller);
+    for (const id of a) assert(!b.has(id), `both users were given the same meeting: ${id}`);
+  });
+
+  await check('syncing twice does not duplicate a meeting', async () => {
+    await req('/api/calendar/sync', { method: 'POST', token: T.sales_rm, expect: 200 });
+    const { data: first } = await req('/api/calendar?days=14', { token: T.sales_rm, expect: 200 });
+    await req('/api/calendar/sync', { method: 'POST', token: T.sales_rm, expect: 200 });
+    const { data: second } = await req('/api/calendar?days=14', { token: T.sales_rm, expect: 200 });
+    eq(second.counts.meetings, first.counts.meetings, 'a second sync created duplicates');
+  });
+
+  await check('a KRA scorecard measures against configured targets', async () => {
+    const { data } = await req('/api/kra', { token: T.sales_rm, expect: 200 });
+    assert(data.metrics.length > 0, 'no metrics configured for sales_rm');
+    for (const m of data.metrics) {
+      assert(m.label && m.target >= 0 && m.weight > 0, `metric ${m.code} is not fully configured`);
+      assert(['higher', 'lower'].includes(m.direction), 'a metric has no direction');
+    }
+  });
+
+  await check('an unmeasurable metric is not scored zero', async () => {
+    const { data } = await req('/api/kra', { token: T.sales_rm, expect: 200 });
+    // Zero and "not measured" look identical on a scorecard and mean opposite
+    // things. Counting a missing feed as a failure is how a scorecard gets
+    // ignored, so it is excluded from the score and says why.
+    for (const m of data.metrics) {
+      if (m.actual === null) {
+        eq(m.score, null, `${m.code} was scored despite having nothing to measure`);
+        assert(m.reason, `${m.code} is unmeasured with no explanation`);
+      }
+    }
+    assert(data.coverage.weight_covered <= data.coverage.weight_total, 'coverage exceeds the total weight');
+  });
+
+  await check('lower-is-better scores the right way round', async () => {
+    const { data } = await req('/api/kra', { token: T.sales_rm, expect: 200 });
+    const lower = data.metrics.find((m) => m.direction === 'lower' && m.actual != null);
+    if (lower) {
+      // At or under target is full marks; above it degrades rather than
+      // falling off a cliff at target + 1.
+      if (lower.actual <= lower.target) eq(lower.score, 100, 'under target did not score full marks');
+      else assert(lower.score < 100 && lower.score >= 0, 'over target scored out of range');
+    }
+  });
+
+  await check('incentive slabs are marginal, not cliff', async () => {
+    const { data } = await req('/api/kra/incentives', { token: T.sales_rm, expect: 200 });
+    assert(data.plan, 'no plan for sales_rm');
+
+    for (const b of data.bases) {
+      // Every band pays on its own portion, and the parts must sum to the total.
+      const sum = b.lines.reduce((s, l) => s + l.amount, 0);
+      assert(Math.abs(sum - b.total) <= b.lines.length,
+        `${b.basis}: the bands sum to ${sum} but the total says ${b.total}`);
+
+      for (const l of b.lines) {
+        assert(l.portion > 0, `${b.basis}: a band counted a non-positive portion`);
+        if (l.to != null) {
+          assert(l.portion <= l.to - l.from + 0.001,
+            `${b.basis}: a band counted more than fits inside it`);
+        }
+      }
+    }
+    eq(data.total, data.bases.reduce((s, b) => s + b.total, 0), 'the payout does not equal its parts');
+  });
+
+  await check('the payout shows its working', async () => {
+    const { data } = await req('/api/kra/incentives', { token: T.sales_rm, expect: 200 });
+    assert(Array.isArray(data.slabs) && data.slabs.length > 0,
+      'the slab table is not returned — a payout nobody can check is one they will query');
+    assert(data.plan.clawback_months > 0, 'no clawback window declared');
+  });
+
+  await check('KRA and incentive configuration needs admin.rules', async () => {
+    await req('/api/kra/config', { token: T.sales_rm, expect: 403 });
+    const { data } = await req('/api/kra/config', { token: T.admin, expect: 200 });
+    assert(data.metrics.length > 0 && data.plans.length > 0, 'nothing is configured');
+    assert(/worked example/i.test(data.note), 'the config does not say these are placeholders');
+  });
+
   /* ------------------------------------------------------------- report */
   report();
 }

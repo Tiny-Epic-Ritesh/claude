@@ -18,6 +18,9 @@ import Team from './Team.jsx';
 import Revenue from './Revenue.jsx';
 import Campaigns from './Campaigns.jsx';
 import Content from './Content.jsx';
+import Calendar from './Calendar.jsx';
+import Kra from './Kra.jsx';
+import Incentives from './Incentives.jsx';
 import ListDetail from './ListDetail.jsx';
 import ClientDetail from './ClientDetail.jsx';
 import Tickets from './Tickets.jsx';
@@ -206,6 +209,9 @@ export default function Crm() {
             <Route path="/revenue" element={<Revenue session={session} />} />
             <Route path="/campaigns" element={<Campaigns session={session} />} />
             <Route path="/content" element={<Content session={session} />} />
+            <Route path="/calendar" element={<Calendar session={session} />} />
+            <Route path="/kra" element={<Kra session={session} />} />
+            <Route path="/incentives" element={<Incentives session={session} />} />
             {/* ENH-24b: the dashboard lives on the homepage, which was the
                 stated preference. This tab renders the same component so
                 the launcher entry works without a second implementation. */}
@@ -222,11 +228,8 @@ export default function Crm() {
             <Route path="/data" element={<DataTools session={session} />} />
             <Route path="/admin" element={<Admin session={session} />} />
 
-            {/* Advertised in the launcher, surface not built yet. Each states
-                what it will hold and points at the part that already works. */}
-            {['calendar', 'kra', 'incentives'].map((key) => (
-                <Route key={key} path={`/${key}`} element={<Placeholder moduleKey={key} />} />
-              ))}
+            {/* Every advertised module is built. Placeholder is kept only for
+                an unknown route, which is a genuine 404 rather than a promise. */}
 
             <Route path="*" element={<Placeholder moduleKey="__unknown" />} />
           </Routes>

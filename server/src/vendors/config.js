@@ -165,3 +165,22 @@ export function vendorStatus() {
     smtp: { state: state(smtp), endpoint: smtp.host },
   };
 }
+
+/* -------------------------------------------------------------- calendar */
+
+/**
+ * Outlook, through Microsoft Graph.
+ *
+ * Client-credentials rather than delegated sign-in: the CRM reads calendars on
+ * behalf of the firm, and asking eighty-three people to consent individually is
+ * an onboarding problem nobody would survive. The tenant grants
+ * Calendars.Read once, application-wide, and the adapter requests only the
+ * signed-in user's own mailbox.
+ */
+export const outlook = {
+  tenantId: env('OUTLOOK_TENANT_ID'),
+  clientId: env('OUTLOOK_CLIENT_ID'),
+  clientSecret: env('OUTLOOK_CLIENT_SECRET'),
+  /** How far ahead a sync reaches. Two weeks is what a desk plans against. */
+  windowDays: Number(env('OUTLOOK_WINDOW_DAYS', '14')),
+};

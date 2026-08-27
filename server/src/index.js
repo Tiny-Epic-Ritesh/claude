@@ -36,6 +36,8 @@ import products from './routes/products.js';
 import ccm from './routes/ccm.js';
 import team from './routes/team.js';
 import revenue from './routes/revenue.js';
+import calendarRoutes from './routes/calendar.js';
+import kraRoutes from './routes/kra.js';
 import { backfillClients, backfillPanIndex } from './engine/clients.js';
 import { sweepListRefresh } from './engine/leadlists.js';
 
@@ -47,6 +49,7 @@ import { sweepMetrics } from './engine/metrics.js';
 import { seedMetadata, seedPicklists } from './engine/metadata.js';
 import { seedCalendars } from './engine/calendar.js';
 import { seedQueues } from './engine/queues.js';
+import { seedKra, seedIncentives } from './engine/kra.js';
 
 /* Register the core entities and fields as metadata. Idempotent, and it
    preserves any label an administrator has renamed. */
@@ -54,6 +57,8 @@ seedMetadata();
 seedPicklists();
 seedCalendars();
 seedQueues();
+seedKra();
+seedIncentives();
 
 const app = express();
 const PORT = process.env.PORT || 4100;
@@ -134,6 +139,8 @@ app.use('/api/products', products);
 app.use('/api/ccm', ccm);
 app.use('/api/team', team);
 app.use('/api/revenue', revenue);
+app.use('/api/calendar', calendarRoutes);
+app.use('/api/kra', kraRoutes);
 app.use('/api/activities', activities);
 app.use('/api/setup', setup);
 app.use('/api/market', market);

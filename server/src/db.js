@@ -740,6 +740,121 @@ CREATE TABLE IF NOT EXISTS tab_visibility (
 );
 CREATE INDEX IF NOT EXISTS idx_tabvis_scope ON tab_visibility(scope_type, scope_key);
 
+/* ---------------------------------------------------- calendar events
+ *
+ * Outlook is the calendar. This table is a CACHE of it, never the source.
+ *
+ * That distinction decides the whole design. The firm already runs Outlook,
+ * people already accept meetings there, and a CRM that kept its own parallel
+ * diary would be a second place to look and a second thing to be wrong. So
+ * every row here arrives from Microsoft Graph and carries the identifiers
+ * needed to recognise it again -- external_id to match, etag to know whether
+ * it changed, and last_synced_at to know how stale the answer is.
+ *
+ * Nothing writes a meeting here that Outlook does not already know about.
+ * Callbacks, tasks and SLA deadlines are CRM-native and live in their own
+ * tables; the calendar view unions them at read time rather than copying them
+ * in, for the same reason the client timeline does.
+ */
+CREATE TABLE IF NOT EXISTS calendar_events (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider     TEXT NOT NULL DEFAULT 'outlook',
+  external_id  TEXT NOT NULL,
+  etag         TEXT,
+  user_id      INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  subject      TEXT NOT NULL,
+  body_preview TEXT,
+  location     TEXT,
+  starts_at    TEXT NOT NULL,
+  ends_at      TEXT,
+  all_day      INTEGER NOT NULL DEFAULT 0,
+  organiser    TEXT,
+  attendees    TEXT,                  -- JSON array of {name, email, response}
+  online_url   TEXT,                  -- Teams join link, when there is one
+  status       TEXT DEFAULT 'confirmed',
+  /* Best-effort link back to a CRM record, matched on attendee address. Never
+     guessed from the subject line: "Call with Sharma" matches four clients. */
+  lead_id      INTEGER REFERENCES leads(id) ON DELETE SET NULL,
+  cancelled_at TEXT,
+  last_synced_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (provider, external_id)
+);
+CREATE INDEX IF NOT EXISTS idx_calendar_user_start ON calendar_events(user_id, starts_at);
+CREATE INDEX IF NOT EXISTS idx_calendar_lead ON calendar_events(lead_id);
+
+/* -------------------------------------------------- KRA and incentives
+ *
+ * Both are configuration, not code. The numbers below ship as a working
+ * example so the screens have something to show, and every one of them is
+ * editable -- because what a Sales RM is measured on, and what that earns, is
+ * a decision the business makes and revises, not one a developer encodes.
+ *
+ * A KRA metric names what is measured, the target, and how much it counts
+ * toward the score. source is the key the engine uses to compute the actual
+ * from live data; a metric whose source it does not recognise still shows, with
+ * the actual left blank rather than silently zero. Zero and "not measured yet"
+ * look identical on a scorecard and mean opposite things.
+ */
+CREATE TABLE IF NOT EXISTS kra_metrics (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  role_code  TEXT NOT NULL,
+  code       TEXT NOT NULL,
+  label      TEXT NOT NULL,
+  description TEXT,
+  source     TEXT,                    -- what the engine computes it from
+  unit       TEXT NOT NULL DEFAULT 'count',   -- count / rupees / percent / days
+  target     REAL NOT NULL DEFAULT 0,
+  weight     REAL NOT NULL DEFAULT 1,         -- share of the overall score
+  direction  TEXT NOT NULL DEFAULT 'higher',  -- higher / lower is better
+  period     TEXT NOT NULL DEFAULT 'month',
+  active     INTEGER NOT NULL DEFAULT 1,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  sales_org  TEXT NOT NULL DEFAULT 'BONANZA',
+  edited_at  TEXT,
+  edited_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  UNIQUE (role_code, code, sales_org)
+);
+
+/* An incentive plan is a set of slabs against a basis.
+ *
+ * Shaped on how Indian retail brokers actually pay: a share of the brokerage
+ * the book generates, banded so the rate rises with production; a flat amount
+ * per account activated; and a trail in basis points on assets under
+ * management. Clawback exists because an account that closes inside six months
+ * was never really won, and paying for it twice is how acquisition targets get
+ * gamed.
+ *
+ * Slabs are marginal, not cliff -- each band pays its own rate on the portion
+ * of production inside it. A cliff structure means one rupee of extra
+ * brokerage can change the whole payout, which is both unfair and an incentive
+ * to hold business back until next month.
+ */
+CREATE TABLE IF NOT EXISTS incentive_plans (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  role_code   TEXT NOT NULL,
+  description TEXT,
+  effective_from TEXT NOT NULL DEFAULT (date('now')),
+  effective_to   TEXT,
+  clawback_months INTEGER NOT NULL DEFAULT 6,
+  active      INTEGER NOT NULL DEFAULT 1,
+  sales_org   TEXT NOT NULL DEFAULT 'BONANZA',
+  edited_at   TEXT,
+  edited_by   INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS incentive_slabs (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  plan_id   INTEGER NOT NULL REFERENCES incentive_plans(id) ON DELETE CASCADE,
+  basis     TEXT NOT NULL,            -- brokerage / accounts / aum
+  from_value REAL NOT NULL DEFAULT 0,
+  to_value   REAL,                    -- NULL means no upper bound
+  rate      REAL NOT NULL,            -- percent for brokerage, rupees for accounts, bps for aum
+  rate_kind TEXT NOT NULL DEFAULT 'percent',  -- percent / flat / bps
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_slabs_plan ON incentive_slabs(plan_id, basis, from_value);
+
 /* ------------------------------------------------------- field masking
  *
  * ENH-16. Which PII fields are obscured, for which roles.
