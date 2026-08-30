@@ -539,6 +539,51 @@ CREATE TABLE IF NOT EXISTS audit_log (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+/* In-flight work keeps the version it started under.
+ *
+ * An applicant who began a sixteen-step journey finishes those sixteen steps
+ * even if somebody edits the definition halfway through, and a ticket keeps the
+ * SLA it was raised under. The alternative -- everything follows the current
+ * definition -- means an applicant can gain or lose steps mid-journey and a
+ * promised deadline can move after it was promised, neither of which is
+ * explainable to a client or to an auditor.
+ *
+ * Nullable: rows created before versioning existed have no pin, and are read as
+ * "whatever is current", which is what they have always done. */
+CREATE TABLE IF NOT EXISTS artefact_versions (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind       TEXT NOT NULL,
+  logical_id TEXT NOT NULL,
+  version    INTEGER NOT NULL,
+  payload    TEXT NOT NULL,
+  note       TEXT,
+  is_current INTEGER NOT NULL DEFAULT 1,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (kind, logical_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_artefact_versions_current
+  ON artefact_versions(kind, logical_id, is_current);
+
+CREATE TABLE IF NOT EXISTS request_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  role        TEXT,
+  sales_org   TEXT,
+  partner_id  INTEGER REFERENCES partners(id) ON DELETE SET NULL,
+  method      TEXT NOT NULL,
+  path        TEXT NOT NULL,
+  status      INTEGER NOT NULL,
+  duration_ms INTEGER,
+  ip          TEXT,
+  at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_request_log_at   ON request_log(at);
+CREATE INDEX IF NOT EXISTS idx_request_log_user ON request_log(user_id, at);
+CREATE INDEX IF NOT EXISTS idx_request_log_path ON request_log(path, at);
+
 CREATE TABLE IF NOT EXISTS sessions (
   token        TEXT PRIMARY KEY,
   user_id      INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -699,6 +744,20 @@ const COLUMNS = [
 
   // Reachability for reminders sent to staff.
   ['users', 'whatsapp', 'TEXT'],
+
+  /* The artefact version in-flight work started under.
+   *
+   * An applicant who began a sixteen-step journey finishes those sixteen steps
+   * even if the definition is edited halfway through, and a ticket keeps the
+   * SLA it was raised under. Letting both follow the current definition instead
+   * means an applicant can gain or lose steps mid-journey and a promised
+   * deadline can move after it was promised — neither explainable to a client
+   * or to an auditor.
+   *
+   * Null on rows that predate versioning, which read as "whatever is current",
+   * exactly as they always have. */
+  ['kyc_journeys', 'journey_version_id', 'INTEGER'],
+  ['tickets', 'sla_version_id', 'INTEGER'],
 ];
 
 for (const [table, column, type] of COLUMNS) {

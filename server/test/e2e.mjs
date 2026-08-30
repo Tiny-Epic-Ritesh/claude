@@ -5189,6 +5189,204 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     }
   });
 
+  /* ============================================================ 51 */
+  suite('51 access log');
+
+  /*
+   * The CRM could say who CHANGED a record long before it could say who READ
+   * one. That gap is why the August cross-book incident has a closed fix and an
+   * open impact assessment: the code was corrected in a day, and nobody could
+   * establish whether anyone had actually looked.
+   */
+
+  await check('a record read is recorded against the person who made it', async () => {
+    const { data: leads } = await req('/api/leads?limit=1', { token: T.sales_rm, expect: 200 });
+    const lead = need((Array.isArray(leads) ? leads : leads.rows)[0], 'a lead to read');
+
+    await req(`/api/leads/${lead.id}`, { token: T.sales_rm, expect: 200 });
+
+    const { data } = await req(`/api/admin/access-log/record?path=/api/leads/${lead.id}`,
+      { token: T.admin, expect: 200 });
+    const mine = data.rows.filter((r) => r.role === 'sales_rm');
+    assert(mine.length > 0, 'the read was not recorded');
+    assert(mine[0].email, 'the row does not say who');
+    assert(mine[0].sales_org, 'the row does not say which book they were in');
+  });
+
+  await check('the path recorded is the whole path, not the routed remainder', async () => {
+    /* Guards a bug that was live briefly: the middleware mounts on '/api', and
+     * inside a mounted handler Express rewrites req.url to the remainder, so
+     * the log recorded '/2' rather than '/api/tickets/2'. Every row still
+     * arrived, so the table looked healthy while answering nothing. */
+    const { data } = await req('/api/admin/access-log', { token: T.admin, expect: 200 });
+    assert(data.rows > 0, 'nothing has been logged at all');
+    for (const b of data.busiest) {
+      assert(b.path.startsWith('/api/'),
+        `a logged path lost its prefix: ${b.path} — the log cannot identify a record`);
+    }
+  });
+
+  await check('search terms are never written to the log', async () => {
+    // ?q= on the duplicate check is a client's mobile number often enough that
+    // storing it would make the log a second copy of the client book.
+    await req('/api/ccm/search?q=9820000000', { token: T.admin, expect: 200 });
+
+    const { data } = await req('/api/admin/access-log', { token: T.admin, expect: 200 });
+    for (const b of data.busiest) {
+      assert(!b.path.includes('?'), `a query string reached the log: ${b.path}`);
+      assert(!/9820000000/.test(b.path), 'a searched mobile number reached the log');
+    }
+  });
+
+  await check('a failed sign-in is recorded', async () => {
+    // Mounted ahead of the sign-in routes for this reason: a run of attempts
+    // against one account is the thing an access log most obviously exists for.
+    await req('/api/auth/login', {
+      method: 'POST', expect: 401,
+      body: { email: 'nobody.at.all@bonanza.test', password: 'wrong' },
+    });
+    const { data } = await req('/api/admin/access-log/record?path=/api/auth/login',
+      { token: T.admin, expect: 200 });
+    assert(data.rows.some((r) => r.status === 401), 'a failed sign-in left no trace');
+  });
+
+  await check('the log says nothing about the boundary being crossed', async () => {
+    // The boundary holds, so this must be empty. It is the query the incident
+    // needed; an empty answer is the whole point of having it.
+    const { data } = await req('/api/admin/access-log/cross-book', { token: T.admin, expect: 200 });
+    assert(Array.isArray(data.rows), 'no rows array');
+    if (data.rows.length) {
+      throw new Error(`cross-book reads recorded: ${JSON.stringify(data.rows[0])}`);
+    }
+    assert(/No cross-book reads/i.test(data.note), 'the empty result is not explained');
+  });
+
+  await check('the access log is readable by Admin alone', async () => {
+    /* The log is a record of who read whose data, which makes it sensitive in
+     * its own right. Widening it would create the problem it detects. */
+    for (const role of ['sales_rm', 'sales_supervisor', 'customer_care', 'marketing_manager', 'caller']) {
+      await req('/api/admin/access-log', { token: T[role], expect: 403 });
+      await req('/api/admin/access-log/cross-book', { token: T[role], expect: 403 });
+    }
+    await req('/api/admin/access-log', { token: T.superadmin, expect: 200 });
+  });
+
+  await check('asking about a record needs a real API path', async () => {
+    const { data } = await req('/api/admin/access-log/record?path=tickets/2',
+      { token: T.admin, expect: 400 });
+    assert(/\/api\//.test(data.error), `unhelpful refusal: ${data.error}`);
+  });
+
+  await check('the retention window is declared, not implied', async () => {
+    const { data } = await req('/api/admin/access-log', { token: T.admin, expect: 200 });
+    assert(data.retention_days > 0 && data.retention_days <= 365,
+      `implausible retention window: ${data.retention_days}`);
+  });
+
+  /* ============================================================ 52 */
+  suite('52 artefact versioning');
+
+  /*
+   * Finding 10 of the LeadSquared audit: nothing was versioned, so nothing was
+   * ever retired -- one capability across five forms and three processes, V3
+   * and V4 both live, the copy marked "old" still enabled. The version history
+   * was the artefact names.
+   */
+
+  await check('saving a rule produces a version', async () => {
+    const { data: created } = await req('/api/admin/rules', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: {
+        name: `E2E versioned rule ${RUN}`,
+        description: 'first',
+        conditions: [{ field: 'stage', op: 'is', value: 'New' }],
+        actions: [{ type: 'set_field', field: 'priority', value: 'High' }],
+      },
+    });
+    REF.versionedRuleId = created.id;
+
+    const { data } = await req(`/api/admin/versions/rule/${created.id}`, { token: T.admin, expect: 200 });
+    eq(data.versions.length, 1, 'creating a rule did not record a version');
+    eq(data.current.version, 1, 'the first version is not current');
+    eq(data.label, 'Automation rule', 'the artefact does not name itself');
+  });
+
+  await check('editing it supersedes, and only one version is current', async () => {
+    const id = need(REF.versionedRuleId, 'a versioned rule');
+    await req(`/api/admin/rules/${id}`, {
+      method: 'PATCH', token: T.admin, expect: 200,
+      body: { description: 'second', note: 'Reworded' },
+    });
+
+    const { data } = await req(`/api/admin/versions/rule/${id}`, { token: T.admin, expect: 200 });
+    eq(data.versions.length, 2, 'the edit did not record a version');
+    eq(data.current.version, 2, 'the current pointer did not move');
+    eq(data.versions.filter((v) => v.is_current).length, 1, 'two versions claim to be current');
+  });
+
+  await check('the diff names the field that changed', async () => {
+    const id = need(REF.versionedRuleId, 'a versioned rule');
+    const { data: hist } = await req(`/api/admin/versions/rule/${id}`, { token: T.admin, expect: 200 });
+    const [v2, v1] = hist.versions;
+
+    const { data } = await req(`/api/admin/versions/diff?a=${v1.id}&b=${v2.id}`, { token: T.admin, expect: 200 });
+    eq(data.identical, false, 'a real change diffed to nothing');
+    const changed = data.changes.map((c) => c.field);
+    assert(changed.includes('description'), `description not listed: ${changed.join(', ')}`);
+    assert(!changed.includes('name'), 'an unchanged field was reported as changed');
+  });
+
+  await check('rolling back restores the values and keeps the history', async () => {
+    const id = need(REF.versionedRuleId, 'a versioned rule');
+    const { data: hist } = await req(`/api/admin/versions/rule/${id}`, { token: T.admin, expect: 200 });
+    const first = hist.versions.find((v) => v.version === 1);
+
+    const { data } = await req(`/api/admin/versions/${first.id}/restore`, {
+      method: 'POST', token: T.admin, expect: 200,
+    });
+    eq(data.ok, true, 'the rollback was refused');
+    eq(data.restored_from, 1);
+
+    const { data: after } = await req(`/api/admin/versions/rule/${id}`, { token: T.admin, expect: 200 });
+    // A rollback that deleted the versions in between would destroy the record
+    // of what was live last Tuesday, which is what an auditor asks about.
+    eq(after.versions.length, 3, 'the rollback removed history instead of adding to it');
+    assert(after.versions.some((v) => v.version === 2), 'the superseded version was deleted');
+    eq(after.current.payload.description, 'first', 'the values did not come back');
+  });
+
+  await check('a diff across two different artefacts is refused', async () => {
+    const id = need(REF.versionedRuleId, 'a versioned rule');
+    const { data: hist } = await req(`/api/admin/versions/rule/${id}`, { token: T.admin, expect: 200 });
+    const { data: index } = await req('/api/admin/versions', { token: T.admin, expect: 200 });
+    const other = index.recent.find((v) => v.logical_id !== String(id) || v.kind !== 'rule');
+    if (!other) return;
+
+    await req(`/api/admin/versions/diff?a=${hist.versions[0].id}&b=${other.id}`,
+      { token: T.admin, expect: 400 });
+  });
+
+  await check('the version history needs admin.rules', async () => {
+    const id = need(REF.versionedRuleId, 'a versioned rule');
+    for (const role of ['sales_rm', 'caller', 'customer_care', 'marketing_manager']) {
+      await req(`/api/admin/versions/rule/${id}`, { token: T[role], expect: 403 });
+    }
+  });
+
+  await check('an artefact nobody versions says so', async () => {
+    await req('/api/admin/versions/not_a_thing/1', { token: T.admin, expect: 404 });
+  });
+
+  await check('every versioned kind is offered by name', async () => {
+    const { data } = await req('/api/admin/versions', { token: T.admin, expect: 200 });
+    const keys = data.kinds.map((k) => k.key).sort();
+    // The four the audit found unversioned.
+    for (const k of ['kyc_journey', 'rule', 'sla_policy', 'template']) {
+      assert(keys.includes(k), `${k} is not versioned`);
+    }
+    assert(data.kinds.every((k) => k.label), 'a kind has no human label');
+  });
+
   /* ------------------------------------------------------------- report */
   report();
 }

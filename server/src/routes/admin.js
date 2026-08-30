@@ -15,6 +15,13 @@ import { MAY_RECEIVE_CAMPAIGN, normaliseKind } from '../engine/leadlists.js';
 import * as meta from '../vendors/meta.js';
 import { healthReport } from '../engine/conflicts.js';
 import {
+  ARTEFACTS, snapshot, versionsOf, byId as versionById, diff as versionDiff,
+  restore as restoreVersion, recentVersions,
+} from '../engine/versioning.js';
+import {
+  accessLogSummary, crossBookReads, activityOf, readersOf, RETENTION_DAYS,
+} from '../engine/accesslog.js';
+import {
   listCalendars, updateCalendar, addDay, removeDay, isWorkingDay,
   nextWorkingTime, addWorkingMinutes, CALENDAR_KINDS,
 } from '../engine/calendar.js';
@@ -125,7 +132,10 @@ router.post('/sla', requirePermission('admin.sla'), (req, res) => {
     [product_type_id, priority, response_mins, resolution_mins],
   );
   audit(req.user.id, 'sla_updated', 'sla_policy', null, req.body);
-  res.json({ ok: true });
+  // Keyed on the pair the table is unique on, so each policy has its own history.
+  const slaVersion = snapshot('sla_policy', `${product_type_id ?? 'null'}:${priority}`,
+    { note: req.body.note ?? null, userId: req.user.id });
+  res.json({ ok: true, version: slaVersion?.version ?? null });
 });
 
 /* ---------------------------------------------------------- categories */
@@ -148,8 +158,10 @@ router.post('/templates', requirePermission('admin.templates'), (req, res) => {
   const result = run('INSERT INTO templates (name, channel, subject, body, product_type_id, approved) VALUES (?,?,?,?,?,?)', [
     name, channel || 'whatsapp', subject || null, body, product_type_id || null, approved ? 1 : 0,
   ]);
-  audit(req.user.id, 'template_created', 'template', Number(result.lastInsertRowid), { channel });
-  res.status(201).json({ id: Number(result.lastInsertRowid) });
+  const templateId = Number(result.lastInsertRowid);
+  audit(req.user.id, 'template_created', 'template', templateId, { channel });
+  snapshot('template', templateId, { note: 'Created', userId: req.user.id });
+  res.status(201).json({ id: templateId });
 });
 
 router.patch('/templates/:id', requirePermission('admin.templates'), (req, res) => {
@@ -158,7 +170,11 @@ router.patch('/templates/:id', requirePermission('admin.templates'), (req, res) 
   const params = [];
   for (const f of fields) if (req.body[f] !== undefined) { sets.push(`${f} = ?`); params.push(req.body[f]); }
   if (sets.length) run(`UPDATE templates SET ${sets.join(', ')} WHERE id = ?`, [...params, req.params.id]);
-  res.json({ ok: true });
+  const templateVersion = sets.length
+    ? snapshot('template', Number(req.params.id), { note: req.body.note ?? null, userId: req.user.id })
+    : null;
+  audit(req.user.id, 'template_updated', 'template', Number(req.params.id), req.body);
+  res.json({ ok: true, version: templateVersion?.version ?? null });
 });
 
 /* ------------------------------------------------------ content library */
@@ -227,7 +243,9 @@ router.post('/kyc/journeys/:productId', requirePermission('admin.kyc.journeys'),
     ]);
   });
   audit(req.user.id, 'kyc_journey_configured', 'product_type', Number(req.params.productId), { steps: steps.length });
-  res.json({ ok: true, steps: steps.length });
+  const journeyVersion = snapshot('kyc_journey', Number(req.params.productId),
+    { note: req.body.note ?? null, userId: req.user.id });
+  res.json({ ok: true, steps: steps.length, version: journeyVersion?.version ?? null });
 });
 
 /* ---------------------------------------------------------- rule builder */
@@ -256,8 +274,10 @@ router.post('/rules', requirePermission('admin.rules'), (req, res) => {
     [name, description || null, JSON.stringify(conditions), JSON.stringify(actions),
       schedule ? JSON.stringify(schedule) : null, enabled ? 1 : 0, priority],
   );
-  audit(req.user.id, 'rule_created', 'rule', Number(result.lastInsertRowid), { name });
-  res.status(201).json({ id: Number(result.lastInsertRowid) });
+  const ruleId = Number(result.lastInsertRowid);
+  audit(req.user.id, 'rule_created', 'rule', ruleId, { name });
+  snapshot('rule', ruleId, { note: 'Created', userId: req.user.id });
+  res.status(201).json({ id: ruleId });
 });
 
 router.patch('/rules/:id', requirePermission('admin.rules'), (req, res) => {
@@ -271,7 +291,12 @@ router.patch('/rules/:id', requirePermission('admin.rules'), (req, res) => {
   }
   if (sets.length) run(`UPDATE rules SET ${sets.join(', ')} WHERE id = ?`, [...params, req.params.id]);
   audit(req.user.id, 'rule_updated', 'rule', Number(req.params.id), req.body);
-  res.json({ ok: true });
+  // Snapshotted after the write, so the version records what was saved rather
+  // than what was asked for -- those differ wherever a default is applied.
+  const ruleVersion = sets.length
+    ? snapshot('rule', Number(req.params.id), { note: req.body.note ?? null, userId: req.user.id })
+    : null;
+  res.json({ ok: true, version: ruleVersion?.version ?? null });
 });
 
 /** Dry-run evaluates and reports without performing a single action. */
@@ -331,6 +356,117 @@ router.post('/integrations/trading-db/sync', requirePermission('admin.system'), 
 });
 
 /* --------------------------------------------------------------- audit */
+
+/* ------------------------------------------------------------- versions */
+
+/**
+ * One logical artefact, many versions, an explicit current pointer, a diff and
+ * a rollback. Finding 10 of the LeadSquared audit was that none of this existed
+ * anywhere, so the version history was the artefact names -- "- Clone",
+ * "19Aug 2025V4-", and two live copies of the same thing.
+ */
+
+router.get('/versions', requirePermission('admin.rules'), (req, res) => {
+  res.json({
+    kinds: Object.entries(ARTEFACTS).map(([key, a]) => ({ key, label: a.label })),
+    recent: recentVersions({ kind: req.query.kind ?? null, limit: req.query.limit }),
+  });
+});
+
+router.get('/versions/:kind/:logicalId', requirePermission('admin.rules'), (req, res) => {
+  if (!ARTEFACTS[req.params.kind]) {
+    return res.status(404).json({ error: `Nothing called "${req.params.kind}" is versioned` });
+  }
+  const versions = versionsOf(req.params.kind, req.params.logicalId);
+  return res.json({
+    kind: req.params.kind,
+    label: ARTEFACTS[req.params.kind].label,
+    logical_id: req.params.logicalId,
+    versions,
+    current: versions.find((v) => v.is_current) ?? null,
+  });
+});
+
+/** What changed between two versions, field by field. */
+router.get('/versions/diff', requirePermission('admin.rules'), (req, res) => {
+  const a = Number(req.query.a);
+  const b = Number(req.query.b);
+  if (!a || !b) return res.status(400).json({ error: 'Give two version ids, a and b' });
+
+  const out = versionDiff(a, b);
+  if (!out) return res.status(404).json({ error: 'One of those versions does not exist' });
+  if (out.error) return res.status(400).json(out);
+  return res.json(out);
+});
+
+/**
+ * Put an old version back, as a new one.
+ *
+ * The versions in between are left exactly where they are: a rollback that
+ * deleted them would destroy the record of what was live last Tuesday, which is
+ * the question an auditor actually asks.
+ */
+router.post('/versions/:id/restore', requirePermission('admin.rules'), (req, res) => {
+  const out = restoreVersion(Number(req.params.id), { userId: req.user.id });
+  if (!out.ok) return res.status(404).json(out);
+
+  const v = versionById(Number(req.params.id));
+  audit(req.user.id, 'version_restored', v.kind, null,
+    { logical_id: v.logical_id, restored_from: out.restored_from });
+  return res.json(out);
+});
+
+/* ------------------------------------------------------------ access log */
+
+/**
+ * The audit log answers "who changed this". These answer "who looked at it".
+ *
+ * Gated on report.system, so Admin and Super Admin only. The access log is a
+ * record of who read whose data, which makes it sensitive in its own right --
+ * widening it would create the problem it exists to detect.
+ */
+router.get('/access-log', requirePermission('report.system'), (req, res) => {
+  res.json({ ...accessLogSummary(), retention_days: RETENTION_DAYS });
+});
+
+/**
+ * Reads of a record belonging to a business the reader is not in.
+ *
+ * The query the August cross-book incident needed and could not run, because
+ * nothing was recording reads at the time. Empty is the expected answer.
+ */
+router.get('/access-log/cross-book', requirePermission('report.system'), (req, res) => {
+  const rows = crossBookReads({ since: req.query.since ?? null, until: req.query.until ?? null });
+  res.json({
+    rows,
+    note: rows.length
+      ? 'Each row is a successful read of a record from the other business. Investigate every one.'
+      : 'No cross-book reads recorded in this window.',
+  });
+});
+
+/** Everything one person did — for an offboarding or a conduct question. */
+router.get('/access-log/user/:id', requirePermission('report.system'), (req, res) => {
+  const user = one('SELECT id, name, email, role, sales_org FROM users WHERE id = ?', [req.params.id]);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  return res.json({ user, rows: activityOf(Number(req.params.id), { limit: req.query.limit }) });
+});
+
+/**
+ * Everyone who opened one record.
+ *
+ * Takes the API path rather than an id, because "who read this" has to be
+ * answerable for any record type without this route knowing about each one.
+ */
+router.get('/access-log/record', requirePermission('report.system'), (req, res) => {
+  const path = String(req.query.path ?? '').trim();
+  if (!path.startsWith('/api/')) {
+    return res.status(400).json({
+      error: 'Give the API path of the record, for example /api/tickets/2',
+    });
+  }
+  return res.json({ path, rows: readersOf(path, { limit: req.query.limit }) });
+});
 
 router.get('/audit', requirePermission('report.system'), (req, res) => {
   const where = [];

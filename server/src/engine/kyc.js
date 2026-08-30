@@ -102,11 +102,36 @@ export const MASTER_STEPS = [
 
 export const stepByCode = (code) => MASTER_STEPS.find((s) => s.code === code);
 
+/**
+ * The step list as it was in a saved version, or null if that version is gone.
+ *
+ * Read straight from the snapshot rather than through engine/versioning.js, to
+ * keep this module free of a dependency it would otherwise need only here.
+ */
+function pinnedJourney(versionId) {
+  const row = one('SELECT payload FROM artefact_versions WHERE id = ? AND kind = ?',
+    [versionId, 'kyc_journey']);
+  if (!row) return null;
+  try {
+    const steps = JSON.parse(row.payload)?.steps ?? [];
+    return steps.length ? steps : null;
+  } catch { return null; }
+}
+
 /* ------------------------------------------------------------- journeys */
 
-/** Which steps apply to this product, honouring the Journey Composer overrides. */
-export function journeyStepsFor(productTypeId) {
-  const configured = all(
+/**
+ * Which steps apply to this product, honouring the Journey Composer overrides.
+ *
+ * `versionId` pins the answer to a specific saved version of the journey. A
+ * journey already under way passes the version it started on, so an applicant
+ * who began a sixteen-step flow finishes those sixteen steps even if somebody
+ * edits the definition while they are halfway through it. Without the pin, a
+ * definition change would add or remove steps under a live applicant.
+ */
+export function journeyStepsFor(productTypeId, versionId = null) {
+  const pinned = versionId ? pinnedJourney(versionId) : null;
+  const configured = pinned ?? all(
     'SELECT * FROM kyc_journey_steps WHERE product_type_id = ? ORDER BY sort_order',
     [productTypeId],
   );
@@ -142,10 +167,19 @@ export function createJourney({ leadId = null, cardId = null, productTypeId, mob
   const token = randomUUID();
   const steps = journeyStepsFor(productTypeId);
 
+  /* The definition this applicant is starting on, remembered now.
+   *
+   * Null when the journey has never been saved through the composer, which
+   * means it is the master step list and there is nothing to pin to. */
+  const pin = one(
+    'SELECT id FROM artefact_versions WHERE kind = ? AND logical_id = ? AND is_current = 1',
+    ['kyc_journey', String(productTypeId)],
+  )?.id ?? null;
+
   const result = run(
-    `INSERT INTO kyc_journeys (lead_id, card_id, product_type_id, applicant_mobile, applicant_email, resume_token, status, current_step, form_data, started_at)
-     VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))`,
-    [leadId, cardId, productTypeId, mobile, email, token, 'In Progress', steps[0].code, writeForm({})],
+    `INSERT INTO kyc_journeys (lead_id, card_id, product_type_id, applicant_mobile, applicant_email, resume_token, status, current_step, form_data, started_at, journey_version_id)
+     VALUES (?,?,?,?,?,?,?,?,?,datetime('now'),?)`,
+    [leadId, cardId, productTypeId, mobile, email, token, 'In Progress', steps[0].code, writeForm({}), pin],
   );
   const journeyId = Number(result.lastInsertRowid);
 
@@ -173,7 +207,10 @@ export function getJourney(id, { byToken = false } = {}) {
   if (!journey) return null;
 
   const form = readForm(journey);
-  const defs = journeyStepsFor(journey.product_type_id);
+  // Read against the version this applicant started on, not whatever the
+  // composer holds now -- otherwise editing a journey rewrites the steps under
+  // everyone currently part-way through it.
+  const defs = journeyStepsFor(journey.product_type_id, journey.journey_version_id);
   const progress = all('SELECT * FROM kyc_journey_progress WHERE journey_id = ?', [journey.id]);
 
   const steps = defs.map((def) => {
@@ -262,7 +299,7 @@ export function submitStep(journeyId, stepCode, payload) {
     [onStepS, JSON.stringify(payload), journeyId, stepCode],
   );
 
-  const steps = journeyStepsFor(journey.product_type_id);
+  const steps = journeyStepsFor(journey.product_type_id, journey.journey_version_id);
   const idx = steps.findIndex((s) => s.code === stepCode);
   const next = steps.slice(idx + 1).find((s) => stepApplies(s, form));
 

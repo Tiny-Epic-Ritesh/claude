@@ -86,6 +86,16 @@ internal.get('/journeys/:id/coach', async (req, res, next) => {
     const journey = kyc.getJourney(Number(req.params.id));
     if (!journey) return res.status(404).json({ error: 'Journey not found' });
 
+    /* Scoped like /journeys/:id above, which it was not when that one was
+     * fixed. The coaching text quotes the applicant's stalled step and what to
+     * say to them, so it describes the journey even though it does not return
+     * the record. */
+    const scope = reqScope(req, 'l');
+    const visible = journey.lead_id
+      ? one(`SELECT 1 v FROM leads l WHERE l.id = ? AND ${scope.sql}`, [journey.lead_id, ...scope.params])
+      : null;
+    if (!visible) return res.status(403).json({ error: 'This journey is outside your visibility scope' });
+
     res.json(await ai.kycCoach({
       product_name: journey.product?.name,
       step_code: journey.stall?.step_code || journey.current_step,

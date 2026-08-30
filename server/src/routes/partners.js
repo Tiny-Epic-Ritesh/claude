@@ -268,6 +268,16 @@ router.post('/:id/sourced-leads', requirePermission('partner.view'), (req, res) 
 
 router.get('/:id/insight', requirePermission('partner.view'), async (req, res, next) => {
   try {
+    /* The sibling of /partners/:id, and it was missed when that one was fixed
+     * -- the same "one of a pair" slip as /cards/:id/detail and /cards/:id/audit.
+     * The insight names the partner and summarises their sourcing and accrued
+     * commission, so it gives away most of what the record does. */
+    const partner = one('SELECT sales_org FROM partners WHERE id = ?', [req.params.id]);
+    if (!partner) return res.status(404).json({ error: 'Partner not found' });
+    if (!mayUseOrg(req.user, partner.sales_org)) {
+      return res.status(403).json({ error: 'This partner belongs to another book' });
+    }
+
     const ctx = ai.partnerInsightContext(Number(req.params.id));
     if (!ctx) return res.status(404).json({ error: 'Partner not found' });
     res.json(await ai.partnerInsight(ctx));

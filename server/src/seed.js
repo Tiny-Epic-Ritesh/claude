@@ -58,6 +58,24 @@ for (const t of [
 db.exec("DELETE FROM role_capabilities WHERE role_code IN (SELECT code FROM roles WHERE is_system = 0)");
 db.exec("DELETE FROM roles WHERE is_system = 0");
 db.exec("DELETE FROM tab_visibility");
+
+/* The access log goes with the records it describes.
+ *
+ * Its rows identify a record by the id in the path, and a reseed recreates
+ * every record with fresh ids and fresh business assignments. Left behind, a
+ * row reading GET /api/leads/3 by a Bigul user resolves against whatever lead 3
+ * happens to be now -- and the cross-book report invents a crossing that never
+ * happened. False evidence in a security control is worse than none. */
+db.exec('DELETE FROM request_log');
+
+/* Version history goes with the artefacts it describes, for the same reason.
+ *
+ * A version is keyed on the artefact's id, and a reseed recreates every rule,
+ * template and journey with ids that start over. Left behind, the history of a
+ * deleted rule 12 attaches itself to whatever rule 12 becomes next — so a
+ * freshly created rule opens on version 7, showing five edits made to something
+ * else entirely. */
+db.exec('DELETE FROM artefact_versions');
 db.exec("DELETE FROM field_masking");
 
 /* KRA targets and incentive plans reset to the shipped worked example.

@@ -47,7 +47,26 @@ export function businessMinutesBetween(from, to) {
   return mins;
 }
 
-export function policyFor(productTypeId, priority) {
+/**
+ * The policy to measure a ticket against.
+ *
+ * `versionId` pins it to the policy as it stood when the ticket was raised. A
+ * deadline that moves after it has been promised is not a deadline, and
+ * "your SLA changed while your case was open" is not something anybody wants to
+ * explain to a client or to an auditor.
+ */
+export function policyFor(productTypeId, priority, versionId = null) {
+  if (versionId) {
+    const snap = one('SELECT payload FROM artefact_versions WHERE id = ? AND kind = ?',
+      [versionId, 'sla_policy']);
+    if (snap) {
+      try {
+        const p = JSON.parse(snap.payload);
+        if (p?.response_mins && p?.resolution_mins) return p;
+      } catch { /* fall through to the live policy */ }
+    }
+  }
+
   const row = productTypeId
     ? one('SELECT * FROM sla_policies WHERE product_type_id = ? AND priority = ?', [productTypeId, priority])
     : null;
@@ -62,14 +81,23 @@ export function applySla(ticketId) {
   if (!ticket) return null;
 
   const card = ticket.card_id ? one('SELECT * FROM product_cards WHERE id = ?', [ticket.card_id]) : null;
-  const policy = policyFor(card?.product_type_id, ticket.priority);
+
+  /* Pin the ticket to the policy in force now, and measure against that from
+   * here on. Re-running applySla later -- on a priority change, say -- keeps
+   * the pin, so the clock does not silently move under an open case. */
+  const pin = ticket.sla_version_id ?? one(
+    'SELECT id FROM artefact_versions WHERE kind = ? AND logical_id = ? AND is_current = 1',
+    ['sla_policy', `${card?.product_type_id ?? 'null'}:${ticket.priority}`],
+  )?.id ?? null;
+
+  const policy = policyFor(card?.product_type_id, ticket.priority, pin);
   const from = new Date(`${ticket.created_at.replace(' ', 'T')}Z`);
 
   const responseDue = addBusinessMinutes(from, policy.response_mins);
   const resolutionDue = addBusinessMinutes(from, policy.resolution_mins);
 
-  run('UPDATE tickets SET response_due = ?, resolution_due = ? WHERE id = ?', [
-    toSql(responseDue), toSql(resolutionDue), ticketId,
+  run('UPDATE tickets SET response_due = ?, resolution_due = ?, sla_version_id = ? WHERE id = ?', [
+    toSql(responseDue), toSql(resolutionDue), pin, ticketId,
   ]);
   return { response_due: toSql(responseDue), resolution_due: toSql(resolutionDue) };
 }

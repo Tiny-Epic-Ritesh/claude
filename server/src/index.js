@@ -40,6 +40,7 @@ import calendarRoutes from './routes/calendar.js';
 import kraRoutes from './routes/kra.js';
 import { backfillClients, backfillPanIndex } from './engine/clients.js';
 import { sweepListRefresh } from './engine/leadlists.js';
+import { accessLog, sweepAccessLog } from './engine/accesslog.js';
 
 import { sweepSla } from './engine/sla.js';
 import { sweepKyc } from './engine/kyc.js';
@@ -87,6 +88,17 @@ const loginLimiter = rateLimiter({
   by: (req) => String(req.body?.email || req.ip || 'anon').toLowerCase(),
 });
 const dkycLimiter  = rateLimiter({ name: 'dkyc',  limit: 120, windowMs: 60_000 });
+
+/* Every API request, mounted before the sign-in routes.
+ *
+ * Sitting after them meant a failed sign-in left no trace at all, so a run of
+ * attempts against one account -- the thing an access log most obviously exists
+ * to show -- was invisible. The row is written on 'finish', by which point
+ * attachSession has run, so an authenticated request still records who made it.
+ *
+ * Paths only: never bodies, never query strings. engine/accesslog.js explains
+ * why that line is drawn where it is. */
+app.use('/api', accessLog);
 
 app.post('/api/auth/login', loginLimiter, (req, res) => {
   const result = login(req.body.email, req.body.password);
@@ -324,6 +336,13 @@ setInterval(() => { try { runEnabledRules(); } catch (e) { console.error('[rules
    score overnight. Rebuilding on a schedule is what keeps a derived value
    honest without anyone remembering to refresh it. */
 setInterval(() => { try { sweepMetrics(); } catch (e) { console.error('[metrics]', e.message); } }, 15 * MINUTE);
+
+/* The access log is a control, not an archive. Rows past the retention window
+   go hourly, so the table cannot quietly become a permanent record of every
+   client record anybody has ever opened. */
+setInterval(() => {
+  try { sweepAccessLog(); } catch (e) { console.error('[accesslog]', e.message); }
+}, 60 * MINUTE);
 
 /* Refreshable lists rebuild at 06:00 IST -- before the market opens and the
    day's calling starts. Checked every fifteen minutes; the sweep itself is
