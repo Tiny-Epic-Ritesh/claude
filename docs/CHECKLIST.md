@@ -5,13 +5,16 @@ the record of what shipped is as useful as the list of what has not.
 
 Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 
-**Status: 38 of 46 done.** Sections A, B, C and D complete — both portals
-rebuilt, lead editing built, product cards boxed, all gates passed.
-The 8 open items are the longer architectural queue, not this batch.
+**Status: 122 done, 1 open** (31 Aug 2026). The single open item is blocked on
+the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 517** — 298 e2e, 33 metadata, 26 advanced search, 25 conditions,
-23 formulas, 23 approvals, 21 de-identification, 20 vendor adapters,
-20 calendars, 16 queues, 12 sharing. All green.
+**Tests: 734** — 477 end-to-end and 257 unit. All green.
+
+Since this header was last accurate the build has also closed the last of the
+LeadSquared audit findings that were still open on 21 August: field-change
+history, automation conflict detection, nested query power, and versioning for
+rules, templates, KYC journeys and SLA policies. See `docs/gap-analysis.md` for
+the current scorecard.
 
 ---
 

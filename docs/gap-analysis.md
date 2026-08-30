@@ -1,6 +1,6 @@
 # Gap Analysis — current build vs. the LeadSquared audit
 
-**Date:** 21 Aug 2026
+**Date:** 21 Aug 2026 · **Scorecard re-checked against the code:** 31 Aug 2026
 **Audit basis:** `docs/legacy-leadsquared/LEADSQUARED-CRM-REFERENCE.md`, Parts 1 and 7
 **Subject:** the CRM in this repo (`server/`, `client/`) as built to date
 
@@ -28,27 +28,33 @@ expensive the moment 495,118 leads land on them.
 
 | # | Finding | Status | Where |
 |---|---|---|---|
-| 1 | Overloaded stage enum | ⚠️ **Partly repeated** | `leads.stage`, `leads.kyc_status` |
+| 1 | Overloaded stage enum | ✅ **Closed** | separate `state` / `stage` / `kyc_portal_stage`; 5 stages, not 32 |
 | 2 | Opportunity as generic work item | ✅ Avoided | `product_cards` / `tickets` / `kyc_journeys` are distinct |
 | 3 | Cross-entity activity mirroring | ✅ Avoided | one `activities` table, multi-parent FKs |
-| 4 | Timestamps stamped by automation | ⚠️ **Partly repeated** | no lead field-history; several stamped fields |
-| 5 | Undefined automation ordering | ⚠️ **Partly repeated** | priority exists; conflict detection does not |
+| 4 | Timestamps stamped by automation | ✅ **Closed** | `field_history` is first-class and queryable; stage entry/exit tracked |
+| 5 | Undefined automation ordering | ✅ **Closed** | `engine/conflicts.js` — priority, static conflict detection, failure queue |
 | 6 | Notes appended to parent record | ✅ Avoided | `notes` table + per-interaction `activities.body` |
 | 7 | Shared login accounts | ✅ Avoided | one identity per human, scrypt, sessions |
-| 8 | Static lists / flat query power | ❌ **Repeated** | `lead_list_members`, flat rule conditions |
+| 8 | Static lists / flat query power | ✅ **Closed** | nested AND/OR trees in `engine/conditions.js`; static / refreshable / dynamic lists |
 | 9 | No cascading picklist validation | ✅ Avoided | `dispositions` enforced server-side |
-| 10 | No versioning | ❌ **Repeated** | nothing is versioned |
+| 10 | No versioning | ⚠️ **Partly closed** | rules, templates, KYC journeys, SLA policies versioned with diff and rollback (`engine/versioning.js`); dispositions, KRA and incentives still carry active/effective flags only |
 
 Plus the explicit checklist from the brief:
 
 | Failure mode to check for | Present? |
 |---|---|
-| A single overloaded status enum | Partly — see 1.1 |
+| A single overloaded status enum | No longer — split into separate dimensions |
 | Opportunity used as a generic work item | No |
-| **Stamped counters instead of computed aggregates** | **Yes — see 1.2. This is the worst one.** |
+| Stamped counters instead of computed aggregates | No longer — derived, with `field_history` behind it |
 | Notes appended to the parent instead of the interaction | No |
-| Flat-only AND/OR query filters | **Yes — see 1.3** |
+| Flat-only AND/OR query filters | No longer — nested condition trees |
 | Vendor names embedded in entity types | No, but see 3.4 |
+
+> **Read the sections below as a record of what was true on 21 August, not as a
+> description of the build.** The scorecard above is current; the prose that
+> follows was written before any of it was fixed and is kept because the
+> reasoning for each decision is still the useful part. Section 1 in particular
+> argues for three refactors that have since been done.
 
 ---
 

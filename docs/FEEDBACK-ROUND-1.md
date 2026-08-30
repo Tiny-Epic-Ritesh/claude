@@ -35,7 +35,7 @@ HTML** because the SPA fallback caught them. An unbuilt endpoint must 404.
 | BUG-02 | Dark theme, login email | P1 | **Done** — same root cause | with BUG-18 |
 | ENH-03 | Scrolling ticker | P2 | **Done** - continuous marquee, seamless loop, pauses on hover, on every page | |
 | ENH-04 | Ticker role control | P2 | **Done** - role + per-user toggle in Setup > Navigation, audited | Q-03/Q-04 confirmed |
-| ENH-05 | Summary-card drill-through | P1 | **Done** — metrics carry a destination; 5 of 6 linked per cockpit | needs Q-05 |
+| ENH-05 | Summary-card drill-through | P1 | **Done** — metrics carry a destination; 5 of 6 linked per cockpit | Q-05 confirmed |
 | ENH-05a | Drill-through per role | P1 | **Done** — same mechanism, every role, filters respect data scope | |
 | ENH-06 | Email composer | P1 | **Done** - composer opens from the address; templates, free text, collateral, files, consent-checked | simulates until SMTP is configured |
 | BUG-07 | Copilot breaks layout | P0 | **Done** — `.copilot` had no CSS at all | |
@@ -47,7 +47,7 @@ HTML** because the SPA fallback caught them. An unbuilt endpoint must 404.
 | ENH-10c | Richer View popup | P1 | **Done** - one request carries pitch, objections, history, what was tried, KYC and consent | |
 | ENH-10d | Start Engaging actions | P1 | **Done** - Call / WhatsApp / SMS / Email, each consent-checked before it is offered | |
 | ENH-11 | Group NBA + Start Call | P2 | **Done** — grouped into a record toolbar | |
-| ENH-12 | Warm card meaning | P1 | **Done** — "Products marked Warm", clickable, lands filtered | needs Q-12 |
+| ENH-12 | Warm card meaning | P1 | **Done** — "Products marked Warm", clickable, lands filtered | Q-12 confirmed |
 | BUG-13 | Quick Actions dead | P0 | **Done** — were spans, not buttons; server now declares each destination | |
 | ENH-14 | Contextual AI help | P1 | **Done** - one assistant, page-aware, returns links only to records the reader can already open | answer quality needs an AI key |
 | ENH-15 | Advanced Search UX | P1 | **Done** - Match all/any wording, inline help, four starter filters, live plain-English readback | |
