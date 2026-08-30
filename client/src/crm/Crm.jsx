@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { NavLink, Route, Routes, useNavigate } from 'react-router-dom';
 import { api, token, ROLE_LABEL } from '../api.js';
 import { Loading, Icon, Avatar, OrgSwitcher, ThemeToggle } from '../components/ui.jsx';
@@ -28,14 +28,27 @@ import Partners from './Partners.jsx';
 import PartnerProfile from './PartnerProfile.jsx';
 import KycConsole from './KycConsole.jsx';
 import Tasks from './Tasks.jsx';
-import Admin from './Admin.jsx';
 import MarketTab, { MarketStrip } from '../components/Market.jsx';
 import Approvals from './Approvals.jsx';
 import BrandLogo from '../components/BrandLogo.jsx';
 import Reports from './Reports.jsx';
-import DataTools from './DataTools.jsx';
 import Placeholder from './Placeholder.jsx';
 import Copilot from './Copilot.jsx';
+
+/**
+ * Loaded on demand, not with the shell.
+ *
+ * Setup is the largest screen in the product and it reaches Object Manager,
+ * Targets, Dispositions, Field masking and Navigation, so it carries most of
+ * that weight with it. Nine of the eleven roles cannot open either of these
+ * and were downloading both on every first load.
+ *
+ * Everything an RM, caller or dealer uses all day stays in the main bundle:
+ * a loading flicker on the screens people live in would be a worse trade than
+ * the bytes.
+ */
+const Admin = lazy(() => import('./Admin.jsx'));
+const DataTools = lazy(() => import('./DataTools.jsx'));
 
 /**
  * Navigation is Salesforce-shaped: an App Launcher switches working surfaces
@@ -225,8 +238,14 @@ export default function Crm() {
             <Route path="/reports" element={<Reports session={session} />} />
             <Route path="/market" element={<MarketTab />} />
             <Route path="/approvals" element={<Approvals />} />
-            <Route path="/data" element={<DataTools session={session} />} />
-            <Route path="/admin" element={<Admin session={session} />} />
+            <Route
+              path="/data"
+              element={<Suspense fallback={<Loading />}><DataTools session={session} /></Suspense>}
+            />
+            <Route
+              path="/admin"
+              element={<Suspense fallback={<Loading />}><Admin session={session} /></Suspense>}
+            />
 
             {/* Every advertised module is built. Placeholder is kept only for
                 an unknown route, which is a genuine 404 rather than a promise. */}
