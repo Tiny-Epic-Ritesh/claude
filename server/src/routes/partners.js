@@ -8,7 +8,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit, notify, daysSince, PARTNER_STATES } from '../db.js';
-import { requireUser, requirePermission, can, unmaskRequested, maskFor } from '../auth.js';
+import { requireUser, requirePermission, can, unmaskRequested, maskFor, orgsFor, mayUseOrg } from '../auth.js';
 import { encryptField, decryptField, maskRecord, maskRecords, validate } from '../security.js';
 import { send, lmsSync } from '../integrations.js';
 import { hashPassword } from '../security.js';
@@ -61,8 +61,14 @@ const decorate = (p) => {
 /* ------------------------------------------------------------ pipeline */
 
 router.get('/', requirePermission('partner.view'), (req, res) => {
-  const where = [];
-  const params = [];
+  /* Scoped to the reader's book.
+   *
+   * partner.view is held by Admin, Partner RM and Sales Supervisor -- roles
+   * that exist in both books -- so holding the capability was enough to list
+   * the other book's partners, their codes and their commercial state. */
+  const orgs = orgsFor(req.user);
+  const where = [`sales_org IN (${orgs.map(() => '?').join(',') || "''"})`];
+  const params = [...orgs];
   if (req.query.state) { where.push('state_code = ?'); params.push(req.query.state); }
   if (req.query.mine === 'true' || req.user.role === 'partner_rm') { where.push('owner_id = ?'); params.push(req.user.id); }
 
@@ -73,6 +79,9 @@ router.get('/', requirePermission('partner.view'), (req, res) => {
 router.get('/:id', requirePermission('partner.view'), (req, res) => {
   const partner = one('SELECT * FROM partners WHERE id = ?', [req.params.id]);
   if (!partner) return res.status(404).json({ error: 'Partner not found' });
+  if (!mayUseOrg(req.user, partner.sales_org)) {
+    return res.status(403).json({ error: 'This partner belongs to another book' });
+  }
 
   res.json({
     ...maskRecord(decorate(partner), maskFor(req, 'partner', Number(req.params.id))),

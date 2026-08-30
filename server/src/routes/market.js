@@ -17,7 +17,7 @@
  */
 
 import { Router } from 'express';
-import { requireUser } from '../auth.js';
+import { requireUser, reqScope } from '../auth.js';
 import { one, all } from '../db.js';
 import {
   indices, news, corporateActions, issues, snapshot, status, DISCLAIMER, DELAY_MINUTES,
@@ -78,7 +78,14 @@ router.get('/status', (_req, res) => res.json(status()));
  * data we actually hold.
  */
 router.get('/context/:leadId', (req, res) => {
-  const lead = one('SELECT id, name FROM leads WHERE id = ? AND deleted_at IS NULL', [req.params.leadId]);
+  // Scoped even though it returns only a name and some index levels: the name
+  // is the part that is not ours to hand over.
+  const scope = reqScope(req, 'l');
+  const lead = one(
+    `SELECT l.id, l.name FROM leads l
+      WHERE l.id = ? AND l.deleted_at IS NULL AND ${scope.sql}`,
+    [req.params.leadId, ...scope.params],
+  );
   if (!lead) return res.status(404).json({ error: 'Lead not found' });
 
   const cards = all(

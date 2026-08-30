@@ -20,6 +20,7 @@
 
 import { all, one, run, audit } from '../db.js';
 import { toSql, validateTree } from './conditions.js';
+import { mayUseOrg } from '../auth.js';
 
 export const LIST_KINDS = ['static', 'refreshable', 'dynamic'];
 
@@ -190,6 +191,18 @@ export const resetSweep = () => { lastSweepDay = null; };
  */
 export function mayReadList(list, user) {
   if (!list || !user) return false;
+
+  /**
+   * The book boundary is checked before ownership and before sharing.
+   *
+   * shared_with holds role names, and a role name says nothing about which
+   * book its holder is in: a Bonanza list shared with "sales_rm" was readable
+   * by every sales RM in the firm, the Bigul ones included. Ownership is tested
+   * after this for the same reason -- there is no case where a Bigul user
+   * should read a Bonanza list, whoever happens to have built it.
+   */
+  if (list.sales_org && !mayUseOrg(user, list.sales_org)) return false;
+
   if (list.owner_id === user.id || list.created_by === user.id) return true;
   if (['superadmin', 'admin'].includes(user.role)) return true;
   let shared = [];

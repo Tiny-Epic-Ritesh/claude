@@ -1533,9 +1533,19 @@ async function run() {
     await req('/api/reports/team', { token: T.caller, expect: 403 });
   });
 
-  await check('the partner report is system-level, not team-level', async () => {
-    await req('/api/reports/partners', { token: T.sales_supervisor, expect: 403 });
+  await check('the partner report follows the partner remit, not the report tier', async () => {
+    /* Superseded a check that asserted report.system, which put the report out
+     * of reach of the two roles whose work it describes. It is gated on
+     * partner.view now and scoped per role on the server, so opening it to a
+     * supervisor does not widen what a supervisor reads. Suite 50 proves the
+     * scoping; this one guards the gate itself. */
+    await req('/api/reports/partners', { token: T.sales_supervisor, expect: 200 });
+    await req('/api/reports/partners', { token: T.partner_rm, expect: 200 });
     await req('/api/reports/partners', { token: T.admin, expect: 200 });
+
+    // No partner remit, no partner report.
+    await req('/api/reports/partners', { token: T.caller, expect: 403 });
+    await req('/api/reports/partners', { token: T.marketing_manager, expect: 403 });
   });
 
   await check('reports are scoped — an RM does not see the whole firm', async () => {
@@ -4975,6 +4985,208 @@ await check('a per-channel withdrawal closes only that channel', async () => {
       method: 'POST', token: T.sales_rm, expect: 403,
       body: { role_code: 'sales_rm', code: 'x', label: 'x' },
     });
+  });
+
+  /* ============================================================ 49 */
+  suite('49 the book boundary holds on record routes');
+
+  /*
+   * Index routes were filtered by book from the start. Record routes were not,
+   * and each one had to be remembered separately -- so seven of them were not.
+   * A Bigul user holding a Bonanza id could read the lead's next-action advice,
+   * a ticket's case notes, a card's state history, a saved list, and a KYC
+   * journey including the applicant's resume token.
+   *
+   * These tests fetch ids from the Bonanza side and demand a refusal on the
+   * Bigul side. The ids are read as superadmin and then filtered on sales_org:
+   * a superadmin spans both books, so "the first record a superadmin can see"
+   * is not necessarily a Bonanza one, and taking it as such is how the first
+   * pass at this test reported a leak that was correct behaviour.
+   */
+
+  const bigulOnly = await login('rm@bigul.test');
+
+  /** One Bonanza id from a list route, or null when the fixture is exhausted. */
+  const bonanzaIdFrom = async (path, pick = (r) => r.id) => {
+    const { data } = await req(path, { token: T.superadmin, expect: 200 });
+    const rows = Array.isArray(data) ? data : (data.rows ?? data.items ?? []);
+    const row = rows.find((r) => r.sales_org === 'BONANZA');
+    return row ? pick(row) : null;
+  };
+
+  /** Refused means 403 or 404 — never 200, and never a crash. */
+  const refused = async (path, what) => {
+    const { status, data } = await req(path, { token: bigulOnly });
+    assert([403, 404].includes(status),
+      `${what}: a Bigul user got HTTP ${status} for ${path} — ${JSON.stringify(data).slice(0, 160)}`);
+  };
+
+  await check('a Bonanza lead is refused on every route that takes a lead id', async () => {
+    const id = need(await bonanzaIdFrom('/api/leads?limit=50'), 'a Bonanza lead');
+    await refused(`/api/leads/${id}`, 'lead detail');
+    await refused(`/api/activities/lead/${id}`, 'lead activities');
+    await refused(`/api/email/compose/${id}`, 'email composer');
+
+    // Reads as harmless -- a name and some index levels -- but the name is the
+    // part that is not ours to hand over.
+    await refused(`/api/market/context/${id}`, 'market context');
+
+    // The advice is assembled from the lead's tickets, cards and KYC state, so
+    // an unscoped answer describes the record about as well as the record does.
+    await refused(`/api/ai/leads/${id}/next-action`, 'next action');
+  });
+
+  await check('a Bonanza ticket is refused, ref and all', async () => {
+    const id = need(await bonanzaIdFrom('/api/tickets?limit=50'), 'a Bonanza ticket');
+    await refused(`/api/tickets/${id}`, 'ticket detail');
+  });
+
+  await check('a Bonanza saved list is refused even when shared with the reader role', async () => {
+    /*
+     * The list has to be one that is actually shared with the reader's role,
+     * or the refusal proves nothing: most lists are shared with nobody, and
+     * those were correctly refused even before the fix. The defect was
+     * specifically that shared_with holds role names, and "sales_rm" names a
+     * role in both books -- so sharing with a role shared it across the firm.
+     */
+    const { data } = await req('/api/lists', { token: T.superadmin, expect: 200 });
+    const rows = Array.isArray(data) ? data : (data.rows ?? []);
+    const sharedWithSalesRm = need(
+      rows.find((l) => {
+        if (l.sales_org !== 'BONANZA') return false;
+        try { return JSON.parse(l.shared_with || '[]').includes('sales_rm'); } catch { return false; }
+      }),
+      'a Bonanza list shared with the sales_rm role',
+    );
+
+    await refused(`/api/lists/${sharedWithSalesRm.id}`, 'list detail');
+    // …and still readable by someone whose book it is.
+    await req(`/api/lists/${sharedWithSalesRm.id}`, { token: T.superadmin, expect: 200 });
+  });
+
+  /*
+   * Cards and journeys do not carry sales_org in their payloads, so their book
+   * is resolved through the lead they belong to. Resolving it by reading a
+   * `sales_org` field that is not there yields undefined, and a test that then
+   * skips itself passes without asserting anything -- which is worse than no
+   * test, because it reads as coverage.
+   */
+  const bonanzaLeadIds = await (async () => {
+    const { data } = await req('/api/leads?limit=200', { token: T.superadmin, expect: 200 });
+    const rows = Array.isArray(data) ? data : (data.rows ?? []);
+    return new Set(rows.filter((l) => l.sales_org === 'BONANZA').map((l) => Number(l.id)));
+  })();
+
+  await check('a Bonanza card audit trail is refused', async () => {
+    assert(bonanzaLeadIds.size > 0, `no Bonanza leads to resolve a card against. ${RESEED}`);
+    const { data } = await req('/api/cards?limit=200', { token: T.superadmin, expect: 200 });
+    const rows = Array.isArray(data) ? data : (data.rows ?? []);
+    const card = need(rows.find((c) => bonanzaLeadIds.has(Number(c.lead_id))), 'a Bonanza product card');
+
+    await refused(`/api/cards/${card.id}/detail`, 'card detail');
+    // card_audit has no owner and no org of its own, which is why it was missed.
+    await refused(`/api/cards/${card.id}/audit`, 'card audit');
+  });
+
+  await check('a Bonanza KYC journey is refused, so its resume token stays put', async () => {
+    const { data } = await req('/api/kyc/health', { token: T.superadmin, expect: 200 });
+    const rows = Array.isArray(data) ? data : (data.rows ?? []);
+    const journey = need(rows.find((j) => bonanzaLeadIds.has(Number(j.lead_id))), 'a Bonanza KYC journey');
+
+    const { status, data: body } = await req(`/api/kyc/journeys/${journey.id}`, { token: bigulOnly });
+    assert([403, 404].includes(status),
+      `a Bigul user read a Bonanza KYC journey (HTTP ${status})`);
+    assert(!JSON.stringify(body ?? {}).includes('resume_token'),
+      'the refusal still returned the applicant resume token');
+
+    // The same journey must still open for someone whose book it is, or the
+    // test above would be satisfied by a route that refuses everybody.
+    await req(`/api/kyc/journeys/${journey.id}`, { token: T.superadmin, expect: 200 });
+  });
+
+  await check('a partial user reaches no book at all, rather than Bonanza', async () => {
+    // orgsFor() used to fall back to BONANZA whenever sales_org was absent, so
+    // anything constructing a user from an id and a capability set was handed
+    // the larger book. The approvals queue did precisely that.
+    const { orgsFor } = await import('../src/auth.js');
+    eq(orgsFor({ id: 1, capabilities: new Set() }).length, 0,
+      'a user with no sales_org was granted a book');
+    eq(orgsFor(null).length, 0, 'a null user was granted a book');
+  });
+
+  /* ============================================================ 50 */
+  suite('50 duplicate check, partner report and partner book');
+
+  await check('Customer Care can run the check its tab offers', async () => {
+    /* The tab was granted to Customer Care while both of its features were
+     * gated on lead.create, which Customer Care does not hold -- so the page
+     * loaded, showed its counts, and refused the only two things it does. */
+    const { data: dupes } = await req('/api/ccm/duplicates', { token: T.customer_care, expect: 200 });
+    assert(Array.isArray(dupes.groups ?? dupes), 'the duplicates list did not come back');
+
+    const { data: search } = await req('/api/ccm/search?q=98', { token: T.customer_care, expect: 200 });
+    assert('matches' in search, 'the search did not come back');
+  });
+
+  await check('the duplicate check still refuses a role with neither permission', async () => {
+    // Widening it to "either job" must not widen it to everybody.
+    await req('/api/ccm/duplicates', { token: T.marketing_manager, expect: 403 });
+  });
+
+  await check('the check answers whether, never who to call', async () => {
+    const { data } = await req('/api/ccm/search?q=98', { token: T.customer_care, expect: 200 });
+    for (const m of data.matches ?? []) {
+      // Crossing the book is the point of this screen; handing over contact
+      // details is not.
+      assert(!('mobile' in m) || m.mobile == null || String(m.mobile).includes('\u2022'),
+        `the duplicate check returned a contactable number: ${JSON.stringify(m).slice(0, 140)}`);
+    }
+  });
+
+  await check('the partner report opens for the roles it describes', async () => {
+    for (const role of ['admin', 'partner_rm', 'sales_supervisor']) {
+      const { data } = await req('/api/reports/partners', { token: T[role], expect: 200 });
+      assert(Array.isArray(data.rows), `${role} got no rows`);
+    }
+    // …and stays shut for a role with no partner remit.
+    await req('/api/reports/partners', { token: T.caller, expect: 403 });
+  });
+
+  await check('a Partner RM report covers their own partners, not the desk', async () => {
+    const { data } = await req('/api/reports/partners', { token: T.partner_rm, expect: 200 });
+    eq(data.scope, 'own_partners', 'a Partner RM was given the whole book');
+
+    const { data: wide } = await req('/api/reports/partners', { token: T.admin, expect: 200 });
+    eq(wide.scope, 'book', 'an admin was narrowed to their own partners');
+    assert(wide.rows.length >= data.rows.length,
+      'the narrowed report returned more rows than the wide one');
+  });
+
+  await check('partners stay inside their own book', async () => {
+    /* partner.view is held by Admin, Partner RM and Sales Supervisor, and those
+     * roles exist in both businesses -- so holding it was enough to list and
+     * open the other book's partners, codes and commercial state included. */
+    const bigulSup = await login('supervisor@bigul.test');
+
+    const { data: theirs } = await req('/api/partners', { token: bigulSup, expect: 200 });
+    const rows = Array.isArray(theirs) ? theirs : (theirs.rows ?? []);
+    const orgs = [...new Set(rows.map((r) => r.sales_org))];
+    assert(!orgs.includes('BONANZA'),
+      `a Bigul supervisor was shown Bonanza partners: ${orgs.join(', ')}`);
+
+    const { data: all } = await req('/api/partners', { token: T.superadmin, expect: 200 });
+    const allRows = Array.isArray(all) ? all : (all.rows ?? []);
+    const bonanza = need(allRows.find((r) => r.sales_org === 'BONANZA'), 'a Bonanza partner');
+    const { status } = await req(`/api/partners/${bonanza.id}`, { token: bigulSup });
+    assert([403, 404].includes(status),
+      `a Bigul supervisor opened a Bonanza partner (HTTP ${status})`);
+
+    // The partner report is built from the same table and had the same gap.
+    const { data: rep } = await req('/api/reports/partners', { token: bigulSup, expect: 200 });
+    for (const r of rep.rows) {
+      assert(!allRows.some((p) => p.id === r.id && p.sales_org === 'BONANZA'),
+        `the partner report leaked a Bonanza partner: ${r.name}`);
+    }
   });
 
   /* ------------------------------------------------------------- report */

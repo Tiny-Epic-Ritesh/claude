@@ -282,6 +282,25 @@ export const requirePartner = (req, res, next) =>
   req.partner ? next() : res.status(401).json({ error: 'Partner sign-in required' });
 
 /** Route guard: `requirePermission('lead.stage.change')`. */
+/**
+ * Any one of several permissions is enough.
+ *
+ * Some screens are reachable by two different jobs. The duplicate check is the
+ * example: the person about to create a lead needs it, and so does the person
+ * answering the phone to somebody who may already be a client. Requiring a
+ * single permission forced a choice between them and locked one out.
+ */
+export const requireAnyPermission = (...permissions) => (req, res, next) => {
+  if (!req.user) return res.status(401).json({ error: 'Sign in required' });
+  if (!permissions.some((p) => can(req.user.role, p))) {
+    return res.status(403).json({
+      error: `Your role (${req.user.role}) cannot do this`,
+      required: permissions.join(' or '),
+    });
+  }
+  next();
+};
+
 export const requirePermission = (permission) => (req, res, next) => {
   if (!req.user) return res.status(401).json({ error: 'Sign in required' });
   if (!can(req.user.role, permission)) {
@@ -458,7 +477,19 @@ export function orgsFor(user) {
   let access = null;
   try { access = user.org_access ? JSON.parse(user.org_access) : null; } catch { access = null; }
 
-  const list = Array.isArray(access) && access.length ? access : [user.sales_org || 'BONANZA'];
+  /**
+   * No sales_org means no book, and no book means nothing -- not Bonanza.
+   *
+   * This used to default to BONANZA, which reads as harmless until something
+   * passes a partial user: every caller assembling `{ id, capabilities }` was
+   * silently granted the Bonanza book, and the approvals queue did exactly
+   * that. A missing org is a programming error, and the safe answer to one is
+   * to see nothing rather than to see the larger of the two books.
+   */
+  if (!Array.isArray(access) || !access.length) {
+    if (!user.sales_org) return [];
+  }
+  const list = Array.isArray(access) && access.length ? access : [user.sales_org];
   // Superadmin is a platform role, not a business role, so it spans both.
   if (user.role === 'superadmin') return [...new Set([...list, ...SALES_ORGS])];
   return [...new Set(list.filter((o) => SALES_ORGS.includes(o)))];

@@ -753,6 +753,19 @@ router.get('/cards/:id/detail', (req, res) => {
 });
 
 router.get('/cards/:id/audit', (req, res) => {
+  /* Scoped the same way as /cards/:id/detail just above.
+   *
+   * card_audit carries no owner and no org of its own -- it hangs off the card,
+   * which hangs off the lead -- so without this join the state history of any
+   * card in the firm was readable by anyone who could guess a card id. */
+  const scope = reqScope(req, 'l');
+  const visible = one(
+    `SELECT 1 v FROM product_cards pc JOIN leads l ON l.id = pc.lead_id
+      WHERE pc.id = ? AND ${scope.sql}`,
+    [req.params.id, ...scope.params],
+  );
+  if (!visible) return res.status(403).json({ error: 'This card is outside your visibility scope' });
+
   res.json(all('SELECT ca.*, u.name AS user_name FROM card_audit ca LEFT JOIN users u ON u.id = ca.user_id WHERE ca.card_id = ? ORDER BY ca.created_at DESC', [req.params.id]));
 });
 

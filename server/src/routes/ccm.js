@@ -20,7 +20,7 @@
 
 import { Router } from 'express';
 import { all, one } from '../db.js';
-import { requireUser, requirePermission, orgsFor } from '../auth.js';
+import { requireUser, requireAnyPermission, orgsFor } from '../auth.js';
 import { blindIndex, maskMobile, maskPan } from '../security.js';
 
 const router = Router();
@@ -31,7 +31,15 @@ const digits = (s) => String(s ?? '').replace(/\D/g, '');
 
 const looksLikePan = (s) => /^[A-Z]{5}[0-9]{4}[A-Z]$/i.test(String(s ?? '').trim());
 
-router.get('/search', requirePermission('lead.create'), (req, res) => {
+/* Either job may run the check.
+ *
+ * lead.create is the person about to onboard somebody; client.view.all is the
+ * person answering the phone to somebody who may already be a client. Customer
+ * Care is the second, holds only the second, and was shown this tab while being
+ * refused both of the things it does. */
+const mayCheckDuplicates = requireAnyPermission('lead.create', 'client.view.all');
+
+router.get('/search', mayCheckDuplicates, (req, res) => {
   const q = String(req.query.q ?? '').trim();
   if (q.length < 3) {
     return res.json({
@@ -135,7 +143,7 @@ router.get('/summary', (req, res) => {
 });
 
 /** The existing duplicates, so somebody can actually work through them. */
-router.get('/duplicates', requirePermission('lead.create'), (req, res) => {
+router.get('/duplicates', mayCheckDuplicates, (req, res) => {
   const orgs = orgsFor(req.user);
   const orgList = orgs.map(() => '?').join(',') || "''";
 

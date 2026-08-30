@@ -29,6 +29,7 @@
  */
 
 import { all, one, run, audit, notify, transact } from '../db.js';
+import { mayUseOrg } from '../auth.js';
 
 /* ---------------------------------------------------------- the scopes */
 
@@ -200,6 +201,12 @@ export function decide(id, { approve, reason, decidedBy, apply }) {
     return { ok: false, error: `Deciding this needs ${spec.approver}` };
   }
 
+  // Holding the capability is not the same as being in the right book. A
+  // supervisor holds lead.reassign in whichever book they work in.
+  if (!inReach(req, decidedBy)) {
+    return { ok: false, error: 'This request belongs to another book' };
+  }
+
   if (!approve && !reason?.trim()) {
     return { ok: false, error: 'Say why it was rejected — the requester has to know what to change.' };
   }
@@ -248,6 +255,39 @@ export function withdraw(id, user) {
   audit(user.id, 'approval_withdrawn', req.entity, req.entity_id, { scope: req.scope });
   return { ok: true };
 }
+
+/* -------------------------------------------------------- book scope */
+
+/**
+ * Which book an approval belongs to.
+ *
+ * The approvals table has no sales_org of its own, and should not grow one: a
+ * request is always about a record, and the record already knows which book it
+ * is in. Deriving it keeps the two from drifting apart, which a copied column
+ * eventually always does.
+ */
+export const orgOf = (entity, entityId) => {
+  const sql = {
+    partner: 'SELECT sales_org FROM partners WHERE id = ?',
+    lead: 'SELECT sales_org FROM leads WHERE id = ?',
+  }[entity];
+  if (!sql) return null;
+  return one(sql, [entityId])?.sales_org ?? null;
+};
+
+/**
+ * Whether this user's book covers the record an approval is about.
+ *
+ * Fails CLOSED on an entity with no mapping above. A new approval scope over a
+ * new entity type should stop working visibly until someone adds it here,
+ * rather than quietly becoming readable across both books -- which is exactly
+ * how a Bigul supervisor came to hold a decide button on a Bonanza request.
+ */
+export const inReach = (row, user) => {
+  if (!row || !user) return false;
+  const org = orgOf(row.entity, row.entity_id);
+  return org == null ? false : mayUseOrg(user, org);
+};
 
 /* ----------------------------------------------------------- reading */
 
@@ -309,7 +349,15 @@ export function queueFor(user) {
     )
     : [];
 
-  return { waiting_on_me: decorate(waiting), my_requests: decorate(mine) };
+  // Both halves are filtered, not just the queue: "my requests" is listed by
+  // requester id, which is already one person, but a user moved between books
+  // would otherwise keep seeing what they raised in the old one.
+  const here = (rows) => rows.filter((r) => inReach(r, user));
+
+  return {
+    waiting_on_me: decorate(here(waiting)),
+    my_requests: decorate(here(mine)),
+  };
 }
 
 export const history = (entity, entityId) => all(

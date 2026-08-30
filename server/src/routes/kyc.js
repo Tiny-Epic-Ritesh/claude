@@ -8,7 +8,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit } from '../db.js';
-import { requireUser, requirePermission } from '../auth.js';
+import { requireUser, requirePermission, reqScope } from '../auth.js';
 import * as kyc from '../engine/kyc.js';
 import { digilockerFetch, pennyDrop, esign, sendOtp, verifyOtp, DEMO_OTP } from '../integrations.js';
 import { generateCards } from './crm.js';
@@ -30,6 +30,18 @@ internal.get('/health', (req, res) => {
 internal.get('/journeys/:id', (req, res) => {
   const journey = kyc.getJourney(Number(req.params.id));
   if (!journey) return res.status(404).json({ error: 'Journey not found' });
+
+  /* A journey inherits its book from the lead it belongs to.
+   *
+   * This one matters more than the rest: the record carries resume_token, the
+   * bearer token an applicant uses to re-enter their own KYC on the public
+   * portal. Handing that across the book boundary hands over the journey. */
+  const scope = reqScope(req, 'l');
+  const visible = journey.lead_id
+    ? one(`SELECT 1 v FROM leads l WHERE l.id = ? AND ${scope.sql}`, [journey.lead_id, ...scope.params])
+    : null;
+  if (!visible) return res.status(403).json({ error: 'This journey is outside your visibility scope' });
+
   res.json(journey);
 });
 

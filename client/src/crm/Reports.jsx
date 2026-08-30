@@ -443,7 +443,9 @@ export default function Reports({ session }) {
     { key: 'team', label: 'Team' },
     { key: 'ageing', label: 'Ageing & KYC' },
     { key: 'sla', label: 'SLA' },
-    has('report.system') && { key: 'partners', label: 'Partners' },
+    // partner.view, not report.system: the report is scoped per role on the
+    // server, so the roles whose work it describes can open it.
+    has('partner.view') && { key: 'partners', label: 'Partners' },
     { key: 'activity', label: 'Activity' },
   ].filter(Boolean);
 

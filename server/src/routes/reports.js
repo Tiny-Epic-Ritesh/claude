@@ -20,7 +20,7 @@
 
 import { Router } from 'express';
 import { all, one, CARD_STATES } from '../db.js';
-import { requireUser, requirePermission, reqScope, can } from '../auth.js';
+import { requireUser, requirePermission, reqScope, can, orgsFor } from '../auth.js';
 
 const router = Router();
 router.use(requireUser);
@@ -355,11 +355,30 @@ router.get('/sla', canReport, (_req, res) => {
 /* --------------------------------------------------------------- partners */
 
 /** Partner sourcing performance. Firm-wide, so it needs the system report right. */
-router.get('/partners', requirePermission('report.system'), (req, res) => {
+/**
+ * Partner performance.
+ *
+ * Gated on partner.view rather than report.system, which put it out of reach of
+ * the two roles whose work it describes: Partner RM, and the Sales Supervisor
+ * asking why the team's numbers moved. Each sees what they can already see
+ * elsewhere -- a Partner RM their own partners, everyone else their own book --
+ * so widening who may open it does not widen what anybody reads.
+ */
+router.get('/partners', requirePermission('partner.view'), (req, res) => {
   const window = days(req, 90);
+
+  const orgs = orgsFor(req.user);
+  const where = [`p.sales_org IN (${orgs.map(() => '?').join(',') || "''"})`];
+  const params = [...orgs];
+
+  // A Partner RM's report is about their own book of partners, matching what
+  // /api/partners already gives them. Nobody else is narrowed further.
+  const ownReach = req.user.role === 'partner_rm';
+  if (ownReach) { where.push('p.owner_id = ?'); params.push(req.user.id); }
 
   res.json({
     window_days: window,
+    scope: ownReach ? 'own_partners' : 'book',
     rows: all(
       `SELECT p.id, p.name, p.partner_code, p.partner_model, p.state_code,
               (SELECT COUNT(*) FROM leads WHERE partner_id = p.id AND deleted_at IS NULL) sourced,
@@ -369,8 +388,9 @@ router.get('/partners', requirePermission('report.system'), (req, res) => {
                  WHERE l2.partner_id = p.id AND pc.state = 'ACTIVE') converted,
               (SELECT COALESCE(SUM(payout),0) FROM commissions WHERE partner_id = p.id) commission
        FROM partners p
+       WHERE ${where.join(' AND ')}
        ORDER BY sourced DESC LIMIT 50`,
-      [`-${window} days`],
+      [`-${window} days`, ...params],
     ).map((r) => ({ ...r, conversion_pct: pct(r.converted, r.sourced) })),
   });
 });

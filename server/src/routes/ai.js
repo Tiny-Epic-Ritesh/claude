@@ -4,7 +4,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
-import { requireUser, can, leadScope } from '../auth.js';
+import { requireUser, can, leadScope, activeOrg } from '../auth.js';
 import { applyScore } from '../engine/rules.js';
 import * as ai from '../ai/index.js';
 
@@ -161,6 +161,16 @@ router.post('/disposition/confirm', (req, res) => {
 
 router.get('/leads/:id/next-action', async (req, res, next) => {
   try {
+    /* The advice is assembled from the lead's tickets, cards and KYC state, so
+     * an unscoped answer describes the record about as thoroughly as the
+     * record itself does. */
+    const scope = leadScope(req.user, 'l', activeOrg(req));
+    const visible = one(
+      `SELECT 1 v FROM leads l WHERE l.id = ? AND l.deleted_at IS NULL AND ${scope.sql}`,
+      [req.params.id, ...scope.params],
+    );
+    if (!visible) return res.status(403).json({ error: 'This lead is outside your visibility scope' });
+
     const ctx = ai.nextActionContext(Number(req.params.id));
     if (!ctx) return res.status(404).json({ error: 'Lead not found' });
     res.json({ ...(await ai.nextAction(ctx)), provider: ai.providerName });

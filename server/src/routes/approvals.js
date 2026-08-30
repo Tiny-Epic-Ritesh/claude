@@ -9,11 +9,11 @@
 
 import { Router } from 'express';
 import { all, one, run, audit } from '../db.js';
-import { requireUser, requirePermission } from '../auth.js';
+import { requireUser, requirePermission, mayUseOrg } from '../auth.js';
 import { newPartnerCode, issuePortalCredential } from './partners-support.js';
 import {
   APPROVAL_SCOPES, BULK_THRESHOLD, request, decide, withdraw, byId,
-  queueFor, history, lockedBy, approversFor,
+  queueFor, history, lockedBy, approversFor, inReach, orgOf,
 } from '../engine/approvals.js';
 
 const router = Router();
@@ -78,7 +78,9 @@ const APPLY = {
 /** What is waiting on me, and what I am waiting on. */
 router.get('/', (req, res) => {
   res.json({
-    ...queueFor({ id: req.user.id, capabilities: req.caps }),
+    // The whole user. queueFor has to know which book this person works in,
+    // and an object carrying only an id and a capability set does not say.
+    ...queueFor({ ...req.user, capabilities: req.caps }),
     scopes: Object.entries(APPROVAL_SCOPES).map(([key, s]) => ({
       key, label: s.label, why: s.why, approver: s.approver,
     })),
@@ -89,12 +91,21 @@ router.get('/', (req, res) => {
 router.get('/:id', (req, res) => {
   const row = byId(Number(req.params.id));
   if (!row) return res.status(404).json({ error: 'Approval not found' });
+  if (!inReach(row, req.user)) {
+    return res.status(403).json({ error: 'This request belongs to another book' });
+  }
   return res.json(row);
 });
 
 /** Everything that has ever been asked about one record. */
 router.get('/history/:entity/:id', (req, res) => {
-  res.json(history(req.params.entity, Number(req.params.id)));
+  // Scoped on the record asked about rather than on each row returned: every
+  // approval in the history is about that one record, so one check settles it.
+  const org = orgOf(req.params.entity, Number(req.params.id));
+  if (org == null || !mayUseOrg(req.user, org)) {
+    return res.status(403).json({ error: 'That record belongs to another book' });
+  }
+  return res.json(history(req.params.entity, Number(req.params.id)));
 });
 
 /* --------------------------------------------------------- requesting */
@@ -144,7 +155,9 @@ router.post('/:id/decide', (req, res) => {
   const out = decide(Number(req.params.id), {
     approve: Boolean(approve),
     reason,
-    decidedBy: { id: req.user.id, capabilities: req.caps },
+    // The whole user, not just the id: the engine has to know which book the
+    // decider works in, and that lives on the user record.
+    decidedBy: { ...req.user, capabilities: req.caps },
     apply: APPLY[row.scope],
   });
 

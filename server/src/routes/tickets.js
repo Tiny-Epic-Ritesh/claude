@@ -4,7 +4,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
-import { can, requireUser, requirePermission } from '../auth.js';
+import { can, requireUser, requirePermission, mayUseOrg } from '../auth.js';
 import { applySla, sweepSla, handleStatusChange, slaRemaining, DEFAULT_SLA } from '../engine/sla.js';
 import { send } from '../integrations.js';
 import * as ai from '../ai/index.js';
@@ -87,6 +87,13 @@ router.get('/:id', (req, res) => {
      WHERE t.id = ?`, [req.params.id],
   );
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+
+  /* The ticket list is filtered by book; this route was not, so a known ref was
+   * enough to read the other book's case notes -- which are the client's own
+   * words about their own money. */
+  if (!mayUseOrg(req.user, ticket.sales_org)) {
+    return res.status(403).json({ error: 'This ticket belongs to another book' });
+  }
 
   res.json({
     ...decorate(ticket),

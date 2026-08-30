@@ -25,11 +25,37 @@ const test = (name, fn) => {
 };
 
 const OWN = [];
-const partnerId = one('SELECT id FROM partners LIMIT 1').id;
-const requester = one("SELECT * FROM users WHERE role = 'partner_rm' AND active = 1 LIMIT 1");
-const approver = one("SELECT * FROM users WHERE role = 'admin' AND active = 1 LIMIT 1");
+const requester = one("SELECT * FROM users WHERE role = 'partner_rm' AND active = 1 ORDER BY id LIMIT 1");
+const approver = one("SELECT * FROM users WHERE role = 'admin' AND active = 1 ORDER BY id LIMIT 1");
 
-const withCaps = (u, caps) => ({ id: u.id, capabilities: new Set(caps) });
+/**
+ * A partner in the same book as the people deciding about them.
+ *
+ * `SELECT id FROM partners LIMIT 1` returned whichever row SQLite felt like,
+ * which in practice was a Bigul partner -- so every decide test below was
+ * quietly asserting that a Bonanza admin may approve a change to a Bigul
+ * partner. It passed because nothing checked. Pinning the book here keeps
+ * these tests about approval mechanics, and leaves the boundary itself to the
+ * test that exists to prove it.
+ */
+const partnerId = one(
+  'SELECT id FROM partners WHERE sales_org = ? ORDER BY id LIMIT 1',
+  [approver.sales_org],
+).id;
+const otherBookPartner = one(
+  'SELECT id, sales_org FROM partners WHERE sales_org <> ? ORDER BY id LIMIT 1',
+  [approver.sales_org],
+);
+
+/**
+ * A decider, as the route actually builds one.
+ *
+ * The whole user, not just an id and a capability set: deciding is scoped to
+ * the book the decider works in, and that lives on the user record. The
+ * earlier `{ id, capabilities }` shape was less than the engine is given in
+ * production, which is how a cross-book decide button went unnoticed here.
+ */
+const withCaps = (u, caps) => ({ ...u, capabilities: new Set(caps) });
 
 function ask(overrides = {}) {
   const out = request({
@@ -249,7 +275,7 @@ console.log('\nThe two queues are separate questions');
 test('"waiting on me" excludes my own requests', () => {
   clearPending();
   ask();
-  const q = queueFor({ id: requester.id, capabilities: new Set(['partner.elevate']) });
+  const q = queueFor(withCaps(requester, ['partner.elevate']));
 
   assert(!q.waiting_on_me.some((r) => Number(r.requested_by) === requester.id),
     'my own request is in my approval queue');
@@ -258,7 +284,7 @@ test('"waiting on me" excludes my own requests', () => {
 });
 
 test('an approver sees it, and is told they can decide it', () => {
-  const q = queueFor({ id: approver.id, capabilities: new Set(['partner.elevate']) });
+  const q = queueFor(withCaps(approver, ['partner.elevate']));
   const row = q.waiting_on_me.find((r) => r.scope === 'commission_change');
   assert(row, 'the approver cannot see a request they should decide');
   assert.equal(row.can_decide, true);
@@ -267,8 +293,41 @@ test('an approver sees it, and is told they can decide it', () => {
 });
 
 test('someone without the capability is offered nothing to decide', () => {
-  const q = queueFor({ id: approver.id, capabilities: new Set(['lead.contact']) });
+  const q = queueFor(withCaps(approver, ['lead.contact']));
   assert.equal(q.waiting_on_me.length, 0, 'work was offered to someone who cannot decide it');
+});
+
+test('a request from the other book is neither shown nor decidable', () => {
+  // The defect this replaced: a Bigul supervisor's queue listed pending Bonanza
+  // requests with can_decide true, and decide() honoured the button. Holding
+  // the capability is not the same as working in the book.
+  clearPending();
+  const out = request({
+    scope: 'commission_change',
+    entityId: otherBookPartner.id,
+    subjectName: 'Other book partner',
+    payload: { commission_pct: 42 },
+    reason: 'Raised in the other book',
+    requestedBy: requester.id,
+  });
+  assert(out.ok, `could not raise the fixture request: ${out.error}`);
+  OWN.push(out.request.id);
+
+  const q = queueFor(withCaps(approver, ['partner.elevate']));
+  assert(!q.waiting_on_me.some((r) => Number(r.id) === Number(out.request.id)),
+    'a request from the other book was offered for decision');
+
+  const decided = decide(out.request.id, {
+    approve: true,
+    reason: 'should not be possible',
+    decidedBy: withCaps(approver, ['partner.elevate']),
+    apply: () => ({}),
+  });
+  assert.equal(decided.ok, false, 'the other book\'s request was decided');
+  assert.match(decided.error, /another book/, `unhelpful refusal: ${decided.error}`);
+
+  assert.equal(byId(out.request.id).status, 'Pending',
+    'the request was changed despite the refusal');
 });
 
 test('a record carries its whole approval history', () => {
