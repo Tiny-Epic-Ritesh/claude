@@ -66,7 +66,7 @@ estimates.
 | ID | Finding |
 |---|---|
 | **P2-07** | Confirmed. `client/src/crm/Leads.jsx:179` still renders `<th>Cards</th>`. Round 1's ENH-10 renamed the label elsewhere and missed the list header. One-line fix. |
-| **P2-05** | Half-built. `POST/PATCH/DELETE /api/setup/roles` all exist and are permission-gated. The UI (`Admin.jsx:151`) renders a **read-only** matrix and never calls them. The work is a screen, not an engine. |
+| **P2-05** | **Done, 31 Aug.** The write API already existed and already implemented the Q-06 rules; what was missing was a screen that called it. `RolesSetup.jsx` now edits name, description, scope and permissions, creates and clones roles, and deletes non-system ones. Four e2e checks added, including that an edit — grant *and* revoke — takes effect on an already-issued token. |
 | **P2-08 + P2-09** | **One root cause, not two.** `EmailComposer.jsx` already does attachments, templates and collateral. But `leadActions.jsx:46` sends the product-card action to a plain message modal instead. Every entry point pointing at the composer fixes both. |
 | **P2-10** | **A regression from Round 1's ENH-19.** The base input rule chains eight `:not()` selectors, which gives it specificity (0,8,1). `.globalsearch input` is (0,1,1) and loses on specificity regardless of source order, so its `border: 0; background: transparent; padding: 0` resets never apply and the input draws its own box inside the pill. Blast radius is this element alone. The right fix wraps the exclusions in `:where()` so the base rule drops to (0,0,1) and any container override wins naturally — which also prevents the next nested input hitting the same wall. |
 
@@ -361,3 +361,70 @@ Being straight with you about scale: this is not a one-week list. Workstreams 5,
 6 and 8 are each larger than everything delivered in Round 1. If there is a date
 attached to the pilot, tell me and I will sequence against it rather than
 against the numbering.
+
+---
+
+## P2-05 — delivered 31 August
+
+**What changed**
+
+| File | Change |
+|---|---|
+| `client/src/crm/RolesSetup.jsx` | New. The editable roles screen: role list with holder counts, an editor modal, a create/clone dialog, and a capability picker grouped by category. |
+| `client/src/crm/Admin.jsx` | The Roles tab renders `RolesSetup`. The old read-only matrix is exported and kept, rendered beneath the list. |
+| `server/src/routes/setup.js` | One fix: `PATCH /roles/:code` accepted a blank name. `COALESCE` keeps an omitted name, but `''` is not null, so the role would have been stored nameless. |
+| `client/src/styles.css` | Styling for the scope picker and capability groups. |
+| `server/test/e2e.mjs` | Four checks (below). |
+
+**Decisions carried out of Q-06, and where they show up**
+
+- *Object and field level editable; record level stays with `data_scope`.* The
+  editor says so on screen: "Record visibility is decided here and nowhere else."
+  A second mechanism for the same question is the LeadSquared mistake.
+- *Code frozen, label editable.* The code field is disabled, on custom roles as
+  well as system ones — seeded configuration and the access-model defaults
+  reference those strings, so renaming one is a migration, not an edit.
+- *Clone, never delete.* System roles have no delete control; the server refuses
+  it independently. "Copy permissions from" is offered on every new role.
+
+**Two things the screen now shows that nothing showed before**
+
+- The `sensitive` flag on a capability. It has been in the table since the
+  access model was built and no screen ever rendered it. Granting "Unmask client
+  identifiers" should not look identical to granting "View own leads" to the
+  person doing the granting.
+- Both the label and the code for every permission. The code is what appears in
+  a refusal message and in the audit log, and whoever is reading either needs to
+  find it here.
+
+**How it was tested**
+
+Four e2e checks in section 27, on top of the nine that already covered the API:
+
+| Check | Why |
+|---|---|
+| An edit replaces the permission set, adding *and* removing | The editor PATCHes a whole set; a bug that only appended would be invisible in the UI. |
+| A role cannot be saved without a name | The `COALESCE` gap above. Fails against the old code. |
+| **An edit takes effect without the holder signing in again** | The one that decides whether the screen is worth anything. Grant, then revoke, both checked on a token issued *before* either change — revocation is the urgent direction, and if capabilities were resolved at sign-in an administrator would take access away and the person would keep it until expiry. |
+| Every capability the picker offers is one the server recognises | The picker renders the catalogue and PATCHes back ticked codes; the server silently drops unknown ones. Drift between catalogue and table would look like a successful save that did nothing. |
+
+Suite: **509 e2e + 285 unit, all green.**
+
+**Two defects found in my own work while verifying, both fixed**
+
+- The suggested role code froze after one keystroke — `f.code || slug(name)` is
+  truthy from the first character, so "Regional Supervisor" suggested `r`.
+- The Sensitive badge rendered as a full-width bar. `.cap-row span` was a
+  descendant selector and the badge is a span; at (0,1,1) it also outranked
+  `.badge` at (0,1,0). Scoped to `.cap-row > span`.
+
+**One finding raised, not fixed — needs your decision**
+
+`/api/tickets` and `/api/tickets/:id` carry no capability gate at all. Both are
+book-scoped, so this is not a cross-book leak, but any signed-in user can read
+every case in their own book including the client's own description and the
+replies. There is no `ticket.view` capability to gate them with — all five
+existing ticket capabilities govern writes. Written up as §6a of the security
+record with three options; I did not pick one, because adding a read capability
+means re-granting across twelve roles and doing that without knowing who
+genuinely needs case access would cut people off mid-work.

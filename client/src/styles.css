@@ -434,6 +434,86 @@ h3 { font-size: 13.5px; font-weight: 600; }
   border-radius: var(--r-xs);
 }
 
+/* P2-05. Editing a role: what it sees, and what it may do. */
+
+.scope-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+.scope-opt {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 11px;
+  text-align: left;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--glass-2);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.scope-opt:hover { border-color: var(--ink-4); }
+.scope-opt.is-on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.scope-opt strong { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.scope-opt em { font-style: normal; font-size: 11px; color: var(--ink-4); }
+
+.cap-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+  /* Capped and scrollable: forty-odd permissions in a modal otherwise pushes
+     Save off the bottom of the window, which is where people look for it. */
+  max-height: 42vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.cap-group {
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--glass-2);
+  overflow: hidden;
+}
+.cap-group-head {
+  display: flex;
+  justify-content: space-between;
+  padding: 7px 11px;
+  background: var(--glass);
+  border-bottom: 1px solid var(--hairline);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.cap-row {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 7px 11px;
+  cursor: pointer;
+  border-top: 1px solid var(--hairline-2);
+}
+.cap-row:first-of-type { border-top: 0; }
+.cap-row:hover { background: var(--glass); }
+.cap-row input { width: auto; margin: 2px 0 0; flex: 0 0 auto; cursor: pointer; }
+/* Direct child only. As a descendant selector this caught the Sensitive
+   badge and the description too — both are spans — and at (0,1,1) it beat
+   .badge at (0,1,0), so the chip rendered as a full-width amber bar. */
+.cap-row > span { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.cap-row strong { font-size: 12.5px; font-weight: 570; color: var(--ink); }
+.cap-row em {
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--ink-4);
+}
+
 /* P2-16. The custom window's two dates. */
 .custom-range {
   display: flex;

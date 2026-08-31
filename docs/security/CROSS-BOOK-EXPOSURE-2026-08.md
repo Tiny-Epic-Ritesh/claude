@@ -271,6 +271,55 @@ answered from the source repository.
 | 5 | **Do the audit queries in §7 return anything?** A definitive answer for the write path and for PII unmasking. | Ritesh |
 | 6 | **Does this meet a notification threshold under SEBI or DPDP?** A judgement for Compliance, not for engineering. | Compliance |
 
+## 6a. Adjacent finding — cases are readable by everyone in the book
+
+Found 31 August while adding coverage for the roles screen (P2-05), and
+recorded here rather than fixed, because fixing it changes who can see what
+and that is a business decision, not an engineering one.
+
+**This is not a cross-book leak.** Both `/api/tickets` and `/api/tickets/:id`
+were book-scoped in the remediation above (F-13/F-14), and remain so. The
+finding is narrower and different in kind:
+
+> Neither route carries a capability gate at all. Any signed-in user can list
+> and open **every case in their own book** — subject, full description, the
+> replies, and the joined client name and mobile.
+
+There is no `ticket.view` capability in the catalogue to gate them with. The
+five that exist — `ticket.create`, `ticket.reply`, `ticket.reassign`,
+`ticket.escalate`, `ticket.merge` — all govern writes. Reading was never
+modelled.
+
+The description and replies on a case are the client's own account of a problem
+with their own money, and often carry an account number or a grievance
+reference. A caller or a marketing user has no work that requires reading
+another rep's case file.
+
+| | |
+|---|---|
+| **Severity** | Medium. Contained to one book, requires a valid login, and no write path is exposed. |
+| **Discovered** | 31 August 2026, by a test asserting a role edit takes effect immediately. |
+| **Status** | Open — awaiting a decision, below. |
+
+**The decision needed (Ritesh):** who should be able to read a case they do not
+own? Three options, in the order I would recommend them:
+
+1. **Add `ticket.view.own` / `ticket.view.all` and grant `all` to the roles that
+   need it** (support, supervisors, compliance, admin), `own` to everyone else.
+   Consistent with how leads and clients are already modelled, and it makes the
+   answer visible on the roles screen. It will remove case access from some
+   roles that have it today, so it needs a list of who genuinely needs it.
+2. **Gate on the existing `data_scope`** — a rep sees cases they are assigned,
+   a supervisor their team's. No new capabilities, but it makes case visibility
+   depend on a field that was designed for leads and clients, and the roles
+   screen would then not show it.
+3. **Leave as is** and record the acceptance. Defensible if every CRM user is
+   expected to handle any case, which is worth stating explicitly if true.
+
+I have not implemented any of these. Option 1 is a schema and seeding change
+plus a re-grant across twelve roles, and doing it without the list of who needs
+case access would silently cut off people mid-work.
+
 ## 7. Queries to run against the UAT database
 
 Read-only. Run on the UAT copy, not on a reseeded development database — the

@@ -20,3 +20,6 @@ npm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# Local probe scripts — never part of a release.
+.scratch/

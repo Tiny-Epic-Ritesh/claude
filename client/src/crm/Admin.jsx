@@ -6,6 +6,7 @@ import FieldMasking from './FieldMasking.jsx';
 import { api, rupees, dateTime, shortDate, ROLE_LABEL } from '../api.js';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, Icon, useDropUp } from '../components/ui.jsx';
 import ObjectManager from './ObjectManager.jsx';
+import RolesSetup from './RolesSetup.jsx';
 
 export default function Admin({ session }) {
   const has = (p) => session.permissions.includes(p);
@@ -44,7 +45,7 @@ export default function Admin({ session }) {
       <Tabs tabs={tabs} active={tab} onChange={setTab} />
 
       {tab === 'users' && <Users />}
-      {tab === 'roles' && <Roles />}
+      {tab === 'roles' && <RolesSetup />}
       {tab === 'navigation' && <TabVisibility />}
       {tab === 'masking' && <FieldMasking />}
       {tab === 'objects' && <ObjectManager />}
@@ -147,7 +148,14 @@ function NewUser({ onClose, onCreated }) {
 
 /* ---------------------------------------------------------------- roles */
 
-function Roles() {
+/**
+ * The read-only matrix. Superseded as the roles screen by RolesSetup (P2-05),
+ * kept because it answers a question the editor does not: "who can do X"
+ * across every role at once, which is the question an auditor asks.
+ *
+ * Exported so RolesSetup can render it beneath the editable list.
+ */
+export function Roles() {
   const [data, { loading }] = useApi('/admin/roles');
   if (loading || !data) return <Loading />;
 
@@ -156,7 +164,7 @@ function Roles() {
     <section className="card" style={{ overflowX: 'auto' }}>
       <div className="card-head">
         <h2>Permission matrix</h2>
-        <span className="tiny muted">Enforced at the API, not just hidden in the UI</span>
+        <span className="tiny muted">Every role at once — enforced at the API, not hidden in the UI</span>
       </div>
       <table style={{ minWidth: 900 }}>
         <thead>

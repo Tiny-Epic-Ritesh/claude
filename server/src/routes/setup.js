@@ -128,6 +128,13 @@ router.patch('/roles/:code', requirePermission('admin.roles'), (req, res) => {
 
   const { name, description, data_scope: scope, capabilities, active } = req.body;
 
+  /* COALESCE keeps an omitted name, but an empty string is not null, so a blank
+     one would be stored and the role would lose its name in every list that
+     shows it. Absent is fine; present and blank is not. */
+  if (name !== undefined && !String(name).trim()) {
+    return res.status(400).json({ error: 'A role needs a name', field: 'name' });
+  }
+
   if (scope && !['own', 'team', 'product', 'org'].includes(scope)) {
     return res.status(400).json({ error: 'data_scope must be own, team, product or org', field: 'data_scope' });
   }

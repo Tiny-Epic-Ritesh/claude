@@ -2234,6 +2234,103 @@ async function run() {
     assert(/your own/i.test(data.error), `unexpected: ${data.error}`);
   });
 
+  /* ------------------------------------------- P2-05: editing a role
+   *
+   * The write API above has existed since the access model was built. What did
+   * not exist was a screen that called it, so "roles are not editable" was true
+   * of the product while being false of the server. These cover the round trip
+   * the screen performs, and the one thing that decides whether the screen is
+   * worth anything: that an edit changes what a holder may actually do.
+   */
+
+  await check('editing a role replaces its permissions, both adding and removing', async () => {
+    const code = need(REF.customRole, 'the custom role');
+    const { data: before } = await req('/api/setup/roles', { token: T.admin, expect: 200 });
+    const start = before.find((r) => r.code === code);
+    assert(start.capabilities.includes('lead.contact'), 'fixture changed — expected lead.contact');
+
+    await req(`/api/setup/roles/${code}`, {
+      method: 'PATCH', token: T.admin, expect: 200,
+      body: {
+        name: 'Regional Head',
+        data_scope: 'org',
+        capabilities: ['lead.view.own', 'client.view.own'],
+      },
+    });
+
+    const { data: after } = await req('/api/setup/roles', { token: T.admin, expect: 200 });
+    const end = after.find((r) => r.code === code);
+    eq(end.name, 'Regional Head', 'name not saved');
+    eq(end.data_scope, 'org', 'scope not saved');
+    eq(end.capabilities.length, 2, `expected 2 capabilities, got ${end.capabilities.length}`);
+    assert(end.capabilities.includes('client.view.own'), 'the added permission is missing');
+    assert(!end.capabilities.includes('lead.contact'), 'the removed permission is still granted');
+    assert(!end.capabilities.includes('report.team'), 'the removed permission is still granted');
+  });
+
+  await check('a role cannot be saved without a name', async () => {
+    // COALESCE keeps an omitted name; an empty string is not null and would be
+    // stored, leaving the role blank in every list that shows it.
+    const code = need(REF.customRole, 'the custom role');
+    await req(`/api/setup/roles/${code}`, {
+      method: 'PATCH', token: T.admin, expect: 400, body: { name: '   ' },
+    });
+  });
+
+  await check('a role edit takes effect without the holder signing in again', async () => {
+    /* The point of the whole screen. If capabilities were resolved once at
+     * sign-in, an administrator would revoke access and the person would keep
+     * it until their token expired — which is the failure that matters here,
+     * because revocation is the urgent direction. */
+    const code = need(REF.customRole, 'the custom role');
+    const email = `roleedit.${RUN}@bonanza.test`;
+
+    const { data: created } = await req('/api/setup/users', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: { name: 'Role Edit Probe', email, role: code, branch: 'Pune' },
+    });
+    const probe = await login(email, created.initial_password);
+
+    // As edited above: lead.view.own and client.view.own, and nothing that
+    // opens the case summary.
+    await req('/api/tickets/reports/summary', { token: probe, expect: 403 });
+
+    await req(`/api/setup/roles/${code}`, {
+      method: 'PATCH', token: T.admin, expect: 200,
+      body: { name: 'Regional Head', capabilities: ['lead.view.own', 'client.view.own', 'report.team'] },
+    });
+    await req('/api/tickets/reports/summary', { token: probe, expect: 200 });
+
+    // And revocation, on the same token, is what actually has to work: an
+    // administrator taking access away expects it gone now, not at expiry.
+    await req(`/api/setup/roles/${code}`, {
+      method: 'PATCH', token: T.admin, expect: 200,
+      body: { name: 'Regional Head', capabilities: ['lead.view.own', 'client.view.own'] },
+    });
+    await req('/api/tickets/reports/summary', { token: probe, expect: 403 });
+  });
+
+  await check('every capability the editor offers is one the server recognises', async () => {
+    /* The picker renders whatever the catalogue returns and PATCHes back the
+     * ticked codes, silently dropping any the server does not know. If the
+     * catalogue ever drifted from the capabilities table, permissions would
+     * appear to save and then not be there. */
+    const { data: cat } = await req('/api/setup/capabilities', { token: T.admin, expect: 200 });
+    const offered = cat.categories.flatMap((c) => c.capabilities.map((x) => x.code));
+    eq(offered.length, cat.total, 'the grouped catalogue and its total disagree');
+    assert(new Set(offered).size === offered.length, 'a capability appears in two categories');
+
+    const code = need(REF.customRole, 'the custom role');
+    await req(`/api/setup/roles/${code}`, {
+      method: 'PATCH', token: T.admin, expect: 200,
+      body: { name: 'Regional Head', capabilities: offered },
+    });
+    const { data: roles } = await req('/api/setup/roles', { token: T.admin, expect: 200 });
+    const granted = roles.find((r) => r.code === code).capabilities;
+    eq(granted.length, offered.length,
+      `${offered.length - granted.length} of the offered permissions were dropped on save`);
+  });
+
   /* -------------------------------------------------------------- users */
 
   await check('an administrator can create a user, and gets a password once', async () => {
