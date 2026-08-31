@@ -4,7 +4,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
-import { can, requireUser, requirePermission, mayUseOrg } from '../auth.js';
+import { can, requireUser, requirePermission, mayUseOrg, orgsFor } from '../auth.js';
 import { applySla, sweepSla, handleStatusChange, slaRemaining, DEFAULT_SLA } from '../engine/sla.js';
 import { send } from '../integrations.js';
 import * as ai from '../ai/index.js';
@@ -47,6 +47,18 @@ router.get('/', (req, res) => {
   const { status, priority, mine, breached, lead_id, category_id } = req.query;
   const where = ['t.merged_into IS NULL'];
   const params = [];
+
+  /* A ticket carries its own book, and this list never checked it.
+   *
+   * /tickets/:id was scoped in August; the list beside it was not, so a Bigul
+   * supervisor's case queue included Bonanza tickets -- subject, description
+   * and the client's name and mobile, all joined in. The record route and its
+   * list are the same data with the same boundary, and fixing one of a pair is
+   * how the other stays broken. Third time that exact shape has appeared, and
+   * the reason the conformance test now covers list routes too. */
+  const orgs = orgsFor(req.user);
+  where.push(`t.sales_org IN (${orgs.map(() => '?').join(',') || "''"})`);
+  params.push(...orgs);
 
   if (mine === 'true') { where.push('t.assignee_id = ?'); params.push(req.user.id); }
   if (status) { where.push('t.status = ?'); params.push(status); }

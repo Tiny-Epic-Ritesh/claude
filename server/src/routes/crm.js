@@ -151,6 +151,26 @@ router.get('/leads', (req, res) => {
   }
   if (stage) { where.push('l.stage = ?'); params.push(stage); }
 
+  /* P2-17c. What the charts count, so clicking a bar opens its own records.
+   *
+   * `stages` is plural because the funnel is cumulative: "Contacted" on that
+   * chart means Contacted and everything past it, and a single-stage filter
+   * would open a strict subset while claiming to be the bar the reader
+   * clicked. */
+  if (req.query.stages) {
+    const list = String(req.query.stages).split(',').map((x) => x.trim()).filter(Boolean);
+    if (list.length) {
+      where.push(`l.stage IN (${list.map(() => '?').join(',')})`);
+      params.push(...list);
+    }
+  }
+  if (req.query.source) {
+    // 'Unknown' is what the chart labels a blank source, so it has to mean the
+    // same thing here or that bar opens nothing.
+    if (req.query.source === 'Unknown') where.push("COALESCE(NULLIF(TRIM(l.source), ''), 'Unknown') = 'Unknown'");
+    else { where.push('l.source = ?'); params.push(req.query.source); }
+  }
+
   /* P2-13. The date range the figure was counted over.
    *
    * A homepage tile reading "New leads 32" that opens a list of 40 is worse

@@ -295,10 +295,17 @@ function funnelChart(req) {
     // Cumulative, so the funnel can only narrow. A raw per-stage count produces
     // a "funnel" that goes up and down, which is the bug I fixed on the partner
     // portal and must not reappear here.
-    stages: stages.map((s, i) => ({
-      label: s,
-      value: stages.slice(i).reduce((sum, name) => sum + (by.get(name) || 0), 0),
-    })),
+    stages: stages.map((s, i) => {
+      const included = stages.slice(i);
+      return {
+        label: s,
+        value: included.reduce((sum, name) => sum + (by.get(name) || 0), 0),
+        /* P2-17c. Every stage at or past this one, because the bar is
+           cumulative. A single-stage link would open fewer records than the
+           number the reader just clicked. */
+        to: `/leads?stages=${encodeURIComponent(included.join(','))}`,
+      };
+    }),
   };
 }
 
@@ -312,21 +319,35 @@ function sourceChart(req, range) {
       GROUP BY label ORDER BY value DESC LIMIT 8`,
     [...scope.params, ...r.params],
   );
-  return { kind: 'bar', title: `Leads by source · ${range.label}`, data: rows };
+  return {
+    kind: 'bar',
+    title: `Leads by source · ${range.label}`,
+    data: rows.map((r) => ({
+      ...r,
+      // The same window the bar was counted over, or the click opens the year.
+      to: `/leads?source=${encodeURIComponent(r.label)}&created_from=${range.from}&created_to=${range.to}`,
+    })),
+  };
 }
 
 function productChart(req) {
   const scope = leadScope(req.user, 'l', activeOrg(req));
   const rows = all(
-    `SELECT pt.name AS label, COUNT(*) AS value
+    `SELECT pt.id, pt.name AS label, COUNT(*) AS value
        FROM product_cards pc
        JOIN leads l ON l.id = pc.lead_id
        JOIN product_types pt ON pt.id = pc.product_type_id
       WHERE pc.state = 'ACTIVE' AND l.deleted_at IS NULL AND ${scope.sql}
-      GROUP BY pt.name ORDER BY value DESC LIMIT 6`,
+      GROUP BY pt.id, pt.name ORDER BY value DESC LIMIT 6`,
     scope.params,
   );
-  return { kind: 'donut', title: 'Active products', data: rows };
+  return {
+    kind: 'donut',
+    title: 'Active products',
+    // Keyed on the product id rather than its name: a rename in Setup would
+    // otherwise quietly break every link on this chart.
+    data: rows.map((r) => ({ ...r, to: `/leads?product_id=${r.id}&card_state=ACTIVE` })),
+  };
 }
 
 /* ----------------------------------------------------------- assembly */

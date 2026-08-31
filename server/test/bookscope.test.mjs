@@ -23,7 +23,7 @@ import { strict as assert } from 'node:assert';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { one } from '../src/db.js';
+import { one, all } from '../src/db.js';
 import { RECORD_KINDS, loadInBook, reachable } from '../src/engine/bookscope.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -136,6 +136,47 @@ const NOT_A_RECORD = {
   '/api/portal/training/:module': 'Partner training content. Not a client record.',
   '/dkyc-api/resume/:token': 'Public KYC portal. The token is the credential; no CRM session.',
   '/dkyc-api/steps/:productId': 'Public KYC step list for a product. No client data.',
+};
+
+/* -------------------------------------------------------- list routes */
+
+/**
+ * Routes that return many records rather than one.
+ *
+ * These were assumed filtered. Most were. `/api/tasks` was not: with
+ * `all=true` a Bigul supervisor was returned every task in the system, forty
+ * of them on Bonanza leads and each labelled with that client's name. Nothing
+ * looked at it for weeks, because the record routes had a conformance test and
+ * the list routes had an assumption.
+ *
+ * Each entry says which field on a returned row names the book it belongs to,
+ * or how to resolve one. A route in neither list fails the classification test
+ * below, exactly as record routes do.
+ */
+const LIST_ROUTES = {
+  '/api/leads': { org: (r) => r.sales_org },
+  '/api/clients': { org: (r) => r.sales_org },
+  '/api/tickets': { org: (r) => r.sales_org },
+  '/api/lists': { org: (r) => r.sales_org },
+  '/api/partners': { org: (r) => r.sales_org },
+  // A task inherits its lead's book, and a task with no lead has none.
+  '/api/tasks': { query: 'all=true', viaLead: (r) => r.lead_id },
+};
+
+/** Routes that return many rows but not client records. */
+const NOT_A_LIST_OF_RECORDS = {
+  '/api/apps': 'The tabs this user may open. Navigation, not records.',
+  '/api/calendar': 'Meetings and due work for the signed-in person only.',
+  '/api/cockpit': 'Aggregate figures for the viewer, each already scoped where it is computed.',
+  '/api/dashboard': 'Aggregates. Covered by suite 56, which checks each figure against its own drill-through.',
+  '/api/kra': 'The viewer\'s own scorecard.',
+  '/api/orgs': 'Which businesses this user may see. The answer to the scoping question, not a thing to scope.',
+  '/api/products': 'The product catalogue. Firm-wide, identical in both books.',
+  '/api/pipeline': 'Cards grouped by state, scoped through leadScope where it is built.',
+  '/api/revenue': 'Aggregates, scoped where computed.',
+  '/api/search': 'Cross-entity search, scoped per entity in the route.',
+  '/api/team': 'Users and their numbers, not client records.',
+  '/api/approvals': 'Guarded by inReach() per row; covered by the approvals suite.',
 };
 
 /* ------------------------------------------------------------- fixtures */
@@ -270,6 +311,68 @@ await test('every record kind the accessor knows has a probe fixture', () => {
     .filter((k) => k !== 'card_audit_parent')
     .filter((k) => !(k in bonanzaId));
   assert.equal(missing.length, 0, `no fixture for: ${missing.join(', ')}`);
+});
+
+
+console.log('\nList routes');
+
+await test('every list route is classified', () => {
+  const live = new Set();
+  for (const file of readdirSync(ROUTES)) {
+    const map = MOUNTS[file];
+    if (!map) continue;
+    const src = readFileSync(join(ROUTES, file), 'utf8');
+    for (const m of src.matchAll(/(\w+)\.get\(\s*'\/'/g)) {
+      const mount = map[m[1]];
+      if (mount) live.add(mount);
+    }
+  }
+
+  const unclassified = [...live]
+    .filter((r) => !(r in LIST_ROUTES) && !(r in NOT_A_LIST_OF_RECORDS));
+
+  assert.equal(
+    unclassified.length, 0,
+    'these list routes are unclassified — say whether they return client records:\n'
+      + unclassified.map((r) => `         ${r}`).join('\n')
+      + '\n       Add each to LIST_ROUTES (with how to read its book) or'
+      + ' NOT_A_LIST_OF_RECORDS (with a reason).',
+  );
+});
+
+await test('no list route returns the other book', async () => {
+  const bigul = await login('supervisor@bigul.test');
+  const problems = [];
+
+  // Which leads are Bonanza's, for the routes that inherit their book.
+  const bonanzaLeads = new Set(
+    all("SELECT id FROM leads WHERE sales_org='BONANZA' AND deleted_at IS NULL").map((r) => r.id),
+  );
+
+  for (const [route, spec] of Object.entries(LIST_ROUTES)) {
+    const url = `${route}?limit=500${spec.query ? `&${spec.query}` : ''}`;
+    const res = await fetch(`${BASE}${url}`, { headers: { Authorization: `Bearer ${bigul}` } });
+    if (res.status === 403) continue;             // not entitled at all: fine
+    if (!res.ok) { problems.push(`${url} → HTTP ${res.status}`); continue; }
+
+    const body = await res.json();
+    const rows = Array.isArray(body) ? body : (body.rows ?? body.items ?? []);
+
+    for (const row of rows) {
+      const org = spec.org ? spec.org(row) : null;
+      if (org && org !== 'BIGUL') { problems.push(`${url} returned a ${org} row`); break; }
+
+      if (spec.viaLead) {
+        const leadId = spec.viaLead(row);
+        if (leadId && bonanzaLeads.has(Number(leadId))) {
+          problems.push(`${url} returned a row on a Bonanza lead (#${leadId})`);
+          break;
+        }
+      }
+    }
+  }
+
+  assert.equal(problems.length, 0, `a list route crosses the book boundary:\n         ${problems.join('\n         ')}`);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -92,7 +92,15 @@ export function Sparkline({ points = [], height = 56, tone = 'accent', showLast 
 /* ------------------------------------------------------------ bar chart */
 
 /** Vertical bars with a label and value per column. */
-export function BarChart({ data = [], height = 160, tone = 'accent', format = (v) => v }) {
+/**
+ * `onPick` makes a value openable (P2-17c).
+ *
+ * Passed a datum rather than a URL so the caller decides what clicking means;
+ * the chart's job is to say which bar, not where it goes. A datum without a
+ * `to` is not interactive, and does not pretend to be — no pointer, no focus
+ * stop, nothing to raise expectations the chart cannot meet.
+ */
+export function BarChart({ data = [], height = 160, tone = 'accent', format = (v) => v, onPick }) {
   if (!data.length) return <div className="chart-empty">Nothing to show yet</div>;
 
   const max = Math.max(...data.map((d) => d.value), 1);
@@ -112,12 +120,26 @@ export function BarChart({ data = [], height = 160, tone = 'accent', format = (v
             stroke="var(--hairline)" strokeWidth="1" />
         ))}
         {data.map((d, i) => {
+          const pickable = Boolean(onPick && d.to);
           const h = Math.max(((d.value / max) * (H - foot - 18)), d.value > 0 ? 3 : 0);
           const x = i * band + (band - bw) / 2;
           const y = H - foot - h;
           return (
-            <g key={d.label}>
-              <title>{`${d.label}: ${format(d.value)}`}</title>
+            <g
+              key={d.label}
+              className={pickable ? 'is-pickable' : ''}
+              role={pickable ? 'button' : undefined}
+              tabIndex={pickable ? 0 : undefined}
+              aria-label={pickable ? `${d.label}: ${format(d.value)} — open these records` : undefined}
+              onClick={pickable ? () => onPick(d) : undefined}
+              onKeyDown={pickable ? (e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onPick(d); }
+              } : undefined}
+            >
+              <title>{`${d.label}: ${format(d.value)}${pickable ? ' — click to open' : ''}`}</title>
+              {/* A transparent hit area over the whole column: a 34px-wide bar
+                  three pixels tall is not something anybody can click. */}
+              {pickable && <rect x={i * band} y="0" width={band} height={H} fill="transparent" />}
               <path d={topRounded(x, y, bw, h, 5)} fill={`var(--${d.tone ?? tone})`} opacity={d.muted ? 0.4 : 1} />
               <text x={x + bw / 2} y={y - 6} className="bar-value">{format(d.value)}</text>
               <text x={x + bw / 2} y={H - 8} className="bar-label">{d.label}</text>
@@ -193,7 +215,7 @@ export function Donut({ segments = [], size = 150, thickness = 16, centre, capti
  * Each row shows its own count and the conversion from the stage above it —
  * because "40 qualified" only means something next to "out of 120 contacted".
  */
-export function Funnel({ stages = [] }) {
+export function Funnel({ stages = [], onPick }) {
   if (!stages.length) return <div className="chart-empty">No pipeline yet</div>;
   const top = Math.max(stages[0]?.value ?? 1, 1);
 
@@ -203,7 +225,17 @@ export function Funnel({ stages = [] }) {
         const prev = i > 0 ? stages[i - 1].value : null;
         const stepPct = prev ? Math.round((s.value / (prev || 1)) * 100) : null;
         return (
-          <div key={s.label} className="funnel-row">
+          <div
+            key={s.label}
+            className={`funnel-row ${onPick && s.to ? 'is-pickable' : ''}`}
+            role={onPick && s.to ? 'button' : undefined}
+            tabIndex={onPick && s.to ? 0 : undefined}
+            aria-label={onPick && s.to ? `${s.label}: ${s.value} — open these records` : undefined}
+            onClick={onPick && s.to ? () => onPick(s) : undefined}
+            onKeyDown={onPick && s.to ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onPick(s); }
+            } : undefined}
+          >
             <div className="funnel-meta">
               <span className="funnel-label">{s.label}</span>
               <span className="funnel-value">{s.value}</span>

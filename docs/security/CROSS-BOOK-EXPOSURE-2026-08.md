@@ -4,7 +4,8 @@
 **Environment affected:** UAT
 **Found:** 30 August 2026, during a scheduled debugging pass
 **Remediated:** 30 August 2026, commit `e725599`; two further routes 31 August 2026
-**Amended:** 31 August 2026 — two more affected routes found, see F-11 and F-12
+**Amended:** 31 August 2026 — four more affected routes found: F-11, F-12 (record)
+and F-13, F-14 (list)
 **Author:** Ritesh Thakur (development), with Claude
 **Status:** **Remediated in code. Impact assessment incomplete — see §6.**
 
@@ -23,20 +24,31 @@
 ## 1. Summary in one paragraph
 
 The CRM separates two businesses — Bonanza (full-service) and Bigul (discount)
-— and a user in one must not see the other's records. List endpoints enforced
-that from the start. **Record endpoints did not.** Eleven routes loaded a record
-by id and returned it without checking which business it belonged to, so any
-authenticated CRM user who knew or guessed a record id could read the other
-book's tickets, saved lists, partner book, product-card history, lead
-next-action briefings and KYC journeys. One route went further and allowed a
-**write**: a Bigul supervisor could approve a bulk reassignment of Bonanza
-leads. All eleven are fixed, with regression tests that were confirmed to fail
-against the unfixed code.
+— and a user in one must not see the other's records. **Thirteen routes did not
+enforce that.**
 
-Nine were found on 30 August by hand. **The last two were found on 31 August by
-a conformance test** that enumerates every record route from the source and
-probes it across the boundary — written precisely because finding these by hand
-had already proved unreliable. It found both within seconds of first running.
+Eleven were record routes: they loaded a record by id and returned it without
+checking which business owned it, so any authenticated user who knew or guessed
+an id could read the other book's tickets, saved lists, partner book,
+product-card history, lead next-action briefings and KYC journeys. One went
+further and allowed a **write** — a Bigul supervisor could approve a bulk
+reassignment of Bonanza leads.
+
+Two more were **list** routes, which had been assumed safe: `/api/tasks`
+returned every task in the system, and `/api/tickets` the whole case queue,
+each carrying the client's name.
+
+All thirteen are fixed, with regression tests confirmed to fail against the
+unfixed code.
+
+**How each was found matters, because it says what to trust.** Nine were found
+by hand on 30 August. Two more on 31 August by a conformance test that
+enumerates record routes from the source — written precisely because finding
+them by hand had already proved unreliable, and it found both within seconds.
+The last two were list routes: one surfaced because a dashboard figure would
+not reconcile with its own drill-through, the other once that same test was
+extended to cover lists. **Manual review found nine of thirteen and then
+stopped finding them; the tests found the remaining four.**
 
 ## 2. What an attacker needed
 
@@ -162,6 +174,29 @@ Unlike F-01 it does not expose `resume_token`.
 **Both were found by the conformance test, not by review.** Two rounds of manual
 probing had already gone over these routes and missed them, which is the
 argument for the test rather than for more care.
+
+### F-13, F-14 — Two list routes, found 31 August · **High**
+
+`GET /api/tasks` had no lead scope at all. With `all=true` a Bigul supervisor
+was returned every task in the system — forty of them on Bonanza leads, each
+labelled with that client name. `GET /api/tickets` likewise returned the other
+book: subject, description, and the client name and mobile joined in.
+
+**Both are the same shape as F-06, F-07, F-11 and F-12: one of a pair fixed.**
+`/tickets/:id` was scoped on 30 August and the list beside it was not.
+
+Neither was found by review. The tasks one surfaced because a dashboard figure
+would not reconcile with its own drill-through; the tickets one because the
+conformance test was then extended to cover list routes.
+
+**Why they were missed for a week:** the 30 August work scoped record routes and
+built a conformance test for record routes. List routes were assumed already
+filtered, on the strength of a probe that checked leads, lists and approvals —
+and stopped there. The assumption was never written down as a test, so nothing
+challenged it.
+
+`test/bookscope.test.mjs` now requires every list route to be classified too,
+and probes each classified one across the boundary on every run.
 
 ### F-10 — The test suite was asserting the defect · **Process finding**
 

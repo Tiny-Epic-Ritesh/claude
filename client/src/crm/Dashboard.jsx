@@ -14,21 +14,58 @@
  * on.
  */
 
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useApi, Icon, Loading, ErrorBanner, Segmented } from '../components/ui.jsx';
 import { Funnel, BarChart, Donut } from '../components/charts.jsx';
 
 const TONE_CLASS = { good: 'tone-good', warn: 'tone-warn', bad: 'tone-bad' };
 
 export default function Dashboard({ embedded = false }) {
+  const navigate = useNavigate();
   const [search, setSearch] = useSearchParams();
   const range = search.get('range') || 'mtd';
 
-  const [data, { loading, error }] = useApi(`/dashboard?range=${encodeURIComponent(range)}`, [range]);
+  /* P2-16. The window lives in the URL, not in component state.
+   *
+   * A date range somebody has picked is worth being able to send to a
+   * colleague, and it should survive a refresh. Keeping it here also means the
+   * tiles' drill-through carries the same window, because the server builds
+   * each destination from the range it was asked for. */
+  const from = search.get('from') || '';
+  const to = search.get('to') || '';
+
+  const query = range === 'custom' && from && to
+    ? `/dashboard?range=custom&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+    : `/dashboard?range=${encodeURIComponent(range)}`;
+
+  const [data, { loading, error }] = useApi(query, [range, from, to]);
 
   const setRange = (code) => {
     const next = new URLSearchParams(search);
     if (code === 'mtd') next.delete('range'); else next.set('range', code);
+
+    if (code === 'custom') {
+      /* Open on the month so far rather than on two empty boxes. An empty
+         custom range would ask the server for nothing and show a dashboard of
+         zeroes, which reads as "no data" rather than "pick a date". */
+      if (!next.get('from')) next.set('from', data?.range?.from ?? '');
+      if (!next.get('to')) next.set('to', data?.range?.to ?? '');
+    } else {
+      next.delete('from');
+      next.delete('to');
+    }
+    setSearch(next, { replace: true });
+  };
+
+  const setBound = (which) => (e) => {
+    const next = new URLSearchParams(search);
+    next.set('range', 'custom');
+    next.set(which, e.target.value);
+    // Keep the pair in order rather than refusing it: dragging the start past
+    // the end is a normal thing to do on the way to picking both.
+    const f = which === 'from' ? e.target.value : next.get('from');
+    const t = which === 'to' ? e.target.value : next.get('to');
+    if (f && t && f > t) next.set(which === 'from' ? 'to' : 'from', e.target.value);
     setSearch(next, { replace: true });
   };
 
@@ -50,15 +87,30 @@ export default function Dashboard({ embedded = false }) {
         {/* Range picker, on the existing segmented control rather than a new
             one. Financial year runs April to March, so FY means what the
             business means by it. */}
-        <Segmented
-          value={data.range.code}
-          onChange={setRange}
-          options={(data.ranges ?? [])
-            .filter((r) => r.code !== 'custom')
-            .map((r) => ({
+        <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
+          <Segmented
+            value={data.range.code}
+            onChange={setRange}
+            options={(data.ranges ?? []).map((r) => ({
               value: r.code,
-              label: { today: 'Today', mtd: 'Month', qtd: 'Quarter', fytd: 'FY' }[r.code] ?? r.label,
+              label: {
+                today: 'Today', mtd: 'Month', qtd: 'Quarter', fytd: 'FY', custom: 'Custom',
+              }[r.code] ?? r.label,
             }))} />
+
+          {data.range.code === 'custom' && (
+            <div className="custom-range">
+              <label>
+                <span className="tiny muted">From</span>
+                <input type="date" value={from} max={to || undefined} onChange={setBound('from')} />
+              </label>
+              <label>
+                <span className="tiny muted">To</span>
+                <input type="date" value={to} min={from || undefined} onChange={setBound('to')} />
+              </label>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="grid-auto" style={{ marginBottom: 18 }}>
@@ -98,8 +150,10 @@ export default function Dashboard({ embedded = false }) {
             <div key={c.title} className="card">
               <div className="card-head"><h2 style={{ fontSize: 15 }}>{c.title}</h2></div>
               <div className="card-body">
-                {c.kind === 'funnel' && <Funnel stages={c.stages} />}
-                {c.kind === 'bar' && <BarChart data={c.data} />}
+                {/* P2-17c: a number on a chart opens the records behind it,
+                    the same promise the tiles make. */}
+                {c.kind === 'funnel' && <Funnel stages={c.stages} onPick={(d) => navigate(d.to)} />}
+                {c.kind === 'bar' && <BarChart data={c.data} onPick={(d) => navigate(d.to)} />}
                 {c.kind === 'donut' && (
                   <Donut
                     segments={c.data.map((d, i) => ({ ...d, colour: DONUT_COLOURS[i % DONUT_COLOURS.length] }))}

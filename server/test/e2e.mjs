@@ -5878,6 +5878,72 @@ await check('a per-channel withdrawal closes only that channel', async () => {
       `a Bigul supervisor was shown ${crossed.length} tasks on Bonanza leads`);
   });
 
+  /* ============================================================ 57 */
+  suite('57 custom range and chart drill-through');
+
+  await check('a custom window is honoured, and its tiles open that window', async () => {
+    /* P2-16. The server has resolved `custom` from the start; the client hid
+     * the option and never sent from/to. Because a tile builds its destination
+     * from the range it was asked for, opening the window to the UI made the
+     * drill-through carry it with no extra work -- which is the payoff for
+     * having fixed P2-13 at the source rather than per tile. */
+    const { data } = await req('/api/dashboard?range=custom&from=2026-08-01&to=2026-08-15',
+      { token: T.admin, expect: 200 });
+
+    eq(data.range.code, 'custom');
+    eq(data.range.from, '2026-08-01');
+    eq(data.range.to, '2026-08-15');
+
+    const newLeads = need(data.tiles.find((t) => t.label === 'New leads'), 'the New leads tile');
+    assert(/created_from=2026-08-01/.test(newLeads.to) && /created_to=2026-08-15/.test(newLeads.to),
+      `the tile does not carry the custom window: ${newLeads.to}`);
+
+    const { res } = await req(`/api/leads?limit=500&${newLeads.to.split('?')[1]}`,
+      { token: T.admin, expect: 200 });
+    eq(Number(res.headers.get('X-Total-Count')), Number(newLeads.value),
+      'the custom-window tile does not open the records it counted');
+  });
+
+  await check('a narrower window counts fewer than a wider one', async () => {
+    // Guards the filter being accepted and ignored, which looks identical to
+    // it working when the seed happens to fit inside the window.
+    const wide = await req('/api/dashboard?range=custom&from=2026-01-01&to=2026-12-31', { token: T.admin, expect: 200 });
+    const narrow = await req('/api/dashboard?range=custom&from=2026-08-01&to=2026-08-02', { token: T.admin, expect: 200 });
+    const v = (d) => Number(d.data.tiles.find((t) => t.label === 'New leads')?.value ?? 0);
+    assert(v(narrow) <= v(wide), `narrow window counted more than wide (${v(narrow)} > ${v(wide)})`);
+  });
+
+  await check('every chart value opens exactly the records behind it', async () => {
+    /* P2-17c. Same promise the tiles make, and the funnel is the one worth
+     * checking: it is cumulative, so a single-stage link would open a strict
+     * subset of the number the reader clicked. */
+    const { data } = await req('/api/dashboard', { token: T.admin, expect: 200 });
+    const problems = [];
+
+    for (const chart of data.charts ?? []) {
+      for (const point of chart.stages ?? chart.data ?? []) {
+        if (!point.to) continue;
+        const { res } = await req(`/api/leads?limit=500&${point.to.split('?')[1]}`,
+          { token: T.admin, expect: 200 });
+        const returned = Number(res.headers.get('X-Total-Count'));
+        if (returned !== Number(point.value)) {
+          problems.push(`${chart.kind} · ${point.label}: shows ${point.value}, opens ${returned}`);
+        }
+      }
+    }
+    assert(problems.length === 0,
+      `a chart value does not open its own records:\n         ${problems.join('\n         ')}`);
+  });
+
+  await check('every chart value carries a destination at all', async () => {
+    const { data } = await req('/api/dashboard', { token: T.admin, expect: 200 });
+    for (const chart of data.charts ?? []) {
+      for (const point of chart.stages ?? chart.data ?? []) {
+        assert(point.to, `${chart.kind} · ${point.label} has no destination`);
+      }
+    }
+  });
+
   /* ------------------------------------------------------------- report */
   report();
 }
