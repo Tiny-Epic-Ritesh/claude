@@ -117,6 +117,13 @@ export const aisensy = {
    * ones; both accept the same v2 campaign contract.
    */
   baseUrl: env('SMARTPING_API_URL', 'https://backend.api-wa.co'),
+  /**
+   * The campaign path. `smartping` is the white-label's own segment, confirmed
+   * by Smartping's API reference; `t1` is AiSensy's, which is what the adapter
+   * was originally written against and would have 404'd on every send.
+   * Configurable so a direct AiSensy tenant needs no code change.
+   */
+  campaignPath: env('SMARTPING_API_PATH', '/campaign/smartping/api/v2'),
   apiKey: env('SMARTPING_API_KEY'),
   /** AiSensy addresses templates by campaign name, not template id. */
   defaultCampaign: env('SMARTPING_CAMPAIGN', 'BONANZA_CRM'),
@@ -182,7 +189,12 @@ export function vendorStatus() {
       campaign: quickcall.campaign,
       signed_callbacks: Boolean(quickcall.webhookSecret),
     },
-    smartping: { state: state(aisensy), endpoint: aisensy.baseUrl, campaign: aisensy.defaultCampaign, signed_callbacks: Boolean(aisensy.webhookSecret) },
+    smartping: {
+      state: state(aisensy),
+      endpoint: `${aisensy.baseUrl}${aisensy.campaignPath}`,
+      campaign: aisensy.defaultCampaign,
+      signed_callbacks: Boolean(aisensy.webhookSecret),
+    },
     bonanza_kyc: { state: state(bonanzaKyc), endpoint: bonanzaKyc.portalUrl, mode: bonanzaKyc.mode, signed_callbacks: Boolean(bonanzaKyc.webhookSecret) },
     smtp: { state: state(smtp), endpoint: smtp.host },
   };

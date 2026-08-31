@@ -1,13 +1,17 @@
 /**
  * Smartping WhatsApp — adapter.
  *
- * WHAT WE ESTABLISHED FROM THE LIVE TENANT
- * ----------------------------------------
- * whatsapp.smartping.in is a white-labelled AiSensy deployment: the dashboard
- * bundle talks to backend.aisensy.com and backend.api-wa.co/partner/t1, sets
- * cookies on .aisensy.com, and carries the Direct-API field names `apiKey`,
- * `campaignName` and `destination`. So the contract to write against is the
- * AiSensy v2 campaign API, not a bespoke Smartping one.
+ * CONFIRMED AGAINST SMARTPING'S OWN API REFERENCE, 31 AUGUST 2026
+ * ---------------------------------------------------------------
+ * Smartping is a white-labelled AiSensy deployment, and their API reference
+ * confirms the contract is the AiSensy v2 campaign API — every field name the
+ * adapter already used was right.
+ *
+ * The path was not. This adapter posted to `/campaign/t1/api/v2`, AiSensy's own
+ * tenant segment; Smartping's is `/campaign/smartping/api/v2`. Every send would
+ * have 404'd. Now configurable, defaulted to Smartping's.
+ *
+ * Full contract in `docs/integrations/SMARTPING-WHATSAPP-API.md`.
  *
  * WHAT THAT MEANS FOR THE CRM
  * ---------------------------
@@ -31,10 +35,17 @@ import { normaliseMsisdn } from './quickcall.js';
 export const name = 'Smartping WhatsApp (AiSensy)';
 export const isLive = () => cfg.configured;
 
-/** AiSensy expects the full international MSISDN without a plus. */
+/**
+ * The destination, in the format the reference recommends: `+` then country
+ * code then number. A number that cannot be resolved to a country is treated as
+ * Indian (+91) by Smartping — fine for this book, but relying on a vendor's
+ * fallback for something as consequential as which country a message goes to is
+ * not a thing to do on purpose.
+ */
 export const toWhatsAppNumber = (raw) => {
   const local = normaliseMsisdn(raw);
-  return local.length === 10 ? `91${local}` : String(raw ?? '').replace(/\D/g, '');
+  const digits = local.length === 10 ? `91${local}` : String(raw ?? '').replace(/\D/g, '');
+  return digits ? `+${digits}` : '';
 };
 
 /**
@@ -47,9 +58,12 @@ export async function sendTemplate({ to, campaignName, userName, params = [], me
   if (!cfg.configured) throw new VendorError(name, 'Smartping is not configured');
 
   const destination = toWhatsAppNumber(to);
-  if (destination.length < 11) throw new VendorError(name, `Not a valid WhatsApp number: ${to}`);
+  // '+' plus at least a dial code and a subscriber number.
+  if (destination.replace(/\D/g, '').length < 11) {
+    throw new VendorError(name, `Not a valid WhatsApp number: ${to}`);
+  }
 
-  const { data } = await vendorFetch(name, `${cfg.baseUrl.replace(/\/$/, '')}/campaign/t1/api/v2`, {
+  const { data } = await vendorFetch(name, `${cfg.baseUrl.replace(/\/$/, '')}${cfg.campaignPath}`, {
     body: {
       apiKey: cfg.apiKey,
       campaignName: campaignName || cfg.defaultCampaign,
@@ -67,6 +81,11 @@ export async function sendTemplate({ to, campaignName, userName, params = [], me
     attempts: 1,
   });
 
+  /* The reference documents no response body — success is HTTP 200 and nothing
+     more. So there is frequently no id to correlate against, and delivery state
+     has to come from the webhook, matched on number and time. `message_id` is
+     read opportunistically and is expected to be null more often than not;
+     nothing should be built on the assumption that it is present. */
   return {
     message_id: data?.messageId || data?.id || null,
     accepted: data?.success !== false,

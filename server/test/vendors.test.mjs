@@ -14,6 +14,7 @@
 import assert from 'node:assert/strict';
 import * as quickcall from '../src/vendors/quickcall.js';
 import * as aisensy from '../src/vendors/aisensy.js';
+import * as vendorConfig from '../src/vendors/config.js';
 import * as bonanzakyc from '../src/vendors/bonanzakyc.js';
 import { safeEqual } from '../src/vendors/http.js';
 
@@ -32,9 +33,24 @@ test('Indian mobiles normalise to bare 10 digits from every common form', () => 
 });
 
 test('WhatsApp numbers carry the country code, dialler numbers do not', () => {
-  assert.equal(aisensy.toWhatsAppNumber('9876543210'), '919876543210');
-  assert.equal(aisensy.toWhatsAppNumber('+91 98765 43210'), '919876543210');
+  /* Smartping's reference recommends `+(country code)(number)`, and says an
+     unresolvable number is assumed Indian. Relying on a vendor's fallback to
+     decide which country a client message goes to is not something to do on
+     purpose, so the dial code is always explicit. The dialler is the opposite:
+     the switch wants bare local digits. */
+  assert.equal(aisensy.toWhatsAppNumber('9876543210'), '+919876543210');
+  assert.equal(aisensy.toWhatsAppNumber('+91 98765 43210'), '+919876543210');
+  assert.equal(aisensy.toWhatsAppNumber('09876543210'), '+919876543210');
+  assert.equal(aisensy.toWhatsAppNumber(''), '', 'an empty number must not become a bare plus');
   assert.equal(quickcall.normaliseMsisdn('+919876543210'), '9876543210');
+});
+
+test('WhatsApp sends go to the Smartping path, not AiSensy own tenant path', () => {
+  /* The adapter posted to /campaign/t1/api/v2 — AiSensy's tenant segment — for
+     as long as this integration existed. Smartping's is /campaign/smartping/.
+     Every send would have 404'd, and nothing would have caught it, because no
+     test had ever looked at the URL. */
+  assert.equal(vendorConfig.aisensy.campaignPath, '/campaign/smartping/api/v2');
 });
 
 /* ------------------------------------------------ QuickCall call events */
