@@ -550,6 +550,40 @@ CREATE TABLE IF NOT EXISTS dialler_campaigns (
   UNIQUE (cube_campaign_id, sales_org)
 );
 
+/*
+ * Validation rules — a save the business refuses.
+ *
+ * The condition describes what is WRONG, and the save is refused when it
+ * matches. "Refuse when stage is Won and PAN is blank" rather than "require PAN
+ * when stage is Won": both say the same thing, and the first is the one that
+ * reads correctly off the screen without being inverted in your head.
+ *
+ * message is not optional and is not generated. A refusal that says
+ * "validation failed on rule 7" tells the person saving nothing they can act
+ * on, and the rule's author is the only one who knows what they meant.
+ *
+ * sales_org NULL means the rule applies to both books. A rule scoped to one is
+ * how Bigul gets a requirement Bonanza does not have without either of them
+ * getting a second copy of the object.
+ */
+CREATE TABLE IF NOT EXISTS validation_rule (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity      TEXT NOT NULL,
+  name        TEXT NOT NULL,
+  description TEXT,
+  -- { all: [ { field, op, value } ] } or { any: [...] }. One level, no nesting.
+  condition   TEXT NOT NULL,
+  -- What the person saving reads when it fires.
+  message     TEXT NOT NULL,
+  sales_org   TEXT,
+  active      INTEGER NOT NULL DEFAULT 1,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_validation_entity ON validation_rule (entity, active);
+
 CREATE TABLE IF NOT EXISTS notifications (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

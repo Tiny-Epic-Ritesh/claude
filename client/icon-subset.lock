@@ -1,6 +1,6 @@
 # The exact names the bundled font was generated from, and the font it produced.
 # Regenerate both together — see the instructions at the top of icon-subset.txt.
-# font-sha256 c5bce24d534b337e04a563fa5c106099a9d8c122e153c7cee3ef81f85e1b40b1
+# font-sha256 bd28b62a26c1069e717981977047c04961598dba442961c09a1fd13ded35cf45
 account_balance
 account_balance_wallet
 account_tree
@@ -89,6 +89,7 @@ expand_less
 expand_more
 explore
 eyebrow
+fact_check
 family_restroom
 feature
 filter_alt

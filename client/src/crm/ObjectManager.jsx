@@ -19,6 +19,7 @@
 
 import { useState } from 'react';
 import { api } from '../api.js';
+import ValidationRules from './ValidationRules.jsx';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner } from '../components/ui.jsx';
 
 const TYPE_GROUPS = [
@@ -249,6 +250,11 @@ function ObjectDetail({ entity, onBack }) {
         </table>
         {data.fields.length === 0 && <Empty>No fields yet.</Empty>}
       </div>
+
+      {/* Rules live under the fields they constrain, on the same screen.
+          A separate tab would mean an administrator can add a required-looking
+          field without ever seeing where "required" is actually decided. */}
+      <ValidationRules entity={entity} />
 
       {adding && (
         <NewField

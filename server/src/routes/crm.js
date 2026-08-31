@@ -9,6 +9,7 @@ import { encryptField, decryptField, maskRecord, maskRecords, validate, blindInd
 import { applyScore } from '../engine/rules.js';
 import { click2call, pushToAutodialler, send, logCall } from '../integrations.js';
 import { checkConsent, contactability } from '../engine/consent.js';
+import { assertValid } from '../engine/validation.js';
 import { derivedValues, describeFormula, describeRollup } from '../engine/formulas.js';
 import { assignLead } from '../engine/assignment.js';
 import { metricsFor } from '../engine/metrics.js';
@@ -360,6 +361,16 @@ router.post('/leads', requirePermission('lead.create'), (req, res) => {
   });
   if (invalid) return res.status(400).json(invalid);
 
+  /* Validation rules apply to creation as well as to edits. A rule that only
+     ran on update would be satisfied by importing the offending record. */
+  const created = assertValid('lead', { patch: req.body });
+  if (created) {
+    return res.status(422).json({
+      error: created[0].message,
+      failed: created.map((r) => ({ rule: r.rule, message: r.message })),
+    });
+  }
+
   // Duplicate guard on mobile — the single most common import defect.
   if (mobile) {
     const dupe = one('SELECT id, name FROM leads WHERE mobile = ? AND deleted_at IS NULL', [mobile]);
@@ -476,6 +487,19 @@ router.patch('/leads/:id', (req, res) => {
 
   const invalid = validate(body, { mobile: ['mobile'], email: ['email'], pan: ['pan'], name: ['max:120'] });
   if (invalid) return res.status(400).json(invalid);
+
+  /* Configured validation rules, enforced at the API rather than in the form.
+     Imports, automation and bulk actions all arrive here and none of them
+     render a form. Every failing rule is reported, not just the first — being
+     told about one problem, fixing it, and being told about the next is how a
+     form becomes something people work around. */
+  const refusals = assertValid('lead', { existing: lead, patch: body });
+  if (refusals) {
+    return res.status(422).json({
+      error: refusals[0].message,
+      failed: refusals.map((r) => ({ rule: r.rule, message: r.message })),
+    });
+  }
 
   /**
    * The core columns a lead form may write.

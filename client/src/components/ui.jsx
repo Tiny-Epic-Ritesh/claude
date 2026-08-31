@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { api, STATE_LABEL } from '../api.js';
 import { avatarStyle, initials, resolvedTheme, cycleTheme } from '../theme.js';
@@ -87,7 +88,14 @@ export function Modal({ title, subtitle, onClose, children, wide }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  return (
+  /* Portalled to the body, and it has to be.
+   *
+   * .card sets backdrop-filter, which makes it the containing block for
+   * position:fixed descendants — so a modal opened from inside a card was
+   * clipped to that card instead of covering the window. It looked like a
+   * layout bug in whichever screen noticed it first, but it applied to every
+   * modal rendered from inside a card and would have kept reappearing. */
+  return createPortal((
     <div className="backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className={`modal card ${wide ? 'modal-lg' : ''}`} role="dialog" aria-modal="true" aria-label={title}>
         <div className="card-head">
@@ -100,7 +108,7 @@ export function Modal({ title, subtitle, onClose, children, wide }) {
         <div className="card-body">{children}</div>
       </div>
     </div>
-  );
+  ), document.body);
 }
 
 /**

@@ -9,6 +9,7 @@
  */
 
 import { Router } from 'express';
+import { assertValid } from '../engine/validation.js';
 import { all, one, run, audit } from '../db.js';
 import {
   can, requireUser, requirePermission, reqClientScope, unmaskRequested, maskFor,
@@ -208,6 +209,19 @@ router.patch('/:id', requirePermission('client.edit'), (req, res) => {
 
   if ('status' in req.body && !CLIENT_STATUSES.includes(req.body.status)) {
     return res.status(400).json({ error: `Status must be one of: ${CLIENT_STATUSES.join(', ')}` });
+  }
+
+  /* Configured validation rules, enforced at the API rather than in the form.
+     Imports, automation and bulk actions all arrive here and none of them
+     render a form. Every failing rule is reported, not just the first — being
+     told about one problem, fixing it, and being told about the next is how a
+     form becomes something people work around. */
+  const refusals = assertValid('client', { existing: client, patch: req.body });
+  if (refusals) {
+    return res.status(422).json({
+      error: refusals[0].message,
+      failed: refusals.map((r) => ({ rule: r.rule, message: r.message })),
+    });
   }
 
   const sets = [];

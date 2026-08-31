@@ -30,6 +30,9 @@ import {
 } from '../engine/access.js';
 import { vendorStatus } from '../vendors/config.js';
 import { syncDispositionPicklists } from '../engine/metadata.js';
+import {
+  validateRule, operatorCatalogue, wouldRefuseExisting,
+} from '../engine/validation.js';
 import { explainVisibility } from '../engine/sharing.js';
 import {
   entities, entityDef, fieldsOf, fieldDef, picklistValues, historyFor,
@@ -776,6 +779,133 @@ router.patch('/objects/:entity/fields/:apiName', requirePermission('admin.object
   const after = one('SELECT * FROM field_def WHERE id = ?', [field.id]);
   auditConfig('field', `${req.params.entity}.${req.params.apiName}`, 'updated', field, after, req.user.id);
   return res.json(after);
+});
+
+/* ----------------------------------------------------- validation rules
+ *
+ * A rule refuses a save when its condition MATCHES — the condition describes
+ * what is wrong, not what is required. Both phrasings say the same thing and
+ * the first is the one that reads correctly off the screen.
+ *
+ * Authoring is gated on admin.objects, the same capability that adds a field:
+ * both change what the object will accept, and splitting them would mean an
+ * administrator who can add a required field but not say when it is required.
+ */
+
+router.get('/objects/:entity/validation-rules', requirePermission('admin.objects'), (req, res) => {
+  const def = entityDef(req.params.entity);
+  if (!def) return res.status(404).json({ error: 'No such object' });
+
+  res.json({
+    object: { api_name: def.api_name, label: def.label_plural },
+    rules: all(
+      'SELECT * FROM validation_rule WHERE entity = ? ORDER BY sort_order, id',
+      [req.params.entity],
+    ).map((r) => ({ ...r, condition: safeParse(r.condition) })),
+    // The screen needs both to build a condition without guessing.
+    fields: fieldsOf(req.params.entity).map((f) => ({
+      api_name: f.api_name, label: f.label, type: f.type,
+      values: (f.type === 'picklist' || f.type === 'multipicklist')
+        ? picklistValues(f.id).map((v) => v.value)
+        : undefined,
+    })),
+    operators: operatorCatalogue(),
+  });
+});
+
+const safeParse = (t) => { try { return JSON.parse(t); } catch { return null; } };
+
+router.post('/objects/:entity/validation-rules', requirePermission('admin.objects'), (req, res) => {
+  const def = entityDef(req.params.entity);
+  if (!def) return res.status(404).json({ error: 'No such object' });
+
+  const { name, description, condition, message, sales_org: org = null } = req.body;
+  if (!name || !String(name).trim()) {
+    return res.status(400).json({ error: 'A rule needs a name', field: 'name' });
+  }
+  if (org && (!SALES_ORGS.includes(org) || !mayUseOrg(req.user, org))) {
+    return res.status(403).json({ error: 'That business is outside your access', field: 'sales_org' });
+  }
+
+  const invalid = validateRule(req.params.entity, { condition, message });
+  if (invalid) return res.status(400).json(invalid);
+
+  const result = run(
+    `INSERT INTO validation_rule (entity, name, description, condition, message, sales_org, created_by, sort_order)
+     VALUES (?,?,?,?,?,?,?,(SELECT COALESCE(MAX(sort_order),-1)+1 FROM validation_rule WHERE entity = ?))`,
+    [req.params.entity, String(name).trim(), description ?? null,
+      JSON.stringify(condition), String(message).trim(), org, req.user.id, req.params.entity],
+  );
+
+  auditConfig('validation_rule', `${req.params.entity}.${name}`, 'created', null, req.body, req.user.id);
+  return res.status(201).json(one('SELECT * FROM validation_rule WHERE id = ?', [Number(result.lastInsertRowid)]));
+});
+
+router.patch('/validation-rules/:id', requirePermission('admin.objects'), (req, res) => {
+  const rule = one('SELECT * FROM validation_rule WHERE id = ?', [req.params.id]);
+  if (!rule) return res.status(404).json({ error: 'Rule not found' });
+  if (rule.sales_org && !mayUseOrg(req.user, rule.sales_org)) {
+    return res.status(403).json({ error: 'That rule belongs to another business' });
+  }
+
+  const { name, description, condition, message, active } = req.body;
+  if (condition !== undefined || message !== undefined) {
+    const invalid = validateRule(rule.entity, {
+      condition: condition ?? safeParse(rule.condition),
+      message: message ?? rule.message,
+    });
+    if (invalid) return res.status(400).json(invalid);
+  }
+
+  run(
+    `UPDATE validation_rule SET
+       name = COALESCE(?, name), description = COALESCE(?, description),
+       condition = COALESCE(?, condition), message = COALESCE(?, message),
+       active = COALESCE(?, active)
+     WHERE id = ?`,
+    [
+      name ?? null, description ?? null,
+      condition === undefined ? null : JSON.stringify(condition),
+      message ?? null,
+      active === undefined ? null : (Number(active) ? 1 : 0),
+      rule.id,
+    ],
+  );
+
+  auditConfig('validation_rule', `${rule.entity}.${rule.name}`, 'updated', rule, req.body, req.user.id);
+  return res.json(one('SELECT * FROM validation_rule WHERE id = ?', [rule.id]));
+});
+
+router.delete('/validation-rules/:id', requirePermission('admin.objects'), (req, res) => {
+  const rule = one('SELECT * FROM validation_rule WHERE id = ?', [req.params.id]);
+  if (!rule) return res.status(404).json({ error: 'Rule not found' });
+  if (rule.sales_org && !mayUseOrg(req.user, rule.sales_org)) {
+    return res.status(403).json({ error: 'That rule belongs to another business' });
+  }
+
+  run('DELETE FROM validation_rule WHERE id = ?', [rule.id]);
+  auditConfig('validation_rule', `${rule.entity}.${rule.name}`, 'deleted', rule, null, req.user.id);
+  return res.status(204).end();
+});
+
+/**
+ * How many records already stored would this rule refuse?
+ *
+ * Asked before the rule is saved, because the answer is usually more than the
+ * author expects. A rule that refuses four hundred existing records blocks
+ * every edit to all of them — including the edit that would fix them.
+ */
+router.post('/objects/:entity/validation-rules/preview', requirePermission('admin.objects'), (req, res) => {
+  const def = entityDef(req.params.entity);
+  if (!def) return res.status(404).json({ error: 'No such object' });
+
+  const invalid = validateRule(req.params.entity, {
+    condition: req.body.condition,
+    message: req.body.message ?? 'preview',
+  });
+  if (invalid) return res.status(400).json(invalid);
+
+  return res.json(wouldRefuseExisting(req.params.entity, req.body.condition));
 });
 
 /**

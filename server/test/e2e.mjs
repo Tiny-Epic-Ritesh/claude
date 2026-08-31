@@ -2331,6 +2331,101 @@ async function run() {
       `${offered.length - granted.length} of the offered permissions were dropped on save`);
   });
 
+  /* ------------------------------------------ P2-21: validation rules
+   *
+   * The engine's edges are covered by unit tests. What these cover is that the
+   * refusal actually reaches the write routes — a validation engine nothing
+   * calls is the most convincing kind of broken.
+   */
+
+  await check('a configured rule refuses the save, with the author\'s message', async () => {
+    const { data: made } = await req('/api/leads', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: { name: `Validation Probe ${RUN}`, mobile: `90000${RUN}`.slice(0, 10), source: 'Manual' },
+    });
+    REF.validationLead = made.id;
+
+    const { data } = await req(`/api/leads/${made.id}`, {
+      method: 'PATCH', token: T.admin, expect: 422, body: { stage: 'Won' },
+    });
+    assert(/PAN/i.test(data.error), `expected the rule's own message, got: ${data.error}`);
+    assert(Array.isArray(data.failed) && data.failed.length, 'no failing rules reported');
+  });
+
+  await check('the same save is allowed once the problem is fixed', async () => {
+    // Fixing the cause in the same request must work, or the only way to
+    // correct a record is a sequence of saves that are each refused.
+    const id = need(REF.validationLead, 'the validation probe lead');
+    await req(`/api/leads/${id}`, {
+      method: 'PATCH', token: T.admin, expect: 200, body: { stage: 'Won', pan: 'AAAPZ1234C' },
+    });
+  });
+
+  await check('creation is guarded, not only editing', async () => {
+    // A rule that only ran on update would be satisfied by importing the
+    // offending record instead of typing it.
+    await req('/api/leads', {
+      method: 'POST', token: T.admin, expect: 422,
+      body: { name: `Born Won ${RUN}`, mobile: `91000${RUN}`.slice(0, 10), source: 'Manual', stage: 'Won' },
+    });
+  });
+
+  await check('a rule that names a field the object lacks is refused', async () => {
+    const { data } = await req('/api/setup/objects/lead/validation-rules', {
+      method: 'POST', token: T.admin, expect: 400,
+      body: {
+        name: 'Nonsense', message: 'never',
+        condition: { all: [{ field: 'not_a_field', op: 'is_blank' }] },
+      },
+    });
+    assert(/not a field/i.test(data.error), data.error);
+  });
+
+  await check('a rule must carry a message the person saving can act on', async () => {
+    await req('/api/setup/objects/lead/validation-rules', {
+      method: 'POST', token: T.admin, expect: 400,
+      body: { name: 'Silent', message: '  ', condition: { all: [{ field: 'pan', op: 'is_blank' }] } },
+    });
+  });
+
+  await check('a rule can be switched off without being deleted', async () => {
+    const { data } = await req('/api/setup/objects/lead/validation-rules', { token: T.admin, expect: 200 });
+    const rule = data.rules.find((r) => /PAN/i.test(r.name));
+    assert(rule, 'the seeded PAN rule is missing');
+
+    await req(`/api/setup/validation-rules/${rule.id}`, {
+      method: 'PATCH', token: T.admin, expect: 200, body: { active: 0 },
+    });
+
+    const id = need(REF.validationLead, 'the validation probe lead');
+    await req(`/api/leads/${id}`, { method: 'PATCH', token: T.admin, expect: 200, body: { pan: '' } });
+
+    await req(`/api/setup/validation-rules/${rule.id}`, {
+      method: 'PATCH', token: T.admin, expect: 200, body: { active: 1 },
+    });
+    await req(`/api/leads/${id}`, { method: 'PATCH', token: T.admin, expect: 422, body: { stage: 'Won' } });
+  });
+
+  await check('an author is told how many stored records a rule would already refuse', async () => {
+    /* Almost never zero, and the number matters: a rule refusing four hundred
+       existing records blocks every edit to all of them, including the edit
+       that would fix them. */
+    const { data } = await req('/api/setup/objects/lead/validation-rules/preview', {
+      method: 'POST', token: T.admin, expect: 200,
+      body: { condition: { all: [{ field: 'pan', op: 'is_blank' }] } },
+    });
+    assert(typeof data.checked === 'number' && typeof data.failing === 'number',
+      `expected a count, got ${JSON.stringify(data)}`);
+    assert(data.failing >= 1, 'the probe lead has no PAN, so at least one record should fail');
+  });
+
+  await check('writing rules needs the capability that adds fields', async () => {
+    await req('/api/setup/objects/lead/validation-rules', {
+      method: 'POST', token: T.sales_rm, expect: 403,
+      body: { name: 'x', message: 'y', condition: { all: [{ field: 'pan', op: 'is_blank' }] } },
+    });
+  });
+
   /* -------------------------------------------------------------- users */
 
   await check('an administrator can create a user, and gets a password once', async () => {

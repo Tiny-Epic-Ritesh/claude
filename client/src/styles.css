@@ -434,6 +434,19 @@ h3 { font-size: 13.5px; font-weight: 600; }
   border-radius: var(--r-xs);
 }
 
+/* A validation clause: field, operator, value, remove. Collapses to two
+   columns on a narrow window rather than squeezing four selects together. */
+.clause-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.2fr) minmax(120px, 1.2fr) minmax(100px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+.clause-row select, .clause-row input { width: 100%; }
+@media (max-width: 620px) {
+  .clause-row { grid-template-columns: 1fr 1fr; }
+}
+
 /* Layout ordering: the two move buttons, kept together and narrow. */
 .order-moves { display: inline-flex; gap: 2px; }
 .order-moves .btn-sm { padding: 4px 6px; }

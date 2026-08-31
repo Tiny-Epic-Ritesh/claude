@@ -119,6 +119,7 @@ expand_less
 expand_more
 explore
 eyebrow
+fact_check
 family_restroom
 feature
 filter_alt

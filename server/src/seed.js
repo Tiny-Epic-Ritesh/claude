@@ -1278,6 +1278,29 @@ const count = (t) => one(`SELECT COUNT(*) n FROM ${t}`).n;
    further down this file and do not exist any earlier. */
 seedCustomFields();
 
+/* Validation rules, as an administrator would write them.
+ *
+ * Each refuses a save when its condition matches — the condition describes what
+ * is wrong, not what is required. All three are real desk rules rather than
+ * demonstrations of the feature: a lead cannot be marked Won without the PAN
+ * that opening an account needs, a client cannot be closed while it still holds
+ * a balance, and a case cannot be resolved without saying what was done. */
+db.exec('DELETE FROM validation_rule');
+for (const [entity, name, message, condition] of [
+  ['lead', 'PAN before Won',
+    'A lead cannot be marked Won without a PAN — the account cannot be opened without one.',
+    { all: [{ field: 'stage', op: 'eq', value: 'Won' }, { field: 'pan', op: 'is_blank' }] }],
+  ['client', 'No closing a funded account',
+    'This client still holds a ledger balance. Settle it before closing the account.',
+    { all: [{ field: 'status', op: 'eq', value: 'Closed' }, { field: 'ledger_balance', op: 'gt', value: '0' }] }],
+  ['case', 'Say what was done',
+    'Add a resolution before marking this case Resolved — the next person to read it needs to know what happened.',
+    { all: [{ field: 'status', op: 'eq', value: 'Resolved' }, { field: 'description', op: 'shorter_than', value: '10' }] }],
+]) {
+  run('INSERT INTO validation_rule (entity, name, condition, message, created_by) VALUES (?,?,?,?,?)',
+    [entity, name, JSON.stringify(condition), message, U.admin ?? null]);
+}
+
 console.log(`
 Seeded Bonanza CRM
   users            ${count('users')}   (password for all: bonanza)

@@ -5,6 +5,7 @@
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
 import { can, requireUser, requirePermission, mayUseOrg, orgsFor } from '../auth.js';
+import { assertValid } from '../engine/validation.js';
 import { applySla, sweepSla, handleStatusChange, slaRemaining, DEFAULT_SLA } from '../engine/sla.js';
 import { send } from '../integrations.js';
 import * as ai from '../ai/index.js';
@@ -199,6 +200,18 @@ router.patch('/:id', async (req, res) => {
     return res.status(403).json({ error: 'Reassignment requires Customer Care, a Supervisor or an Admin', required: 'ticket.reassign' });
   }
   if (status && !STATUSES.includes(status)) return res.status(400).json({ error: `Status must be one of ${STATUSES.join(', ')}` });
+
+  /* Configured validation rules, enforced here rather than in the form —
+     automation and the API reach this route without rendering one. Checked
+     against the ticket as it WOULD be, not as it is, or a rule refusing a bad
+     final state would let the save that creates it straight through. */
+  const refusals = assertValid('case', { existing: ticket, patch: req.body });
+  if (refusals) {
+    return res.status(422).json({
+      error: refusals[0].message,
+      failed: refusals.map((r) => ({ rule: r.rule, message: r.message })),
+    });
+  }
 
   if (status && status !== ticket.status) handleStatusChange(ticket, status);
 
