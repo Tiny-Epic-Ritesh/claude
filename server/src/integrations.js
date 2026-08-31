@@ -105,12 +105,79 @@ export function send(channel, { to, body, subject, leadId, partnerId, templateId
 /* ------------------------------------------------------------ telephony */
 
 /**
+ * Which CUBE queue a call goes into.
+ *
+ * This is what the cross-campaign requirement actually needs. AuthClick2Call
+ * carries the campaign per request, so a Bigul desk and a Bonanza desk can dial
+ * from different queues on the same switch, and neither is tied to whatever the
+ * agent happened to log into.
+ *
+ * Most specific wins:
+ *   1. a queue registered for this lead's product, in this lead's book
+ *   2. the book's default queue
+ *   3. the environment default — the placeholder, which is not a real CUBE
+ *      campaign and exists so the product runs unconfigured
+ *
+ * The book is taken from the lead, never from the caller. A supervisor working
+ * across both books dials each lead into its own book's queue, which is the
+ * same boundary every other query in the product holds.
+ */
+export function campaignFor(lead, productTypeId = null) {
+  const org = lead?.sales_org || 'BONANZA';
+
+  /* A lead has no product column — products hang off it as product_cards, and
+     it can hold several. "The lead's product" therefore needs a stated rule
+     rather than a guess, because picking arbitrarily among several open cards
+     would put the call in an arbitrary queue and nothing would ever say so.
+
+     When the RM calls from a product card we know the product exactly, and it
+     is passed in. Only when we do not — a call from the lead header, or from a
+     list row — is it inferred, and then the rule is the open card touched most
+     recently, which is the product they are actually working. Closed cards are
+     ignored: a won or lost product is not what this call is about. */
+  const card = productTypeId
+    ? { product_type_id: productTypeId }
+    : lead?.id && one(
+      `SELECT product_type_id FROM product_cards
+       WHERE lead_id = ? AND state NOT IN ('Won', 'Lost')
+       ORDER BY COALESCE(last_state_at, created_at) DESC, id DESC
+       LIMIT 1`,
+      [lead.id],
+    );
+
+  const byProduct = card?.product_type_id && one(
+    `SELECT cube_campaign_id FROM dialler_campaigns
+     WHERE active = 1 AND sales_org = ? AND product_type_id = ?
+     ORDER BY is_default DESC, id LIMIT 1`,
+    [org, card.product_type_id],
+  );
+  if (byProduct) return { campaign: byProduct.cube_campaign_id, source: 'product' };
+
+  const byOrg = one(
+    `SELECT cube_campaign_id FROM dialler_campaigns
+     WHERE active = 1 AND sales_org = ? AND product_type_id IS NULL
+     ORDER BY is_default DESC, id LIMIT 1`,
+    [org],
+  );
+  if (byOrg) return { campaign: byOrg.cube_campaign_id, source: 'book' };
+
+  // Nothing registered. The adapter falls back to the configured placeholder,
+  // and the caller is told the queue was not chosen so a screen can say so.
+  return { campaign: null, source: 'fallback' };
+}
+
+/**
  * Click-to-call. Async because the agent needs to know whether the switch
  * actually rang — a silently failed dial is worse than an error toast.
  */
-export async function click2call({ userId, leadId, mobile, campaign = null }) {
+export async function click2call({ userId, leadId, mobile, campaign = null, productTypeId = null }) {
   const agent = one('SELECT id, name, phone_extension, cti_agent_id FROM users WHERE id = ?', [userId]);
-  const lead = leadId ? one('SELECT id, name FROM leads WHERE id = ?', [leadId]) : null;
+  const lead = leadId
+    ? one('SELECT id, name, sales_org FROM leads WHERE id = ?', [leadId])
+    : null;
+
+  // An explicit campaign always wins; otherwise it is resolved from the lead.
+  const resolved = campaign ? { campaign, source: 'explicit' } : campaignFor(lead, productTypeId);
 
   /* No simulation branch here any more. The adapter simulates below its own
      field mapping, so the same code builds the request body whether or not
@@ -127,12 +194,19 @@ export async function click2call({ userId, leadId, mobile, campaign = null }) {
       mobile,
       leadId,
       leadName: lead?.name,
-      campaign,
+      campaign: resolved.campaign,
     });
     record('telephony', { to: mobile, body: 'Click2Call placed' }, {
       simulated: res.simulated, call_id: res.call_id, lead_id: leadId, user_id: userId, status: res.status,
     });
-    return { ...res, agent_mapped: Boolean(agent?.cti_agent_id) };
+    return {
+      ...res,
+      agent_mapped: Boolean(agent?.cti_agent_id),
+      // How the queue was chosen, so a screen can distinguish "dialled into the
+      // Bigul equity queue" from "dialled into the placeholder because nobody
+      // has registered a queue yet".
+      campaign_source: resolved.source,
+    };
   } catch (err) {
     record('telephony', { to: mobile, body: `Click2Call failed — ${err.message}` }, { simulated: false, lead_id: leadId, user_id: userId, status: 'failed' });
     throw err;

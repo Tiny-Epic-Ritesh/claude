@@ -38,7 +38,7 @@ for (const t of [
   'client_segments', 'clients',
   'notes', 'tasks', 'activities', 'card_audit', 'product_cards', 'leads', 'partners',
   'content_items', 'templates', 'sla_policies', 'ticket_categories', 'product_types', 'users',
-  'reminders', 'assignment_rules', 'team_members', 'teams',
+  'reminders', 'assignment_rules', 'team_members', 'teams', 'dialler_campaigns',
 ]) {
   db.exec(`DELETE FROM ${t}`);
   db.exec(`DELETE FROM sqlite_sequence WHERE name = '${t}'`);
@@ -102,6 +102,38 @@ seedKra();
 seedIncentives();
 
 /* ------------------------------------------------------------- products */
+
+/**
+ * Dialler queues, as CUBE would know them.
+ *
+ * Placeholders -- the real CampaignId strings are still outstanding from Cube,
+ * and CUBE has no endpoint that lists them, so they can only be configured.
+ * They are seeded anyway because the shape is the point: a queue per desk per
+ * book, plus one book-wide default, which is what makes a call carry the right
+ * campaign instead of the whole firm sharing one environment variable.
+ *
+ * Named per book deliberately. A Bigul desk dialling from a Bonanza queue
+ * would put the two books' calls in one place in Cube's own reporting, which
+ * is the same boundary failure as any cross-book query.
+ */
+function seedDiallerCampaigns() {
+  const productId = (org, code) =>
+    one('SELECT id FROM product_types WHERE sales_org = ? AND code = ?', [org, code])?.id ?? null;
+
+  const queues = [
+    ['BNZ_SALES_OUT', 'Bonanza — outbound sales', 'BONANZA', null, 1],
+    ['BNZ_EQ_DESK', 'Bonanza — equity desk', 'BONANZA', productId('BONANZA', 'EQD'), 0],
+    ['BGL_SALES_OUT', 'Bigul — outbound sales', 'BIGUL', null, 1],
+  ];
+
+  for (const [cubeId, label, org, ptId, isDefault] of queues) {
+    run(
+      `INSERT INTO dialler_campaigns (cube_campaign_id, label, sales_org, product_type_id, is_default)
+       VALUES (?,?,?,?,?)`,
+      [cubeId, label, org, ptId, isDefault],
+    );
+  }
+}
 
 const PRODUCTS = [
   ['EQD', 'Equity & Derivatives', 'Broking', 0, 'None', 'High',
@@ -597,6 +629,7 @@ for (const [leadIdx, code, state, value] of [...CARD_PLAN, ...BIGUL_CARD_PLAN]) 
 db.exec('DELETE FROM dispositions');
 db.exec("DELETE FROM sqlite_sequence WHERE name = 'dispositions'");
 seedDispositions();
+seedDiallerCampaigns();
 
 /* ------------------------------------------------------------- teams */
 

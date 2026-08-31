@@ -7,6 +7,7 @@ import { api, rupees, dateTime, shortDate, ROLE_LABEL } from '../api.js';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, Icon, useDropUp } from '../components/ui.jsx';
 import ObjectManager from './ObjectManager.jsx';
 import RolesSetup from './RolesSetup.jsx';
+import Telephony from './Telephony.jsx';
 
 export default function Admin({ session }) {
   const has = (p) => session.permissions.includes(p);
@@ -26,6 +27,7 @@ export default function Admin({ session }) {
     has('admin.templates') && { key: 'templates', label: 'Templates' },
     has('admin.content') && { key: 'content', label: 'Content library' },
     has('campaign.manage') && { key: 'campaigns', label: 'Campaigns' },
+    has('admin.system') && { key: 'telephony', label: 'Telephony' },
     { key: 'integrations', label: 'Integrations' },
     has('admin.system') && { key: 'meta', label: 'Facebook & Instagram' },
     { key: 'residency', label: 'Data residency' },
@@ -59,6 +61,7 @@ export default function Admin({ session }) {
       {tab === 'templates' && <Templates />}
       {tab === 'content' && <Content />}
       {tab === 'campaigns' && <Campaigns />}
+      {tab === 'telephony' && <Telephony />}
       {tab === 'integrations' && <Integrations />}
       {tab === 'meta' && <MetaConnector />}
       {tab === 'residency' && <Residency session={session} />}

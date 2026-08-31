@@ -860,7 +860,16 @@ router.post('/leads/:id/call', requirePermission('lead.contact'), async (req, re
   }
 
   try {
-    return res.json(await click2call({ userId: req.user.id, leadId: lead.id, mobile: lead.mobile }));
+    /* product_type_id is optional and comes from the product card the RM is
+       calling from, when there is one. It decides which CUBE queue the call
+       goes into; without it the queue is inferred from the lead's most recent
+       open card. */
+    return res.json(await click2call({
+      userId: req.user.id,
+      leadId: lead.id,
+      mobile: lead.mobile,
+      productTypeId: req.body.product_type_id ?? null,
+    }));
   } catch (err) {
     // A dial failure is the agent's problem to act on, not a server fault: they
     // need to know the switch refused so they can call from the handset.

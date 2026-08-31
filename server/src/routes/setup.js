@@ -28,6 +28,7 @@ import { hashPassword, validate } from '../security.js';
 import {
   invalidate, explainAccess, dataScope, CAPABILITY_CATALOGUE,
 } from '../engine/access.js';
+import { vendorStatus } from '../vendors/config.js';
 import { explainVisibility } from '../engine/sharing.js';
 import {
   entities, entityDef, fieldsOf, fieldDef, picklistValues, historyFor,
@@ -1172,6 +1173,182 @@ router.post('/field-masking', requirePermission('admin.users'), (req, res) => {
     { masked: before }, { masked: after }, req.user.id);
 
   res.json({ ok: true, masked: after });
+});
+
+/* ------------------------------------------------------------ telephony
+ *
+ * Two things the dialler needs that nothing could previously set.
+ *
+ * The CUBE agent id is one. It has been a column since the integration was
+ * written and there has never been a screen for it, so every call went out
+ * unattributed -- or worse, carrying our internal user id, which CUBE would
+ * either reject or pin on whichever of its agents is called "2".
+ *
+ * The campaign registry is the other. CUBE has no endpoint that lists its
+ * campaigns, so the values cannot be discovered, only configured. Without
+ * somewhere to put them the whole firm shares one environment variable, and
+ * the cross-campaign requirement -- a call carries its queue per request so
+ * different desks dial into different queues -- has no data to work from.
+ *
+ * Gated on admin.system rather than admin.users: this is integration
+ * configuration that happens to live on a user row, and splitting it across
+ * two screens is how the two drift apart.
+ */
+
+/** Everything the telephony screen needs, in one call. */
+router.get('/dialler', requirePermission('admin.system'), (req, res) => {
+  const orgs = orgsFor(req.user);
+  const marks = orgs.map(() => '?').join(',') || 'NULL';
+
+  res.json({
+    connection: vendorStatus().quickcall,
+    campaigns: all(
+      `SELECT c.*, pt.name AS product_name
+       FROM dialler_campaigns c
+       LEFT JOIN product_types pt ON pt.id = c.product_type_id
+       WHERE c.sales_org IN (${marks})
+       ORDER BY c.sales_org, c.is_default DESC, c.label`,
+      orgs,
+    ),
+    /* Only the roles that actually dial. Listing all 83 users on a telephony
+       screen buries the eight who need an extension among the rest. */
+    agents: all(
+      `SELECT u.id, u.name, u.email, u.role, u.sales_org, u.branch,
+              u.cti_agent_id, u.phone_extension, r.name AS role_name
+       FROM users u
+       LEFT JOIN roles r ON r.code = u.role
+       WHERE u.active = 1 AND u.sales_org IN (${marks})
+         AND u.role IN ('sales_rm','caller','dealer','sales_supervisor','product_supervisor')
+       ORDER BY u.cti_agent_id IS NULL DESC, u.name`,
+      orgs,
+    ),
+    products: all('SELECT id, name FROM product_types ORDER BY name'),
+    orgs,
+  });
+});
+
+router.post('/dialler/campaigns', requirePermission('admin.system'), (req, res) => {
+  const {
+    cube_campaign_id: cubeId, label, sales_org: org = 'BONANZA',
+    product_type_id: productTypeId = null, is_default: isDefault = 0,
+  } = req.body;
+
+  const invalid = validate(req.body, {
+    cube_campaign_id: ['required', 'max:80'], label: ['required', 'max:80'],
+  });
+  if (invalid) return res.status(400).json(invalid);
+
+  if (!SALES_ORGS.includes(org)) return res.status(400).json({ error: 'Unknown business', field: 'sales_org' });
+  if (!mayUseOrg(req.user, org)) return res.status(403).json({ error: 'That business is outside your access', field: 'sales_org' });
+
+  if (one('SELECT id FROM dialler_campaigns WHERE cube_campaign_id = ? AND sales_org = ?', [cubeId, org])) {
+    return res.status(409).json({ error: `${cubeId} is already registered for ${org}`, field: 'cube_campaign_id' });
+  }
+
+  const result = transact(() => {
+    // One default per book, or "the book's default queue" has no answer.
+    if (Number(isDefault)) {
+      run('UPDATE dialler_campaigns SET is_default = 0 WHERE sales_org = ?', [org]);
+    }
+    return run(
+      `INSERT INTO dialler_campaigns (cube_campaign_id, label, sales_org, product_type_id, is_default)
+       VALUES (?,?,?,?,?)`,
+      [String(cubeId).trim(), String(label).trim(), org, productTypeId || null, Number(isDefault) ? 1 : 0],
+    );
+  });
+
+  audit(req.user.id, 'dialler_campaign_created', 'dialler_campaign', null, { cube_campaign_id: cubeId, sales_org: org });
+  return res.status(201).json(one('SELECT * FROM dialler_campaigns WHERE id = ?', [Number(result.lastInsertRowid)]));
+});
+
+router.patch('/dialler/campaigns/:id', requirePermission('admin.system'), (req, res) => {
+  const row = one('SELECT * FROM dialler_campaigns WHERE id = ?', [req.params.id]);
+  if (!row) return res.status(404).json({ error: 'Campaign not found' });
+  if (!mayUseOrg(req.user, row.sales_org)) return res.status(403).json({ error: 'That campaign belongs to another business' });
+
+  const { label, product_type_id: productTypeId, is_default: isDefault, active } = req.body;
+  if (label !== undefined && !String(label).trim()) {
+    return res.status(400).json({ error: 'A campaign needs a label', field: 'label' });
+  }
+
+  /* cube_campaign_id is deliberately not editable. Calls have been placed
+     against it and the call log is queried by it, so changing the string
+     silently detaches this row from its own history. Retire it and add
+     another. */
+
+  transact(() => {
+    if (Number(isDefault)) run('UPDATE dialler_campaigns SET is_default = 0 WHERE sales_org = ?', [row.sales_org]);
+    run(
+      `UPDATE dialler_campaigns SET
+         label = COALESCE(?, label),
+         product_type_id = ?,
+         is_default = COALESCE(?, is_default),
+         active = COALESCE(?, active)
+       WHERE id = ?`,
+      [
+        label ?? null,
+        productTypeId === undefined ? row.product_type_id : (productTypeId || null),
+        isDefault === undefined ? null : (Number(isDefault) ? 1 : 0),
+        active === undefined ? null : (Number(active) ? 1 : 0),
+        row.id,
+      ],
+    );
+  });
+
+  audit(req.user.id, 'dialler_campaign_updated', 'dialler_campaign', null, { id: row.id });
+  return res.json(one('SELECT * FROM dialler_campaigns WHERE id = ?', [row.id]));
+});
+
+router.delete('/dialler/campaigns/:id', requirePermission('admin.system'), (req, res) => {
+  const row = one('SELECT * FROM dialler_campaigns WHERE id = ?', [req.params.id]);
+  if (!row) return res.status(404).json({ error: 'Campaign not found' });
+  if (!mayUseOrg(req.user, row.sales_org)) return res.status(403).json({ error: 'That campaign belongs to another business' });
+
+  run('DELETE FROM dialler_campaigns WHERE id = ?', [row.id]);
+  audit(req.user.id, 'dialler_campaign_deleted', 'dialler_campaign', null, { cube_campaign_id: row.cube_campaign_id });
+  return res.status(204).end();
+});
+
+/** The dialler identity on one user. */
+router.patch('/dialler/agents/:id', requirePermission('admin.system'), (req, res) => {
+  const user = one('SELECT id, name, sales_org FROM users WHERE id = ?', [req.params.id]);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (!mayUseOrg(req.user, user.sales_org)) return res.status(403).json({ error: 'That user is outside your access' });
+
+  const agentId = req.body.cti_agent_id;
+  const ext = req.body.phone_extension;
+
+  /* An agent id is unique on the switch. Two CRM users sharing one would make
+     every call from either indistinguishable in CUBE's own reporting, which is
+     the shared-login problem arriving through a different door. */
+  if (agentId) {
+    const clash = one(
+      'SELECT id, name FROM users WHERE cti_agent_id = ? AND id != ?',
+      [String(agentId).trim(), user.id],
+    );
+    if (clash) {
+      return res.status(409).json({
+        error: `${clash.name} already uses the agent id "${agentId}"`,
+        field: 'cti_agent_id',
+      });
+    }
+  }
+
+  // An empty string clears the mapping; undefined leaves it alone.
+  run(
+    `UPDATE users SET
+       cti_agent_id = ${agentId === undefined ? 'cti_agent_id' : '?'},
+       phone_extension = ${ext === undefined ? 'phone_extension' : '?'}
+     WHERE id = ?`,
+    [
+      ...(agentId === undefined ? [] : [String(agentId).trim() || null]),
+      ...(ext === undefined ? [] : [String(ext).trim() || null]),
+      user.id,
+    ],
+  );
+
+  audit(req.user.id, 'dialler_agent_mapped', 'user', user.id, { cti_agent_id: agentId ?? null });
+  return res.json(one('SELECT id, name, cti_agent_id, phone_extension FROM users WHERE id = ?', [user.id]));
 });
 
 export default router;

@@ -518,6 +518,38 @@ CREATE TABLE IF NOT EXISTS campaigns (
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+/**
+ * Dialler campaigns — the queues CUBE knows about.
+ *
+ * DELIBERATELY NOT THE campaigns TABLE ABOVE. That one is a marketing send:
+ * a template, a list, and open/click counts. This one is a CUBE queue
+ * identifier that a call is placed into. They share an English word and
+ * nothing else, and merging them would be exactly the one-name-two-meanings
+ * mistake the legacy audit spent ten findings on.
+ *
+ * They exist as rows because CUBE has no endpoint that lists its campaigns —
+ * the values cannot be discovered, only configured. Without this table the
+ * whole product shares the single campaign in an environment variable, which
+ * makes the cross-campaign requirement (P2-04a) unbuildable: a call carries a
+ * campaign per request precisely so different desks can use different queues.
+ */
+CREATE TABLE IF NOT EXISTS dialler_campaigns (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  -- The CampaignId string as CUBE knows it. Not our label, and not editable
+  -- once calls have been placed against it.
+  cube_campaign_id TEXT NOT NULL,
+  label           TEXT NOT NULL,
+  -- Which book it serves. A Bigul desk must not dial from a Bonanza queue.
+  sales_org       TEXT NOT NULL DEFAULT 'BONANZA',
+  -- Optional: the desk/product this queue is for. NULL means it serves the
+  -- whole book, which is what is_default then picks.
+  product_type_id INTEGER REFERENCES product_types(id) ON DELETE SET NULL,
+  is_default      INTEGER NOT NULL DEFAULT 0,
+  active          INTEGER NOT NULL DEFAULT 1,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (cube_campaign_id, sales_org)
+);
+
 CREATE TABLE IF NOT EXISTS notifications (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

@@ -434,6 +434,40 @@ h3 { font-size: 13.5px; font-weight: 600; }
   border-radius: var(--r-xs);
 }
 
+/* Telephony setup: the connection panel and its checkboxes. */
+
+.setup-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px 20px;
+  margin: 12px 0 0;
+}
+.setup-facts > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.setup-facts dt {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+.setup-facts dd { margin: 0; font-size: 13px; color: var(--ink); overflow-wrap: anywhere; }
+
+/* A setting that is wrong rather than merely absent. Distinct from .muted,
+   which is for things that are simply quiet. */
+.warn-text { color: var(--warn); }
+
+/* A checkbox and its label on one line, where the label carries its own hint.
+   .check-row already exists and lays out a row OF these; this is one. */
+.check-one {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  cursor: pointer;
+}
+.check-one input { width: auto; margin: 2px 0 0; flex: 0 0 auto; cursor: pointer; }
+.check-one > span { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.check-one em { font-style: normal; }
+
 /* P2-05. Editing a role: what it sees, and what it may do. */
 
 .scope-options {

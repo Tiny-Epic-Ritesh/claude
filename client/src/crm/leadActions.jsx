@@ -16,19 +16,46 @@ import { Icon, Spinner } from '../components/ui.jsx';
  * list. Actions that need no input fire straight away; the rest open a modal.
  *
  * Click-to-call goes through CUBE rather than a `tel:` link, deliberately: the
- * switch dials the RM's extension first and only then the client, so the call
- * is recorded, logged against the lead, and the RM is never showing a client
- * their personal number.
+ * call is placed by the switch, so it is recorded, logged against the lead, and
+ * the RM is never showing a client their personal number.
  */
 export function useLeadActions({ session, reload, onError, onNotice }) {
   const [modal, setModal] = useState(null);   // { kind, lead }
   const [dialling, setDialling] = useState(null);
 
-  async function call(lead) {
+  /**
+   * `productTypeId` decides which CUBE queue the call goes into. It is passed
+   * when the call comes from a product card, because then we know the product
+   * exactly; from the lead header or a list row it is left out and the queue is
+   * inferred from the lead's most recent open card.
+   */
+  async function call(lead, productTypeId = null) {
     setDialling(lead.id);
     try {
-      const res = await api.post(`/leads/${lead.id}/call`, {});
-      onNotice?.(res.message ?? `Connecting you to ${lead.name}. Answer your handset.`);
+      const res = await api.post(`/leads/${lead.id}/call`, {
+        product_type_id: productTypeId ?? undefined,
+      });
+
+      /* Say what actually happened, and no more.
+       *
+       * The switch has been told to place the call; whether the client picks up
+       * is not known here and arrives later on the timeline. The previous
+       * wording claimed "Connecting you" and, worse, surfaced the vendor's own
+       * `message` field verbatim — which in a simulated environment reads
+       * "Simulated: no dialler configured" to an RM who only wanted to ring
+       * somebody. */
+      const parts = [`Dialling ${lead.name}.`];
+      if (res.simulated) {
+        parts.push('Simulated — no dialler is connected, so no call was placed.');
+      } else {
+        parts.push('Your handset will ring.');
+        // Worth saying once: an unattributed call is a reporting hole in Cube,
+        // and the person who can fix it is usually the person seeing this.
+        if (res.agent_mapped === false) {
+          parts.push('You have no CUBE agent id, so this call is not attributed to you.');
+        }
+      }
+      onNotice?.(parts.join(' '));
     } catch (err) {
       // A refusal here is usually consent or a dead number, and the message
       // says which. It is the RM's problem to act on, not a server fault.
@@ -38,9 +65,9 @@ export function useLeadActions({ session, reload, onError, onNotice }) {
     }
   }
 
-  function run(key, lead) {
+  function run(key, lead, extra = null) {
     switch (key) {
-      case 'call': return call(lead);
+      case 'call': return call(lead, extra?.product_type_id ?? null);
       case 'whatsapp': return setModal({ kind: 'message', channel: 'whatsapp', lead });
       case 'sms': return setModal({ kind: 'message', channel: 'sms', lead });
       /* P2-08. Email opens the composer, not the plain message modal.
