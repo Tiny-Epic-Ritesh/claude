@@ -69,6 +69,9 @@ router.get('/', requirePermission('partner.view'), (req, res) => {
   const orgs = orgsFor(req.user);
   const where = [`sales_org IN (${orgs.map(() => '?').join(',') || "''"})`];
   const params = [...orgs];
+  /* P2-13. `state` here is the lifecycle state_code, not the geographic
+     state on the partner record -- a distinction that has caught somebody on
+     this codebase before. The dashboard tiles pass ACTIVE and ONBOARDING. */
   if (req.query.state) { where.push('state_code = ?'); params.push(req.query.state); }
   if (req.query.mine === 'true' || req.user.role === 'partner_rm') { where.push('owner_id = ?'); params.push(req.user.id); }
 

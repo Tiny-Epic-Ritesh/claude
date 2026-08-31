@@ -19,7 +19,7 @@
 
 import { Router } from 'express';
 import { all, one } from '../db.js';
-import { requireUser, leadScope, clientScope, activeOrg, can } from '../auth.js';
+import { requireUser, leadScope, clientScope, activeOrg, can, orgsFor } from '../auth.js';
 import {
   RANGES, DEFAULT_RANGE, resolveRange, inRange, inPrevRange, delta,
 } from '../engine/daterange.js';
@@ -91,31 +91,48 @@ function leadTiles(req, range) {
     p,
   ).n;
 
+  /* Whose overdue tasks?
+   *
+   * The tile counted every overdue task on a lead in view, while /tasks lists
+   * the ones assigned to you -- so a supervisor saw four and opened a list of
+   * their own two. Both were defensible; they simply were not the same
+   * question, and the tile is the one making the promise.
+   *
+   * Answered the same way the list answers it: your own tasks, unless you can
+   * see the team's, in which case both count and link say so. */
+  const teamWide = can(req.user.role, 'report.team');
   const overdue = one(
     `SELECT COUNT(*) n FROM tasks t
       JOIN leads l ON l.id = t.lead_id
      WHERE t.status = 'Open' AND t.due_at < datetime('now')
-       AND l.deleted_at IS NULL AND ${scope.sql}`,
-    p,
+       AND l.deleted_at IS NULL AND ${scope.sql}
+       ${teamWide ? '' : 'AND t.assignee_id = ?'}`,
+    teamWide ? p : [...p, req.user.id],
   ).n;
 
   return [
     tile('New leads', now, {
-      sub: range.label, trend: delta(now, before),
-      to: '/leads',
+      sub: range.label,
+      trend: delta(now, before),
+      to: `/leads?created_from=${range.from}&created_to=${range.to}`,
     }),
-    tile('Won', won, { sub: range.label, tone: 'good', to: '/leads?stage=Won' }),
+    tile('Won', won, {
+      sub: range.label,
+      tone: 'good',
+      to: `/leads?stage=Won&created_from=${range.from}&created_to=${range.to}`,
+    }),
     tile('Conversion', now ? `${Math.round((won / now) * 100)}%` : '—', {
       sub: `${won} of ${now} created ${range.label.toLowerCase()}`,
     }),
     tile('Unattended over 48h', unattended, {
       sub: 'No contact logged — worth a call today',
       tone: 'warn', goodWhen: 'down', alert: unattended > 0,
-      to: '/leads?band=At Risk',
+      to: '/leads?unattended_hours=48',
     }),
     tile('Overdue follow-ups', overdue, {
       sub: 'Tasks past their due date', tone: overdue ? 'warn' : null,
-      goodWhen: 'down', alert: overdue > 0, to: '/tasks',
+      goodWhen: 'down', alert: overdue > 0,
+      to: `/tasks?overdue=true${teamWide ? '&all=true' : ''}`,
     }),
   ];
 }
@@ -141,7 +158,11 @@ function clientTiles(req, range) {
     ${base}`, p);
 
   return [
-    tile('Accounts opened', now, { sub: range.label, trend: delta(now, before), to: '/clients' }),
+    tile('Accounts opened', now, {
+      sub: range.label,
+      trend: delta(now, before),
+      to: `/clients?opened_from=${range.from}&opened_to=${range.to}`,
+    }),
     // Revenue already won, quietly leaving. The single most actionable number
     // on a broking desk, and the one nobody looks at unaided.
     tile('Dormant accounts', row.dormant ?? 0, {
@@ -174,7 +195,11 @@ function activityTiles(req, range) {
   ).n;
 
   return [
-    tile('Calls logged', calls, { sub: range.label, to: '/leads' }),
+    /* No destination. This counts activities, and /leads is a list of leads --
+       a different set with a plausible-looking number. There is no activity
+       list screen to send anyone to, and a link that lands somewhere
+       approximate is worse than none, because the reader believes it. */
+    tile('Calls logged', calls, { sub: range.label }),
     tile('Connect rate', calls ? `${Math.round((connected / calls) * 100)}%` : '—', {
       sub: `${connected} connected of ${calls}`,
     }),
@@ -206,20 +231,33 @@ function caseTiles(req, range) {
   })();
 
   return [
-    tile('Open cases', open, { to: '/tickets' }),
+    tile('Open cases', open, { to: '/tickets?open=true' }),
     tile('SLA breached', breached, {
       sub: 'Past the promised response time', tone: 'warn',
-      goodWhen: 'down', alert: breached > 0, to: '/tickets',
+      goodWhen: 'down', alert: breached > 0, to: '/tickets?breached=true',
     }),
-    tile('Resolved', resolved, { sub: range.label, tone: 'good', to: '/tickets' }),
+    tile('Resolved', resolved, {
+      sub: range.label,
+      tone: 'good',
+      to: `/tickets?resolved_from=${range.from}&resolved_to=${range.to}`,
+    }),
   ];
 }
 
 function partnerTiles(req, range) {
   if (!can(req.user.role, 'partner.view')) return [];
-  const orgs = activeOrg(req) ? [activeOrg(req)] : null;
-  const orgSql = orgs ? 'AND p.sales_org = ?' : '';
-  const orgParams = orgs || [];
+  /* Scoped to the books this person may see, narrowed by the switcher.
+   *
+   * This used to filter only when the switcher was set, so with no active org
+   * an admin's "Active partners" counted across Bonanza and Bigul together
+   * while the partner list beside it counted one. The figure was wrong, not
+   * the link -- and a cross-book number on a dashboard is the same boundary
+   * failure as a cross-book list, just harder to notice. */
+  const entitled = orgsFor(req.user);
+  const active_ = activeOrg(req);
+  const orgs = active_ && entitled.includes(active_) ? [active_] : entitled;
+  const orgSql = `AND p.sales_org IN (${orgs.map(() => '?').join(',') || "''"})`;
+  const orgParams = orgs;
 
   const active = one(`SELECT COUNT(*) n FROM partners p WHERE p.state_code = 'ACTIVE' ${orgSql}`, orgParams).n;
   const onboarding = one(`SELECT COUNT(*) n FROM partners p WHERE p.state_code = 'ONBOARDING' ${orgSql}`, orgParams).n;
@@ -234,8 +272,8 @@ function partnerTiles(req, range) {
   ).v;
 
   return [
-    tile('Active partners', active, { to: '/partners' }),
-    tile('Onboarding', onboarding, { sub: 'Not yet activated', to: '/partners' }),
+    tile('Active partners', active, { to: '/partners?state=ACTIVE' }),
+    tile('Onboarding', onboarding, { sub: 'Not yet activated', to: '/partners?state=ONBOARDING' }),
     tile('Commission', compact(commission), { sub: range.label }),
   ];
 }

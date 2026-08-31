@@ -60,6 +60,12 @@ router.get('/', (req, res) => {
   // Derived, so it narrows in SQL rather than after the limit.
   if (dormant === 'true') where.push(`${dormantSql('c')} = 'Dormant'`);
 
+  /* P2-13. The window the "Accounts opened" tile counted over. Matched on
+     activated_at, which is what that tile counts -- created_at would be a
+     different set and a plausible-looking wrong answer. */
+  if (req.query.opened_from) { where.push('date(c.activated_at) >= date(?)'); params.push(req.query.opened_from); }
+  if (req.query.opened_to) { where.push('date(c.activated_at) <= date(?)'); params.push(req.query.opened_to); }
+
   const clause = where.join(' AND ');
   const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
   const offset = Math.max(Number(req.query.offset) || 0, 0);

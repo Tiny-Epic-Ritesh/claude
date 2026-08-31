@@ -150,6 +150,29 @@ router.get('/leads', (req, res) => {
     params.push(`%${q}%`, `%${q}%`, `%${q}%`);
   }
   if (stage) { where.push('l.stage = ?'); params.push(stage); }
+
+  /* P2-13. The date range the figure was counted over.
+   *
+   * A homepage tile reading "New leads 32" that opens a list of 40 is worse
+   * than one that opens nothing: the reader believes the list. The tile now
+   * hands over the same window it counted, and this is what applies it. */
+  if (req.query.created_from) { where.push('date(l.created_at) >= date(?)'); params.push(req.query.created_from); }
+  if (req.query.created_to) { where.push('date(l.created_at) <= date(?)'); params.push(req.query.created_to); }
+
+  /* Nobody has logged contact, and it has been long enough to matter.
+   *
+   * Present tense on purpose, and deliberately not a date range: "unattended"
+   * is a fact about now, not about a window. Expressed here rather than
+   * approximated with an age band, which counts a different set. */
+  if (req.query.unattended_hours) {
+    const hours = Math.min(Math.max(Number(req.query.unattended_hours) || 48, 1), 24 * 90);
+    where.push(`l.stage NOT IN ('Won','Lost')
+      AND NOT EXISTS (SELECT 1 FROM activities a
+                       WHERE a.lead_id = l.id
+                         AND a.type IN ('Call','WhatsApp','Email','SMS','Meeting')
+                         AND a.created_at > datetime('now', ?))`);
+    params.push(`-${hours} hours`);
+  }
   if (owner_id) { where.push('l.owner_id = ?'); params.push(owner_id); }
   if (partner_id) { where.push('l.partner_id = ?'); params.push(partner_id); }
 
@@ -868,12 +891,43 @@ router.post('/autodialler', requirePermission('lead.contact'), async (req, res, 
 /* --------------------------------------------------------------- tasks */
 
 router.get('/tasks', (req, res) => {
-  const mine = req.query.all === 'true' && can(req.user.role, 'report.team') ? '' : 'WHERE t.assignee_id = ?';
+  const where = [];
+  const params = [];
+
+  /* A task carries its lead's name, so it carries its lead's book.
+   *
+   * This route had no lead scope at all. With `all=true` a Bigul supervisor
+   * was returned every task in the system -- forty of them on Bonanza leads,
+   * each labelled with that client's name. The record routes were scoped in
+   * August and the list routes were assumed already filtered; this one was
+   * not, and nothing looked at it until a dashboard tile disagreed with its
+   * own drill-through.
+   *
+   * Tasks with no lead are kept: a standalone reminder belongs to whoever it
+   * is assigned to and has no book to be outside of. */
+  const scope = reqScope(req, 'l');
+  where.push(`(t.lead_id IS NULL OR EXISTS (
+    SELECT 1 FROM leads l WHERE l.id = t.lead_id AND l.deleted_at IS NULL AND ${scope.sql}))`);
+  params.push(...scope.params);
+
+  if (!(req.query.all === 'true' && can(req.user.role, 'report.team'))) {
+    where.push('t.assignee_id = ?');
+    params.push(req.user.id);
+  }
+
+  /* P2-13. Past its due date and still open -- the same predicate the
+     "Overdue follow-ups" tile counts, so the number and the list are one set
+     rather than two definitions that happen to agree. */
+  if (req.query.overdue === 'true') {
+    where.push("t.status = 'Open' AND t.due_at < datetime('now')");
+  }
+  if (req.query.status) { where.push('t.status = ?'); params.push(req.query.status); }
+
   res.json(all(
     `SELECT t.*, l.name AS lead_name, u.name AS assignee_name
      FROM tasks t LEFT JOIN leads l ON l.id = t.lead_id LEFT JOIN users u ON u.id = t.assignee_id
-     ${mine} ORDER BY t.status, t.due_at`,
-    mine ? [req.user.id] : [],
+     ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY t.status, t.due_at`,
+    params,
   ));
 });
 

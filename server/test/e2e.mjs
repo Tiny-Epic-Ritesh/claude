@@ -5767,6 +5767,117 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     assert(/\.next-step\s*\{/.test(css), 'the product panel styling was removed');
   });
 
+  /* ============================================================ 56 */
+  suite('56 drill-through');
+
+  /*
+   * P2-13. A tile promises that its number and its list are the same set.
+   * Anything else is worse than no link, because the reader believes it.
+   *
+   * Before this, thirty of fifty-two tiles across five roles disagreed with
+   * their own destination -- "New leads 32" opening a list of 40, "SLA
+   * breached 2" opening all 11 tickets, `/clients?dormant=true` filtering on a
+   * parameter the route did not read. The counts were right and the links were
+   * decorative.
+   *
+   * This walks every tile of every role and asks the destination what it
+   * returns, so the promise is checked rather than assumed.
+   */
+
+  const LIST_API = {
+    '/leads': '/api/leads',
+    '/clients': '/api/clients',
+    '/tickets': '/api/tickets',
+    '/tasks': '/api/tasks',
+    '/partners': '/api/partners',
+  };
+
+  const countAt = async (to, token) => {
+    const [path, qs] = String(to).split('?');
+    const api = LIST_API[path];
+    if (!api) return null;                       // not a list route: not our promise
+    const { data, res } = await req(`${api}?limit=500${qs ? `&${qs}` : ''}`, { token, expect: 200 });
+    const total = res.headers.get('X-Total-Count');
+    if (total != null) return Number(total);
+    const rows = Array.isArray(data) ? data : (data.rows ?? data.items ?? []);
+    return rows.length;
+  };
+
+  await check('every tile that offers a list returns exactly what it counted', async () => {
+    const problems = [];
+
+    for (const [role, token] of Object.entries(T)) {
+      const { status, data } = await req('/api/dashboard', { token });
+      if (status !== 200) continue;              // role has no dashboard
+
+      for (const tile of data.tiles ?? []) {
+        if (!tile.to) continue;
+        const counted = Number(tile.value);
+        if (!Number.isFinite(counted)) continue; // a percentage or a sum
+
+        const returned = await countAt(tile.to, token);
+        if (returned === null) continue;
+
+        if (returned !== counted) {
+          problems.push(`${role} · ${tile.label}: counted ${counted}, ${tile.to} returns ${returned}`);
+        }
+      }
+    }
+
+    assert(problems.length === 0,
+      `a tile does not open the records it counted:\n         ${problems.join('\n         ')}`);
+  });
+
+  await check('a tile with no list to open says so by having no link', async () => {
+    /* A percentage has no list behind it and a sum's records are not the sum.
+     * "Calls logged" used to point at /leads -- a different set with a
+     * plausible-looking number, which is the worst kind of wrong. */
+    const { data } = await req('/api/dashboard', { token: T.sales_rm, expect: 200 });
+    for (const tile of data.tiles ?? []) {
+      if (!tile.to) continue;
+      assert(!/^\/leads/.test(tile.to) || !/calls/i.test(tile.label),
+        `${tile.label} points at a list of leads, which is not what it counts`);
+    }
+  });
+
+  await check('the filters the tiles rely on actually filter', async () => {
+    // Each of these was referenced by a destination before the route read it.
+    const cases = [
+      ['/api/leads?unattended_hours=48', '/api/leads'],
+      ['/api/tickets?breached=true', '/api/tickets'],
+      ['/api/tasks?overdue=true', '/api/tasks'],
+      ['/api/partners?state=ACTIVE', '/api/partners'],
+    ];
+    for (const [filtered, unfiltered] of cases) {
+      const a = await countAt(filtered.replace('/api', ''), T.admin)
+        ?? (await req(filtered, { token: T.admin, expect: 200 })).data.length;
+      const b = await countAt(unfiltered.replace('/api', ''), T.admin)
+        ?? (await req(unfiltered, { token: T.admin, expect: 200 })).data.length;
+      assert(a <= b, `${filtered} returned more than ${unfiltered} (${a} > ${b})`);
+    }
+  });
+
+  await check('a task list never carries another book\'s leads', async () => {
+    /* Found by a tile disagreeing with its own drill-through. /api/tasks had
+     * no lead scope at all, so `all=true` returned every task in the system --
+     * forty of them on Bonanza leads, each labelled with that client's name.
+     * The record routes were scoped in August; the list routes were assumed
+     * already filtered, and this one was not. */
+    const bigul = await login('supervisor@bigul.test');
+    const { data } = await req('/api/tasks?all=true', { token: bigul, expect: 200 });
+    const rows = Array.isArray(data) ? data : (data.rows ?? []);
+
+    const bonanzaLeads = new Set(
+      leadRows(await req('/api/leads?limit=200', { token: T.superadmin, expect: 200 }))
+        .filter((l) => l.sales_org === 'BONANZA')
+        .map((l) => Number(l.id)),
+    );
+
+    const crossed = rows.filter((t) => t.lead_id && bonanzaLeads.has(Number(t.lead_id)));
+    assert(crossed.length === 0,
+      `a Bigul supervisor was shown ${crossed.length} tasks on Bonanza leads`);
+  });
+
   /* ------------------------------------------------------------- report */
   report();
 }

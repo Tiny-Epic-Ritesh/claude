@@ -51,6 +51,14 @@ router.get('/', (req, res) => {
   if (mine === 'true') { where.push('t.assignee_id = ?'); params.push(req.user.id); }
   if (status) { where.push('t.status = ?'); params.push(status); }
   else if (req.query.open === 'true') where.push("t.status NOT IN ('Resolved','Closed')");
+
+  /* P2-13. The predicates the dashboard tiles count on, so the tile and the
+     list are the same set rather than two implementations that agree today. */
+  if (req.query.breached === 'true') where.push('t.breached = 1');
+  if (req.query.resolved_from) { where.push('date(t.resolved_at) >= date(?)'); params.push(req.query.resolved_from); }
+  if (req.query.resolved_to) { where.push('date(t.resolved_at) <= date(?)'); params.push(req.query.resolved_to); }
+  if (req.query.created_from) { where.push('date(t.created_at) >= date(?)'); params.push(req.query.created_from); }
+  if (req.query.created_to) { where.push('date(t.created_at) <= date(?)'); params.push(req.query.created_to); }
   if (priority) { where.push('t.priority = ?'); params.push(priority); }
   if (breached === 'true') where.push('t.breached = 1');
   if (lead_id) { where.push('t.lead_id = ?'); params.push(lead_id); }
