@@ -4,7 +4,7 @@ import Dispositions from './Dispositions.jsx';
 import KraSetup from './KraSetup.jsx';
 import FieldMasking from './FieldMasking.jsx';
 import { api, rupees, dateTime, shortDate, ROLE_LABEL } from '../api.js';
-import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, Icon } from '../components/ui.jsx';
+import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, Icon, useDropUp } from '../components/ui.jsx';
 import ObjectManager from './ObjectManager.jsx';
 
 export default function Admin({ session }) {
@@ -639,6 +639,9 @@ function CampaignActions({ campaign: c, busy, onEdit, onPreview, onAct }) {
       run: () => onAct(c.id, 'delete', () => api.del(`/admin/campaigns/${c.id}`)) },
   ].filter(Boolean);
 
+  const menuRef = useRef(null);
+  const dropUp = useDropUp(open, wrap, menuRef, [items.length]);
+
   return (
     <div className="row" style={{ gap: 6, justifyContent: 'flex-end' }}>
       {!sent && (
@@ -663,7 +666,15 @@ function CampaignActions({ campaign: c, busy, onEdit, onPreview, onAct }) {
           <Icon name="more_vert" />
         </button>
         {open && (
-          <div className="popover action-popover align-end" role="menu">
+          /* P2-24: the row this sits on is often near the foot of the table,
+             where a menu pinned below the trigger runs off the bottom of the
+             window. Same hook as the record ActionMenu, so the two cannot
+             drift apart again. */
+          <div
+            ref={menuRef}
+            className={`popover action-popover align-end ${dropUp ? 'drop-up' : ''}`}
+            role="menu"
+          >
             {items.map((i) => (
               <button
                 key={i.key}

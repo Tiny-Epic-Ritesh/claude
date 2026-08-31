@@ -23,6 +23,7 @@ import { strict as assert } from 'node:assert';
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, '..', '..');
@@ -30,8 +31,10 @@ const CLIENT = join(repo, 'client', 'src');
 const SERVER = join(repo, 'server', 'src');
 const SUBSET = join(repo, 'client', 'icon-subset.txt');
 const VOCAB = join(repo, 'client', 'material-symbols-names.txt');
-const FONT = join(repo, 'client', 'public', 'fonts', 'material-symbols-rounded.woff2');
+const FONT = join(repo, 'client', 'src', 'assets', 'fonts', 'material-symbols-rounded.woff2');
 const INDEX = join(repo, 'client', 'index.html');
+const CSS = join(repo, 'client', 'src', 'styles.css');
+const LOCK = join(repo, 'client', 'icon-subset.lock');
 
 let passed = 0;
 let failed = 0;
@@ -100,24 +103,81 @@ test('the font, its list and the vocabulary are all present', () => {
 });
 
 test('the font is served from our own box, not a CDN', () => {
-  const html = readFileSync(INDEX, 'utf8');
-  // Matches a live reference, not the comment above it explaining why there
-  // is no live reference.
-  assert(!/(?:href|src)=['"][^'"]*fonts\.(?:googleapis|gstatic)\.com/.test(html),
-    'index.html still links a stylesheet or font from Google');
-  assert(!/url\([^)]*fonts\.gstatic\.com/.test(html),
-    'a CSS rule in index.html still fetches from Google');
-  assert(html.includes('fonts/material-symbols-rounded.woff2'),
-    'index.html does not reference the local font');
+  for (const [what, file] of [['index.html', INDEX], ['styles.css', CSS]]) {
+    const src = readFileSync(file, 'utf8');
+    // Matches a live reference, not a comment explaining why there is none.
+    assert(!/(?:href|src)=['"][^'"]*fonts\.(?:googleapis|gstatic)\.com/.test(src),
+      `${what} still links a stylesheet or font from Google`);
+    assert(!/url\([^)]*fonts\.gstatic\.com/.test(src),
+      `${what} still fetches a font from Google`);
+  }
 });
 
-test('the bundled font is the variable one the UI asks for', () => {
+test('the font is declared in CSS, so the build fingerprints it', () => {
+  /*
+   * The bug this exists to prevent, which cost half a day:
+   *
+   * The @font-face lived inline in index.html pointing at a fixed path under
+   * public/. Vite copies public/ verbatim, so the filename never changed --
+   * and index.js serves it with `immutable, max-age=31536000`. Regenerating
+   * the subset therefore reached nobody who had already loaded the app, and
+   * would not have for a year. Fifty-two icons rendered as their own names in
+   * words while the file on disk was perfectly correct.
+   *
+   * Declared in styles.css the url() goes through the build, which emits
+   * material-symbols-rounded-<hash>.woff2. New font, new URL, no stale cache.
+   */
+  const css = readFileSync(CSS, 'utf8');
+  const html = readFileSync(INDEX, 'utf8');
+
+  assert(/@font-face/.test(css), 'styles.css does not declare the icon font');
+  assert(/url\(['"]?\.\/assets\/fonts\/material-symbols-rounded\.woff2/.test(css),
+    'the @font-face does not point at the font through a build-processed relative url()');
+
+  assert(!/@font-face/.test(html),
+    'index.html declares a font face again — an inline url() is not fingerprinted');
+  assert(!/fonts\/material-symbols-rounded\.woff2/.test(html),
+    'index.html references the font on a fixed path; served immutable, that path can never be busted');
+
   // Icon renders with font-variation-settings for FILL and wght. A static
   // per-weight font would load, look almost right, and ignore both.
-  const html = readFileSync(INDEX, 'utf8');
-  assert(/font-weight:\s*100\s+700/.test(html),
+  assert(/font-weight:\s*100\s+700/.test(css),
     'the @font-face does not declare a variable weight range');
-  assert(/format\(['"]woff2['"]\)/.test(html), 'the font is not served as woff2');
+  assert(/format\(['"]woff2['"]\)/.test(css), 'the font is not declared as woff2');
+});
+
+test('the font was generated from the list that is checked in', () => {
+  /*
+   * The lock records the exact names the bundled font was built from. Without
+   * it, "the name is in icon-subset.txt" proves only that somebody typed it --
+   * not that the font in the repo contains the glyph. Adding a name and
+   * forgetting to regenerate produces an icon that renders as its own name,
+   * and nothing else notices.
+   */
+  const list = lines(SUBSET).sort();
+  const lock = lines(LOCK).sort();
+
+  const added = list.filter((n) => !lock.includes(n));
+  const removed = lock.filter((n) => !list.includes(n));
+
+  assert.equal(
+    added.length + removed.length, 0,
+    'icon-subset.txt no longer matches the font that was generated from it.\n'
+      + (added.length ? `         added, not yet in the font: ${added.join(', ')}\n` : '')
+      + (removed.length ? `         removed, still in the font: ${removed.join(', ')}\n` : '')
+      + '       Regenerate the font (instructions at the top of icon-subset.txt),'
+      + ' then copy the list to icon-subset.lock.',
+  );
+
+  /* And the font on disk is the one the lock describes. A hash rather than a
+   * timestamp: mtime is whatever the last checkout or file move happened to
+   * set, so a timestamp check fails for reasons that have nothing to do with
+   * the font and teaches people to ignore it. */
+  const declared = readFileSync(LOCK, 'utf8').match(/# font-sha256 ([0-9a-f]{64})/)?.[1];
+  assert(declared, 'the lock does not record the font hash');
+  const actual = createHash('sha256').update(readFileSync(FONT)).digest('hex');
+  assert.equal(actual, declared,
+    'the bundled font is not the one this list generated — regenerate it, or update the lock');
 });
 
 test('every icon the UI can ask for is in the subset', () => {

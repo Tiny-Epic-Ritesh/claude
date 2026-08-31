@@ -3,6 +3,38 @@ import { Link } from 'react-router-dom';
 import { api, STATE_LABEL } from '../api.js';
 import { avatarStyle, initials, resolvedTheme, cycleTheme } from '../theme.js';
 
+/**
+ * Whether a popover should open upward instead of downward.
+ *
+ * A menu pinned to `top: 100%` with nothing measuring the room left below just
+ * carries on past the bottom of the window, which reads as the menu opening
+ * underneath its container rather than over it (P2-24). Only the browser knows
+ * how tall the menu turned out and how much space is left, so this measures
+ * both after it renders.
+ *
+ * Shared because there are two menu implementations — the record ActionMenu and
+ * the campaign row menu in Setup — and fixing the positioning in one of them is
+ * how the other quietly stays broken.
+ */
+export function useDropUp(open, triggerRef, menuRef, deps = []) {
+  const [dropUp, setDropUp] = useState(false);
+
+  useEffect(() => {
+    if (!open) { setDropUp(false); return; }
+    const trigger = triggerRef.current?.getBoundingClientRect();
+    const menu = menuRef.current?.getBoundingClientRect();
+    if (!trigger || !menu) return;
+
+    const below = window.innerHeight - trigger.bottom;
+    // Flip only when up is genuinely roomier, so a menu near the top of the
+    // page still opens downward where the reader expects it.
+    setDropUp(menu.height + 12 > below && trigger.top > below);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, ...deps]);
+
+  return dropUp;
+}
+
 /** Data-loading hook: const [data, { loading, error, reload }] = useApi('/leads'). */
 export function useApi(path, deps = []) {
   const [data, setData] = useState(null);

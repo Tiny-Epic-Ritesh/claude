@@ -4,45 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#81c141" />
-    <!-- Material Symbols Rounded, matching the icon vocabulary of the RM
-         Companion dashboard this design follows.
-
-         Served from our own box rather than fonts.googleapis.com. Two reasons.
-         A CDN fetch that fails renders every icon as its literal ligature text
-         ("support_agent", "candlestick_chart") across the whole product, which
-         is what a blocked or slow corporate network produces. And a system whose
-         compliance position is "self-hosted in India" should not call a third
-         party on every page load, even for something carrying no client data.
-
-         Subset to the icons this app uses: 179 KB against 5.2 MB for the full
-         variable font. The list lives in client/icon-subset.txt and is enforced
-         by test/icons.test.mjs -- an icon added to the UI but not to that list
-         renders as text, so the test fails the build instead. -->
-    <link rel="preload" href="/ai-crm/fonts/material-symbols-rounded.woff2" as="font" type="font/woff2" crossorigin />
-    <style>
-      @font-face {
-        font-family: 'Material Symbols Rounded';
-        font-style: normal;
-        font-weight: 100 700;
-        font-display: block;
-        src: url('/ai-crm/fonts/material-symbols-rounded.woff2') format('woff2');
-      }
-      .material-symbols-rounded {
-        font-family: 'Material Symbols Rounded';
-        font-weight: normal;
-        font-style: normal;
-        font-size: 24px;
-        line-height: 1;
-        letter-spacing: normal;
-        text-transform: none;
-        display: inline-block;
-        white-space: nowrap;
-        word-wrap: normal;
-        direction: ltr;
-        -webkit-font-feature-settings: 'liga';
-        -webkit-font-smoothing: antialiased;
-      }
-    </style>
+    <!-- The icon font is declared in src/styles.css, not here.
+         Vite fingerprints anything referenced from CSS it processes, so the
+         file ships as material-symbols-rounded-<hash>.woff2 and a changed font
+         gets a changed URL. Declared inline here it kept one stable filename,
+         and index.js serves that path with `immutable, max-age=31536000` — so
+         every browser that had already loaded the app was pinned to the old
+         font for a year. Regenerating the subset silently reached nobody. -->
     <title>Bonanza CRM</title>
     <script>
       /* Apply the stored theme before first paint, so a dark-mode user never

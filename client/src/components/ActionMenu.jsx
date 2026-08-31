@@ -28,6 +28,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { useDropUp } from './ui.jsx';
 
 /**
  * Every action the menu can offer.
@@ -98,7 +99,9 @@ export default function ActionMenu({
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
+  const menuRef = useRef(null);
   const actions = resolveActions(lead, permissions, { listMode });
+  const dropUp = useDropUp(open, wrapRef, menuRef, [actions.length]);
 
   // Close on outside click and on Escape. Both, because a menu that traps the
   // page is worse than no menu.
@@ -137,7 +140,11 @@ export default function ActionMenu({
       </button>
 
       {open && (
-        <div className={`popover action-popover align-${align}`} role="menu">
+        <div
+          ref={menuRef}
+          className={`popover action-popover align-${align} ${dropUp ? 'drop-up' : ''}`}
+          role="menu"
+        >
           {grouped.map((rows, gi) => (
             <div key={rows[0].group} className="action-group">
               {gi > 0 && <div className="action-sep" />}

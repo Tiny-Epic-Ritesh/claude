@@ -90,6 +90,36 @@ export default function LeadDetail({ session }) {
             {/* ENH-10a: was a row of dots needing one hover each. */}
             <CardStrip cards={lead.cards.map((c) => ({ ...c, name: c.product_name }))} />
           </div>
+
+          {/* P2-11. These five were a row of full-width boxes sitting between
+              the tab strip and the tab content, on every tab. That put a band
+              of summary between a heading and the thing it heads, so the
+              products list never lined up with the bar above it — and the same
+              break appeared on Details, Activity and Notes.
+
+              They belong to the record rather than to any one tab, so they now
+              read as part of the header: compact facts you glance at, not
+              cards you study. The tab strip now sits directly on top of its
+              own content. */}
+          <div className="record-facts">
+            <Fact label="Lead score" value={lead.score} />
+            <Fact
+              label="AUM"
+              value={lead.aum ? money(lead.aum) : '—'}
+              title={lead.aum_as_of ? `as of ${lead.aum_as_of}` : 'no active products'}
+            />
+            <Fact
+              label="Owner"
+              value={lead.owner_name || '—'}
+              title={lead.partner_name ? `sourced by ${lead.partner_name}` : lead.source}
+            />
+            <Fact
+              label="Last contact"
+              value={lead.days_since_contact == null ? 'never' : `${lead.days_since_contact}d ago`}
+              title={shortDate(lead.last_activity_at)}
+            />
+            <Fact label="Risk" value={lead.risk_profile || '—'} />
+          </div>
         </div>
 
         {/* ENH-11: these sat loose against the page with nothing separating
@@ -147,14 +177,6 @@ export default function LeadDetail({ session }) {
           navigation belongs. */}
       <Tabs tabs={tabs} active={tab} onChange={setTab} />
 
-      <div className="metrics">
-        <Snap label="Lead score" value={lead.score} />
-        <Snap label="AUM" value={lead.aum ? money(lead.aum) : '—'} sub={lead.aum_as_of ? `as of ${lead.aum_as_of}` : 'no active products'} />
-        <Snap label="Owner" value={lead.owner_name || '—'} sub={lead.partner_name ? `sourced by ${lead.partner_name}` : lead.source} />
-        <Snap label="Last contact" value={lead.days_since_contact == null ? 'never' : `${lead.days_since_contact}d ago`} sub={shortDate(lead.last_activity_at)} />
-        <Snap label="Risk profile" value={lead.risk_profile || '—'} />
-      </div>
-
       {tab === 'cards' && (
           <Cards lead={lead} session={session} reload={reload} onError={setActionError}
             onContact={(channel) => actions.run(channel, lead)} />
@@ -197,12 +219,18 @@ export default function LeadDetail({ session }) {
   );
 }
 
-const Snap = ({ label, value, sub }) => (
-  <div className="card stat">
-    <div className="stat-label">{label}</div>
-    <div className="stat-value" style={{ fontSize: 18 }}>{value}</div>
-    {sub && <div className="stat-sub">{sub}</div>}
-  </div>
+/**
+ * One fact in the record header.
+ *
+ * The full detail that used to be a second line under each box moves to the
+ * title attribute: "as of 2026-08-30" is worth having, but not worth a line of
+ * its own five times across the top of every tab.
+ */
+const Fact = ({ label, value, title }) => (
+  <span className="fact" title={title || undefined}>
+    <span className="fact-label">{label}</span>
+    <span className="fact-value">{value}</span>
+  </span>
 );
 
 /* --------------------------------------------------------- product cards */

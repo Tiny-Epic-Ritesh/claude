@@ -1,3 +1,43 @@
+/**
+ * Material Symbols Rounded, self-hosted and fingerprinted.
+ *
+ * Declared here rather than inline in index.html so that Vite processes the
+ * url() and emits a content-hashed filename. That matters more than it looks:
+ * the file is served with `immutable, max-age=31536000`, so on a stable path a
+ * regenerated font never reaches a browser that has already cached one. It is
+ * the same failure that once pinned every returning user to their first build
+ * of index.html.
+ *
+ * Subset to the icons this app uses -- see client/icon-subset.txt for the list
+ * and how to regenerate it. font-display: block rather than swap because the
+ * fallback for a missing icon glyph is its own name in words, and
+ * "candlestick_chart" flashing up in a button is worse than a brief blank.
+ */
+@font-face {
+  font-family: 'Material Symbols Rounded';
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: block;
+  src: url('./assets/fonts/material-symbols-rounded.woff2') format('woff2');
+}
+
+.material-symbols-rounded {
+  font-family: 'Material Symbols Rounded';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: 'liga';
+  font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+}
+
 /* ============================================================================
    Bonanza / Bigul CRM — glass design system
    ============================================================================
@@ -382,6 +422,46 @@ h3 { font-size: 13.5px; font-weight: 600; }
   margin-bottom: var(--gap);
 }
 
+/* P2-11. The record's own facts, in its header.
+ *
+ * Wraps rather than scrolls, so a narrow window stacks them instead of hiding
+ * them — this is the first thing a Sales RM reads on a phone. */
+.record-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 18px;
+  margin-top: 10px;
+}
+
+.fact {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.fact-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+
+.fact-value {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 560px) {
+  /* One per line reads better than two half-truncated pairs. */
+  .record-facts { gap: 4px 14px; }
+  .fact-value { font-size: 13px; }
+}
+
 .tone-good { color: var(--ok); }
 .tone-warn { color: var(--warn); }
 .tone-bad, .tone-danger { color: var(--danger); }
@@ -516,7 +596,20 @@ h3 { font-size: 13.5px; font-weight: 600; }
  * shorter and safe by default: a new input inherits the design system unless it
  * is explicitly one of the controls below.
  */
-input:not([type='checkbox']):not([type='radio']):not([type='file']):not([type='range']):not([type='color']):not([type='submit']):not([type='button']):not([type='reset']),
+/* P2-10. The exclusions are wrapped in :where() so they cost nothing.
+ *
+ * Written as a chain of eight bare :not() selectors, this rule scored (0,8,1) —
+ * :not() carries the specificity of whatever is inside it, and each of those is
+ * an attribute selector. That beat `.globalsearch input` at (0,1,1) no matter
+ * what order the file was in, so the search box's own `border: 0; background:
+ * transparent; padding: 0` never applied and the input painted a second box
+ * inside the pill. That is the two overlapping boxes in the top bar.
+ *
+ * :where() always contributes zero, so the rule now scores (0,0,1) — a plain
+ * element default that any container can override, which is what a default
+ * should be. Same elements matched, same styles applied; only the weight
+ * changes. */
+input:where(:not([type='checkbox'], [type='radio'], [type='file'], [type='range'], [type='color'], [type='submit'], [type='button'], [type='reset'])),
 select, textarea {
   width: 100%;
   padding: 9px 12px;
@@ -649,9 +742,28 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
   border: 1px solid var(--glass-border);
   box-shadow: var(--lift-1);
   overflow-x: auto;
-  scrollbar-width: none;
+  /* P2-18. The scrollbar used to be hidden on both engines.
+   *
+   * Setup carries 18 tabs; on a 1440 viewport seven of them sit past the right
+   * edge — Working calendars through to Audit log — and with the scrollbar
+   * suppressed there was nothing to say so and nothing for a mouse to drag.
+   * Trackpad users could swipe. Everybody else simply could not reach them.
+   *
+   * A slim styled bar is left visible instead. `overflow-x: auto` already means
+   * it renders only when the tabs actually overflow, so the eleven screens with
+   * three or four tabs are untouched — nothing appears there at all. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-4) transparent;
+  scroll-behavior: smooth;
+  padding-bottom: 4px;
 }
-.tabs::-webkit-scrollbar { display: none; }
+.tabs::-webkit-scrollbar { height: 6px; }
+.tabs::-webkit-scrollbar-track { background: transparent; }
+.tabs::-webkit-scrollbar-thumb {
+  background: var(--ink-4);
+  border-radius: var(--r-pill);
+}
+.tabs::-webkit-scrollbar-thumb:hover { background: var(--ink-3); }
 
 .tab {
   padding: 7px 15px;
@@ -2747,6 +2859,21 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
 }
 .align-end { right: 0; }
 .align-start { left: 0; }
+
+/* P2-24. Opens upward when there is not enough room below.
+ *
+ * The menu was pinned to `top: 100%` and nothing measured whether it fitted, so
+ * on a row near the foot of the table it simply carried on past the bottom of
+ * the window — which reads as the menu opening underneath the box rather than
+ * over it. Nothing was obscuring it and nothing was clipping it; it was just
+ * drawn somewhere the reader could not see.
+ *
+ * The class is set by ActionMenu after measuring, because only the browser
+ * knows how tall the menu turned out and how much room is left. */
+.action-popover.drop-up {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
 
 .action-group { display: grid; }
 .action-sep { height: 1px; background: var(--hairline); margin: 5px 7px; }

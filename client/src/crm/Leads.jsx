@@ -176,7 +176,10 @@ export default function Leads({ session }) {
                     onChange={(e) => setSelected(e.target.checked ? new Set((found ? found.rows : leads).map((l) => l.id)) : new Set())}
                   />
                 </th>
-                <th>Lead</th><th>Stage</th><th>Cards</th><th>Age</th><th>Owner</th><th>Partner</th>
+                {/* P2-07: display label only. The API name stays `card_state`
+                    and the table stays `product_cards`, per the ENH-10 rule
+                    that a rename is a label change and never a schema one. */}
+                <th>Lead</th><th>Stage</th><th>Products</th><th>Age</th><th>Owner</th><th>Partner</th>
                 <th className="num">AUM</th><th className="num">Score</th><th className="col-actions" />
               </tr>
             </thead>
