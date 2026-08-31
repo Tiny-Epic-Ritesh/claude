@@ -5459,6 +5459,46 @@ await check('a per-channel withdrawal closes only that channel', async () => {
       'the marketing option is not disabled for a client who has opted out');
   });
 
+  await check('a hostile body is neutralised before it reaches storage', async () => {
+    /* The composer sends markup now (P2-09), so the body is whatever an RM
+     * pasted. Sanitising only what leaves for the mail server is half a fix:
+     * the same body is written to the activity timeline and rendered back
+     * inside the CRM, which makes an unsanitised copy stored XSS against a
+     * colleague rather than a problem for the recipient.
+     *
+     * sanitize.test.mjs proves the function. This proves the wiring. */
+    const lead = need(
+      leadRows(await req('/api/leads?limit=50', { token: T.admin, expect: 200 }))
+        .find((l) => l.email && !l.marketing_opt_out),
+      'a contactable lead',
+    );
+
+    const subject = `Sanitiser wiring ${RUN}`;
+    await req('/api/email/send', {
+      method: 'POST', token: T.admin, expect: 200,
+      body: {
+        lead_id: lead.id,
+        subject,
+        intent: 'service',
+        body: "<p onmouseover='steal()'>Hello <b>there</b></p>"
+          + '<script>alert(1)</script>'
+          + "<a href='javascript:bad()'>click</a>"
+          + "<img src='https://tracker.example/p.gif'>",
+      },
+    });
+
+    const { data } = await req(`/api/activities/lead/${lead.id}`, { token: T.admin, expect: 200 });
+    const logged = need(data.find((a) => a.subject === subject), 'the sent email on the timeline');
+
+    const stored = String(logged.body || '').toLowerCase();
+    for (const bad of ['<script', 'onmouseover', 'javascript:', '<img']) {
+      assert(!stored.includes(bad), `"${bad}" was stored on the timeline: ${logged.body}`);
+    }
+    // …and the real message survived, so this is not a route that stores nothing.
+    assert(/hello/i.test(stored) && stored.includes('<b>'),
+      `the content was stripped along with the payload: ${logged.body}`);
+  });
+
   await check('every email entry point opens the composer, not the plain modal', async () => {
     /* P2-08. The message modal was built for WhatsApp and SMS -- nothing to
      * attach, no collateral to pick -- so reaching email from a product card

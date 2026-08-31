@@ -28,6 +28,7 @@ import { requireUser, requirePermission, reqScope, mayUnmask } from '../auth.js'
 import { decryptField } from '../security.js';
 import { checkConsent } from '../engine/consent.js';
 import { send } from '../integrations.js';
+import { sanitizeHtml, htmlToText, isEmptyHtml } from '../engine/sanitize.js';
 
 const router = Router();
 router.use(requireUser);
@@ -124,7 +125,17 @@ router.post('/send', requirePermission('lead.contact'), (req, res) => {
   if (!lead) return res.status(404).json({ error: 'Lead not found' });
 
   if (!String(subject || '').trim()) return res.status(400).json({ error: 'Give the email a subject' });
-  if (!String(body || '').trim()) return res.status(400).json({ error: 'Write something first' });
+
+  /* The body is markup now (P2-09), so "is it non-empty" is not a trim() away:
+     an untouched contenteditable contains "<p><br></p>", which is a full three
+     characters of nothing. */
+  if (isEmptyHtml(body)) return res.status(400).json({ error: 'Write something first' });
+
+  /* Sanitised here rather than in the browser, because the browser is not the
+     only thing that can post to this route, and a sanitiser the caller can skip
+     is decoration. See engine/sanitize.js for what survives and why. */
+  const safeBody = sanitizeHtml(body);
+  const textBody = htmlToText(safeBody);
 
   const verdict = checkConsent(lead, 'email', intent);
   if (!verdict.allowed) return res.status(409).json({ error: verdict.reason, code: verdict.code });
@@ -164,12 +175,19 @@ router.post('/send', requirePermission('lead.contact'), (req, res) => {
     org: lead.sales_org === 'BIGUL' ? 'Bigul' : 'Bonanza',
   };
   const finalSubject = merge(subject, vars);
-  const finalBody = merge(body, vars);
+  // Merged after sanitising: a merge field resolving to a client's own name is
+  // data, and running it through the sanitiser would escape apostrophes in it.
+  const finalBody = merge(safeBody, vars);
+  const finalText = merge(textBody, vars);
 
   const result = send('email', {
     to: lead.email,
     subject: finalSubject,
     body: finalBody,
+    /* Both parts, carried together. The timeline, the search index and any
+       text-only mail client all want the plain rendering, and three callers
+       deriving their own would produce three different answers. */
+    text: finalText,
     leadId: lead.id,
     templateId: templateId ?? null,
     userName: req.user.name,

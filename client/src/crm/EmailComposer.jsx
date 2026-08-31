@@ -18,6 +18,7 @@
 import { useState } from 'react';
 import { api } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Modal } from '../components/ui.jsx';
+import RichText from '../components/RichText.jsx';
 
 const MAX_BYTES = 5 * 1024 * 1024;
 
@@ -176,9 +177,16 @@ export default function EmailComposer({ leadId, onClose, onSent, onError }) {
         </div>
 
         <div className="field">
-          <label htmlFor="em-body">Message</label>
-          <textarea id="em-body" rows={10} value={form.body}
-            onChange={(e) => set('body', e.target.value)} />
+          {/* P2-09. A label rather than htmlFor: the editor is a contenteditable
+              div, and a label cannot point at one. It carries its own
+              aria-label instead. */}
+          <span className="field-label">Message</span>
+          <RichText
+            id="em-body"
+            value={form.body}
+            onChange={(html) => set('body', html)}
+            placeholder={`Hello ${(d.lead.name || '').split(' ')[0]}, …`}
+          />
         </div>
 
         {/* Approved collateral first. */}

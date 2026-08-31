@@ -1,7 +1,7 @@
 # The exact names the bundled font was generated from, and the font it produced.
 # Regenerate both together — see the instructions at the top of icon-subset.txt.
-# font-sha256 4fa47f405b05235120d806725eaa906f6013351af2bbb2f47de66ca4403a6e03
-# font-bytes 268564
+# font-sha256 b706c938fc5dcd44a889232af3f4ae1cfaa0465f5b2f3eec9d7434444c6114a4
+# font-bytes 273100
 account_balance
 account_balance_wallet
 account_tree
@@ -91,7 +91,12 @@ feature
 filter_alt
 flag
 folder
+format_bold
+format_clear
+format_italic
 format_list_bulleted
+format_list_numbered
+format_underlined
 forum
 forward
 group
@@ -233,6 +238,7 @@ test
 tickets
 timeline
 title
+toolbar
 trending_down
 trending_flat
 trending_up

@@ -260,3 +260,9 @@ warn
 warning
 weight
 whatsapp
+format_bold
+format_italic
+format_underlined
+format_list_numbered
+format_clear
+toolbar
