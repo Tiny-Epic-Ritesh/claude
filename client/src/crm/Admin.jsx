@@ -8,6 +8,7 @@ import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, Icon, useDro
 import ObjectManager from './ObjectManager.jsx';
 import RolesSetup from './RolesSetup.jsx';
 import Telephony from './Telephony.jsx';
+import Logs from './Logs.jsx';
 
 export default function Admin({ session }) {
   const has = (p) => session.permissions.includes(p);
@@ -31,6 +32,7 @@ export default function Admin({ session }) {
     { key: 'integrations', label: 'Integrations' },
     has('admin.system') && { key: 'meta', label: 'Facebook & Instagram' },
     { key: 'residency', label: 'Data residency' },
+    has('report.system') && { key: 'logs', label: 'Logs' },
     has('report.system') && { key: 'audit', label: 'Audit log' },
   ].filter(Boolean);
 
@@ -65,6 +67,7 @@ export default function Admin({ session }) {
       {tab === 'integrations' && <Integrations />}
       {tab === 'meta' && <MetaConnector />}
       {tab === 'residency' && <Residency session={session} />}
+      {tab === 'logs' && <Logs />}
       {tab === 'audit' && <Audit />}
     </>
   );

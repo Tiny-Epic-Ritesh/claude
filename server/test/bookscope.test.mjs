@@ -115,6 +115,7 @@ const NOT_A_RECORD = {
   '/api/setup/objects/:entity': 'Object definition. Configuration.',
   '/api/setup/objects/:entity/derivable': 'Formula sources for an entity type. Configuration.',
   '/api/setup/objects/:entity/validation-rules': 'Validation rules for an entity type. Configuration, not a client record — a rule scoped to one business carries sales_org and is checked by mayUseOrg where it is written.',
+  '/api/setup/logs/:kind': 'A kind of log, not a record id. Rows inside are scoped to the reader entitlement by readLog, which is asserted in logs.test.mjs.',
   '/api/setup/field-usage/:entity': 'Usage counts per field. Aggregate over configuration.',
   '/api/setup/history/:entity/:id': 'Field-change history; the underlying record is scoped where it is read.',
   '/api/setup/users/:id/access': 'A user, not a client record. Guarded by mayUseOrg on the user row.',

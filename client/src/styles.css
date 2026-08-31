@@ -434,6 +434,31 @@ h3 { font-size: 13.5px; font-weight: 600; }
   border-radius: var(--r-xs);
 }
 
+/* A second-level tab strip, inside a card. Lighter than the page tabs so the
+   two do not read as the same level of navigation. */
+.tabs-sub {
+  margin: 4px 0 12px;
+  gap: 2px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.tabs-sub button {
+  padding: 5px 10px;
+  font-size: 12.5px;
+  border-radius: var(--r-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ink-3);
+}
+.tabs-sub button:hover { color: var(--ink); background: var(--glass-2); }
+.tabs-sub button.is-active {
+  color: var(--ink);
+  background: var(--glass-2);
+  border-color: var(--hairline);
+  font-weight: 570;
+}
+
 /* A validation clause: field, operator, value, remove. Collapses to two
    columns on a narrow window rather than squeezing four selects together. */
 .clause-row {

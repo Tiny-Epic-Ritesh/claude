@@ -101,6 +101,7 @@ dashboards
 database
 deal
 delete
+delete_sweep
 description
 details
 dialler

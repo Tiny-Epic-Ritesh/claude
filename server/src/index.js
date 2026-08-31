@@ -48,6 +48,7 @@ import { runEnabledRules } from './engine/rules.js';
 import { sweepReminders } from './engine/followups.js';
 import { sweepMetrics } from './engine/metrics.js';
 import { seedMetadata, seedPicklists } from './engine/metadata.js';
+import { seedRetention, purge } from './engine/logs.js';
 import { seedCalendars } from './engine/calendar.js';
 import { seedQueues } from './engine/queues.js';
 import { seedKra, seedIncentives } from './engine/kra.js';
@@ -56,6 +57,11 @@ import { seedKra, seedIncentives } from './engine/kra.js';
    preserves any label an administrator has renamed. */
 seedMetadata();
 seedPicklists();
+/* Retention periods, and a purge on the way up. A period nothing enforces is a
+   statement of intent, and under DPDP that is worse than none: the firm has
+   written down how long it keeps personal data and then kept it longer. */
+seedRetention();
+purge();
 seedCalendars();
 seedQueues();
 seedKra();

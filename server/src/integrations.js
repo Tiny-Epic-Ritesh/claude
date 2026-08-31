@@ -30,12 +30,54 @@ export { vendorStatus };
 export { bonanzakyc, quickcall, aisensy };
 
 const LOG_LIMIT = 200;
-const outbox = [];   // in-memory record of everything sent, surfaced in Admin → Integrations
+const outbox = [];   // recent activity, kept in memory for the Integrations panel
 
+/**
+ * Record one integration event, durably.
+ *
+ * This used to write only to `outbox` — an array capped at 200 that vanished on
+ * restart. "Show me the telephony logs" (P2-15a) is asked after something goes
+ * wrong and the process has been bounced, which is exactly when that array was
+ * empty. It now writes a row as well, and the array stays as the fast path for
+ * the live panel.
+ *
+ * WHAT IS NOT WRITTEN: the body. A WhatsApp message is the client's own words,
+ * a KYC callback carries their PAN. The row records that something happened, to
+ * which record, through which vendor, and whether it worked — never what was
+ * said. `to` is dropped for the same reason: it is a mobile number, and the
+ * lead id already says who it was.
+ */
 const record = (channel, payload, meta = {}) => {
   const entry = { id: outbox.length + 1, channel, ...payload, ...meta, at: new Date().toISOString() };
   outbox.unshift(entry);
   if (outbox.length > LOG_LIMIT) outbox.pop();
+
+  try {
+    run(
+      `INSERT INTO integration_log
+         (kind, direction, vendor, status, simulated, lead_id, partner_id, user_id, reference, summary, error)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        channel,
+        meta.direction ?? 'out',
+        meta.vendor ?? null,
+        meta.status ?? (meta.simulated ? 'simulated' : 'ok'),
+        meta.simulated ? 1 : 0,
+        meta.lead_id ?? null,
+        meta.partner_id ?? null,
+        meta.user_id ?? null,
+        meta.call_id ?? meta.message_id ?? meta.reference ?? null,
+        // The one-line summary the caller already writes, which is safe to keep.
+        payload.body && String(payload.body).length <= 120 ? payload.body : (meta.summary ?? null),
+        meta.error ?? null,
+      ],
+    );
+  } catch {
+    /* A log write must never fail the thing being logged. A dialler outage is
+       bad; a dialler outage that also refuses to place calls because the log
+       table is locked is worse. */
+  }
+
   return entry;
 };
 

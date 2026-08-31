@@ -33,6 +33,7 @@ import { syncDispositionPicklists } from '../engine/metadata.js';
 import {
   validateRule, operatorCatalogue, wouldRefuseExisting,
 } from '../engine/validation.js';
+import { retention, counts, readLog, purge } from '../engine/logs.js';
 import { explainVisibility } from '../engine/sharing.js';
 import {
   entities, entityDef, fieldsOf, fieldDef, picklistValues, historyFor,
@@ -779,6 +780,75 @@ router.patch('/objects/:entity/fields/:apiName', requirePermission('admin.object
   const after = one('SELECT * FROM field_def WHERE id = ?', [field.id]);
   auditConfig('field', `${req.params.entity}.${req.params.apiName}`, 'updated', field, after, req.user.id);
   return res.json(after);
+});
+
+/* ----------------------------------------------------------------- logs
+ *
+ * P2-15a: one place for webhook, telephony, API, payment and portal logs.
+ *
+ * Reading is gated on report.system, the capability that already opens the
+ * audit log — these are the same class of thing and splitting them would mean
+ * someone who can read who changed a setting cannot read whether the call went
+ * through. Changing a retention period is admin.system, because it decides how
+ * long the firm holds personal data and that is a different decision.
+ */
+
+router.get('/logs', requirePermission('report.system'), (req, res) => {
+  res.json({
+    kinds: retention(),
+    counts: counts(orgsFor(req.user)),
+  });
+});
+
+router.get('/logs/:kind', requirePermission('report.system'), (req, res) => {
+  const page = readLog(req.params.kind, {
+    orgs: orgsFor(req.user),
+    limit: Math.min(Number(req.query.limit) || 100, 500),
+    offset: Number(req.query.offset) || 0,
+    status: req.query.status || null,
+    q: req.query.q || null,
+  });
+  if (!page) return res.status(404).json({ error: 'No such log' });
+  return res.json(page);
+});
+
+router.patch('/log-retention/:kind', requirePermission('admin.system'), (req, res) => {
+  const row = one('SELECT * FROM log_retention WHERE kind = ?', [req.params.kind]);
+  if (!row) return res.status(404).json({ error: 'No such log' });
+
+  const days = Number(req.body.days);
+  if (!Number.isInteger(days) || days < 1) {
+    return res.status(400).json({ error: 'Retention is a whole number of days, at least 1', field: 'days' });
+  }
+  /* Ten years. Not a technical limit — a prompt to stop and think, because
+     "keep it for ever" is a decision somebody should make deliberately rather
+     than by typing a large number into a box. */
+  if (days > 3650) {
+    return res.status(400).json({
+      error: 'Over ten years needs a written retention decision from Compliance, not a setting',
+      field: 'days',
+    });
+  }
+
+  run("UPDATE log_retention SET days = ?, note = COALESCE(?, note), updated_at = datetime('now'), updated_by = ? WHERE kind = ?",
+    [days, req.body.note ?? null, req.user.id, row.kind]);
+
+  auditConfig('log_retention', row.kind, 'updated', row, { days }, req.user.id);
+  return res.json(one('SELECT * FROM log_retention WHERE kind = ?', [row.kind]));
+});
+
+/**
+ * Run the purge now.
+ *
+ * It also runs on boot. Offered on demand because a retention period that has
+ * just been shortened should take effect when somebody decides it does, not at
+ * the next restart — and because seeing what a purge removes is the only way to
+ * trust that it is doing what the number says.
+ */
+router.post('/logs/purge', requirePermission('admin.system'), (req, res) => {
+  const removed = purge();
+  audit(req.user.id, 'logs_purged', 'log_retention', null, removed);
+  res.json({ removed, total: Object.values(removed).reduce((a, b) => a + b, 0) });
 });
 
 /* ----------------------------------------------------- validation rules

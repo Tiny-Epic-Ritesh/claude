@@ -584,6 +584,69 @@ CREATE TABLE IF NOT EXISTS validation_rule (
 
 CREATE INDEX IF NOT EXISTS idx_validation_entity ON validation_rule (entity, active);
 
+/*
+ * Integration log — every call out to a vendor, and every callback in.
+ *
+ * This replaces an in-memory array capped at 200 entries. Everything the
+ * product had ever sent vanished on restart, which made "show me the telephony
+ * logs" (P2-15a) unanswerable at exactly the moment it is asked: after
+ * something went wrong and the process was bounced.
+ *
+ * WHAT IS DELIBERATELY NOT HERE
+ *
+ * Bodies. A WhatsApp message is the client's own words, a call payload carries
+ * their mobile, a KYC callback carries their PAN. The log records that a thing
+ * happened, to which record, through which vendor, and whether it worked —
+ * never what was said. A log that quietly becomes a second copy of the client
+ * database is a breach waiting for someone to grant read access to support.
+ *
+ * reference is the vendor's own id where there is one — a callID, a message
+ * id — because that is what a vendor asks for when you telephone them about a
+ * failure, and hunting for it afterwards is the whole problem.
+ */
+CREATE TABLE IF NOT EXISTS integration_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  -- telephony | whatsapp | email | sms | webhook | payment | kyc | api | autodialler
+  kind        TEXT NOT NULL,
+  direction   TEXT NOT NULL DEFAULT 'out',   -- out = we called them, in = they called us
+  vendor      TEXT,
+  endpoint    TEXT,
+  status      TEXT NOT NULL DEFAULT 'ok',    -- ok | failed | refused | queued | simulated
+  http_status INTEGER,
+  duration_ms INTEGER,
+  simulated   INTEGER NOT NULL DEFAULT 0,
+  -- What it was about, so a failure can be traced back to a person.
+  lead_id     INTEGER,
+  partner_id  INTEGER,
+  user_id     INTEGER,
+  sales_org   TEXT,
+  reference   TEXT,
+  -- One line, safe to read: "Click2Call placed", "refused: number is on DND".
+  summary     TEXT,
+  error       TEXT,
+  at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_intlog_kind ON integration_log (kind, at DESC);
+CREATE INDEX IF NOT EXISTS idx_intlog_lead ON integration_log (lead_id, at DESC);
+
+/*
+ * How long each kind of log is kept.
+ *
+ * Configuration rather than constants, so Compliance can set the real number
+ * without a deploy and the number they set is visible and auditable. The
+ * seeded values are recommendations, not law — the payment period in
+ * particular is an assumption from general practice and is flagged for
+ * Compliance to confirm.
+ */
+CREATE TABLE IF NOT EXISTS log_retention (
+  kind        TEXT PRIMARY KEY,
+  days        INTEGER NOT NULL,
+  note        TEXT,
+  updated_at  TEXT,
+  updated_by  INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+
 CREATE TABLE IF NOT EXISTS notifications (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
