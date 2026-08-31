@@ -84,10 +84,47 @@ function ObjectDetail({ entity, onBack }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null);
 
+  /* Layout order.
+   *
+   * `draft` is null until somebody starts reordering, and holds the whole list
+   * while they are. Explicit save rather than a write per move: this is a
+   * configuration screen, where the Q-07 rule applies — a wrong layout affects
+   * everybody at once and nobody notices for a week — and moving a field four
+   * places should be one audited change, not four. */
+  const [draft, setDraft] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [orderError, setOrderError] = useState(null);
+
   if (loading || !data) return <Loading />;
   if (error) return <ErrorBanner error={error} />;
 
   const fillRate = new Map((usage?.fields ?? []).map((f) => [f.api_name, f.fill_rate]));
+  const reordering = draft !== null;
+  const rows = draft ?? data.fields;
+
+  const move = (i, by) => {
+    const next = [...rows];
+    const j = i + by;
+    if (j < 0 || j >= next.length) return;
+    [next[i], next[j]] = [next[j], next[i]];
+    setDraft(next);
+  };
+
+  const saveOrder = async () => {
+    setSaving(true);
+    setOrderError(null);
+    try {
+      await api.patch(`/setup/objects/${entity}/field-order`, {
+        order: rows.map((f) => f.api_name),
+      });
+      setDraft(null);
+      reload();
+    } catch (err) {
+      setOrderError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <>
@@ -99,9 +136,25 @@ function ObjectDetail({ entity, onBack }) {
           <h2>{data.object.label_plural}</h2>
           <code className="api-name">{data.object.api_name}</code>
         </div>
-        <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>
-          <span className="material-symbols-rounded">add</span> New field
-        </button>
+        {reordering ? (
+          <span className="row" style={{ gap: 8 }}>
+            <button type="button" className="btn btn-ghost" onClick={() => { setDraft(null); setOrderError(null); }}>
+              Discard
+            </button>
+            <button type="button" className="btn btn-primary" disabled={saving} onClick={saveOrder}>
+              {saving ? <Spinner /> : 'Save order'}
+            </button>
+          </span>
+        ) : (
+          <span className="row" style={{ gap: 8 }}>
+            <button type="button" className="btn btn-ghost" onClick={() => setDraft(data.fields)}>
+              <span className="material-symbols-rounded">swap_vert</span> Reorder
+            </button>
+            <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>
+              <span className="material-symbols-rounded">add</span> New field
+            </button>
+          </span>
+        )}
       </div>
 
       {usage && (usage.unused.length > 0 || usage.unowned.length > 0) && (
@@ -118,6 +171,18 @@ function ObjectDetail({ entity, onBack }) {
         </div>
       )}
 
+      {orderError && <ErrorBanner error={orderError} onDismiss={() => setOrderError(null)} />}
+
+      {reordering && (
+        <div className="glass notice">
+          <span className="material-symbols-rounded">swap_vert</span>
+          <div>
+            This is the order fields appear in on the record and in the edit form.
+            Nothing is saved until you choose Save order.
+          </div>
+        </div>
+      )}
+
       <div className="glass panel">
         <table className="field-table">
           <thead>
@@ -126,7 +191,7 @@ function ObjectDetail({ entity, onBack }) {
             </tr>
           </thead>
           <tbody>
-            {data.fields.map((f) => (
+            {rows.map((f, i) => (
               <tr key={f.api_name} className={f.active ? '' : 'row-inactive'}>
                 <td>
                   <div className="field-name">
@@ -154,7 +219,29 @@ function ObjectDetail({ entity, onBack }) {
                     : f.is_custom ? (f.purpose ?? '—') : 'Core field'}
                 </td>
                 <td>
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(f)}>Edit</button>
+                  {reordering ? (
+                    <span className="order-moves">
+                      {/* Buttons rather than drag. A configuration screen is
+                          used rarely and often on a laptop trackpad, and a
+                          dropped drag silently reorders something else. */}
+                      <button
+                        type="button" className="btn btn-ghost btn-sm"
+                        disabled={i === 0} onClick={() => move(i, -1)}
+                        aria-label={`Move ${f.label} up`} title="Move up"
+                      >
+                        <span className="material-symbols-rounded">arrow_upward</span>
+                      </button>
+                      <button
+                        type="button" className="btn btn-ghost btn-sm"
+                        disabled={i === rows.length - 1} onClick={() => move(i, 1)}
+                        aria-label={`Move ${f.label} down`} title="Move down"
+                      >
+                        <span className="material-symbols-rounded">arrow_downward</span>
+                      </button>
+                    </span>
+                  ) : (
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(f)}>Edit</button>
+                  )}
                 </td>
               </tr>
             ))}

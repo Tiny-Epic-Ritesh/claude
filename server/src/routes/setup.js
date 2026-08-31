@@ -667,8 +667,9 @@ router.post('/objects/:entity/fields', requirePermission('admin.objects'), (req,
          (entity, api_name, label, type, storage, required, length, precision, scale,
           default_value, help_text, description, controlling_field, encrypted,
           read_scope, read_capability, history_tracked, owner_user_id, purpose,
-          retire_at, formula, rollup, is_custom, created_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)`,
+          retire_at, formula, rollup, is_custom, created_by, sort_order)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,
+               (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM field_def WHERE entity = ?))`,
       [
         req.params.entity, apiName, label.trim(), type,
         isDerived ? 'derived' : 'value',
@@ -681,6 +682,11 @@ router.post('/objects/:entity/fields', requirePermission('admin.objects'), (req,
         owner_user_id ?? req.user.id, purpose.trim(), retire_at ?? null,
         formulaJson, rollupJson,
         req.user.id,
+        // Once more, for the sort_order sub-select: a new field is appended to
+        // the layout rather than landing at position zero, which is where the
+        // column default put it and why every field created through the API
+        // sorted to the top the moment ordering became meaningful.
+        req.params.entity,
       ],
     );
     const fieldId = info.lastInsertRowid;
@@ -770,6 +776,64 @@ router.patch('/objects/:entity/fields/:apiName', requirePermission('admin.object
   const after = one('SELECT * FROM field_def WHERE id = ?', [field.id]);
   auditConfig('field', `${req.params.entity}.${req.params.apiName}`, 'updated', field, after, req.user.id);
   return res.json(after);
+});
+
+/**
+ * Set the layout order for an object.
+ *
+ * The whole order is sent, not a move. A "move field up" API has to reason
+ * about neighbours and ties, and two administrators reordering at once
+ * interleave into an order neither chose. Sending the list makes the request
+ * idempotent and the result exactly what was on screen.
+ *
+ * Fields the caller omits keep their relative order after the ones sent, so a
+ * client that filtered its list — inactive fields hidden, say — cannot silently
+ * reset everything it could not see.
+ */
+router.patch('/objects/:entity/field-order', requirePermission('admin.objects'), (req, res) => {
+  const def = entityDef(req.params.entity);
+  if (!def) return res.status(404).json({ error: 'No such object' });
+
+  const order = Array.isArray(req.body.order) ? req.body.order.map(String) : null;
+  if (!order || !order.length) {
+    return res.status(400).json({ error: 'Send the field order as a list of api_names', field: 'order' });
+  }
+
+  /* Ordered by the current layout, because the remainder below relies on it.
+     Without the ORDER BY this is insertion order, and "fields you did not send
+     keep their relative order" would quietly mean "keep the order they were
+     created in" — which is not the same thing and not what was on screen. */
+  const known = new Map(
+    all('SELECT id, api_name FROM field_def WHERE entity = ? ORDER BY sort_order, label',
+      [req.params.entity])
+      .map((f) => [f.api_name, f.id]),
+  );
+
+  const unknown = order.filter((n) => !known.has(n));
+  if (unknown.length) {
+    return res.status(400).json({
+      error: `Not fields of ${def.label}: ${unknown.join(', ')}`,
+      field: 'order',
+    });
+  }
+  if (new Set(order).size !== order.length) {
+    return res.status(400).json({ error: 'The same field appears twice in the order', field: 'order' });
+  }
+
+  transact(() => {
+    order.forEach((apiName, i) => {
+      run('UPDATE field_def SET sort_order = ? WHERE id = ?', [i, known.get(apiName)]);
+    });
+    // Anything not sent keeps its relative order, after everything that was.
+    const rest = [...known.keys()].filter((n) => !order.includes(n));
+    rest.forEach((apiName, i) => {
+      run('UPDATE field_def SET sort_order = ? WHERE id = ?', [order.length + i, known.get(apiName)]);
+    });
+  });
+
+  invalidate();
+  auditConfig('object', req.params.entity, 'field_order_changed', null, { order }, req.user.id);
+  return res.json({ ok: true, order });
 });
 
 /**

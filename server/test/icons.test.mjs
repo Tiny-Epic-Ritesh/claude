@@ -64,14 +64,33 @@ function usedIcons(vocabulary) {
   const found = new Map();
   const rel = (f) => f.slice(repo.length + 1).replace(/\\/g, '/');
 
-  // The client renders icons, so every string literal there is a candidate.
-  // A false positive costs a few KB of glyph and nothing else.
+  /* The client renders icons two ways and this scan has to cover both.
+   *
+   *   <Icon name="add" />                                a string literal
+   *   <span className="material-symbols-rounded">add</span>   JSX children
+   *
+   * Only the first was scanned, for as long as this test existed. The second is
+   * how ObjectManager, the record headers and the login page draw every one of
+   * their icons, so the check passed while `arrow_upward` rendered as the word
+   * ARROW_UPWARD on screen — the exact failure this file was written to catch.
+   *
+   * Comments are stripped first. The literal pattern treats a backtick as a
+   * quote, so a word in prose — `draft`, in a JSDoc block — was being reported
+   * as a missing icon. A false positive here is not free: it sends someone to
+   * add a glyph that nothing renders. */
+  const strip = (src) => src
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+
   for (const file of walk(CLIENT)) {
-    const src = readFileSync(file, 'utf8');
-    for (const m of src.matchAll(/(['"`])([a-z][a-z0-9_]{2,30})\1/g)) {
-      const name = m[2];
+    const src = strip(readFileSync(file, 'utf8'));
+    const add = (name) => {
       if (vocabulary.has(name) && !found.has(name)) found.set(name, rel(file));
-    }
+    };
+    // A string literal — <Icon name="add" />, and the array-slot cases.
+    for (const m of src.matchAll(/(['"`])([a-z][a-z0-9_]{2,30})\1/g)) add(m[2]);
+    // JSX children of a Material Symbols span.
+    for (const m of src.matchAll(/material-symbols-rounded[^>]*>\s*([a-z][a-z0-9_]{2,30})\s*</g)) add(m[1]);
   }
 
   // The server names an icon exactly one way. Scanning its every literal

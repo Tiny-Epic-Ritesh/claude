@@ -245,18 +245,25 @@ export function seedMetadata() {
         const existing = one('SELECT id, label FROM field_def WHERE entity = ? AND api_name = ?', [e.api_name, apiName]);
 
         if (existing) {
-          // Preserve a renamed label; refresh everything the platform owns.
+          /* Preserve a renamed label; refresh everything the platform owns.
+           *
+           * sort_order is NOT refreshed, for the same reason the label is not:
+           * it is the administrator's, not ours. This line used to set it back
+           * to the position in CORE_ENTITIES on every boot, which would have
+           * silently reverted the layout on the next restart or deploy —
+           * shipping a feature that undoes itself. New fields still take their
+           * position from the list below, so a fresh install is unchanged. */
           run(
             `UPDATE field_def SET type = ?, storage = 'column', required = ?, indexed = ?,
                     length = ?, precision = ?, scale = ?, encrypted = ?,
                     read_scope = ?, read_capability = ?, history_tracked = ?,
-                    is_custom = 0, sort_order = ?
+                    is_custom = 0
              WHERE id = ?`,
             [
               type, opts.required ?? 0, opts.indexed ?? 0,
               opts.length ?? null, opts.precision ?? null, opts.scale ?? null,
               opts.encrypted ?? 0, opts.read_scope ?? 'record', opts.read_capability ?? null,
-              opts.history_tracked ?? 0, j, existing.id,
+              opts.history_tracked ?? 0, existing.id,
             ],
           );
         } else {
@@ -508,10 +515,20 @@ export function seedPicklists() {
 export const entities = () => all('SELECT * FROM entity_def WHERE active = 1 ORDER BY sort_order, label');
 export const entityDef = (apiName) => one('SELECT * FROM entity_def WHERE api_name = ?', [apiName]);
 
+/**
+ * The fields of one object, in layout order.
+ *
+ * Ordered by sort_order alone. It used to sort by `is_custom` first, which
+ * pinned every custom field below every core one however they were arranged —
+ * so an administrator could not put "Preferred Call Window" next to the phone
+ * number, which is the entire point of being able to order a layout. Custom
+ * fields are appended on creation, so they still land at the bottom by default;
+ * the difference is that they no longer have to stay there.
+ */
 export function fieldsOf(entity, { includeInactive = false } = {}) {
   return all(
     `SELECT * FROM field_def WHERE entity = ? ${includeInactive ? '' : 'AND active = 1'}
-     ORDER BY is_custom, sort_order, label`,
+     ORDER BY sort_order, label`,
     [entity],
   );
 }

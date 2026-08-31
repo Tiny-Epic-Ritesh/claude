@@ -13,6 +13,7 @@
  */
 
 import { strict as assert } from 'node:assert';
+import { readFileSync } from 'node:fs';
 import { all, one } from '../src/db.js';
 
 let passed = 0;
@@ -137,6 +138,47 @@ test('the Client object exposes what an administrator would configure, and no mo
   for (const backOffice of ['ledger_balance', 'margin_available', 'holding_value', 'trades_last_year']) {
     assert(!fields.has(backOffice),
       `client.${backOffice} is back-office data and should not be configurable here`);
+  }
+});
+
+test("layout order is the administrator's, and boot does not take it back", () => {
+  /* seedMetadata runs on every start and refreshes what the platform owns. It
+     used to refresh sort_order too, setting every core field back to its
+     position in CORE_ENTITIES — so a layout an administrator arranged would
+     revert on the next restart or deploy. A feature that undoes itself is
+     worse than no feature: the first time it happens nobody trusts the screen
+     again.
+
+     Asserted structurally rather than by restarting a server: the UPDATE that
+     refreshes an existing field must not mention sort_order at all. */
+  const src = readFileSync(new URL('../src/engine/metadata.js', import.meta.url), 'utf8');
+  const from = src.indexOf('UPDATE field_def SET type');
+  const update = src.slice(from, src.indexOf('WHERE id = ?', from));
+  assert(!/sort_order/.test(update),
+    'seedMetadata refreshes sort_order, which reverts the layout on every boot');
+});
+
+test('fields come back in layout order, not core-then-custom', () => {
+  /* fieldsOf used to order by is_custom first, pinning every custom field
+     below every core one however they were arranged — so "Preferred Call
+     Window" could never sit beside the phone number, which is the entire point
+     of being able to order a layout. */
+  const src = readFileSync(new URL('../src/engine/metadata.js', import.meta.url), 'utf8');
+  const fn = src.slice(src.indexOf('export function fieldsOf'));
+  const clause = fn.slice(fn.indexOf('ORDER BY'), fn.indexOf('`,'));
+  assert(!/is_custom/.test(clause), `fieldsOf still sorts custom fields apart: ${clause.trim()}`);
+});
+
+test('every field has a distinct position within its object', () => {
+  /* Ties fall back to label, so a tie is broken by something nobody chose —
+     two fields at the same position cannot be put in a deliberate order. This
+     is what a create path that never set sort_order produced: every field made
+     through the API sat at zero. */
+  for (const e of all('SELECT api_name FROM entity_def WHERE active = 1')) {
+    const rows = all('SELECT sort_order FROM field_def WHERE entity = ? AND active = 1', [e.api_name]);
+    const seen = new Set(rows.map((r) => r.sort_order));
+    assert.equal(seen.size, rows.length,
+      `${e.api_name} has fields sharing a position — ${rows.length - seen.size} collision(s)`);
   }
 });
 

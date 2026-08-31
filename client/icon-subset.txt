@@ -1,16 +1,35 @@
-# Icons bundled into client/public/fonts/material-symbols-rounded.woff2
+# Icons bundled into client/src/assets/fonts/material-symbols-rounded.woff2
 #
-# The full Material Symbols Rounded variable font is 5.2 MB; this subset is 179 KB.
-# An icon used in the UI but missing here renders as its literal ligature text
-# ("support_agent"), so server/test/icons.test.mjs fails the build when one is.
+# The full Material Symbols Rounded variable font is 5.2 MB; this subset is
+# about 270 KB. An icon used in the UI but missing here renders as its literal
+# ligature text ("support_agent"), so server/test/icons.test.mjs fails the
+# build when one is.
 #
 # To regenerate after adding a name below:
-#   NAMES=$(grep -v '^#' client/icon-subset.txt | paste -sd,)
-#   curl -G 'https://fonts.googleapis.com/css2' \
+#
+#   UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+#   NAMES=$(grep -v '^#' client/icon-subset.txt | grep -v '^$' | paste -sd,)
+#   curl -sG -A "$UA" 'https://fonts.googleapis.com/css2' \
 #     --data-urlencode 'family=Material Symbols Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200' \
 #     --data-urlencode "icon_names=$NAMES" -o /tmp/subset.css
-#   curl "$(grep -o 'https://fonts.gstatic.com/l/font?[^)]*' /tmp/subset.css)" \
-#     -o client/public/fonts/material-symbols-rounded.woff2
+#   curl -s "$(grep -o 'https://fonts.gstatic.com/l/font?[^)]*' /tmp/subset.css | head -1)" \
+#     -o client/src/assets/fonts/material-symbols-rounded.woff2
+#
+# Then copy these names into client/icon-subset.lock with the font's new
+# sha256, which is what the test compares against.
+#
+# TWO TRAPS, both of which have now been fallen into:
+#
+#   The User-Agent is not optional. Without a modern one Google returns SEVEN
+#   static @font-face blocks, one per weight, and the first URL is weight 100 —
+#   a 53 KB file that renders every icon hairline-thin. With a browser UA you
+#   get one variable font of about 270 KB covering 100..700, which is the one
+#   the CSS asks for.
+#
+#   The font lives in src/assets, not public/. It moved there so Vite
+#   fingerprints the filename: a fixed path under public/ is served immutable
+#   for a year, so a regenerated font never reaches a browser holding the old
+#   one. That cost 52 icons rendering as words until somebody noticed.
 #
 account_balance
 account_balance_wallet
@@ -23,9 +42,11 @@ approval
 approvals
 apps
 arrow_back
+arrow_downward
 arrow_drop_down
 arrow_drop_up
 arrow_forward
+arrow_upward
 article
 assessment
 assignment_turned_in
@@ -37,6 +58,7 @@ auto_stories
 badge
 block
 bolt
+bookmark
 bookmark_add
 btn
 bulk_dialler
@@ -90,6 +112,7 @@ duplicate
 edit
 edit_note
 email
+encrypted
 event
 event_upcoming
 expand_less
@@ -101,9 +124,15 @@ feature
 filter_alt
 flag
 folder
+format_bold
+format_clear
+format_italic
 format_list_bulleted
+format_list_numbered
+format_underlined
 forum
 forward
+gavel
 group
 group_add
 groups
@@ -159,6 +188,7 @@ owner
 partners
 password
 pause
+pause_circle
 payments
 pending
 people
@@ -214,6 +244,7 @@ settings
 settings_account_box
 setup
 shield
+shield_lock
 shield_person
 shopping_basket
 slideshow
@@ -243,6 +274,7 @@ test
 tickets
 timeline
 title
+toolbar
 trending_down
 trending_flat
 trending_up
@@ -260,9 +292,3 @@ warn
 warning
 weight
 whatsapp
-format_bold
-format_italic
-format_underlined
-format_list_numbered
-format_clear
-toolbar

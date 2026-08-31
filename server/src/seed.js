@@ -16,6 +16,7 @@ import { MASTER_STEPS } from './engine/kyc.js';
 import { ONBOARDING_STEPS, LMS_MODULES } from './routes/partners.js';
 import { seedDispositions, applyEffects } from './engine/dispositions.js';
 import { seedKra, seedIncentives } from './engine/kra.js';
+import { syncDispositionPicklists } from './engine/metadata.js';
 import { createFollowUp } from './engine/followups.js';
 import { DEFAULT_SLA } from './engine/sla.js';
 import { ticketSummary } from './ai/mock.js';
@@ -629,6 +630,11 @@ for (const [leadIdx, code, state, value] of [...CARD_PLAN, ...BIGUL_CARD_PLAN]) 
 db.exec('DELETE FROM dispositions');
 db.exec("DELETE FROM sqlite_sequence WHERE name = 'dispositions'");
 seedDispositions();
+/* The interaction outcome picklists are a projection of the dispositions table,
+   so they have to move when it is reseeded. Without this they keep whatever the
+   last running server left them holding — including values retired by a test
+   run, which then read as missing for outcomes that plainly exist. */
+syncDispositionPicklists();
 seedDiallerCampaigns();
 
 /* ---------------------------------------------------- custom fields
