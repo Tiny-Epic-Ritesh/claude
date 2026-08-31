@@ -44,11 +44,15 @@ UserID + Password        ──►  Token        (expires: ExpiresIn, sample 360
   restarts, every agent's dialer session is orphaned and they must log in again.
   That argues for storing the session server-side and keyed to the CRM user,
   rather than in browser memory.
-- **`AuthLogin` requires the agent's own CUBE password.** See §5 — this is the
-  single biggest open question in the integration and it is a security decision,
-  not a technical one.
+- **`AuthLogin` requires the agent's own CUBE password** — a credential store we
+  do not have and should not build lightly.
 - **An agent is in exactly one campaign at a time**, because `CampaignId` is
   fixed at login. Moving campaign means log off and log back in.
+
+**All three are avoidable for the calling path.** `AuthClick2Call` needs none of
+them — no session, no agent password, no campaign lock. See **§7**, which is
+where the design actually lands; this section describes the session model the
+rest of the API assumes, not the path we take to place a call.
 
 ---
 
@@ -95,8 +99,10 @@ rather than sharing one serialiser.
 
 **`AuthClick2Call` is the odd one out** in two ways: it is the only call-control
 endpoint that does not take `AuthId`, and the only one returning a `callID`.
-It takes `CampaignID` directly instead. It appears to queue a call rather than
-place one from a live agent session.
+It takes `CampaignID` directly instead. Those two properties are what make the
+cross-campaign requirement buildable at all — **see §7**, where this endpoint
+becomes the whole calling design. Whether it dials immediately or queues into
+the campaign is the one thing that must be verified on UAT first.
 
 ### Routing and conference
 
@@ -221,8 +227,8 @@ Five questions for Ritesh or for CUBE. The first is the one that matters.
 
 | # | Question | Ask |
 |---|---|---|
-| 1 | **`AuthLogin` needs each agent's CUBE password. How is the CRM supposed to get it?** Storing every agent's dialer password in the CRM is a credential store we do not currently have and would rather not build. Options: the agent types it once at start of shift and we hold the `AuthId` only, never the password; we store it encrypted per user; or CUBE provides a service-account login that does not need it. | CUBE + Compliance |
-| 2 | Is `Extension` **fixed per agent**, or does it change by seat or shift? Fixed means a user field; variable means a prompt at login. | Ritesh |
+| 1 | **Does `AuthClick2Call` dial immediately, or queue the number into the campaign?** The single most important thing to verify on UAT — see §7, where the whole calling design rests on it. The presence of `Priority` and `Duplicate` on the request hints at queue-insertion semantics rather than an immediate dial. | Verify on UAT |
+| 2 | ~~Is `Extension` fixed per agent?~~ **Answered 31 Aug: fixed per agent.** It becomes a field on the user record, set once. | *closed* |
 | 3 | What are the real **`CampaignId`** values, and is a campaign per team, per product or per user? No endpoint lists them, so they must be configured by hand. | Ritesh / CUBE |
 | 4 | Does the **`AuthFreeMe` `DispositionCode`** accept our existing outcome codes, and is there a way to send a **sub-disposition** through the secure endpoint as the legacy PHP one allows? | CUBE |
 | 5 | Are the **duration fields seconds**, and is `CallBackDateTime` in IST? The two sample formats differ between endpoints — `2024-05-21 18:13:33` on `AuthFreeMe` versus `28-02-2023 07:08:00 pm` on `DisposeCall.php`. Sending the wrong one silently books a callback at the wrong time. | CUBE / verify on UAT |
@@ -243,7 +249,7 @@ run without a dialer.
 | CUBE concept | Our home |
 |---|---|
 | `UserID` / `Password` | `server/.env`, never in the database |
-| `AgentId`, `Extension` | Fields on the user record |
+| `AgentId`, `Extension` | Fields on the user record — `Extension` is fixed per agent (confirmed 31 Aug) |
 | `CampaignId` | Configured list; selected at agent login |
 | `AuthId` | Server-side session, keyed to the CRM user |
 | `DispositionCode` | Existing **Call outcomes** setup screen |
@@ -252,3 +258,103 @@ run without a dialer.
 That last row is non-negotiable #1 from the original brief: one shared
 interaction timeline. A call is an interaction, and it goes where every other
 interaction goes.
+
+---
+
+## 7. Calling must work across campaigns — and what that changes
+
+**Requirement, from Ritesh, 31 August 2026:**
+
+> Whatever campaign the user logs into — in CUBE directly or through the CRM —
+> they should be able to make a call irrespective of the campaign they selected
+> at login.
+
+The API does not offer this on the obvious path, and does offer it on a less
+obvious one. The difference is worth setting out, because it changes the
+authentication design as well as the calling design.
+
+### Why the obvious path cannot do it
+
+`AuthManualPass` — the endpoint whose name suggests "place a manual call" —
+takes `AuthId` and **no campaign at all**. The campaign is whatever was fixed at
+`AuthLogin`. A session is therefore welded to one campaign, and manual dialling
+inherits that welding. There is no parameter to override it and no endpoint to
+change a live session's campaign.
+
+So on this path, meeting the requirement would mean logging the agent off and
+back on for every call to a lead in a different campaign. That is not a design,
+it is a workaround with a latency cost on every dial.
+
+### The path that does
+
+`AuthClick2Call` is the exception noted in §2, and the exception is exactly what
+we need:
+
+| | `AuthManualPass` | `AuthClick2Call` |
+|---|---|---|
+| Needs `AuthId` | **Yes** | **No** |
+| Takes a campaign | No — inherited from session | **Yes, `CampaignID`, per call** |
+| Needs the agent's CUBE password | Yes, indirectly (via `AuthLogin`) | **No** |
+| Returns a call identifier | No | **Yes, `callID`** |
+
+It carries the campaign per call, so any agent can call into any campaign. It
+does not carry `AuthId`, so it works whether the agent logged into CUBE through
+our CRM, through CUBE's own client, or not at all. And it returns a `callID`,
+which is the reconciliation key §4 says we otherwise lack.
+
+### The design
+
+One **Call** action in the CRM, which always uses `AuthClick2Call`:
+
+```
+Call(lead) →  AuthClick2Call {
+                PhoneNo:    lead.mobile
+                CampaignID: campaign for this lead's product/desk
+                AgentID:    the CRM user's CUBE agent id
+                ClientID:   our lead id        ← comes back as callID
+                Name:       lead.name
+              }
+```
+
+The agent's currently-selected CUBE campaign is simply not consulted. That is
+the requirement, stated as code.
+
+### The consequence worth noticing
+
+**This removes the agent-password problem from the calling path entirely.**
+
+`AuthClick2Call` authenticates with the tenant `Token` from `AuthToken` —
+`UserID` and `Password` held once in `server/.env` — and nothing else. No
+`AuthLogin`, no `AuthId`, no agent credential stored or prompted for.
+
+That splits the integration cleanly in two:
+
+| | Needs | Who it is for |
+|---|---|---|
+| **Calling** — dial, and log the call to the timeline | Tenant token only | Everyone. Ships first. |
+| **Session control** — break start/end, hold, unhold, transfer, conference, dispose, agent status | `AuthLogin`, hence the agent's CUBE password | Optional, per agent, later |
+
+The first is the feature P2-04a is actually about, and it now has no credential
+question attached to it. The second becomes opt-in: an agent who wants break and
+transfer controls inside the CRM signs in to the dialer once at start of shift;
+one who does not, does not, and can still make calls all day.
+
+I would build the first now and treat the second as a separate, later decision.
+
+### The one thing to verify before relying on this
+
+**Does `AuthClick2Call` dial immediately, or insert the number into the
+campaign's queue?**
+
+The spec does not say. Two details hint at queue-insertion rather than an
+immediate dial: the request carries `Priority` and `Duplicate`, which are
+list-management concepts, not call-control ones; and the response is
+`status` / `callID` / `message` rather than the `Api` / `Status` shape every
+other call-control endpoint returns — suggesting it belongs to a different
+subsystem.
+
+If it queues rather than dials, this design does not meet the requirement and
+the answer has to come from CUBE instead. **This is the first thing to test on
+UAT**, before any of the adapter is written against it. It is a ten-minute check
+with credentials and it decides the shape of the whole feature, so it should not
+be assumed either way.
