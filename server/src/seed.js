@@ -246,6 +246,16 @@ const addUser = (key, name, email, role, extra = {}) => {
       (empSeq * 47) % 360,
     ],
   );
+
+  /* The dialler identity, for the roles that actually call. CUBE knows an agent
+     by its own id and its own extension, neither of which is our user id; the
+     adapter sends no AgentID at all when this is unset rather than inventing
+     one. Seeded from the email local part, which is the shape Cube's own
+     samples use (`bsingh`). */
+  if (['sales_rm', 'caller', 'dealer', 'sales_supervisor'].includes(role)) {
+    run('UPDATE users SET cti_agent_id = ?, phone_extension = ? WHERE id = ?',
+      [email.split('@')[0], String(5000 + empSeq), Number(result.lastInsertRowid)]);
+  }
   U[key] = Number(result.lastInsertRowid);
   return U[key];
 };

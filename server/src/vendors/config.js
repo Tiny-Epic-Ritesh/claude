@@ -31,13 +31,30 @@ const flag = (key, fallback = false) => {
 /* ------------------------------------------------------------ telephony */
 
 export const quickcall = {
-  /** QuickCall REST base, e.g. https://cubehosted.net/QuickCallComp */
-  baseUrl: env('CUBE_QUICKCALL_URL'),
+  /**
+   * CUBE server root. Production is https://raphsody.in, UAT is
+   * https://uat-raphsody.in — both documented in the published specification.
+   * Defaulted to UAT rather than production: a misconfigured deployment should
+   * fail against the test switch, not ring a real client.
+   */
+  baseUrl: env('CUBE_QUICKCALL_URL', 'https://uat-raphsody.in'),
+  /** Tenant credentials for AuthToken. Not an agent's credentials. */
   user: env('CUBE_QUICKCALL_USER'),
   password: env('CUBE_QUICKCALL_PASSWORD'),
-  /** Tenant/campaign identifiers as issued by Cube. */
-  tenant: env('CUBE_QUICKCALL_TENANT'),
-  campaign: env('CUBE_QUICKCALL_CAMPAIGN'),
+  /**
+   * Default campaign, used when a lead does not name its own.
+   *
+   * There is no endpoint that lists campaigns, so the values are whatever CUBE
+   * has been configured with and cannot be discovered. Calls carry the campaign
+   * per request (AuthClick2Call), so an agent is never restricted to this one —
+   * that is the P2-04a cross-campaign requirement.
+   *
+   * The default is a placeholder so the feature runs unconfigured. It is NOT a
+   * real CUBE campaign: once credentials are set this must be too, or CUBE
+   * rejects the call naming a campaign it does not have. The real values are
+   * still outstanding from Cube — see §5 of the reference doc.
+   */
+  campaign: env('CUBE_QUICKCALL_CAMPAIGN', 'BONANZA_CRM'),
   /**
    * Shared secret QuickCall presents on its Save Call callback. We refuse
    * unsigned call events rather than trusting anything that reaches the URL:
@@ -159,7 +176,12 @@ export function vendorStatus() {
   };
   return {
     forced_simulation: FORCE_SIMULATION,
-    quickcall: { state: state(quickcall), endpoint: quickcall.baseUrl, signed_callbacks: Boolean(quickcall.webhookSecret) },
+    quickcall: {
+      state: state(quickcall),
+      endpoint: quickcall.baseUrl,
+      campaign: quickcall.campaign,
+      signed_callbacks: Boolean(quickcall.webhookSecret),
+    },
     smartping: { state: state(aisensy), endpoint: aisensy.baseUrl, campaign: aisensy.defaultCampaign, signed_callbacks: Boolean(aisensy.webhookSecret) },
     bonanza_kyc: { state: state(bonanzaKyc), endpoint: bonanzaKyc.portalUrl, mode: bonanzaKyc.mode, signed_callbacks: Boolean(bonanzaKyc.webhookSecret) },
     smtp: { state: state(smtp), endpoint: smtp.host },

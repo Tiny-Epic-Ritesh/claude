@@ -108,24 +108,31 @@ export function send(channel, { to, body, subject, leadId, partnerId, templateId
  * Click-to-call. Async because the agent needs to know whether the switch
  * actually rang — a silently failed dial is worse than an error toast.
  */
-export async function click2call({ userId, leadId, mobile }) {
-  if (simulate(quickcall.isLive)) {
-    const callId = `SIMCALL-${Date.now().toString(36).toUpperCase()}`;
-    record('telephony', { to: mobile, body: 'Click2Call placed' }, { simulated: true, call_id: callId, lead_id: leadId, user_id: userId });
-    return { call_id: callId, status: 'ringing', simulated: true };
-  }
-
+export async function click2call({ userId, leadId, mobile, campaign = null }) {
   const agent = one('SELECT id, name, phone_extension, cti_agent_id FROM users WHERE id = ?', [userId]);
+  const lead = leadId ? one('SELECT id, name FROM leads WHERE id = ?', [leadId]) : null;
 
+  /* No simulation branch here any more. The adapter simulates below its own
+     field mapping, so the same code builds the request body whether or not
+     credentials are present — a typo in a CUBE field name now fails a test
+     instead of surviving until the first live call. */
   try {
     const res = await quickcall.makeCall({
-      agentExtension: agent?.phone_extension,
-      agentId: agent?.cti_agent_id || agent?.id,
+      /* The CUBE agent id, or nothing. Never our internal user id: CUBE would
+         either reject it or attribute the call to whichever of its agents
+         happens to be called "2". AgentID is optional on Click2Call, so an
+         unmapped user places an unattributed call rather than a misattributed
+         one — and `agent_mapped` below says which happened. */
+      agentId: agent?.cti_agent_id || null,
       mobile,
       leadId,
+      leadName: lead?.name,
+      campaign,
     });
-    record('telephony', { to: mobile, body: 'Click2Call placed' }, { simulated: false, call_id: res.call_id, lead_id: leadId, user_id: userId, status: res.status });
-    return { ...res, simulated: false };
+    record('telephony', { to: mobile, body: 'Click2Call placed' }, {
+      simulated: res.simulated, call_id: res.call_id, lead_id: leadId, user_id: userId, status: res.status,
+    });
+    return { ...res, agent_mapped: Boolean(agent?.cti_agent_id) };
   } catch (err) {
     record('telephony', { to: mobile, body: `Click2Call failed — ${err.message}` }, { simulated: false, lead_id: leadId, user_id: userId, status: 'failed' });
     throw err;
@@ -149,14 +156,22 @@ export async function pushToAutodialler(leadIds, userId) {
     ? all(`SELECT id, name, mobile FROM leads WHERE id IN (${leadIds.map(() => '?').join(',')})`, leadIds)
     : [];
 
-  if (simulate(quickcall.isLive)) {
-    record('autodialler', { to: `${leads.length} leads`, body: 'Queued for progressive dialling' }, { simulated: true, user_id: userId });
-    return { queued: leads.length, leads, campaign: `SIMDIAL-${Date.now().toString(36)}`, simulated: true };
-  }
-
   const res = await quickcall.loadCampaign({ leads });
-  record('autodialler', { to: `${leads.length} leads`, body: `Loaded into ${res.campaign}` }, { simulated: false, user_id: userId });
-  return { queued: res.loaded, leads, campaign: res.campaign, simulated: false };
+
+  /* The upload endpoint returns a real load report, so a partial load is
+     reported as one. "500 queued" when 40 were rejected is the kind of quiet
+     success that is discovered a week later by someone wondering why nobody
+     called their list. */
+  const note = res.rejected || res.duplicates || res.malformed
+    ? `Loaded ${res.inserted} of ${leads.length} into ${res.campaign}`
+      + ` — ${res.rejected} rejected, ${res.duplicates} duplicate, ${res.malformed} malformed`
+    : `Loaded ${res.inserted} into ${res.campaign}`;
+
+  record('autodialler', { to: `${leads.length} leads`, body: note }, { simulated: res.simulated, user_id: userId });
+  return {
+    queued: res.inserted, leads, campaign: res.campaign, simulated: res.simulated,
+    rejected: res.rejected, duplicates: res.duplicates, malformed: res.malformed,
+  };
 }
 
 /* --------------------------------------------------------- KYC vendors */
@@ -276,8 +291,8 @@ export function lmsSync(partnerId) {
 export function integrationRegistry() {
   const v = vendorStatus();
   return [
-    { key: 'telephony', name: 'Cube QuickCall — Click2Call', status: v.quickcall.state, contract: 'POST /MakeCall {AgentID, Extension, DialNumber, customerID}; Save Call API posts the completed call back' },
-    { key: 'autodialler', name: 'Cube QuickCall — Campaign dialler', status: v.quickcall.state, contract: 'POST /LoadCampaignData; MANUAL / Preview / Predictive modes' },
+    { key: 'telephony', name: 'Cube QuickCall — Click2Call', status: v.quickcall.state, contract: 'POST /QuickCall61AuthToken/AuthClick2Call/ {PhoneNo, CampaignID, AgentID, ClientID} → callID. Campaign travels per call, so an agent is not tied to the one they logged into.' },
+    { key: 'autodialler', name: 'Cube QuickCall — Campaign dialler', status: v.quickcall.state, contract: 'POST /QuickCallRaphsody/Uploadlead61.php {CampaignId, data[]} → load report with rejected/duplicate counts' },
     { key: 'whatsapp', name: 'Smartping WhatsApp (AiSensy)', status: v.smartping.state, contract: 'POST /campaign/t1/api/v2 {apiKey, campaignName, destination, templateParams[]}; delivery + reply webhooks' },
     { key: 'bonanza_kyc', name: 'Bonanza eKYC portal', status: v.bonanza_kyc.state, contract: `Mode "${v.bonanza_kyc.mode}" — attributed handoff link + status callback` },
     { key: 'sms', name: 'SMS Gateway', status: 'simulated', contract: 'Provider not yet nominated' },
