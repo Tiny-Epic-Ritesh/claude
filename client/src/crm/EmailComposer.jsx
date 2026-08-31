@@ -17,7 +17,7 @@
 
 import { useState } from 'react';
 import { api } from '../api.js';
-import { useApi, Icon, Loading, ErrorBanner, Modal } from '../components/ui.jsx';
+import { useApi, Icon, Loading, ErrorBanner, Modal, Spinner } from '../components/ui.jsx';
 import RichText from '../components/RichText.jsx';
 
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -39,6 +39,10 @@ export default function EmailComposer({ leadId, onClose, onSent, onError }) {
   const [d, { loading, error }] = useApi(leadId ? `/email/compose/${leadId}` : null, [leadId]);
   const [form, setForm] = useState({ subject: '', body: '', template_id: '', intent: 'service' });
   const [contentIds, setContentIds] = useState([]);
+  const [saving, setSaving] = useState(null);      // null | 'ask' | 'busy'
+  const [tplName, setTplName] = useState('');
+  const [tplScope, setTplScope] = useState('personal');
+  const [tplNote, setTplNote] = useState(null);
   const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState(null);
@@ -95,6 +99,29 @@ export default function EmailComposer({ leadId, onClose, onSent, onError }) {
     } catch (err) {
       setProblem(err.message);
       setBusy(false);
+    }
+  };
+
+  /* Save what is in the composer as a template.
+   *
+   * The server validates the merge fields and refuses anything that cannot
+   * resolve, so an unknown token is reported here rather than discovered by a
+   * client reading a sentence with a hole in it. */
+  const saveTemplate = async () => {
+    setSaving('busy'); setTplNote(null); setProblem(null);
+    try {
+      const r = await api.post('/email/templates', {
+        name: tplName,
+        subject: form.subject,
+        body: form.body,
+        scope: tplScope,
+      });
+      setTplNote(r.note);
+      setSaving(null);
+      setTplName('');
+    } catch (err) {
+      setProblem(err.message);
+      setSaving('ask');
     }
   };
 
@@ -167,7 +194,8 @@ export default function EmailComposer({ leadId, onClose, onSent, onError }) {
             {d.templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
           <span className="tiny muted">
-            Only approved templates appear here. {'{{name}}'} and {'{{rm}}'} are filled in when it sends.
+            Your own templates and the approved firm-wide ones. Fields in double
+            braces are filled in when it sends.
           </span>
         </div>
 
@@ -180,13 +208,84 @@ export default function EmailComposer({ leadId, onClose, onSent, onError }) {
           {/* P2-09. A label rather than htmlFor: the editor is a contenteditable
               div, and a label cannot point at one. It carries its own
               aria-label instead. */}
-          <span className="field-label">Message</span>
+          <div className="row-between" style={{ alignItems: 'baseline', marginBottom: 4 }}>
+            <span className="field-label" style={{ margin: 0 }}>Message</span>
+
+            {/* Only fields that exist, and only ones safe to send.
+                engine/mergefields.js excludes the encrypted and read-restricted
+                ones -- a PAN in an email body is an incident, not a feature. */}
+            <select
+              className="rt-select"
+              aria-label="Insert a merge field"
+              value=""
+              onChange={(e) => {
+                if (!e.target.value) return;
+                set('body', `${form.body}{{${e.target.value}}}`);
+                e.target.value = '';
+              }}
+            >
+              <option value="">Insert a field…</option>
+              {(d.merge_fields ?? []).map((f) => (
+                <option key={f.token} value={f.token}>
+                  {f.label}{f.example ? ` — ${f.example}` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <RichText
             id="em-body"
             value={form.body}
             onChange={(html) => set('body', html)}
             placeholder={`Hello ${(d.lead.name || '').split(' ')[0]}, …`}
           />
+
+          <div className="row" style={{ gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
+            {saving === null && (
+              <button type="button" className="btn-ghost btn-sm" onClick={() => setSaving('ask')}>
+                <Icon name="bookmark_add" size={14} /> Save as template
+              </button>
+            )}
+            {tplNote && <span className="tiny" style={{ color: 'var(--ok)' }}>{tplNote}</span>}
+          </div>
+
+          {saving !== null && (
+            <div className="glass notice" style={{ marginTop: 8, display: 'block' }}>
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <label style={{ flex: '1 1 200px' }}>
+                  <span className="tiny muted">Template name</span>
+                  <input
+                    value={tplName}
+                    onChange={(e) => setTplName(e.target.value)}
+                    placeholder="SIP follow-up"
+                    autoFocus
+                  />
+                </label>
+                <label style={{ flex: '0 1 190px' }}>
+                  <span className="tiny muted">Who can use it</span>
+                  <select value={tplScope} onChange={(e) => setTplScope(e.target.value)}>
+                    <option value="personal">Just me</option>
+                    <option value="org">Everyone — needs approval</option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  disabled={saving === 'busy' || !tplName.trim()}
+                  onClick={saveTemplate}
+                >
+                  {saving === 'busy' ? <Spinner /> : 'Save'}
+                </button>
+                <button type="button" className="btn-ghost btn-sm" onClick={() => { setSaving(null); setTplNote(null); }}>
+                  Cancel
+                </button>
+              </div>
+              <span className="tiny muted">
+                Your own templates are yours to use straight away. A firm-wide one is
+                client-facing copy, so an administrator approves it first.
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Approved collateral first. */}

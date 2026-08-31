@@ -24,11 +24,12 @@
 
 import { Router } from 'express';
 import { all, one, run, audit } from '../db.js';
-import { requireUser, requirePermission, reqScope, mayUnmask } from '../auth.js';
+import { requireUser, requirePermission, reqScope, mayUnmask, can } from '../auth.js';
 import { decryptField } from '../security.js';
 import { checkConsent } from '../engine/consent.js';
 import { send } from '../integrations.js';
 import { sanitizeHtml, htmlToText, isEmptyHtml } from '../engine/sanitize.js';
+import { availableMergeFields, unknownTokens } from '../engine/mergefields.js';
 
 const router = Router();
 router.use(requireUser);
@@ -92,10 +93,23 @@ router.get('/compose/:leadId', (req, res) => {
       // Saying which intent applies stops an RM guessing.
       marketing_allowed: checkConsent(lead, 'email', 'marketing').allowed,
     },
+    /* Approved org templates, plus this person's own drafts.
+     *
+     * A personal template is the RM's own wording and needs no approval; it is
+     * only ever offered to them. An org template is firm-wide client-facing
+     * copy and only appears once approved. */
     templates: all(
-      `SELECT id, name, subject, body, product_type_id
-         FROM templates WHERE channel = 'email' AND approved = 1 ORDER BY name`,
+      `SELECT id, name, subject, body, product_type_id, scope
+         FROM templates
+        WHERE channel = 'email'
+          AND ((scope = 'org' AND approved = 1) OR (scope = 'personal' AND owner_id = ?))
+        ORDER BY scope DESC, name`,
+      [req.user.id],
     ),
+    /* What a template may reference. Encrypted and read-restricted fields are
+       not in here -- see engine/mergefields.js for why that is the important
+       half of this list. */
+    merge_fields: availableMergeFields('lead'),
     /* Approved collateral, in date. An expired brochure is not offered at all,
        which is cheaper than asking every RM to check a date. */
     library: all(
@@ -111,6 +125,101 @@ router.get('/compose/:leadId', (req, res) => {
     },
     from: { name: req.user.name, email: req.user.email },
   });
+});
+
+/* ------------------------------------------------------------ templates */
+
+/** What a template may reference, for the composer's picker. */
+router.get('/merge-fields', requireUser, (_req, res) => {
+  res.json({ fields: availableMergeFields('lead') });
+});
+
+/**
+ * Save what is in the composer as a template.
+ *
+ * Personal by default and freely created: it is the RM's own wording, sent
+ * under their own name. Promoting one to the firm-wide list needs
+ * admin.templates, because org templates are client-facing copy for a
+ * regulated business and only approved ones may carry a campaign.
+ */
+router.post('/templates', requirePermission('lead.contact'), (req, res) => {
+  const { name, subject, body, scope = 'personal', product_type_id: productId } = req.body ?? {};
+
+  if (!String(name || '').trim()) return res.status(400).json({ error: 'Give the template a name' });
+  if (!String(subject || '').trim()) return res.status(400).json({ error: 'Give the template a subject' });
+  if (isEmptyHtml(body)) return res.status(400).json({ error: 'A template needs a body' });
+
+  if (!['personal', 'org'].includes(scope)) {
+    return res.status(400).json({ error: 'A template is either personal or org' });
+  }
+  if (scope === 'org' && !can(req.user.role, 'admin.templates')) {
+    return res.status(403).json({
+      error: 'Only an administrator can add a template to the firm-wide list',
+      fix: 'Save it as a personal template and ask an administrator to promote it.',
+    });
+  }
+
+  /* Refuse a merge field that cannot resolve.
+   *
+   * This is the LeadSquared failure caught at the point it is introduced: a
+   * template referencing a field nobody can resolve does not break loudly, it
+   * emails a client a sentence with a hole in it. */
+  const unknown = [...new Set([...unknownTokens(subject), ...unknownTokens(body)])];
+  if (unknown.length) {
+    return res.status(400).json({
+      error: unknown.length === 1
+        ? `There is no field called "${unknown[0]}"`
+        : `These fields do not exist: ${unknown.join(', ')}`,
+      unknown,
+      fix: 'Pick from the merge field list — anything else will reach the client as a blank space.',
+    });
+  }
+
+  if (one('SELECT id FROM templates WHERE lower(name) = lower(?) AND channel = ? AND scope = ? AND (owner_id IS ? OR owner_id = ?)',
+    [name.trim(), 'email', scope, scope === 'org' ? null : req.user.id, req.user.id])) {
+    return res.status(409).json({ error: `You already have a template called "${name.trim()}"` });
+  }
+
+  const clean = sanitizeHtml(body);
+  const r = run(
+    `INSERT INTO templates (name, channel, subject, body, product_type_id, approved, scope, owner_id)
+     VALUES (?, 'email', ?, ?, ?, ?, ?, ?)`,
+    [
+      name.trim(), subject.trim(), clean, productId || null,
+      // A personal template is usable by its owner immediately; an org one is
+      // added unapproved and reviewed on the Setup screen.
+      scope === 'personal' ? 1 : 0,
+      scope,
+      scope === 'personal' ? req.user.id : null,
+    ],
+  );
+
+  const id = Number(r.lastInsertRowid);
+  audit(req.user.id, 'template_created', 'template', id, { scope, name: name.trim() });
+  res.status(201).json({
+    id,
+    scope,
+    approved: scope === 'personal',
+    note: scope === 'personal'
+      ? 'Saved to your own templates.'
+      : 'Added to the firm-wide list, awaiting approval before it can be used.',
+  });
+});
+
+/** Remove one of your own personal templates. */
+router.delete('/templates/:id', requirePermission('lead.contact'), (req, res) => {
+  const t = one('SELECT * FROM templates WHERE id = ?', [req.params.id]);
+  if (!t) return res.status(404).json({ error: 'Template not found' });
+
+  // An org template is configuration and is managed in Setup, where the change
+  // is versioned and audited. This route only ever removes personal drafts.
+  if (t.scope !== 'personal' || Number(t.owner_id) !== Number(req.user.id)) {
+    return res.status(403).json({ error: 'You can only delete your own personal templates' });
+  }
+
+  run('DELETE FROM templates WHERE id = ?', [req.params.id]);
+  audit(req.user.id, 'template_deleted', 'template', Number(req.params.id), { name: t.name });
+  return res.json({ ok: true });
 });
 
 /* ----------------------------------------------------------------- send */

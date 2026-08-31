@@ -5540,6 +5540,142 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     assert(sent, 'the email was not logged against the lead at all');
   });
 
+  /* ============================================================ 54 */
+  suite('54 templates and merge fields');
+
+  /*
+   * Finding 10 of the LeadSquared audit, from the other end: that tenant was
+   * full of copy keyed to fields nobody could resolve. A merge field that does
+   * not resolve fails silently -- it emails a client a sentence with a hole in
+   * it -- so the check belongs where the template is written, not where it is
+   * sent.
+   */
+
+  await check('only fields that exist and are safe to send are offered', async () => {
+    const { data } = await req('/api/email/merge-fields', { token: T.sales_rm, expect: 200 });
+    const tokens = data.fields.map((f) => f.token);
+
+    assert(tokens.length > 5, `only ${tokens.length} merge fields offered`);
+    assert(tokens.includes('name') && tokens.includes('rm'),
+      'the computed tokens the templates already use are missing');
+
+    /* The important half of the list is what is NOT in it. A PAN in the body
+     * of an email is a data-protection incident, not personalisation, and
+     * `pan` is a perfectly real field in the registry. */
+    assert(!tokens.includes('pan'), 'PAN is offered as a merge field');
+
+    for (const f of data.fields) assert(f.label, `${f.token} has no label`);
+  });
+
+  await check('a personal template saves and is usable straight away', async () => {
+    const { data } = await req('/api/email/templates', {
+      method: 'POST', token: T.sales_rm, expect: 201,
+      body: {
+        name: `Personal draft ${RUN}`,
+        subject: 'About your SIP, {{name}}',
+        body: '<p>Hello {{name}}, {{rm}} here.</p>',
+        scope: 'personal',
+      },
+    });
+    eq(data.scope, 'personal');
+    eq(data.approved, true, 'an RM has to wait for approval on their own wording');
+    REF.personalTemplateId = data.id;
+  });
+
+  await check("a personal template is offered to its owner and nobody else", async () => {
+    const lead = need(
+      leadRows(await req('/api/leads?limit=50', { token: T.sales_rm, expect: 200 }))
+        .find((l) => l.email),
+      'a lead with an email',
+    );
+
+    const mine = await req(`/api/email/compose/${lead.id}`, { token: T.sales_rm, expect: 200 });
+    assert(mine.data.templates.some((t) => t.id === REF.personalTemplateId),
+      'the author cannot see their own template');
+
+    // Somebody else's draft is not firm-wide copy and must not appear as if
+    // it were approved.
+    const theirs = await req(`/api/email/compose/${lead.id}`, { token: T.admin, expect: 200 });
+    assert(!theirs.data.templates.some((t) => t.id === REF.personalTemplateId),
+      "another user was shown somebody else's personal draft");
+  });
+
+  await check('a firm-wide template needs an administrator', async () => {
+    const { data } = await req('/api/email/templates', {
+      method: 'POST', token: T.sales_rm, expect: 403,
+      body: { name: `Org attempt ${RUN}`, subject: 's', body: '<p>b</p>', scope: 'org' },
+    });
+    // The refusal has to say what to do instead, or the RM simply gives up and
+    // writes free text every time.
+    assert(/personal/i.test(data.fix ?? ''), `unhelpful refusal: ${JSON.stringify(data)}`);
+
+    await req('/api/email/templates', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: { name: `Org template ${RUN}`, subject: 's', body: '<p>b</p>', scope: 'org' },
+    });
+  });
+
+  await check('a firm-wide template is not usable until it is approved', async () => {
+    const lead = need(
+      leadRows(await req('/api/leads?limit=50', { token: T.sales_rm, expect: 200 }))
+        .find((l) => l.email),
+      'a lead with an email',
+    );
+    const { data } = await req(`/api/email/compose/${lead.id}`, { token: T.sales_rm, expect: 200 });
+    assert(!data.templates.some((t) => t.name === `Org template ${RUN}`),
+      'an unapproved firm-wide template was offered for use');
+  });
+
+  await check('a template naming a field that does not exist is refused, and says which', async () => {
+    const { data } = await req('/api/email/templates', {
+      method: 'POST', token: T.sales_rm, expect: 400,
+      body: {
+        name: `Bad merge ${RUN}`,
+        subject: 'Hi {{first_name}}',
+        body: '<p>Your {{portfolio_value}} is ready, {{name}}.</p>',
+        scope: 'personal',
+      },
+    });
+
+    // Naming them is the point: "invalid template" leaves somebody hunting
+    // through their own copy for which brace is wrong.
+    assert(data.unknown.includes('first_name'), `first_name not reported: ${JSON.stringify(data)}`);
+    assert(data.unknown.includes('portfolio_value'), 'portfolio_value not reported');
+    assert(!data.unknown.includes('name'), 'a valid field was reported as unknown');
+  });
+
+  await check('a template body is sanitised on the way in, not just on the way out', async () => {
+    const { data } = await req('/api/email/templates', {
+      method: 'POST', token: T.sales_rm, expect: 201,
+      body: {
+        name: `Hostile template ${RUN}`,
+        subject: 'Hello',
+        body: "<p>Hi {{name}}</p><script>alert(1)</script><a href='javascript:x()'>c</a>",
+        scope: 'personal',
+      },
+    });
+
+    const lead = need(
+      leadRows(await req('/api/leads?limit=50', { token: T.sales_rm, expect: 200 }))
+        .find((l) => l.email),
+      'a lead with an email',
+    );
+    const composed = await req(`/api/email/compose/${lead.id}`, { token: T.sales_rm, expect: 200 });
+    const saved = composed.data.templates.find((t) => t.id === data.id);
+    assert(saved, 'the template was not saved');
+    assert(!/<script|javascript:/i.test(saved.body),
+      `a stored template carries a payload every future send would reuse: ${saved.body}`);
+  });
+
+  await check('only your own personal drafts can be deleted', async () => {
+    await req(`/api/email/templates/${need(REF.personalTemplateId, 'a personal template')}`, {
+      method: 'DELETE', token: T.admin, expect: 403,
+    });
+    await req(`/api/email/templates/${REF.personalTemplateId}`, {
+      method: 'DELETE', token: T.sales_rm, expect: 200,
+    });
+  });
+
   /* ------------------------------------------------------------- report */
   report();
 }

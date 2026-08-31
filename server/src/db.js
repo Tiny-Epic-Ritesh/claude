@@ -745,6 +745,21 @@ const COLUMNS = [
   // Reachability for reminders sent to staff.
   ['users', 'whatsapp', 'TEXT'],
 
+  /* Who a template belongs to, and how far it reaches (P2-09).
+   *
+   * A personal template is one RM's own wording and needs no approval — it is
+   * their writing, sent under their name, and asking an admin to sign off on
+   * "thanks, speak tomorrow" is how a template library stops being used.
+   *
+   * An org template is firm-wide client-facing copy. For a SEBI-regulated firm
+   * that carries content obligations, so promoting one needs admin.templates
+   * and only approved org templates may be used for a campaign or a bulk send.
+   *
+   * Null scope on rows that predate this reads as 'org', which is what the
+   * seeded templates are. */
+  ['templates', 'scope', "TEXT NOT NULL DEFAULT 'org'"],
+  ['templates', 'owner_id', 'INTEGER'],
+
   /* The artefact version in-flight work started under.
    *
    * An applicant who began a sixteen-step journey finishes those sixteen steps
