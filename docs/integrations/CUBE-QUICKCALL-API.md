@@ -227,7 +227,7 @@ Five questions for Ritesh or for CUBE. The first is the one that matters.
 
 | # | Question | Ask |
 |---|---|---|
-| 1 | **Does `AuthClick2Call` dial immediately, or queue the number into the campaign?** The single most important thing to verify on UAT — see §7, where the whole calling design rests on it. The presence of `Priority` and `Duplicate` on the request hints at queue-insertion semantics rather than an immediate dial. | Verify on UAT |
+| 1 | ~~Does `AuthClick2Call` dial or queue?~~ **Answered 31 Aug: it dials.** The calling design in §7 holds as written. | *closed* |
 | 2 | ~~Is `Extension` fixed per agent?~~ **Answered 31 Aug: fixed per agent.** It becomes a field on the user record, set once. | *closed* |
 | 3 | What are the real **`CampaignId`** values, and is a campaign per team, per product or per user? No endpoint lists them, so they must be configured by hand. | Ritesh / CUBE |
 | 4 | Does the **`AuthFreeMe` `DispositionCode`** accept our existing outcome codes, and is there a way to send a **sub-disposition** through the secure endpoint as the legacy PHP one allows? | CUBE |
@@ -341,20 +341,26 @@ one who does not, does not, and can still make calls all day.
 
 I would build the first now and treat the second as a separate, later decision.
 
-### The one thing to verify before relying on this
+### Verified: it dials — Ritesh, 31 August 2026
 
-**Does `AuthClick2Call` dial immediately, or insert the number into the
-campaign's queue?**
+The specification does not say whether `AuthClick2Call` places the call
+immediately or inserts the number into the campaign's dial queue, and two
+details suggested the latter: the request carries `Priority` and `Duplicate`,
+which are list-management concepts rather than call-control ones, and the
+response is `status` / `callID` / `message` rather than the `Api` / `Status`
+shape every other call-control endpoint returns.
 
-The spec does not say. Two details hint at queue-insertion rather than an
-immediate dial: the request carries `Priority` and `Duplicate`, which are
-list-management concepts, not call-control ones; and the response is
-`status` / `callID` / `message` rather than the `Api` / `Status` shape every
-other call-control endpoint returns — suggesting it belongs to a different
-subsystem.
+**It dials.** So the design above holds without qualification — one call, any
+campaign, no session, no agent password, and a `callID` back at the moment of
+dialling.
 
-If it queues rather than dials, this design does not meet the requirement and
-the answer has to come from CUBE instead. **This is the first thing to test on
-UAT**, before any of the adapter is written against it. It is a ten-minute check
-with credentials and it decides the shape of the whole feature, so it should not
-be assumed either way.
+Two consequences:
+
+- `Priority` and `Duplicate` are accepted but meaningless for a single dial, so
+  the adapter sends neither. There is nothing for one call to be prioritised
+  against.
+- The adapter reports the call as **`dialing`**, which is now true. It does not
+  report it as answered or connected, because neither is known at this point;
+  both arrive later on the call log or the Save Call callback. That distinction
+  is held by a test, because "the call connected" is exactly the claim a UI is
+  tempted to make and exactly the one that destroys trust when it is wrong.

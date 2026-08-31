@@ -34,18 +34,22 @@
  * status) does need `AuthLogin` and is therefore a separate, opt-in feature that
  * is deliberately not built here.
  *
- * THE ONE THING NOT YET VERIFIED
- * -----------------------------
- * Whether `AuthClick2Call` dials immediately or inserts the number into the
- * campaign's queue. The specification does not say, and two details point at
- * queue-insertion: `Priority` and `Duplicate` are list-management fields, and its
- * response shape (`status` / `callID` / `message`) differs from the
- * `Api` / `Status` every other call-control endpoint returns.
+ * CLICK2CALL DIALS — CONFIRMED BY RITESH, 31 AUGUST 2026
+ * ------------------------------------------------------
+ * The specification does not say whether `AuthClick2Call` places the call
+ * immediately or inserts the number into the campaign's dial queue, and two
+ * details suggested the latter: `Priority` and `Duplicate` are list-management
+ * fields, and its response shape (`status` / `callID` / `message`) differs from
+ * the `Api` / `Status` every other call-control endpoint returns.
  *
- * Until it is checked on UAT this adapter does not claim the phone is ringing.
- * It reports what CUBE reported. Telling an agent a call is connecting when it
- * is actually forty-third in a queue is the kind of small lie that destroys
- * trust in a tool.
+ * It dials. So the endpoint is a true click-to-call and the design above holds
+ * without qualification: one call, any campaign, no session, no agent password.
+ * `Priority` and `Duplicate` are accepted and ignored for our purposes; we send
+ * neither, because a single dial has nothing to be prioritised against.
+ *
+ * The status this adapter reports is therefore `dialing` — the switch has been
+ * told to place the call. Whether the customer picks up is a later fact, and it
+ * arrives on the call log or the Save Call callback, not here.
  */
 
 import { quickcall as cfg, FORCE_SIMULATION } from './config.js';
@@ -217,10 +221,10 @@ export async function makeCall({ agentId, mobile, leadId, leadName, campaign, re
 
   return {
     call_id: data?.callID ?? null,
-    // Deliberately not "ringing". See the header note: until Click2Call's
-    // dial-versus-queue behaviour is verified on UAT, we report acceptance,
-    // which is all we actually know.
-    status: 'accepted',
+    /* Click2Call dials rather than queues (confirmed 31 Aug), so the switch is
+       placing the call. Not "answered" and not "connected" — neither is known
+       yet, and both arrive later on the call log or the Save Call callback. */
+    status: 'dialing',
     campaign: campaignId,
     message: data?.message ?? null,
     simulated,

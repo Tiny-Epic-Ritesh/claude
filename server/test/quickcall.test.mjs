@@ -110,14 +110,15 @@ await test('the call id comes back, because it is the only reliable key we get',
   assert.equal(res.simulated, true, 'should be simulated with no credentials configured');
 });
 
-await test('the adapter does not claim the phone is ringing', () => {
-  /* Click2Call may queue rather than dial — §7 of the reference, unverified
-   * until UAT. Reporting "ringing" would be a small lie told to an agent
-   * waiting for a connection. */
-  return makeCall({ agentId: 'bsingh', mobile: '9899978503', campaign: 'CubeTest' })
-    .then((res) => {
-      assert.equal(res.status, 'accepted', `claimed "${res.status}" when only acceptance is known`);
-    });
+await test('a placed call reports dialing — not answered, which is not yet known', async () => {
+  /* Click2Call dials rather than queues (confirmed 31 Aug), so "dialing" is
+   * true at this point. What is still unknown is whether anyone picks up, and
+   * that must not be implied here: it arrives later on the call log or the Save
+   * Call callback. An agent told a call connected when it did not is how a tool
+   * stops being trusted. */
+  const res = await makeCall({ agentId: 'bsingh', mobile: '9899978503', campaign: 'CubeTest' });
+  assert.equal(res.status, 'dialing', `reported "${res.status}"`);
+  assert(!/answer|connect/i.test(res.status), 'claimed an outcome that is not known yet');
 });
 
 /* ----------------------------------------------------------- dial list */
