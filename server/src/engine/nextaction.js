@@ -148,3 +148,76 @@ export function nextAction(card, caps, { daysInState = 0 } = {}) {
     })),
   };
 }
+
+/**
+ * The one next step for a whole lead, across all of its products.
+ *
+ * P2-12. The lead header used to summarise the products as "2 Warm · 1 Active",
+ * which describes state to somebody who is one tab away from seeing that state
+ * laid out in full. It answered a question nobody had. What an RM opening a
+ * record actually needs is what to do next, and that was behind a button.
+ *
+ * Ordering, most urgent first:
+ *
+ *   1. Anything gone stale. A card sitting untouched for a fortnight is the
+ *      single most useful thing to surface, and it is the one an RM has
+ *      already stopped noticing.
+ *   2. Otherwise the furthest-progressed card, because the nearest thing to
+ *      revenue is the one worth an hour today.
+ *
+ * INACTIVE cards are ignored. Every lead carries a card for every product, so
+ * counting those would make "find out whether they want this" the advice on
+ * every lead in the book forever.
+ */
+export function nextStepForLead(cards = [], caps = new Set()) {
+  const engaged = cards.filter((c) => c.state && c.state !== 'INACTIVE' && c.state !== 'LOST');
+  if (!engaged.length) return null;
+
+  const progress = ['EXPLORING', 'WARM', 'PRODUCT_RM_ENGAGED', 'KYC_IN_PROGRESS', 'ACTIVE'];
+  const rank = (c) => progress.indexOf(c.state);
+
+  const scored = engaged.map((card) => {
+    const days = card.days_in_state
+      ?? (card.last_state_at
+        ? Math.floor((Date.now() - new Date(`${String(card.last_state_at).replace(' ', 'T')}Z`).getTime()) / 86400000)
+        : 0);
+    return { card, days, step: nextAction(card, caps, { daysInState: days }) };
+  });
+
+  scored.sort((a, b) => {
+    if (a.step.urgent !== b.step.urgent) return a.step.urgent ? -1 : 1;
+    if (a.step.urgent && b.step.urgent) return b.days - a.days;
+    return rank(b.card) - rank(a.card);
+  });
+
+  const { card, days, step } = scored[0];
+
+  /* An ACTIVE card has nothing outstanding, so advice about it would be noise.
+   * Said explicitly rather than returning null, because "nothing to do here"
+   * is itself worth reading on a record somebody just opened. */
+  if (card.state === 'ACTIVE' && !step.urgent) {
+    return {
+      product: card.product_name ?? card.product_code,
+      state: card.state,
+      headline: 'Nothing outstanding',
+      why: `${card.product_name ?? 'This product'} is active. The next move is a review, not a chase.`,
+      urgent: false,
+      days_in_state: days,
+      action: null,
+    };
+  }
+
+  return {
+    product: card.product_name ?? card.product_code,
+    state: card.state,
+    state_label: step.state_label,
+    headline: step.headline,
+    why: step.why,
+    urgent: step.urgent,
+    days_in_state: days,
+    // What the button would do, so the header can offer it rather than
+    // describe it. Null when this role may not.
+    action: step.primary?.allowed ? step.primary : null,
+    blocked_reason: step.primary && !step.primary.allowed ? step.primary.blocked_reason : null,
+  };
+}

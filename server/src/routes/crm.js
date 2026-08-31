@@ -13,7 +13,7 @@ import { derivedValues, describeFormula, describeRollup } from '../engine/formul
 import { assignLead } from '../engine/assignment.js';
 import { metricsFor } from '../engine/metrics.js';
 import { kycStatusSql, kycStatusFor } from '../engine/kycstatus.js';
-import { nextAction } from '../engine/nextaction.js';
+import { nextAction, nextStepForLead } from '../engine/nextaction.js';
 import {
   listQueues, membersOf, mayTakeFrom, workIn, claimFromQueue, assignToQueue,
   setMembers, ownerOf,
@@ -271,8 +271,13 @@ router.get('/leads/:id', (req, res) => {
 
   const id = req.params.id;
   const masking = maskFor(req, 'lead', Number(id));
+  const full = decorate(lead);
   res.json({
-    ...maskRecord(decorate(lead), masking),
+    ...maskRecord(full, masking),
+    /* P2-12. Computed here rather than in the browser: the ordering depends on
+       what this role may actually do, and the client does not hold the
+       capability set. */
+    next_step: nextStepForLead(full.cards, req.caps ?? new Set()),
     read_only: isReadOnlyOnLeads(req.user.role),
     // Metadata open, content restricted: the fact and outcome of every
     // interaction stay visible; notes and recordings need ownership or

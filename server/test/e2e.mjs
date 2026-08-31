@@ -5676,6 +5676,97 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     });
   });
 
+  /* ============================================================ 55 */
+  suite('55 the lead next step');
+
+  /*
+   * P2-12. The lead header used to read "2 Warm · 1 Active" -- a count of
+   * product states, shown to somebody one tab away from seeing those states
+   * laid out in full. It described the record to a reader already looking at
+   * it. What changes an RM's next hour is what to do next, and that was behind
+   * a button.
+   */
+
+  await check('a lead with engaged products gets one next step, not a list', async () => {
+    const leads = leadRows(await req('/api/leads?limit=60', { token: T.sales_rm, expect: 200 }));
+    let found = null;
+    for (const l of leads) {
+      // eslint-disable-next-line no-await-in-loop
+      const { data } = await req(`/api/leads/${l.id}`, { token: T.sales_rm, expect: 200 });
+      if (data.next_step && data.next_step.headline !== 'Nothing outstanding') { found = data; break; }
+    }
+    const lead = need(found, 'a lead with an engaged product');
+
+    assert(lead.next_step.headline, 'the step has no headline');
+    assert(lead.next_step.why, 'the step does not say why');
+    assert(lead.next_step.product, 'the step does not say which product it is about');
+    assert(typeof lead.next_step.urgent === 'boolean', 'urgency is not declared');
+    REF.nextStepLead = lead.id;
+  });
+
+  await check('the step offers the action, or says why it cannot', async () => {
+    const id = need(REF.nextStepLead, 'a lead with a next step');
+    const { data } = await req(`/api/leads/${id}`, { token: T.sales_rm, expect: 200 });
+    // One or the other, never neither: a step with no action and no reason is
+    // advice the reader cannot act on and cannot understand.
+    assert(data.next_step.action || data.next_step.blocked_reason,
+      'the step offers neither an action nor a reason it is unavailable');
+  });
+
+  await check('the step is scoped to what this role may actually do', async () => {
+    /* Computed on the server precisely because the ordering depends on the
+     * caller's capabilities, which the browser does not hold. A caller who
+     * cannot mark a card gets the reason rather than a button that fails. */
+    const id = need(REF.nextStepLead, 'a lead with a next step');
+    const { data: asRm } = await req(`/api/leads/${id}`, { token: T.sales_rm, expect: 200 });
+    const { data: asCaller } = await req(`/api/leads/${id}`, { token: T.caller });
+
+    if (asCaller?.next_step) {
+      assert(asCaller.next_step.action || asCaller.next_step.blocked_reason,
+        'a restricted role got a step with neither an action nor an explanation');
+    }
+    assert(asRm.next_step, 'the owner role lost its next step');
+  });
+
+  await check('a lead with nothing engaged is given no advice at all', async () => {
+    // Every lead carries a card for every product, so counting INACTIVE ones
+    // would make "find out whether they want this" the advice on every lead in
+    // the book, forever. Silence is the correct answer.
+    const leads = leadRows(await req('/api/leads?limit=60', { token: T.sales_rm, expect: 200 }));
+    let bare = null;
+    for (const l of leads) {
+      // eslint-disable-next-line no-await-in-loop
+      const { data } = await req(`/api/leads/${l.id}`, { token: T.sales_rm, expect: 200 });
+      if (!(data.cards ?? []).some((c) => c.state && c.state !== 'INACTIVE')) { bare = data; break; }
+    }
+    if (bare) eq(bare.next_step, null, 'a lead with no engaged product was given a next step anyway');
+  });
+
+  await check('the header no longer carries the state count it replaced', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../../client/src/crm/LeadDetail.jsx', import.meta.url), 'utf8');
+
+    assert(!/<CardStrip/.test(src),
+      'the lead header still renders the product state counts P2-12 removed');
+    assert(/lead-next-step/.test(src), 'the header does not render the next step');
+
+    /* …and the list still does. Scanning forty leads for shape is a different
+     * job from working one, and a count is the right answer for that. */
+    const list = readFileSync(new URL('../../client/src/crm/Leads.jsx', import.meta.url), 'utf8');
+    assert(/<CardStrip/.test(list),
+      'the counts were removed from the list too, where they were doing their job');
+  });
+
+  await check('the header step does not borrow the product panel styling', async () => {
+    /* `.next-step` already belongs to ProductPanel (ENH-10b) and lays out as a
+     * column. Reusing the name would have restyled the header row with that
+     * layout and tied any future change to either one to the other. */
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync(new URL('../../client/src/styles.css', import.meta.url), 'utf8');
+    assert(/\.lead-next-step\s*\{/.test(css), 'the header step has no styling of its own');
+    assert(/\.next-step\s*\{/.test(css), 'the product panel styling was removed');
+  });
+
   /* ------------------------------------------------------------- report */
   report();
 }

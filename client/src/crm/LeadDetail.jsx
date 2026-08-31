@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, money, rupees, shortDate, dateTime, mins, STATE_LABEL, ROLE_LABEL, appUrl } from '../api.js';
-import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, AgeBadge, PriorityBadge, Progress, CardDot, CardStrip, Icon } from '../components/ui.jsx';
+import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, AgeBadge, PriorityBadge, Progress, CardDot, Icon } from '../components/ui.jsx';
 import ActivityComposer from './ActivityComposer.jsx';
 import InCall from './InCall.jsx';
 import ProductCard from '../components/ProductCard.jsx';
@@ -87,9 +87,45 @@ export default function LeadDetail({ session }) {
               KYC: {lead.kyc_status}
             </span>
             {lead.open_tickets > 0 && <span className="badge badge-red">{lead.open_tickets} open ticket</span>}
-            {/* ENH-10a: was a row of dots needing one hover each. */}
-            <CardStrip cards={lead.cards.map((c) => ({ ...c, name: c.product_name }))} />
           </div>
+
+          {/* P2-12. This was "2 Warm · 1 Active" — a count of product states,
+              shown to somebody one tab away from seeing those states laid out
+              in full. It described the record to a reader who was already
+              looking at it.
+
+              What an RM opening a lead needs is what to do next, and that was
+              behind the Next best action button. It is the header now, with the
+              button that does it, so reading and acting are the same gesture.
+
+              The list keeps the old strip: scanning forty leads for shape is a
+              different job from working one, and counts are right for that. */}
+          {lead.next_step && (
+            <div className={`lead-next-step ${lead.next_step.urgent ? 'is-urgent' : ''}`}>
+              <Icon name={lead.next_step.urgent ? 'priority_high' : 'arrow_forward'} size={16} />
+              <div className="lead-next-step-text">
+                <strong>{lead.next_step.headline}</strong>
+                <span className="tiny muted">
+                  {lead.next_step.product ? `${lead.next_step.product} · ` : ''}
+                  {lead.next_step.why}
+                </span>
+              </div>
+              {lead.next_step.action && (
+                <button
+                  className="btn btn-sm btn-accent"
+                  onClick={() => actions.run(
+                    lead.next_step.action.kind === 'state' ? 'card' : lead.next_step.action.kind,
+                    lead,
+                  )}
+                >
+                  {lead.next_step.action.label}
+                </button>
+              )}
+              {lead.next_step.blocked_reason && (
+                <span className="tiny muted">{lead.next_step.blocked_reason}</span>
+              )}
+            </div>
+          )}
 
           {/* P2-11. These five were a row of full-width boxes sitting between
               the tab strip and the tab content, on every tab. That put a band

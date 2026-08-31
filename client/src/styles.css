@@ -422,6 +422,64 @@ h3 { font-size: 13.5px; font-weight: 600; }
   margin-bottom: var(--gap);
 }
 
+/* P2-12. The one next step, in the lead header.
+ *
+ * Its own class rather than reusing `.next-step`, which already belongs to the
+ * product panel (ENH-10b) and lays out as a column with its own head/title/why
+ * structure. Sharing the name would have restyled this element with that
+ * layout and put every future change to either one at risk of moving the
+ * other. Two places, two jobs, two classes.
+ *
+ * A row, not a card: this sits inside a record header that already carries a
+ * name, six badges and five facts, and a second panel there would compete with
+ * the record rather than introduce it.
+ */
+.lead-next-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--accent);
+  background: var(--glass-2);
+  color: var(--ink-3);
+}
+
+/* Urgent means a card has not moved in a fortnight. Worth a colour rather than
+   a louder adjective. */
+.lead-next-step.is-urgent {
+  border-left-color: var(--warn);
+  color: var(--warn);
+}
+.lead-next-step .material-symbols-rounded { flex-shrink: 0; }
+
+.lead-next-step-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+.lead-next-step-text strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+/* One line: the reason is context, not the message. The full text stays in the
+   title-less DOM for anyone who widens the window. */
+.lead-next-step-text .tiny {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .lead-next-step { align-items: flex-start; flex-wrap: wrap; }
+  .lead-next-step-text .tiny { white-space: normal; }
+}
+
 /* P2-11. The record's own facts, in its header.
  *
  * Wraps rather than scrolls, so a narrow window stacks them instead of hiding

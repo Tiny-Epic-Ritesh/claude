@@ -13,8 +13,18 @@
 | **A-3** | **SMTP now, Outlook per user later.** SMTP unblocks the composer immediately and carries system and campaign mail; per-user Outlook is added when Compliance rules on Graph. |
 | Sequence | **Workstream 1 starts now** — P2-07, P2-10, P2-18, P2-24, P2-11 — while the remaining questions are settled. |
 
-**Still open:** Q-05 (CUBE fields, A-2), Q-09 (lead layout — I offered to propose
-options), Q-11 (vendor accounts, A-4), A-6 (scope of "all objects"), and
+## Confirmed later on 31 Aug
+
+| Ref | Decision |
+|---|---|
+| **Q-09** | Lead Score / AUM / Owner move into the record header (option 1). Done. |
+| **P2-09** | Hand-built toolbar, no editor dependency. Personal templates free, firm-wide ones approved. Merge fields validated against `field_def`. Done. |
+| **P2-12** | Replace the state counts with the one next step, inline, with the button that performs it. Done. |
+| **Q-06** | Object and field level through the UI; record level already works via `data_scope`. System roles can be cloned, never deleted — label editable, code frozen. |
+| **A-6** | Lead, Client and Ticket as the first three objects for P2-21. |
+| Order | P2-12 → drill-through (P2-13/16/17c) → P2-05 → P2-21. |
+
+**Still open:** Q-05 (CUBE fields, A-2), Q-11 (vendor accounts, A-4), and
 Compliance on Microsoft Graph.
 
 ---
