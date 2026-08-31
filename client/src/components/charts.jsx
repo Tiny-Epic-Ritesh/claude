@@ -16,6 +16,8 @@
  * the light/dark switch without a second code path.
  */
 
+import { bandWidth, fitLabel } from './chartLayout.js';
+
 /* --------------------------------------------------------- primitives */
 
 const money = (n) => {
@@ -104,11 +106,16 @@ export function BarChart({ data = [], height = 160, tone = 'accent', format = (v
   if (!data.length) return <div className="chart-empty">Nothing to show yet</div>;
 
   const max = Math.max(...data.map((d) => d.value), 1);
-  const W = Math.max(data.length * 56, 240);
   const H = height;
   const foot = 26;
-  const band = W / data.length;
+
+  /* P2-17. The band is sized from the longest label, not fixed at 56px.
+     The rule lives in chartLayout.js so it can be tested — a component that
+     renders is not proof that two words do not collide. */
+  const band = bandWidth(data.map((d) => d.label));
+  const W = Math.max(data.length * band, 240);
   const bw = Math.min(band * 0.52, 34);
+  const fit = (label) => fitLabel(label, band);
 
   return (
     <div className="chart-scroll">
@@ -142,7 +149,7 @@ export function BarChart({ data = [], height = 160, tone = 'accent', format = (v
               {pickable && <rect x={i * band} y="0" width={band} height={H} fill="transparent" />}
               <path d={topRounded(x, y, bw, h, 5)} fill={`var(--${d.tone ?? tone})`} opacity={d.muted ? 0.4 : 1} />
               <text x={x + bw / 2} y={y - 6} className="bar-value">{format(d.value)}</text>
-              <text x={x + bw / 2} y={H - 8} className="bar-label">{d.label}</text>
+              <text x={x + bw / 2} y={H - 8} className="bar-label">{fit(d.label)}</text>
             </g>
           );
         })}
