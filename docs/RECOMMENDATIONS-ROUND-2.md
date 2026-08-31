@@ -24,8 +24,9 @@
 | **A-6** | Lead, Client and Ticket as the first three objects for P2-21. |
 | Order | P2-12 → drill-through (P2-13/16/17c) → P2-05 → P2-21. |
 
-**Still open:** Q-05 (CUBE fields, A-2), Q-11 (vendor accounts, A-4), and
-Compliance on Microsoft Graph.
+**Still open:** Q-11 (vendor accounts, A-4) and Compliance on Microsoft Graph.
+Q-05 / A-2 (CUBE) was **answered 31 Aug** — see below and
+`docs/integrations/CUBE-QUICKCALL-API.md`.
 
 ---
 
@@ -285,15 +286,41 @@ A native iOS/Android app is a separate product with its own build, release
 cycle, app-store review and maintenance. If that is genuinely what the business
 expects, it needs to be scoped as such rather than absorbed into this item.
 
-### A-2 · P2-04a — CUBE fields
+### A-2 · P2-04a — CUBE fields — **answered 31 Aug 2026**
 
-I need either the CUBE QuickCall API documentation or the field list from
-whoever administers it. I can guess at "campaign name" and "DID mapping" but
-guessing at an integration's field names produces exactly the invented-field
-problem the audit found.
+Ritesh authenticated to the vendor's Swagger portal and the full specification
+was read. Written up as `docs/integrations/CUBE-QUICKCALL-API.md` — 18
+endpoints, every request and response field.
 
-Also: should these sync from CUBE, or be entered by hand? Sync is better and
-needs API credentials, which are among the 19 keys still outstanding.
+**The headline: there is no DID field in the CUBE API.** Nothing in any request
+or response is named DID or equivalent. The nearest concept is `Extension`,
+supplied per agent at login. So the P2-04a field is `Extension` and it belongs
+on the **user** record, not the campaign.
+
+Three things the documentation settled:
+
+- **`CampaignId` is fixed at agent login**, so an agent is in exactly one
+  campaign at a time and changing campaign means logging off and on. There is
+  also no endpoint that lists campaigns, so the values must be configured by
+  hand on our side.
+- **The integration is stateful.** `AuthLogin` returns an `AuthId` that every
+  later action carries until logout, so the CRM has to hold a live session per
+  signed-in agent — server-side, or a restart orphans every agent's dialer.
+- **A UAT server exists** (`uat-raphsody.in`), so this can be built and
+  exercised without touching production dialer traffic.
+
+Two things it did *not* settle, both raised in §5 of the reference doc. The
+first is a security decision rather than a technical one:
+
+- **`AuthLogin` requires each agent's own CUBE password.** Storing every
+  agent's dialer password is a credential store we do not have and should not
+  build lightly. Preferred option: the agent types it once at start of shift
+  and we retain only the `AuthId`, never the password.
+- **`AuthCallLog` does not return `ClientId`**, though both dialling endpoints
+  accept it. The only join key back to a lead is phone number plus a time
+  window, which is ambiguous for family accounts sharing a mobile — common in
+  Indian broking. Worth asking CUBE to return it, since the field plainly
+  exists in their model.
 
 ### A-3 · P2-09 / P2-25 — which system sends email?
 
