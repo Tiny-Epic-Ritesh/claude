@@ -154,6 +154,38 @@ const CORE_ENTITIES = [
     ],
   },
   {
+    /* P2-21 / A-6. The Client object had no metadata definition at all.
+     *
+     * Clients had a table, screens and reports, but nothing in entity_def — so
+     * the Object Manager did not list them and no field on a client could be
+     * relabelled, masked, made required or added to. "Configuration options for
+     * all objects" was true of five objects and silently false of the one that
+     * holds the converted book.
+     *
+     * Its fields are the ones an administrator has any business configuring.
+     * The trading aggregates (ledger balance, margin, holding value) are
+     * deliberately absent: they are written by the broking back office, not by
+     * anyone here, and offering them as configurable fields would invite an
+     * edit that the next sync silently overwrites. */
+    api_name: 'client', label: 'Client', label_plural: 'Clients', table_name: 'clients',
+    icon: 'account_balance_wallet', owner_type: 'user', has_activities: 1, has_approvals: 1,
+    columns: [
+      ['name', 'Name', 'text', { required: 1, indexed: 1 }],
+      ['client_code', 'Client Code', 'text', { required: 1, indexed: 1 }],
+      ['pan', 'PAN', 'encrypted_text', { encrypted: 1, read_scope: 'capability', read_capability: 'pii.unmask' }],
+      ['mobile', 'Mobile', 'phone', { indexed: 1 }],
+      ['email', 'Email', 'email', {}],
+      ['demat_id', 'Demat ID', 'text', {}],
+      ['status', 'Status', 'picklist', { required: 1, indexed: 1, history_tracked: 1 }],
+      ['risk_profile', 'Risk Profile', 'picklist', {}],
+      ['nominee_name', 'Nominee', 'text', {}],
+      ['owner_id', 'Relationship Manager', 'lookup', { indexed: 1, history_tracked: 1 }],
+      ['partner_id', 'Partner', 'lookup', { indexed: 1 }],
+      ['brokerage_ytd', 'Brokerage YTD', 'currency', {}],
+      ['last_traded_at', 'Last Traded', 'datetime', {}],
+    ],
+  },
+  {
     api_name: 'partner', label: 'Partner', label_plural: 'Partners', table_name: 'partners',
     icon: 'handshake', owner_type: 'user', has_approvals: 1,
     columns: [
@@ -303,7 +335,128 @@ const CORE_PICKLISTS = {
   'task.status': [
     ['Open', 'Open'], ['Done', 'Done'], ['Cancelled', 'Cancelled'],
   ],
+
+  /* P2-21. Eight fields were declared as picklists and given no values.
+   *
+   * The Object Manager showed them as choice fields you could not choose from,
+   * and every screen that offered them offered an empty list -- including
+   * case.status, which is the status of the Ticket object. A picklist with no
+   * values is worse than a text field: it promises a controlled vocabulary and
+   * delivers nothing.
+   *
+   * The values below are the ones already in the data. They were living in
+   * application code and in whatever rows happened to exist, which is the
+   * "one question, several mechanisms" shape the legacy audit kept finding. */
+  'case.status': [
+    ['Open', 'Open'], ['Pending', 'Pending'], ['Waiting on Client', 'Waiting on Client'],
+    ['Resolved', 'Resolved'], ['Closed', 'Closed'],
+  ],
+  'task.kind': [
+    ['follow_up', 'Follow-up'], ['meeting', 'Meeting'], ['retry', 'Retry'],
+  ],
+  'partner.partner_model': [
+    ['Associate', 'Associate'], ['Remisier', 'Remisier'],
+    ['Authorised Person', 'Authorised Person'], ['Agent', 'Agent'],
+    ['Trainee Entrepreneur', 'Trainee Entrepreneur'],
+  ],
+  'partner.state_code': [
+    ['PROSPECT', 'Prospect'], ['QUALIFYING', 'Qualifying'], ['ONBOARDING', 'Onboarding'],
+    ['ACTIVE', 'Active'], ['SUSPENDED', 'Suspended'],
+  ],
+  'product_interest.state': [
+    ['EXPLORING', 'Exploring'], ['WARM', 'Warm'], ['KYC_IN_PROGRESS', 'KYC in progress'],
+    ['PRODUCT_RM_ENGAGED', 'Product RM engaged'], ['ACTIVE', 'Active'],
+    ['ON_HOLD', 'On hold'], ['INACTIVE', 'Inactive'], ['LOST', 'Lost'],
+  ],
+  'product_interest.contact_flag': [
+    ['Direct Contact', 'Direct contact'],
+    ['Schedule Joint Call', 'Schedule joint call'],
+    ['No Direct Contact', 'No direct contact'],
+  ],
+  'client.status': [
+    ['Active', 'Active'], ['Dormant', 'Dormant'], ['Suspended', 'Suspended'],
+    ['Closed', 'Closed'],
+  ],
+  'client.risk_profile': [
+    ['Conservative', 'Conservative'], ['Moderate', 'Moderate'], ['Aggressive', 'Aggressive'],
+  ],
 };
+
+/**
+ * Keep the interaction outcome picklists in step with the dispositions table.
+ *
+ * Call outcomes live in `dispositions`, which has its own setup screen and is
+ * edited at runtime. The picklist is therefore a projection of that table, not
+ * a second list of the same thing — restating them is how the outcome an RM
+ * picks stops matching the one a report counts.
+ *
+ * The taxonomy is two levels and they are two columns. `outcome` is the top
+ * level, which an activity stores in activities.disposition — Connected, Not
+ * Connected, Other. `label` is the sub-outcome, of which there are twenty-odd.
+ * Neither is `code`: seeding from that would fill the picker with
+ * CALL_PITCH_DONE, an identifier rather than a choice anybody recognises.
+ *
+ * Syncs both directions. Adding only would have passed a test on the day it was
+ * written and left every retired outcome in the dropdown for ever.
+ */
+export function syncDispositionPicklists() {
+  return transact(applyDispositionPicklists);
+}
+
+/**
+ * The body of the sync, without its own transaction.
+ *
+ * Separate because seedPicklists() already runs inside one, and SQLite has no
+ * nested transactions — calling the wrapper from there took the server down at
+ * boot rather than silently misbehaving, which is the right way round.
+ */
+function applyDispositionPicklists() {
+  {
+    let changed = 0;
+
+    const levels = [
+      ['disposition', 'SELECT DISTINCT outcome AS v FROM dispositions WHERE active = 1 AND outcome IS NOT NULL ORDER BY outcome'],
+      ['sub_disposition', 'SELECT DISTINCT label AS v FROM dispositions WHERE active = 1 AND label IS NOT NULL ORDER BY label'],
+    ];
+
+    for (const [apiName, sql] of levels) {
+      const field = fieldDef('interaction', apiName);
+      if (!field) continue;
+
+      const wanted = all(sql).map((r) => String(r.v));
+      const have = new Map(
+        all('SELECT id, value, active FROM picklist_value WHERE field_id = ?', [field.id])
+          .map((v) => [v.value, v]),
+      );
+
+      wanted.forEach((value, i) => {
+        const existing = have.get(value);
+        if (!existing) {
+          run('INSERT INTO picklist_value (field_id, value, label, sort_order) VALUES (?,?,?,?)',
+            [field.id, value, value, i]);
+          changed += 1;
+        } else if (!existing.active) {
+          // Came back: an outcome reactivated on the setup screen.
+          run('UPDATE picklist_value SET active = 1, sort_order = ? WHERE id = ?', [i, existing.id]);
+          changed += 1;
+        }
+      });
+
+      /* Retired rather than deleted, for the same reason a field is: activities
+         already store the value, and removing the row would leave those rows
+         showing a value with no definition behind it. */
+      const keep = new Set(wanted);
+      for (const [value, row] of have) {
+        if (!keep.has(value) && row.active) {
+          run('UPDATE picklist_value SET active = 0 WHERE id = ?', [row.id]);
+          changed += 1;
+        }
+      }
+    }
+
+    return changed;
+  }
+}
 
 /**
  * Seed picklist values for the core fields.
@@ -332,6 +485,8 @@ export function seedPicklists() {
         added += 1;
       });
     }
+
+    added += applyDispositionPicklists();
 
     // Sales org is not a fixed list — it is whatever orgs the business has.
     const orgField = fieldDef('lead', 'sales_org');

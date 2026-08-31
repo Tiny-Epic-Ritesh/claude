@@ -631,6 +631,88 @@ db.exec("DELETE FROM sqlite_sequence WHERE name = 'dispositions'");
 seedDispositions();
 seedDiallerCampaigns();
 
+/* ---------------------------------------------------- custom fields
+ *
+ * Custom fields are cleared on reseed, and three are then created properly.
+ *
+ * WHY CLEAR. A custom field is by definition not part of the shipped state, so
+ * a reseed should not keep it. Nothing did, and the result was the exact
+ * failure this product exists to prevent: the end-to-end suite adds a picklist
+ * to Lead on every run and the API refuses to delete fields -- correctly, since
+ * deleting one takes its data with it -- so they accumulated. 159 of 219
+ * field_def rows were test residue by 31 August, built up over nine days. The
+ * legacy audit's Finding 3 is 289 unowned custom fields after four years; we
+ * managed 161 in nine days, in the tool built to stop it.
+ *
+ * WHY SEED THREE. The headline claim is that an administrator adds a field
+ * without a developer. Three custom fields existed in the UAT database and
+ * nothing in the codebase created them -- they were left behind by someone
+ * clicking around, and would have vanished on any fresh install, taking the
+ * demonstration with them. Now they are seeded, owned, and carry the purpose
+ * the screen asks for.
+ */
+function seedCustomFields() {
+  db.exec(`DELETE FROM field_value WHERE field_id IN (SELECT id FROM field_def WHERE is_custom = 1)`);
+  db.exec(`DELETE FROM picklist_value WHERE field_id IN (SELECT id FROM field_def WHERE is_custom = 1)`);
+  db.exec('DELETE FROM field_def WHERE is_custom = 1');
+
+  const owner = U.admin ?? null;
+  const add = (entity, apiName, label, type, purpose, values = []) => {
+    const res = run(
+      `INSERT INTO field_def
+         (entity, api_name, label, type, storage, is_custom, active, owner_user_id, purpose, sort_order)
+       VALUES (?,?,?,?,'value',1,1,?,?,(SELECT COALESCE(MAX(sort_order),0)+1 FROM field_def WHERE entity = ?))`,
+      [entity, apiName, label, type, owner, purpose, entity],
+    );
+    const id = Number(res.lastInsertRowid);
+    values.forEach((v, i) => {
+      run('INSERT INTO picklist_value (field_id, value, label, sort_order) VALUES (?,?,?,?)', [id, v, v, i]);
+    });
+    return id;
+  };
+
+  add('lead', 'preferred_call_window', 'Preferred Call Window', 'picklist',
+    'Callers waste attempts ringing people at work. Recorded once, honoured by the dialler list.',
+    ['Morning (9-12)', 'Afternoon (12-4)', 'Evening (4-8)', 'Weekends only']);
+
+  add('lead', 'expected_monthly_sip', 'Expected Monthly SIP', 'currency',
+    'Sizes the mutual fund opportunity before the first meeting, so the desk prioritises correctly.');
+
+  const tier = add('client', 'service_tier', 'Service Tier', 'picklist',
+    'Which service promise this client was sold. Drives SLA and who picks up their call.',
+    ['Standard', 'Priority', 'Wealth']);
+
+  /* Give the custom fields values on real records.
+   *
+   * A seeded field that is empty on every record trips the screen's own
+   * unused-field warning — "empty on every record, worth retiring" — which is
+   * correct behaviour reading a bad fixture. Demonstrating that a custom field
+   * works means demonstrating it holding something. */
+  const tiers = ['Standard', 'Priority', 'Wealth'];
+  all('SELECT id, brokerage_ytd FROM clients ORDER BY brokerage_ytd DESC').forEach((c, i) => {
+    run('INSERT INTO field_value (entity, record_id, field_id, text_value) VALUES (?,?,?,?)',
+      ['client', c.id, tier, tiers[Math.min(i < 3 ? 2 : i < 9 ? 1 : 0, 2)]]);
+  });
+
+  /* Numbers go in num_value, not text_value — a currency field filtered or
+     summed as text sorts 9,000 above 10,000. */
+  const sip = one("SELECT id FROM field_def WHERE entity = 'lead' AND api_name = 'expected_monthly_sip'").id;
+  all("SELECT id FROM leads WHERE deleted_at IS NULL AND stage IN ('Qualified','In Progress','Won')").forEach((l, i) => {
+    run('INSERT INTO field_value (entity, record_id, field_id, num_value) VALUES (?,?,?,?)',
+      ['lead', l.id, sip, [2500, 5000, 10000, 15000, 25000][i % 5]]);
+  });
+
+  const windows = ['Morning (9-12)', 'Afternoon (12-4)', 'Evening (4-8)', 'Weekends only'];
+  const callWindow = one("SELECT id FROM field_def WHERE entity = 'lead' AND api_name = 'preferred_call_window'").id;
+  all('SELECT id FROM leads WHERE deleted_at IS NULL').forEach((l, i) => {
+    // Not every lead has been asked, which is the honest shape for this field.
+    if (i % 3 === 0) return;
+    run('INSERT INTO field_value (entity, record_id, field_id, text_value) VALUES (?,?,?,?)',
+      ['lead', l.id, callWindow, windows[i % windows.length]]);
+  });
+}
+
+
 /* ------------------------------------------------------------- teams */
 
 const teamIds = {};
@@ -1186,6 +1268,10 @@ run('INSERT INTO notifications (user_id, title, body, link) VALUES (?,?,?,?)', [
 /* -------------------------------------------------------------- summary */
 
 const count = (t) => one(`SELECT COUNT(*) n FROM ${t}`).n;
+/* Last, because it fills values on clients — which are converted from leads
+   further down this file and do not exist any earlier. */
+seedCustomFields();
+
 console.log(`
 Seeded Bonanza CRM
   users            ${count('users')}   (password for all: bonanza)

@@ -29,6 +29,7 @@ import {
   invalidate, explainAccess, dataScope, CAPABILITY_CATALOGUE,
 } from '../engine/access.js';
 import { vendorStatus } from '../vendors/config.js';
+import { syncDispositionPicklists } from '../engine/metadata.js';
 import { explainVisibility } from '../engine/sharing.js';
 import {
   entities, entityDef, fieldsOf, fieldDef, picklistValues, historyFor,
@@ -1071,6 +1072,8 @@ router.patch('/dispositions/:id', requirePermission('admin.rules'), (req, res) =
   params.push(req.user.id);
 
   run(`UPDATE dispositions SET ${sets.join(', ')} WHERE id = ?`, [...params, row.id]);
+  // The outcome picklists are a projection of this table, so they move with it.
+  syncDispositionPicklists();
   const after = one('SELECT * FROM dispositions WHERE id = ?', [row.id]);
 
   auditConfig('dispositions', row.code, 'updated', row, after, req.user.id);
@@ -1101,6 +1104,8 @@ router.post('/dispositions', requirePermission('admin.rules'), (req, res) => {
   );
 
   const created = one('SELECT * FROM dispositions WHERE id = ?', [Number(r.lastInsertRowid)]);
+  // The outcome picklists are a projection of this table, so they move with it.
+  syncDispositionPicklists();
   auditConfig('dispositions', code, 'created', null, created, req.user.id);
   res.status(201).json(created);
 });
@@ -1119,6 +1124,8 @@ router.delete('/dispositions/:id', requirePermission('admin.rules'), (req, res) 
   const used = one('SELECT COUNT(*) n FROM activities WHERE sub_disposition = ?', [row.code]).n;
   run("UPDATE dispositions SET active = 0, edited_at = datetime('now'), edited_by = ? WHERE id = ?",
     [req.user.id, row.id]);
+  // The outcome picklists are a projection of this table, so they move with it.
+  syncDispositionPicklists();
   auditConfig('dispositions', row.code, 'retired', row, { ...row, active: 0 }, req.user.id);
 
   res.json({
