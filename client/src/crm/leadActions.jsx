@@ -43,7 +43,13 @@ export function useLeadActions({ session, reload, onError, onNotice }) {
       case 'call': return call(lead);
       case 'whatsapp': return setModal({ kind: 'message', channel: 'whatsapp', lead });
       case 'sms': return setModal({ kind: 'message', channel: 'sms', lead });
-      case 'email': return setModal({ kind: 'message', channel: 'email', lead });
+      /* P2-08. Email opens the composer, not the plain message modal.
+         The modal was built for WhatsApp and SMS, where there is nothing
+         to attach and no collateral to pick, so an RM reaching email from
+         a product card got a bare textarea while the same person reaching
+         it from the lead's address got attachments and the content
+         library. Same act, two different products. */
+      case 'email': return setModal({ kind: 'email', lead });
       case 'activity': return setModal({ kind: 'activity', lead });
       case 'task': return setModal({ kind: 'task', lead });
       case 'case': return setModal({ kind: 'case', lead });

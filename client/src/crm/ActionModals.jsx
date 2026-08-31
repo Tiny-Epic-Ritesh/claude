@@ -14,6 +14,7 @@ import { useState } from 'react';
 import { api, money } from '../api.js';
 import { useApi, Modal, Spinner, ErrorBanner, Loading, Icon } from '../components/ui.jsx';
 import ActivityComposer from './ActivityComposer.jsx';
+import EmailComposer from './EmailComposer.jsx';
 
 const CHANNEL_LABEL = { whatsapp: 'WhatsApp', sms: 'SMS', email: 'Email' };
 
@@ -29,6 +30,17 @@ export default function ActionModal({ state, session, onClose, onDone, onNotice 
     case 'bulk_stage': return <BulkStageModal {...bulk} />;
     case 'bulk_message': return <BulkMessageModal {...bulk} channel={channel} />;
     case 'activity': return <ActivityModal {...common} />;
+    /* Email has its own case: the composer carries attachments, the
+       content library and the service/marketing declaration, none of
+       which apply to a 160-character SMS. */
+    case 'email': return (
+      <EmailComposer
+        leadId={lead.id}
+        onClose={onClose}
+        onSent={(msg) => { onNotice?.(msg); onDone(); }}
+        onError={onNotice}
+      />
+    );
     case 'message': return <MessageModal {...common} channel={channel} />;
     case 'task': return <TaskModal {...common} />;
     case 'case': return <CaseModal {...common} />;

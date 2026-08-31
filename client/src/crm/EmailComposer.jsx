@@ -36,7 +36,7 @@ const readFile = (file) => new Promise((resolve, reject) => {
 
 export default function EmailComposer({ leadId, onClose, onSent, onError }) {
   const [d, { loading, error }] = useApi(leadId ? `/email/compose/${leadId}` : null, [leadId]);
-  const [form, setForm] = useState({ subject: '', body: '', template_id: '' });
+  const [form, setForm] = useState({ subject: '', body: '', template_id: '', intent: 'service' });
   const [contentIds, setContentIds] = useState([]);
   const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -83,6 +83,12 @@ export default function EmailComposer({ leadId, onClose, onSent, onError }) {
         template_id: form.template_id || null,
         content_ids: contentIds,
         attachments: files,
+        // Declared, never defaulted. The server treats a missing intent as
+        // 'service', and service is the permissive branch -- it is allowed
+        // through a marketing opt-out on purpose, because a KYC reminder is
+        // not a pitch. Sending everything unlabelled therefore let a pitch
+        // reach somebody who had opted out of exactly that.
+        intent: form.intent,
       });
       onSent?.(r.note ?? 'Email logged.');
     } catch (err) {
@@ -114,6 +120,43 @@ export default function EmailComposer({ leadId, onClose, onSent, onError }) {
             </span>
           </div>
         )}
+
+        {/* Which kind of email this is, asked before it is written.
+          *
+          * Not a formality: consent differs by intent. A service email about an
+          * existing account reaches a client who has opted out of marketing; a
+          * pitch does not. The composer used to send neither answer, so the
+          * server fell back to 'service' and every email -- pitches included --
+          * went out on the permissive branch.
+          *
+          * Marketing is disabled rather than hidden when they have opted out,
+          * so the reason is visible instead of the option silently missing. */}
+        <div className="field">
+          <span className="field-label">What kind of email is this?</span>
+          <div className="intent-switch">
+            <button
+              type="button"
+              className={`intent-opt ${form.intent === 'service' ? 'is-on' : ''}`}
+              onClick={() => set('intent', 'service')}
+            >
+              <Icon name="support_agent" />
+              <span><strong>Service</strong><em>KYC, statements, dues, case updates</em></span>
+            </button>
+            <button
+              type="button"
+              className={`intent-opt ${form.intent === 'marketing' ? 'is-on' : ''} ${d.consent.marketing_allowed ? '' : 'is-blocked'}`}
+              disabled={!d.consent.marketing_allowed}
+              title={d.consent.marketing_allowed ? undefined : 'This client has opted out of marketing'}
+              onClick={() => set('intent', 'marketing')}
+            >
+              <Icon name="campaign" />
+              <span>
+                <strong>Marketing</strong>
+                <em>{d.consent.marketing_allowed ? 'Offers, product pitches, campaigns' : 'Opted out'}</em>
+              </span>
+            </button>
+          </div>
+        </div>
 
         <div className="field">
           <label htmlFor="em-template">Start from a template</label>

@@ -5387,6 +5387,119 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     assert(data.kinds.every((k) => k.label), 'a kind has no human label');
   });
 
+  /* ============================================================ 53 */
+  suite('53 email intent and consent');
+
+  /** /api/leads answers with a bare array; other list routes wrap in .rows. */
+  const leadRows = ({ data }) => (Array.isArray(data) ? data : (data.rows ?? []));
+
+  /*
+   * Consent differs by intent, and the difference is the whole point of having
+   * two words for it: a service email about an existing account reaches a
+   * client who has opted out of marketing, and a pitch does not.
+   *
+   * The composer used to send no intent at all. The server defaults a missing
+   * one to 'service' -- the permissive branch -- so every email it sent, pitches
+   * included, went out as service and the opt-out never applied.
+   */
+
+  await check('a marketing email to an opted-out client is refused', async () => {
+    const optedOut = need(
+      leadRows(await req('/api/leads?limit=200', { token: T.admin, expect: 200 }))
+        .find((l) => l.marketing_opt_out && l.email),
+      'a lead with an email who has opted out of marketing',
+    );
+
+    const { data } = await req('/api/email/send', {
+      method: 'POST', token: T.admin, expect: 409,
+      body: {
+        lead_id: optedOut.id,
+        subject: 'A product you might like',
+        body: 'Pitch.',
+        intent: 'marketing',
+      },
+    });
+    assert(/opted out/i.test(data.error), `unhelpful refusal: ${data.error}`);
+  });
+
+  await check('a service email to the same client is allowed', async () => {
+    // The counter-half. Without it, a route that refused everything would
+    // satisfy the test above, and refusing a KYC reminder is its own failure.
+    const optedOut = need(
+      leadRows(await req('/api/leads?limit=200', { token: T.admin, expect: 200 }))
+        .find((l) => l.marketing_opt_out && l.email),
+      'a lead with an email who has opted out of marketing',
+    );
+
+    await req('/api/email/send', {
+      method: 'POST', token: T.admin, expect: 200,
+      body: {
+        lead_id: optedOut.id,
+        subject: 'Your KYC is incomplete',
+        body: 'Two steps left on your account opening.',
+        intent: 'service',
+      },
+    });
+  });
+
+  await check('the composer declares an intent rather than letting it default', async () => {
+    /* Guards the actual defect. The server still defaults a missing intent to
+     * 'service' for older callers, so an API-level test cannot see the bug --
+     * the composer has to be the thing that is checked. */
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(
+      new URL('../../client/src/crm/EmailComposer.jsx', import.meta.url), 'utf8',
+    );
+
+    assert(/intent:\s*form\.intent/.test(src),
+      'EmailComposer does not send an intent — every email it sends will be treated as service');
+    assert(/intent-switch/.test(src),
+      'EmailComposer does not ask which kind of email this is');
+    assert(/disabled=\{!d\.consent\.marketing_allowed\}/.test(src),
+      'the marketing option is not disabled for a client who has opted out');
+  });
+
+  await check('every email entry point opens the composer, not the plain modal', async () => {
+    /* P2-08. The message modal was built for WhatsApp and SMS -- nothing to
+     * attach, no collateral to pick -- so reaching email from a product card
+     * gave a bare textarea while reaching it from the lead address gave
+     * attachments and the content library. Same act, two products, and only
+     * one of them could attach anything. */
+    const { readFileSync } = await import('node:fs');
+    const read = (f) => readFileSync(new URL(f, import.meta.url), 'utf8');
+
+    const actions = read('../../client/src/crm/leadActions.jsx');
+    assert(/case 'email': return setModal\(\{ kind: 'email'/.test(actions),
+      'the email action still opens the generic message modal');
+
+    const modals = read('../../client/src/crm/ActionModals.jsx');
+    assert(/case 'email': return \(/.test(modals) && /EmailComposer/.test(modals),
+      'the modal host does not render the composer for email');
+
+    // …and WhatsApp and SMS still use the modal that suits them.
+    assert(/case 'whatsapp': return setModal\(\{ kind: 'message'/.test(actions),
+      'WhatsApp was moved onto the email composer, which has no reason to exist for it');
+  });
+
+  await check('the send is recorded with the intent it was sent under', async () => {
+    const lead = need(
+      leadRows(await req('/api/leads?limit=50', { token: T.admin, expect: 200 }))
+        .find((l) => l.email && !l.marketing_opt_out),
+      'a contactable lead',
+    );
+
+    await req('/api/email/send', {
+      method: 'POST', token: T.admin, expect: 200,
+      body: {
+        lead_id: lead.id, subject: 'Quarterly note', body: 'Body.', intent: 'marketing',
+      },
+    });
+
+    const { data } = await req(`/api/activities/lead/${lead.id}`, { token: T.admin, expect: 200 });
+    const sent = data.find((a) => a.subject === 'Quarterly note');
+    assert(sent, 'the email was not logged against the lead at all');
+  });
+
   /* ------------------------------------------------------------- report */
   report();
 }
