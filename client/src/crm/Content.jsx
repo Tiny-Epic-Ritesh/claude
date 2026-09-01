@@ -14,12 +14,37 @@
 import { useMemo, useState } from 'react';
 import { shortDate } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty } from '../components/ui.jsx';
+import Libraries from './Libraries.jsx';
 
 const TYPE_ICON = {
   PDF: 'picture_as_pdf', Video: 'play_circle', Link: 'link', PPT: 'slideshow',
 };
 
+/**
+ * The Marketing Hub, in two halves (P2-20 + P2-22).
+ *
+ * "Browse" is what an RM opens: the approved collateral, with the date it stops
+ * being safe to send. "Libraries" is where that collateral is governed — who
+ * may use it, when it expires, and who approved it.
+ *
+ * One screen with two tabs rather than two screens, for the reason Q-02 gave
+ * about API access and logs: two places over the same collateral means one of
+ * them drifts, and the one that drifts is the one nobody opens.
+ */
 export default function Content() {
+  const [tab, setTab] = useState('collateral');
+  return (
+    <div>
+      <div className="tabs tabs-sub" style={{ marginBottom: 12 }}>
+        <button className={tab === 'collateral' ? 'is-active' : ''} onClick={() => setTab('collateral')}>Browse</button>
+        <button className={tab === 'libraries' ? 'is-active' : ''} onClick={() => setTab('libraries')}>Libraries</button>
+      </div>
+      {tab === 'collateral' ? <Browse /> : <Libraries />}
+    </div>
+  );
+}
+
+function Browse() {
   const [rows, { loading, error }] = useApi('/admin/content');
   const [filter, setFilter] = useState('current');
   const [q, setQ] = useState('');

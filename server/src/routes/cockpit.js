@@ -432,7 +432,7 @@ const COCKPITS = {
         metric('Campaign sends', one('SELECT COALESCE(SUM(sent),0) v FROM campaigns').v),
         metric('Avg lead score', one('SELECT ROUND(AVG(score),1) v FROM leads WHERE deleted_at IS NULL').v ?? 0),
         metric('Lists', one('SELECT COUNT(*) n FROM lead_lists').n),
-        metric('Content expiring 30d', one("SELECT COUNT(*) n FROM content_items WHERE expiry_date IS NOT NULL AND date(expiry_date) <= date('now','+30 days') AND status = 'active'").n, null, 'warn'),
+        metric('Content expiring 30d', one("SELECT COUNT(*) n FROM content_items WHERE expiry_date IS NOT NULL AND date(expiry_date) <= date('now','+30 days') AND status = 'approved'").n, null, 'warn'),
       ],
       worklist: {
         type: 'campaigns',

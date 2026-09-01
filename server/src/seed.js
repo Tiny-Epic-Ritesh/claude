@@ -38,7 +38,7 @@ for (const t of [
   // already converted, and never restore the link.
   'client_segments', 'clients',
   'notes', 'tasks', 'activities', 'card_audit', 'product_cards', 'leads', 'partners',
-  'content_items', 'templates', 'sla_policies', 'ticket_categories', 'product_types', 'users',
+  'content_items', 'content_library', 'templates', 'sla_policies', 'ticket_categories', 'product_types', 'users',
   'reminders', 'assignment_rules', 'team_members', 'teams', 'dialler_campaigns',
 ]) {
   db.exec(`DELETE FROM ${t}`);
@@ -377,20 +377,62 @@ for (const [name, channel, subject, body, product] of TEMPLATES) {
 
 /* --------------------------------------------------------------- content */
 
-const CONTENT = [
-  ['Bonanza MF SIP brochure 2026', 'PDF', 'MF', null, ahead(120), 'product_supervisor'],
-  ['Equity flat plan explainer', 'PDF', 'EQD', null, ahead(20), 'product_supervisor'],
-  ['PMS strategy note Q3', 'PDF', 'PMS', null, ahead(15), 'product_supervisor'],
-  ['How DigiLocker KYC works (video)', 'Video', null, 'AADHAAR_DIGILOCKER', ahead(300), 'admin'],
-  ['Penny drop failed — what next', 'Link', null, 'BANK', ahead(300), 'admin'],
-  ['Risk disclosure document', 'PDF', null, null, ahead(400), 'admin'],
-  ['Smart Portfolios one-pager', 'PDF', 'SMART', null, ahead(60), 'marketing_manager'],
+/* Three libraries, because the differences between them are the point.
+ *
+ * Client-facing collateral requires approval and expires in a year — a brochure
+ * quoting last year's brokerage is a compliance problem, not stale content.
+ * The KYC help material does not require approval: it explains a screen, and
+ * putting a review between an admin and a screenshot is how review becomes a
+ * rubber stamp. Regulatory documents require approval and never expire by
+ * default, because their expiry is decided by the regulator, not by us. */
+const LIBRARIES = [
+  ['Client collateral', 'Brochures and explainers an RM may send to a client.',
+   'marketing_manager', null, 1, 365],
+  ['KYC help', 'What to show somebody stuck on a step. Internal-facing.',
+   'admin', ['admin', 'customer_care', 'sales_rm', 'caller'], 0, null],
+  ['Regulatory', 'Risk disclosures and anything a regulator expects to see.',
+   'admin', null, 1, null],
 ];
-for (const [name, type, product, step, expiry, owner] of CONTENT) {
-  run('INSERT INTO content_items (name, type, url, product_type_id, kyc_step_code, expiry_date, owner_role, send_count) VALUES (?,?,?,?,?,?,?,?)', [
-    name, type, 'https://www.bonanzaonline.com/content/demo', product ? productIds[product] : null, step, expiry, owner,
-    Math.floor(Math.random() * 40),
-  ]);
+const libraryIds = {};
+for (const [name, description, owner, shared, approval, expiryDays] of LIBRARIES) {
+  const r = run(
+    `INSERT INTO content_library (name, description, owner_role, shared_with, requires_approval, default_expiry_days, created_by)
+     VALUES (?,?,?,?,?,?,?)`,
+    [name, description, owner, shared ? JSON.stringify(shared) : null, approval, expiryDays, U.admin ?? null],
+  );
+  libraryIds[name] = Number(r.lastInsertRowid);
+}
+
+const CONTENT = [
+  ['Bonanza MF SIP brochure 2026', 'PDF', 'MF', null, ahead(120), 'Client collateral', 'approved'],
+  ['Equity flat plan explainer', 'PDF', 'EQD', null, ahead(20), 'Client collateral', 'approved'],
+  ['PMS strategy note Q3', 'PDF', 'PMS', null, ahead(15), 'Client collateral', 'pending'],
+  ['How DigiLocker KYC works (video)', 'Video', null, 'AADHAAR_DIGILOCKER', ahead(300), 'KYC help', 'approved'],
+  ['Penny drop failed — what next', 'Link', null, 'BANK', ahead(300), 'KYC help', 'approved'],
+  ['Risk disclosure document', 'PDF', null, null, ahead(400), 'Regulatory', 'approved'],
+  ['Smart Portfolios one-pager', 'PDF', 'SMART', null, ahead(60), 'Client collateral', 'draft'],
+];
+for (const [name, type, product, step, expiry, library, status] of CONTENT) {
+  const lib = one('SELECT * FROM content_library WHERE id = ?', [libraryIds[library]]);
+  run(
+    `INSERT INTO content_items (name, type, url, product_type_id, kyc_step_code, expiry_date,
+                                owner_role, library_id, status, created_by, send_count,
+                                approved_by, approved_at, submitted_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [
+      name, type, 'https://www.bonanzaonline.com/content/demo',
+      product ? productIds[product] : null, step, expiry,
+      lib.owner_role, lib.id, status,
+      /* Authored by the marketing manager so the approvals are demonstrably
+         somebody else's — the reviewer must not be the author, and a fixture
+         where they are the same person would let that rule pass untested. */
+      U.marketing ?? U.admin ?? null,
+      Math.floor(Math.random() * 40),
+      status === 'approved' ? (U.admin ?? null) : null,
+      status === 'approved' ? "datetime('now')" && new Date().toISOString().slice(0, 19).replace('T', ' ') : null,
+      status === 'pending' ? new Date().toISOString().slice(0, 19).replace('T', ' ') : null,
+    ],
+  );
 }
 
 /* ------------------------------------------------------------ KYC master */

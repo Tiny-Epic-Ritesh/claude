@@ -115,7 +115,7 @@ router.get('/compose/:leadId', (req, res) => {
     library: all(
       `SELECT id, name, type, url, version
          FROM content_items
-        WHERE status = 'active'
+        WHERE status = 'approved'
           AND (expiry_date IS NULL OR expiry_date >= date('now'))
         ORDER BY name`,
     ),
@@ -254,7 +254,7 @@ router.post('/send', requirePermission('lead.contact'), (req, res) => {
     ? all(
       `SELECT id, name, type, url FROM content_items
         WHERE id IN (${contentIds.map(() => '?').join(',')})
-          AND status = 'active'
+          AND status = 'approved'
           AND (expiry_date IS NULL OR expiry_date >= date('now'))`,
       contentIds,
     )

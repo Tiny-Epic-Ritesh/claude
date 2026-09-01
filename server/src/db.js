@@ -764,6 +764,38 @@ CREATE TABLE IF NOT EXISTS dashboard_panel (
 
 CREATE INDEX IF NOT EXISTS idx_panel_dashboard ON dashboard_panel (dashboard_id, sort_order);
 
+/*
+ * Content libraries (P2-20 + P2-22 -- one screen, since /content is the
+ * Marketing Hub).
+ *
+ * A library is a named collection owned by a role and readable by named roles.
+ * Q-15: a rep arranging their own view harms nobody, but collateral is
+ * different -- an out-of-date brochure quoting last year's brokerage is a
+ * compliance problem, not stale content.
+ *
+ * requires_approval is per library rather than global. Regulatory documents
+ * need a second pair of eyes; an internal battlecard does not, and forcing
+ * approval on both is how approval becomes a rubber stamp.
+ *
+ * default_expiry_days is what stops the real failure: nobody sets an expiry,
+ * and four years later the library is full of documents nobody has checked.
+ * A default means the question is answered by omission rather than skipped.
+ */
+CREATE TABLE IF NOT EXISTS content_library (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  name                TEXT NOT NULL,
+  description         TEXT,
+  owner_role          TEXT NOT NULL,
+  -- JSON array of role codes that may read it. NULL means every role.
+  shared_with         TEXT,
+  sales_org           TEXT,
+  requires_approval   INTEGER NOT NULL DEFAULT 0,
+  default_expiry_days INTEGER,
+  active              INTEGER NOT NULL DEFAULT 1,
+  created_by          INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS notifications (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -871,6 +903,12 @@ const COLUMNS = [
   ['users', 'cti_agent_id', 'TEXT'],           // agent id as known to QuickCall
   ['users', 'kyc_shortcode', 'TEXT'],          // RM attribution on the eKYC portal
   ['partners', 'kyc_shortcode', 'TEXT'],       // partner attribution, drives commission
+  ['content_items', 'created_by', 'INTEGER'],   // so the reviewer cannot be the author
+  ['content_items', 'library_id', 'INTEGER'],   // which library it lives in
+  ['content_items', 'submitted_at', 'TEXT'],    // when it was sent for approval
+  ['content_items', 'approved_by', 'INTEGER'],  // who approved it
+  ['content_items', 'approved_at', 'TEXT'],
+  ['content_items', 'rejected_reason', 'TEXT'], // why it was sent back
   ['dashboard_panel', 'grain', 'TEXT'],        // group by time instead of a field
   ['sessions', 'ghost_of', 'INTEGER'],         // the admin behind a ghost session
   ['request_log', 'ghost_of', 'INTEGER'],      // and who they were really

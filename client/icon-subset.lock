@@ -1,6 +1,6 @@
 # The exact names the bundled font was generated from, and the font it produced.
 # Regenerate both together — see the instructions at the top of icon-subset.txt.
-# font-sha256 a4a3c36b8c6d66ece3a65c4bdc86dc02877e1eaa2e80157562c335fbe31bf83d
+# font-sha256 4490d2fa69dbb33b21162d4f02eed0807ad7eb05e55b39ebbf00db7eea5b9845
 account_balance
 account_balance_wallet
 account_tree
@@ -81,6 +81,7 @@ dialpad
 done
 donut_small
 download
+draft
 draw
 duplicate
 edit
@@ -168,6 +169,7 @@ pause
 pause_circle
 payments
 pending
+pending_actions
 people
 percent
 person
