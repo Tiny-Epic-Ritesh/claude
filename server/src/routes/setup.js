@@ -584,11 +584,25 @@ router.patch('/objects/:entity', requirePermission('admin.objects'), (req, res) 
   if (!def) return res.status(404).json({ error: 'No such object' });
 
   const { label, label_plural, description, icon } = req.body ?? {};
+
+  /* COALESCE keeps a field that is not sent, which is what makes this a partial
+     update — but an empty string is sent, and would blank the name of an object
+     on every screen at once. An object with no label is not a rename, it is a
+     gap where the navigation used to be. */
+  for (const [key, value] of [['label', label], ['label_plural', label_plural]]) {
+    if (value !== undefined && value !== null && !String(value).trim()) {
+      return res.status(400).json({ error: 'An object needs a name', field: key });
+    }
+  }
+
   run(
     `UPDATE entity_def SET label = COALESCE(?, label), label_plural = COALESCE(?, label_plural),
             description = COALESCE(?, description), icon = COALESCE(?, icon)
      WHERE api_name = ?`,
-    [label ?? null, label_plural ?? null, description ?? null, icon ?? null, req.params.entity],
+    [
+      label?.trim() ?? null, label_plural?.trim() ?? null,
+      description ?? null, icon?.trim() ?? null, req.params.entity,
+    ],
   );
 
   const after = entityDef(req.params.entity);

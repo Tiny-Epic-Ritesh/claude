@@ -21,6 +21,7 @@ import { useState } from 'react';
 import { api } from '../api.js';
 import ValidationRules from './ValidationRules.jsx';
 import PicklistValues from './PicklistValues.jsx';
+import ObjectSettings from './ObjectSettings.jsx';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner } from '../components/ui.jsx';
 
 const TYPE_GROUPS = [
@@ -86,6 +87,7 @@ function ObjectDetail({ entity, onBack }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null);
   const [values, setValues] = useState(null);
+  const [settings, setSettings] = useState(false);
 
   /* Layout order.
    *
@@ -150,6 +152,9 @@ function ObjectDetail({ entity, onBack }) {
           </span>
         ) : (
           <span className="row" style={{ gap: 8 }}>
+            <button type="button" className="btn btn-ghost" onClick={() => setSettings(true)}>
+              <span className="material-symbols-rounded">settings</span> Settings
+            </button>
             <button type="button" className="btn btn-ghost" onClick={() => setDraft(data.fields)}>
               <span className="material-symbols-rounded">swap_vert</span> Reorder
             </button>
@@ -274,6 +279,13 @@ function ObjectDetail({ entity, onBack }) {
           types={data.types}
           onClose={() => setAdding(false)}
           onSaved={() => { setAdding(false); reload(); }}
+        />
+      )}
+      {settings && (
+        <ObjectSettings
+          object={data.object}
+          onClose={() => setSettings(false)}
+          onSaved={() => { setSettings(false); reload(); }}
         />
       )}
       {values && (

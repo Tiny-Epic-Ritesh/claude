@@ -182,5 +182,54 @@ test('every field has a distinct position within its object', () => {
   }
 });
 
+/* --------------------------------------------- the object's own settings */
+
+test('every object can be renamed without anything downstream moving', () => {
+  /* Non-negotiable 5: a label is not an API name. Keeping the label editable is
+     what makes freezing the API name safe — a screen that freezes both gives up
+     the benefit of having two identifiers. Cases is the live example: `case` in
+     the API, "Cases" here, "Tickets" in the system this replaces. */
+  const src = readFileSync(new URL('../src/routes/setup.js', import.meta.url), 'utf8');
+  const from = src.indexOf("router.patch('/objects/:entity'");
+  const handler = src.slice(from, src.indexOf('router.', from + 10));
+
+  assert(/label = COALESCE/.test(handler), 'an object can no longer be renamed');
+  assert(!/api_name\s*=\s*COALESCE/.test(handler),
+    'the API name is writable, which is the identifier everything else binds to');
+});
+
+test('an object cannot be left with no name', () => {
+  /* COALESCE keeps a field that is not sent, which is what makes the update
+     partial — but an empty string IS sent, and would blank the name of an
+     object on every screen at once. */
+  const src = readFileSync(new URL('../src/routes/setup.js', import.meta.url), 'utf8');
+  assert(/An object needs a name/.test(src), 'an object can be saved with a blank label');
+});
+
+test('every object has a label, a plural and an icon to show', () => {
+  // A missing plural shows in the navigation, which is where everybody looks.
+  for (const e of all('SELECT api_name, label, label_plural, icon FROM entity_def WHERE active = 1')) {
+    assert(e.label && e.label.trim(), `${e.api_name} has no label`);
+    assert(e.label_plural && e.label_plural.trim(), `${e.api_name} has no plural`);
+    assert(e.icon && e.icon.trim(), `${e.api_name} has no icon, so its card renders blank`);
+  }
+});
+
+test('the object flags that are stored are actually read by something', () => {
+  /* `has_history`, `has_activities`, `has_record_types` and `has_approvals` are
+     written at seed and read by nothing at all. They are deliberately NOT on
+     the settings screen for that reason: a toggle that changes no behaviour is
+     worse than a missing one, because an administrator turns "Approvals" off
+     and approvals go on working.
+
+     This does not require them to be wired. It requires that whoever puts them
+     on a screen has to wire them first. */
+  const client = readFileSync(new URL('../../client/src/crm/ObjectSettings.jsx', import.meta.url), 'utf8');
+  for (const flag of ['has_history', 'has_activities', 'has_record_types', 'has_approvals']) {
+    assert(!client.includes(flag),
+      `ObjectSettings offers ${flag}, which nothing in the server reads — the toggle would do nothing`);
+  }
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exitCode = failed ? 1 : 0;
