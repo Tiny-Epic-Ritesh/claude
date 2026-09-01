@@ -68,11 +68,11 @@ export const manages = (userId, otherId) =>
  * Returns null when the user manages nobody, so the caller can leave the clause
  * out entirely rather than emitting `owner_id IN ()`, which SQLite rejects.
  */
-export function managerScopeSql(user, alias = 'l') {
+export function managerScopeSql(user, alias = 'l', column = 'owner_id') {
   const reports = reportsOf(user?.id);
   if (!reports.length) return null;
   return {
-    sql: `${alias}.owner_id IN (${reports.map(() => '?').join(',')})`,
+    sql: `${alias}.${column} IN (${reports.map(() => '?').join(',')})`,
     params: reports,
   };
 }

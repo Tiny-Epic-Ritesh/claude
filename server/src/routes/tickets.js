@@ -4,7 +4,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
-import { can, requireUser, requirePermission, mayUseOrg, orgsFor } from '../auth.js';
+import { can, requireUser, requirePermission, mayUseOrg, ticketScope } from '../auth.js';
 import { assertValid } from '../engine/validation.js';
 import { applySla, sweepSla, handleStatusChange, slaRemaining, DEFAULT_SLA } from '../engine/sla.js';
 import { send } from '../integrations.js';
@@ -57,9 +57,13 @@ router.get('/', (req, res) => {
    * list are the same data with the same boundary, and fixing one of a pair is
    * how the other stays broken. Third time that exact shape has appeared, and
    * the reason the conformance test now covers list routes too. */
-  const orgs = orgsFor(req.user);
-  where.push(`t.sales_org IN (${orgs.map(() => '?').join(',') || "''"})`);
-  params.push(...orgs);
+  /* §6a. The book check below answers "whose book", never "whose case", so
+     until now every signed-in user read every case in their own book. The
+     scope carries the org check itself, so this is one rule rather than two
+     that have to agree. */
+  const scope = ticketScope(req.user, 't');
+  where.push(scope.sql);
+  params.push(...scope.params);
 
   if (mine === 'true') { where.push('t.assignee_id = ?'); params.push(req.user.id); }
   if (status) { where.push('t.status = ?'); params.push(status); }
@@ -115,6 +119,13 @@ router.get('/:id', (req, res) => {
   if (!mayUseOrg(req.user, ticket.sales_org)) {
     return res.status(403).json({ error: 'This ticket belongs to another book' });
   }
+
+  /* §6a. Right book is not the same question as your case. Asked against the
+     same scope the list uses, so a case that cannot be found in the list
+     cannot be opened by guessing its id either. */
+  const scope = ticketScope(req.user, 't');
+  const visible = one(`SELECT 1 v FROM tickets t WHERE t.id = ? AND ${scope.sql}`, [req.params.id, ...scope.params]);
+  if (!visible) return res.status(403).json({ error: 'This case is outside your visibility scope' });
 
   res.json({
     ...decorate(ticket),

@@ -214,7 +214,7 @@ export const workIn = (queueId, limit = 100) => all(
  * The SQL fragment for "leads I can see because they are in a queue I belong
  * to". Composed into the lead scope alongside role scope and manager sharing.
  */
-export function queueScopeSql(user) {
+export function queueScopeSql(user, alias = 'l') {
   if (!user) return null;
   const queues = all(
     `SELECT q.id FROM queues q
@@ -225,7 +225,7 @@ export function queueScopeSql(user) {
 
   if (!queues.length) return null;
   return {
-    sql: `l.owner_queue_id IN (${queues.map(() => '?').join(',')})`,
+    sql: `${alias}.owner_queue_id IN (${queues.map(() => '?').join(',')})`,
     params: queues,
   };
 }

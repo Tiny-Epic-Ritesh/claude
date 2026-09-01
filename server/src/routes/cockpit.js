@@ -61,6 +61,23 @@ function orgCount(user, active, table, extra = '') {
   return one(`SELECT COUNT(*) n FROM ${table} WHERE ${where}`, f.params).n;
 }
 
+/**
+ * Calls logged today in the books this admin works in.
+ *
+ * `activities` carries no `sales_org` of its own — an interaction belongs to
+ * the book its lead belongs to — so this joins rather than using orgCount,
+ * which is single-table.
+ */
+function callsToday(user, active) {
+  const f = orgScope(user, 'l', active);
+  return one(
+    `SELECT COUNT(*) n FROM activities a
+       JOIN leads l ON l.id = a.lead_id
+      WHERE a.type = 'Call' AND date(a.created_at) = date('now') AND ${f.sql}`,
+    f.params,
+  ).n;
+}
+
 function myLeads(user, active = null) {
   // `active` is the sales org the header switcher is narrowed to. Threading it
   // here rather than at each call site means a new cockpit cannot forget it.
@@ -141,9 +158,13 @@ const COCKPITS = {
     subtitle: 'Configuration, users and system-wide activity.',
     metrics: [
       metric('Leads created today', orgCount(user, active, 'leads', "date(created_at) = date('now')")),
-      metric('Calls today', one("SELECT COUNT(*) n FROM activities WHERE type = 'Call' AND date(created_at) = date('now')").n),
+      /* These two counted across both books while every other metric beside
+         them went through orgCount, so a Bigul admin was shown Bonanza's call
+         volume and Bonanza's breaches. Same boundary as the August incident,
+         reached through an aggregate instead of a record. */
+      metric('Calls today', callsToday(user, active)),
       metric('Tickets opened today', orgCount(user, active, 'tickets', "date(created_at) = date('now')"), null, null, '/tickets'),
-      metric('SLA breaches', one('SELECT COUNT(*) n FROM tickets WHERE breached = 1').n, 'open + closed', 'danger', '/tickets?breached=1'),
+      metric('SLA breaches', orgCount(user, active, 'tickets', 'breached = 1'), 'open + closed', 'danger', '/tickets?breached=1'),
       metric('Active users', orgCount(user, active, 'users', 'active = 1'), null, null, '/admin?tab=users'),
       metric('Products configured', orgCount(user, active, 'product_types', 'active = 1'), null, null, '/admin?tab=products'),
     ],

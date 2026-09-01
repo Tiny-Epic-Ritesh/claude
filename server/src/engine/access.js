@@ -70,6 +70,8 @@ export const CAPABILITY_CATALOGUE = [
   ['kyc.view', 'View KYC journeys', 'KYC', null, 0],
 
   // Cases
+  ['ticket.view.all', 'View all cases', 'Cases', 'See every case in the sales org', 0],
+  ['ticket.view.own', 'View own cases', 'Cases', 'See cases they are assigned or raised, and cases on their own leads', 0],
   ['ticket.create', 'Create cases', 'Cases', null, 0],
   ['ticket.reply', 'Reply to cases', 'Cases', null, 0],
   ['ticket.reassign', 'Reassign cases', 'Cases', null, 0],

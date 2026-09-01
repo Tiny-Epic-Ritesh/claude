@@ -50,7 +50,7 @@ export const TABS = {
   kra:        { id: 'kra',        label: 'KRA Scorecard',   icon: 'article',               to: '/kra' },
   incentives: { id: 'incentives', label: 'Incentives',      icon: 'account_balance_wallet', to: '/incentives' },
 
-  tickets:    { id: 'tickets',    label: 'Cases',           icon: 'support_agent',         to: '/tickets',    needs: ['ticket.create'] },
+  tickets:    { id: 'tickets',    label: 'Cases',           icon: 'support_agent',         to: '/tickets',    needs: ['ticket.view.all', 'ticket.view.own'] },
   ccm:        { id: 'ccm',        label: 'Client Master',   icon: 'recent_actors',         to: '/ccm',        needs: ['lead.view.all', 'lead.view.own'] },
 
   partners:   { id: 'partners',   label: 'Partners',        icon: 'handshake',             to: '/partners',   needs: ['partner.view'] },
@@ -92,7 +92,11 @@ export const APPS = [
     icon: 'support_agent',
     colour: '#3d6ea8',
     tabs: ['home', 'tickets', 'clients', 'ccm', 'tasks'],
-    needs: ['ticket.create'],
+    /* Reading cases is what the console is for; raising them is one action
+       inside it. Keyed off the view grants now that those exist, so a
+       read-only service role is not shown a console it cannot open — and a
+       role that may raise a case but not read one is not either. */
+    needs: ['ticket.view.all', 'ticket.view.own'],
   },
   {
     id: 'partner',

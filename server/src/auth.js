@@ -77,7 +77,15 @@ export const PERMISSIONS = {
   'kyc.override':         ['product_supervisor', 'superadmin', 'admin'],
   'kyc.view':             ['superadmin', 'admin', 'caller', 'dealer', 'sales_rm', 'sales_supervisor', 'partner_rm', 'product_rm', 'product_supervisor', 'customer_care'],
 
-  // Tickets
+  /* Cases.
+   *
+   * `view.all` is held only by roles declared org scope, so the capability and
+   * the declared scope cannot disagree — the mistake called out in leadScope,
+   * where Sales Supervisor held lead.view.all while being declared `team` and
+   * made data_scope decorative. A supervisor reaches their team's cases through
+   * the management chain instead, which is what `team` already means. */
+  'ticket.view.all':      ['superadmin', 'admin', 'customer_care', 'product_supervisor'],
+  'ticket.view.own':      ['caller', 'dealer', 'sales_rm', 'sales_supervisor', 'partner_rm', 'product_rm', 'marketing_manager'],
   'ticket.create':        ['superadmin', 'admin', 'caller', 'dealer', 'sales_rm', 'sales_supervisor', 'partner_rm', 'product_rm', 'product_supervisor', 'customer_care', 'marketing_manager'],
   'ticket.reply':         ['superadmin', 'admin', 'customer_care', 'sales_rm', 'sales_supervisor', 'product_rm', 'partner_rm'],
   'ticket.reassign':      ['superadmin', 'admin', 'customer_care', 'sales_supervisor'],
@@ -416,7 +424,7 @@ export function leadScope(user, alias = 'l', active = null) {
   const manager = managerScopeSql(user, alias);
   if (manager) grants.push(manager);
 
-  const queue = queueScopeSql(user);
+  const queue = queueScopeSql(user, alias);
   if (queue) grants.push(queue);
 
   const reach = {
@@ -483,6 +491,82 @@ export function clientScope(user, alias = 'c', active = null) {
   const grants = [role];
   const manager = managerScopeSql(user, alias);
   if (manager) grants.push(manager);
+
+  const reach = {
+    sql: `(${grants.map((g) => `(${g.sql})`).join(' OR ')})`,
+    params: grants.flatMap((g) => g.params),
+  };
+
+  return {
+    sql: `(${reach.sql}) AND (${org.sql})`,
+    params: [...reach.params, ...org.params],
+  };
+}
+
+/**
+ * What cases this person may read.
+ *
+ * Until now there was no answer to this question: `/api/tickets` and
+ * `/api/tickets/:id` carried no capability gate at all, so any signed-in user
+ * could read every case in their own book — including the client's own
+ * description of their own money, and every reply. Recorded as §6a of the
+ * security register.
+ *
+ * Shaped like `clientScope` rather than `leadScope`, because it should fail
+ * closed the same way: an org-scoped role that has not been granted sight of
+ * cases gets none, rather than falling through to everything.
+ *
+ * "Own" means assigned OR raised. Gating on the assignee alone would take a
+ * case away from the person who opened it the moment support picked it up,
+ * which is how a security fix turns into people losing their own work.
+ */
+export function ticketScope(user, alias = 't', active = null) {
+  const org = orgScope(user, alias, active);
+  const mine = {
+    sql: `(${alias}.assignee_id = ? OR ${alias}.created_by = ?)`,
+    params: [user.id, user.id],
+  };
+
+  const role = (() => {
+    if (can(user.role, 'ticket.view.all')) return { sql: '1=1', params: [] };
+
+    switch (dataScope(user.role)) {
+      case 'org':
+        // Marketing sits here: org scope, but no grant of sight over cases.
+        return can(user.role, 'ticket.view.own') ? mine : { sql: '1=0', params: [] };
+
+      case 'product':
+        // The case hangs off a product card, which is the same test the lead
+        // and client rules make against the card's product type.
+        return {
+          sql: `EXISTS (SELECT 1 FROM product_cards pc
+                        WHERE pc.id = ${alias}.card_id AND pc.product_type_id = ?)`,
+          params: [user.product_type_id ?? -1],
+        };
+
+      case 'team':
+      case 'own':
+      default:
+        return can(user.role, 'ticket.view.own') ? mine : { sql: '1=0', params: [] };
+    }
+  })();
+
+  const grants = [role];
+
+  // A supervisor reaches their reports' cases, at any depth of the chain.
+  const manager = managerScopeSql(user, alias, 'assignee_id');
+  if (manager) grants.push(manager);
+
+  /* A case raised against a lead you can already see is a case about your own
+     client, and you will be asked about it whoever is handling it. This grants
+     nothing new — if the lead is invisible to you, so is the case. */
+  if (can(user.role, 'ticket.view.own')) {
+    const lead = leadScope(user, 'sl');
+    grants.push({
+      sql: `EXISTS (SELECT 1 FROM leads sl WHERE sl.id = ${alias}.lead_id AND ${lead.sql})`,
+      params: lead.params,
+    });
+  }
 
   const reach = {
     sql: `(${grants.map((g) => `(${g.sql})`).join(' OR ')})`,

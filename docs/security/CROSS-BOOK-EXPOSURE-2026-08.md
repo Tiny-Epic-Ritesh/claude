@@ -299,26 +299,59 @@ another rep's case file.
 |---|---|
 | **Severity** | Medium. Contained to one book, requires a valid login, and no write path is exposed. |
 | **Discovered** | 31 August 2026, by a test asserting a role edit takes effect immediately. |
-| **Status** | Open — awaiting a decision, below. |
+| **Status** | **Closed, 1 September 2026.** Option 1 implemented; see below. |
 
-**The decision needed (Ritesh):** who should be able to read a case they do not
-own? Three options, in the order I would recommend them:
+**Decided 1 September 2026 — option 1, implemented.**
 
-1. **Add `ticket.view.own` / `ticket.view.all` and grant `all` to the roles that
-   need it** (support, supervisors, compliance, admin), `own` to everyone else.
-   Consistent with how leads and clients are already modelled, and it makes the
-   answer visible on the roles screen. It will remove case access from some
-   roles that have it today, so it needs a list of who genuinely needs it.
-2. **Gate on the existing `data_scope`** — a rep sees cases they are assigned,
-   a supervisor their team's. No new capabilities, but it makes case visibility
-   depend on a field that was designed for leads and clients, and the roles
-   screen would then not show it.
-3. **Leave as is** and record the acceptance. Defensible if every CRM user is
-   expected to handle any case, which is worth stating explicitly if true.
+`ticket.view.all` and `ticket.view.own` are now in the capability catalogue and
+enforced by `ticketScope()` in `auth.js`, which both `/api/tickets` and
+`/api/tickets/:id` go through. The scope is shaped like `clientScope` rather
+than `leadScope`, so it fails closed: a role granted neither capability sees no
+cases at all rather than falling through to everything.
 
-I have not implemented any of these. Option 1 is a schema and seeding change
-plus a re-grant across twelve roles, and doing it without the list of who needs
-case access would silently cut off people mid-work.
+**"Own" means assigned OR raised, plus cases against a lead the person can
+already see.** Gating on the assignee alone would have taken a case off the
+person who opened it the moment support picked it up — a security fix that
+costs people their own work gets worked around, not followed. The lead grant
+widens nothing: if the lead is invisible, so is the case.
+
+The conservative default shipped:
+
+| Capability | Roles |
+|---|---|
+| `ticket.view.all` | Super Admin, Admin, Customer Care, Product Supervisor |
+| `ticket.view.own` | Caller, Dealer, Sales RM, Sales Supervisor, Partner RM, Product RM, Marketing Manager |
+
+`view.all` is held only by roles declared `org` scope, so the capability and the
+declared scope cannot disagree — the mistake `leadScope` calls out by name,
+where Sales Supervisor held `lead.view.all` while declared `team`. A supervisor
+reaches their team's cases through the management chain instead.
+
+**This did not need the definitive list of who requires case access**, which is
+what held it up. Both capabilities appear on the roles screen, which has been
+editable since P2-05, so the default above is corrected in the UI rather than in
+a release.
+
+Covered by `test/casevisibility.test.mjs` — eight checks, including that a
+front-line role no longer reads the whole book, that the raiser keeps sight of
+their own case, and that `view.all` never lands on a role declared narrower than
+`org`.
+
+### Two further findings, fixed at the same time
+
+- **Two Admin cockpit metrics counted across both books.** `Calls today` and
+  `SLA breaches` were raw `COUNT(*)` with no org filter, while every other
+  metric beside them went through `orgCount` — so a Bigul admin was shown
+  Bonanza's call volume and Bonanza's breach count. Same boundary as this
+  incident, reached through an aggregate rather than a record. `SLA breaches`
+  also linked to `/tickets?breached=1`, so after the §6a fix the number and the
+  list it opened would have disagreed.
+- **`leadScope()` was only correct at alias `l`.** It threads a caller-supplied
+  alias through every other grant but passed none to `queueScopeSql`, which
+  emitted a hardcoded `l.owner_queue_id`. Any caller using a different alias got
+  a SQL error — or, in a query that happened to have an `l` in scope, silently
+  the wrong rows. Found by nesting it inside `ticketScope`. Both
+  `queueScopeSql` and `managerScopeSql` now take the alias and column.
 
 ## 7. Queries to run against the UAT database
 
