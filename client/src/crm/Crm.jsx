@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
-import { api, token, ROLE_LABEL } from '../api.js';
-import GhostBar from './GhostBar.jsx';
+import { api, appUrl, token, ROLE_LABEL } from '../api.js';
+import GhostBar, { hasParentToken, parentName, leaveGhost, ghostReturnTo } from './GhostBar.jsx';
 import { Loading, Icon, Avatar, OrgSwitcher, ThemeToggle } from '../components/ui.jsx';
 import { AppLauncher, TabBar, GlobalSearch, UserMenu } from '../components/AppNav.jsx';
 import { applyOrgAccent } from '../theme.js';
@@ -116,7 +116,15 @@ export default function Crm() {
   useEffect(() => {
     if (!token.get('crm')) { setSession(null); return; }
     api.get('/auth/me')
-      .then((d) => setSession({ ...d.user, ghost_of: d.ghost_of ?? null }))
+      /* `hasParentToken()` is the local, synchronous truth: an administrator's
+         own token is only ever stashed while they are acting as somebody else.
+         Trusting it as well as the server means the banner cannot go missing
+         because a response was slow, cached or revalidated — which is exactly
+         how it went missing before. */
+      .then((d) => setSession({
+        ...d.user,
+        ghost_of: d.ghost_of ?? (hasParentToken() ? { id: null, name: parentName() ?? 'your account' } : null),
+      }))
       .catch(() => { token.clear('crm'); setSession(null); });
   }, []);
 
@@ -175,7 +183,21 @@ export default function Crm() {
 
   const allowed = (item) => !item.needs || item.needs.some((p) => session.permissions.includes(p));
 
+  /*
+   * Signing out, while acting as somebody else, returns rather than ends.
+   *
+   * This is the trap that sent an administrator to the login screen: the banner
+   * was not rendering, so the profile menu's Sign out was the only exit they
+   * could see — and it ended both sessions. Salesforce does not offer that from
+   * inside a "log in as" session either. Ending your own session is available
+   * again the moment you are yourself.
+   */
   const signOut = async () => {
+    if (hasParentToken()) {
+      const { returnTo } = await leaveGhost();
+      window.location.assign(appUrl(returnTo || '/setup/users'));
+      return;
+    }
     try { await api.post('/auth/logout'); } catch { /* token may already be gone */ }
     token.clear('crm');
     setSession(null);
@@ -202,7 +224,7 @@ export default function Crm() {
           <GhostBar
             ghostOf={session.ghost_of.name}
             actingAs={session.name}
-            onLeave={() => window.location.reload()}
+            onLeave={(restored, returnTo) => window.location.assign(appUrl(restored ? (returnTo || '/setup/users') : '/'))}
           />
         )}
         <Suspense fallback={<Loading />}>
@@ -225,7 +247,7 @@ export default function Crm() {
         <GhostBar
           ghostOf={session.ghost_of.name}
           actingAs={session.name}
-          onLeave={() => window.location.reload()}
+          onLeave={(restored, returnTo) => window.location.assign(appUrl(restored ? (returnTo || '/setup/users') : '/'))}
         />
       )}
       <div className="main-content">

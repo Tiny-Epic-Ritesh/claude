@@ -10,6 +10,7 @@
  */
 
 import { strict as assert } from 'node:assert';
+import { readFileSync } from 'node:fs';
 import { all, one, run, audit } from '../src/db.js';
 import { mayGhost, start, stop, GHOST_MINUTES } from '../src/engine/ghost.js';
 import { withContext } from '../src/engine/reqcontext.js';
@@ -136,6 +137,58 @@ test('an ordinary write records no actor, so the column means something', () => 
   } finally {
     run('DELETE FROM audit_log WHERE action = ?', [marker]);
   }
+});
+
+/* ------------------------------------------- getting back out again */
+
+const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+
+test('no API response may be cached by anything', () => {
+  /* This is what hid the banner. Express puts an ETag on every JSON response
+     and nothing set Cache-Control or Vary, so a browser cache keyed on the URL
+     served one identity's /api/auth/me to another — arriving with
+     `ghost_of: null`, which is the field the banner is built from. */
+  const index = read('../src/index.js');
+  const block = index.slice(index.indexOf("app.use('/api', (_req, res, next)"), index.indexOf("app.use('/api', accessLog)"));
+  assert(/no-store/.test(block), 'API responses are cacheable again');
+  assert(/Vary.*Authorization/s.test(block), 'two identities can share a cache entry again');
+});
+
+test('the banner does not depend on a round trip', () => {
+  /* The administrator's own token is only ever stashed while they are acting
+     as somebody else, so its presence is local, synchronous proof. Trusting it
+     as well as the server means a slow or cached response cannot leave
+     somebody inside another account with nothing telling them so. */
+  const crm = read('../../client/src/crm/Crm.jsx');
+  assert(/hasParentToken\(\)/.test(crm), 'the banner is back to trusting the response alone');
+});
+
+test('signing out while acting as somebody else returns rather than ends', () => {
+  /* The trap: with the banner missing, the profile menu's Sign out was the
+     only exit anybody could find, and it ended both sessions and landed on the
+     login screen. Salesforce does not offer that from inside a "log in as"
+     session either. */
+  const crm = read('../../client/src/crm/Crm.jsx');
+  const signOut = crm.slice(crm.indexOf('const signOut = async'), crm.indexOf('const orgName ='));
+  assert(/hasParentToken\(\)/.test(signOut), 'sign out no longer checks for a ghost session');
+  assert(signOut.indexOf('leaveGhost') < signOut.indexOf("api.post('/auth/logout')"),
+    'sign out ends the session before checking whether it is a ghost one');
+
+  const nav = read('../../client/src/components/AppNav.jsx');
+  assert(/Return to \{session\.ghost_of\.name\}/.test(nav), 'the menu still says Sign out while ghosting');
+});
+
+test('returning lands where the trip started', () => {
+  // An administrator working down a list of users comes back to that list.
+  const admin = read('../../client/src/crm/Admin.jsx');
+  assert(/returnTo:/.test(admin), 'the origin is no longer recorded when ghosting starts');
+  const bar = read('../../client/src/crm/GhostBar.jsx');
+  assert(/ghostReturnTo|RETURN_KEY/.test(bar), 'the return path is not read back');
+});
+
+test('the way back is named, so it is obvious what it does', () => {
+  const bar = read('../../client/src/crm/GhostBar.jsx');
+  assert(/Return to \$\{parentName\(\)/.test(bar), 'the button no longer names who you return to');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

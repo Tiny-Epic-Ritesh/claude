@@ -19,9 +19,43 @@ import { Icon } from '../components/ui.jsx';
 
 /** Where the administrator's own token waits while they are somebody else. */
 const PARENT_KEY = 'bnz_crm_token_parent';
+/** And where they were standing when they left, so returning is a round trip. */
+const RETURN_KEY = 'bnz_crm_ghost_return';
+/** Who they are, so the banner can name them before any request comes back. */
+const PARENT_NAME_KEY = 'bnz_crm_ghost_parent_name';
 
-export const stashParentToken = (t) => sessionStorage.setItem(PARENT_KEY, t);
+export const stashParentToken = (t, { name = null, returnTo = null } = {}) => {
+  sessionStorage.setItem(PARENT_KEY, t);
+  if (name) sessionStorage.setItem(PARENT_NAME_KEY, name);
+  if (returnTo) sessionStorage.setItem(RETURN_KEY, returnTo);
+};
+
 export const hasParentToken = () => Boolean(sessionStorage.getItem(PARENT_KEY));
+export const parentName = () => sessionStorage.getItem(PARENT_NAME_KEY);
+export const ghostReturnTo = () => sessionStorage.getItem(RETURN_KEY);
+
+/**
+ * Hand the administrator back their own session.
+ *
+ * Shared by the banner and the profile menu, because both are now the same act
+ * and having two of them was how one could end the session outright.
+ */
+export async function leaveGhost() {
+  try {
+    await api.post('/setup/ghost/exit', {});
+  } catch {
+    /* Already expired, or already gone. Either way the right thing now is to
+       put the administrator back in their own session rather than strand them
+       in somebody else's. */
+  }
+  const parent = sessionStorage.getItem(PARENT_KEY);
+  const back = sessionStorage.getItem(RETURN_KEY);
+  sessionStorage.removeItem(PARENT_KEY);
+  sessionStorage.removeItem(RETURN_KEY);
+  sessionStorage.removeItem(PARENT_NAME_KEY);
+  if (parent) tokenStore.set('crm', parent);
+  return { restored: Boolean(parent), returnTo: back };
+}
 
 export default function GhostBar({ ghostOf, actingAs, onLeave }) {
   const [left, setLeft] = useState(null);
@@ -40,17 +74,8 @@ export default function GhostBar({ ghostOf, actingAs, onLeave }) {
 
   const leave = async () => {
     setBusy(true);
-    try {
-      await api.post('/setup/ghost/exit', {});
-    } catch {
-      /* Already expired, or already gone. Either way the right thing now is to
-         put the administrator back in their own session rather than strand
-         them in somebody else's. */
-    }
-    const parent = sessionStorage.getItem(PARENT_KEY);
-    sessionStorage.removeItem(PARENT_KEY);
-    if (parent) tokenStore.set('crm', parent);
-    onLeave?.(parent ?? null);
+    const { restored, returnTo } = await leaveGhost();
+    onLeave?.(restored, returnTo);
   };
 
   return (
@@ -65,7 +90,7 @@ export default function GhostBar({ ghostOf, actingAs, onLeave }) {
         )}
       </span>
       <button className="btn btn-sm" disabled={busy} onClick={leave}>
-        Leave and return
+        {busy ? 'Returning…' : `Return to ${parentName() ?? ghostOf ?? 'your account'}`}
       </button>
     </div>
   );

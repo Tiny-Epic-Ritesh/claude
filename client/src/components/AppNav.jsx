@@ -255,9 +255,26 @@ export function UserMenu({ session, orgName, onSignOut }) {
 
             <div className="divider" style={{ margin: '8px 0' }} />
 
-            <button className="popover-item" role="menuitem" onClick={onSignOut}>
-              <Icon name="logout" size={17} /> Sign out
-            </button>
+            {/* While acting as somebody else this is the way back, not the way
+                out. It was the only exit an administrator could find when the
+                banner failed to render, and it ended both sessions — so it says
+                what it now does. Ending your own session is available again the
+                moment you are yourself. */}
+            {session?.ghost_of ? (
+              <button className="popover-item" role="menuitem" onClick={onSignOut}>
+                <Icon name="arrow_back" size={17} />
+                <span>
+                  Return to {session.ghost_of.name}
+                  <span className="tiny muted" style={{ display: 'block' }}>
+                    You are viewing as {session.name}
+                  </span>
+                </span>
+              </button>
+            ) : (
+              <button className="popover-item" role="menuitem" onClick={onSignOut}>
+                <Icon name="logout" size={17} /> Sign out
+              </button>
+            )}
           </div>
         </>
       )}

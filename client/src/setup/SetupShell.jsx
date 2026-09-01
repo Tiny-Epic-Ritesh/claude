@@ -336,7 +336,7 @@ export default function SetupShell({ session, orgs = [], activeOrg, onSwitchOrg,
 
           {pinned.length > 0 && (
             <div className="setup-group">
-              <h2 className="setup-group-head"><Icon name="star" size={14} />Pinned</h2>
+              <h2 className="setup-group-head"><span>Pinned</span></h2>
               <div>
                 {pinned.map((s) => (
                   <SectionLink key={s.key} section={s} pinned onTogglePin={togglePin} />
@@ -350,8 +350,10 @@ export default function SetupShell({ session, orgs = [], activeOrg, onSwitchOrg,
             return (
               <div key={g.key} className="setup-group">
                 <h2 className="setup-group-head">
+                  {/* Text only, indented to sit exactly above the item labels.
+                      The icon used to push the heading 27px left of everything
+                      under it, so no two things in the column shared an edge. */}
                   <button type="button" className="setup-group-toggle" onClick={() => toggleGroup(g.key)} aria-expanded={!shut}>
-                    <Icon name={g.icon} size={14} />
                     <span>{g.label}</span>
                     <Icon name={shut ? 'expand_more' : 'expand_less'} size={15} />
                   </button>

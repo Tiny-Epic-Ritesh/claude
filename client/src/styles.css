@@ -977,7 +977,18 @@ h3 { font-size: 13.5px; font-weight: 600; }
   border: 1px solid var(--accent-dark);
   box-shadow: var(--lift-1), inset 0 1px 0 rgba(255, 255, 255, 0.28);
 }
-.btn-primary:hover { box-shadow: var(--lift-2), 0 0 0 4px var(--accent-soft); transform: translateY(-1px); }
+/* The background is set here, not just the shadow.
+   
+   39 buttons are written `class="btn btn-primary"`. Both are single-class
+   selectors, so source order decides — and `.btn:hover` sets
+   `background: var(--glass-solid)`, which in light mode is white. A hover with
+   no background of its own therefore turned the green button white underneath
+   white text, and "+ New field" vanished under the cursor. */
+.btn-primary:hover {
+  background: linear-gradient(180deg, var(--accent-dark), var(--accent-dark));
+  box-shadow: var(--lift-2), 0 0 0 4px var(--accent-soft);
+  transform: translateY(-1px);
+}
 .btn-primary:active { transform: translateY(0); }
 
 .btn-danger {
@@ -985,6 +996,9 @@ h3 { font-size: 13.5px; font-weight: 600; }
   color: #fff;
   border: 1px solid var(--danger);
 }
+/* Same trap as .btn-primary above: `btn btn-danger` would otherwise take
+   .btn:hover's near-white background under white text. */
+.btn-danger:hover { background: var(--danger); box-shadow: var(--lift-2), 0 0 0 4px var(--danger-soft); }
 
 .btn-ghost {
   background: transparent;
@@ -4935,21 +4949,25 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
   gap: 4px;
 }
 
-.setup-group { margin-top: 14px; }
+.setup-group { margin-top: 16px; }
+/* Indented to 37px so the heading text starts exactly where the item labels
+   start — 10px of row padding, a 17px icon, then the 10px gap. The heading
+   used to sit at 10px, 27px left of everything beneath it, so nothing in the
+   column shared a left edge and the whole sidebar read as unaligned. */
 .setup-group-head {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin: 0 0 4px;
-  padding: 0 10px;
+  margin: 0 0 3px;
+  padding: 0 10px 0 37px;
   font-size: 10.5px;
   font-weight: 700;
-  letter-spacing: 0.7px;
+  letter-spacing: 0.6px;
   text-transform: uppercase;
   /* Was --ink-4, which measured 2.52:1 in light — a label nobody can read is
      not a subtle label. Size, case and weight carry the hierarchy; the colour
      does not have to as well. */
-  color: var(--ink-2);
+  color: var(--ink-3);
+  white-space: nowrap;
 }
 .setup-nav ul { list-style: none; margin: 0; padding: 0; }
 
@@ -5250,8 +5268,9 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
 .setup-group-toggle {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   width: 100%;
+  min-width: 0;
   padding: 0;
   border: 0;
   background: none;
@@ -5261,7 +5280,29 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
   letter-spacing: inherit;
   text-transform: inherit;
 }
-.setup-group-toggle span { flex: 1; text-align: left; }
+.setup-group-toggle span {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* A Material Symbols glyph is a LIGATURE, and a ligature is broken by both
+   `text-transform` and `letter-spacing`. The heading sets uppercase and 0.6px
+   spacing, so the chevron was rendering as the literal word EXPAND_LESS — 96px
+   of it — which is what squeezed the heading text into an ellipsis. Reset both
+   on the icon itself. */
+.setup-group-toggle .material-symbols-rounded {
+  text-transform: none;
+  letter-spacing: normal;
+  flex: 0 0 auto;
+}
+
+/* The chevron only when there is something to fold, and quiet until wanted. */
+.setup-group-toggle .material-symbols-rounded { color: var(--ink-4); opacity: 0; transition: opacity 0.12s ease; }
+.setup-group:hover .setup-group-toggle .material-symbols-rounded,
+.setup-group-toggle:focus-visible .material-symbols-rounded { opacity: 1; }
+.setup-group-toggle[aria-expanded='false'] .material-symbols-rounded { opacity: 1; }
 .setup-group-toggle:hover { color: var(--ink-2); }
 
 .setup-footer {

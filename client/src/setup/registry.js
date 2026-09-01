@@ -42,13 +42,22 @@ const Database = lazy(() => import('../crm/Database.jsx'));
 const Admin = () => import('../crm/Admin.jsx');
 const from = (name) => lazy(() => Admin().then((m) => ({ default: m[name] })));
 
+/*
+ * Six groups, and the labels are as short as they can be and stay honest.
+ *
+ * Four of the longer ones wrapped to two lines in a 280px sidebar, which is
+ * what made the whole column look unfinished — a heading that wraps drags the
+ * items under it out of rhythm. The icons stay on the group for Setup home,
+ * where there is room for them; the sidebar heading is text only, aligned to
+ * the same left edge as the item labels beneath it.
+ */
 export const GROUPS = [
   { key: 'people', label: 'People & access', icon: 'group' },
   { key: 'objects', label: 'Objects & fields', icon: 'account_tree' },
   { key: 'automation', label: 'Automation', icon: 'bolt' },
-  { key: 'comms', label: 'Customer communication', icon: 'forum' },
+  { key: 'comms', label: 'Communication', icon: 'forum' },
   { key: 'integrations', label: 'Integrations', icon: 'cable' },
-  { key: 'monitoring', label: 'Monitoring & data', icon: 'monitoring' },
+  { key: 'monitoring', label: 'Monitoring', icon: 'monitoring' },
 ];
 
 export const SECTIONS = [

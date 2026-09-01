@@ -146,7 +146,13 @@ function UserActions({ user, reload, onLink, onError }) {
       /* The administrator's own token is stashed, not discarded, so leaving is
          a swap back rather than a second sign-in. sessionStorage, so closing
          the tab cannot leave it lying about. */
-      stashParentToken(token.get('crm'));
+      /* Where they were standing, so returning is a round trip rather than a
+         landing. An administrator working down a list of users should come back
+         to that list, not to the CRM home. */
+      stashParentToken(token.get('crm'), {
+        name: r.on_behalf_of?.name ?? null,
+        returnTo: window.location.pathname.replace(/^.*?(\/setup)/, '$1') || '/setup/users',
+      });
       token.set('crm', r.token);
       window.location.assign(appUrl('/'));
     } catch (err) { onError(err.message); setBusy(null); }

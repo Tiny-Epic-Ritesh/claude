@@ -276,5 +276,57 @@ test('the Setup header carries what was asked for', () => {
   assert(!/<select/.test(shell), 'the business switcher is a bare select rather than the shared control');
 });
 
+/* --------------------------------------------------- the sidebar reads */
+
+test('no group label is long enough to wrap', () => {
+  /* Four of six wrapped to two lines in a 280px sidebar, which dragged the
+     items under them out of rhythm and made the whole column look unfinished.
+     Measured in characters rather than pixels: at 10.5px uppercase with 0.6px
+     tracking, the column fits about 22. */
+  for (const g of groups) {
+    assert(g.label.length <= 18, `"${g.label}" is ${g.label.length} characters — it will wrap`);
+  }
+});
+
+test('group headings line up with the items beneath them', () => {
+  /* The heading used to start at 10px and the item labels at 37px, so nothing
+     in the column shared a left edge. The indent is the row padding plus the
+     icon plus the gap, which is what puts the two on one line. */
+  const css = readFileSync(new URL('../../client/src/styles.css', import.meta.url), 'utf8');
+  const head = css.slice(css.indexOf('.setup-group-head {'), css.indexOf('.setup-nav ul'));
+  assert(/padding: 0 10px 0 37px/.test(head), 'the heading indent no longer matches the item text');
+  assert(/white-space: nowrap/.test(head), 'headings can wrap again');
+});
+
+test('an icon inside an uppercase heading keeps its ligature', () => {
+  /* A Material Symbols glyph IS a ligature, and both `text-transform` and
+     `letter-spacing` break one. The heading sets both, so the chevron rendered
+     as the literal word EXPAND_LESS and ate 96px — which is what squeezed the
+     heading text into an ellipsis. */
+  const css = readFileSync(new URL('../../client/src/styles.css', import.meta.url), 'utf8');
+  const at = css.indexOf('.setup-group-toggle .material-symbols-rounded {');
+  assert(at > -1, 'the chevron reset rule is gone');
+  const body = css.slice(at, css.indexOf('}', at));
+  assert(/text-transform: none/.test(body), 'the chevron will render as its own name');
+  assert(/letter-spacing: normal/.test(body), 'tracking will break the chevron ligature');
+});
+
+/* ------------------------------------------------- buttons stay readable */
+
+test('a coloured button keeps its own background on hover', () => {
+  /* 39 buttons are written `class="btn btn-primary"`. Both are single-class
+     selectors, so source order decides — and `.btn:hover` sets
+     `background: var(--glass-solid)`, which is white in light mode. A hover
+     with no background of its own turned the green button white underneath
+     white text, and "+ New field" vanished under the cursor. */
+  const css = readFileSync(new URL('../../client/src/styles.css', import.meta.url), 'utf8');
+  for (const kind of ['primary', 'danger']) {
+    const at = css.indexOf(`.btn-${kind}:hover {`);
+    assert(at > -1, `.btn-${kind}:hover does not exist, so .btn:hover decides its background`);
+    const body = css.slice(at, css.indexOf('}', at));
+    assert(/background:/.test(body), `.btn-${kind}:hover sets no background of its own`);
+  }
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exitCode = failed ? 1 : 0;

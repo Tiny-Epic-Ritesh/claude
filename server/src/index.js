@@ -118,6 +118,31 @@ const dkycLimiter  = rateLimiter({ name: 'dkyc',  limit: 120, windowMs: 60_000 }
  *
  * Paths only: never bodies, never query strings. engine/accesslog.js explains
  * why that line is drawn where it is. */
+/*
+ * No API response may be cached, by anything.
+ *
+ * Express puts an ETag on every JSON response and nothing set Cache-Control or
+ * Vary. A browser cache is keyed on the URL, not on the Authorization header —
+ * so two people asking /api/auth/me share one cache entry, and the second one
+ * can be handed the first one's answer.
+ *
+ * That is how the ghost banner went missing: an administrator signing in as
+ * somebody else got a revalidated 304 for /api/auth/me carrying the previous
+ * identity's body, with `ghost_of: null` in it. The banner is built from that
+ * field, so the one thing telling them they were acting as another person did
+ * not render — and the only exit they could find was Sign out, which ends
+ * everything and lands on the login screen.
+ *
+ * `Vary: Authorization` would fix the collision. `no-store` is the right answer
+ * anyway: none of this is cacheable, some of it is a client's PAN, and a
+ * response that is never stored cannot be served to the wrong person.
+ */
+app.use('/api', (_req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.set('Vary', 'Authorization');
+  next();
+});
+
 app.use('/api', accessLog);
 
 app.post('/api/auth/login', loginLimiter, (req, res) => {
