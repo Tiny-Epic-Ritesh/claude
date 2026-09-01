@@ -81,6 +81,38 @@ export default function ObjectManager() {
 
 /* --------------------------------------------------------- one object */
 
+/**
+ * The settings that belong to an object but live on their own screens.
+ *
+ * "Relevant detailed settings for each" is the second half of P2-21, and most
+ * of those settings already existed — on other tabs, with nothing to say they
+ * were connected to the object. An administrator configuring Cases had to
+ * already know that the SLA clock is set two tabs away.
+ *
+ * Linked rather than duplicated. A second SLA editor here would be a second
+ * place for the numbers to disagree, which is the duplication P2-02 and P2-20
+ * both turned out to be.
+ */
+const RELATED = {
+  lead: [
+    ['rules', 'Rule builder', 'What happens automatically when a lead changes'],
+    ['masking', 'Field masking', 'Which roles see the mobile and PAN in the clear'],
+    ['targets', 'Targets & incentives', 'What each role is measured on'],
+  ],
+  case: [
+    ['sla', 'SLA & categories', 'Response and resolution clocks, and how cases are classified'],
+    ['calendars', 'Working calendars', 'The hours the SLA clock actually runs'],
+  ],
+  client: [
+    ['masking', 'Field masking', 'Which roles see client identifiers in the clear'],
+    ['products', 'Products', 'What a client can hold'],
+  ],
+  interaction: [
+    ['outcomes', 'Call outcomes', 'The dispositions this picklist is a projection of'],
+    ['calendars', 'Working calendars', 'When follow-ups may be scheduled'],
+  ],
+};
+
 function ObjectDetail({ entity, onBack }) {
   const [data, { loading, error, reload }] = useApi(`/setup/objects/${entity}`);
   const [usage] = useApi(`/setup/field-usage/${entity}`);
@@ -272,6 +304,23 @@ function ObjectDetail({ entity, onBack }) {
           A separate tab would mean an administrator can add a required-looking
           field without ever seeing where "required" is actually decided. */}
       <ValidationRules entity={entity} />
+
+      {RELATED[entity] && (
+        <section className="glass panel" style={{ marginTop: 18 }}>
+          <div className="card-head">
+            <h3 style={{ fontSize: '0.95rem' }}>More settings for {data.object.label_plural}</h3>
+            <span className="tiny muted">Configured on their own screens</span>
+          </div>
+          <div className="related-grid">
+            {RELATED[entity].map(([tab, label, what]) => (
+              <a key={tab} className="related-link" href={`?tab=${tab}`}>
+                <strong>{label}</strong>
+                <span className="tiny muted">{what}</span>
+              </a>
+            ))}
+          </div>
+        </section>
+      )}
 
       {adding && (
         <NewField

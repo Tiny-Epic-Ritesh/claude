@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import TabVisibility from './TabVisibility.jsx';
 import Dispositions from './Dispositions.jsx';
 import KraSetup from './KraSetup.jsx';
@@ -39,7 +40,20 @@ export default function Admin({ session }) {
     has('report.system') && { key: 'audit', label: 'Audit log' },
   ].filter(Boolean);
 
-  const [tab, setTab] = useState(tabs[0]?.key);
+  /* The tab lives in the URL rather than in state.
+   *
+   * `?tab=objects` looked supported and was not — it was read by nothing, so a
+   * link into a particular tab silently landed on Users. That matters now the
+   * object screen links to the settings that belong to it, and it means an
+   * administrator can bookmark or send "the SLA screen" like any other page. */
+  const [search, setSearch] = useSearchParams();
+  const wanted = search.get('tab');
+  const tab = tabs.some((t) => t.key === wanted) ? wanted : tabs[0]?.key;
+  const setTab = (key) => setSearch((prev) => {
+    const next = new URLSearchParams(prev);
+    next.set('tab', key);
+    return next;
+  }, { replace: true });
 
   return (
     <>

@@ -231,5 +231,41 @@ test('the object flags that are stored are actually read by something', () => {
   }
 });
 
+test('the settings an object links to actually exist', () => {
+  /* Most of "relevant detailed settings for each" already existed, on other
+     tabs, with nothing saying they belonged to the object — an administrator
+     configuring Cases had to already know the SLA clock is two tabs away. They
+     are linked rather than duplicated, because a second SLA editor would be a
+     second place for the numbers to disagree.
+
+     A link is only worth having while it goes somewhere. Renaming a tab key
+     would leave these pointing at a screen that silently falls back to Users. */
+  const manager = readFileSync(new URL('../../client/src/crm/ObjectManager.jsx', import.meta.url), 'utf8');
+  const admin = readFileSync(new URL('../../client/src/crm/Admin.jsx', import.meta.url), 'utf8');
+
+  const related = manager.slice(manager.indexOf('const RELATED = {'), manager.indexOf('function ObjectDetail'));
+  const targets = [...related.matchAll(/\['([a-z_]+)',/g)].map((m) => m[1]);
+  assert(targets.length > 0, 'the related-settings map has gone missing');
+
+  const known = new Set([...admin.matchAll(/key:\s*'([a-z_]+)'/g)].map((m) => m[1]));
+  for (const t of new Set(targets)) {
+    assert(known.has(t), `an object links to "?tab=${t}", which is not a tab that exists`);
+  }
+
+  // And the objects doing the linking have to be real objects.
+  for (const m of related.matchAll(/^\s{2}([a-z_]+):\s*\[/gm)) {
+    assert(one('SELECT 1 v FROM entity_def WHERE api_name = ?', [m[1]]),
+      `related settings are declared for "${m[1]}", which is not an object`);
+  }
+});
+
+test('a tab can be linked to at all', () => {
+  /* `?tab=objects` looked supported and was read by nothing, so every link into
+     a particular tab landed on Users instead. */
+  const admin = readFileSync(new URL('../../client/src/crm/Admin.jsx', import.meta.url), 'utf8');
+  assert(/useSearchParams/.test(admin), 'the admin tab is back to internal state and cannot be linked to');
+  assert(!/useState\(tabs\[0\]\?\.key\)/.test(admin), 'the tab is chosen from state rather than the URL');
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exitCode = failed ? 1 : 0;

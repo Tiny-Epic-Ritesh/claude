@@ -2148,6 +2148,27 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
    big table is untouched whatever the source order. */
 .field-table.compact { min-width: 0; }
 
+/* The object's related settings, linked rather than duplicated. */
+.related-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 10px;
+  padding: 14px 16px;
+}
+.related-link {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 11px 13px;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--r-sm, 8px);
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.related-link:hover,
+.related-link:focus-visible { border-color: var(--accent); background: var(--hairline); }
+
 .field-name { display: flex; align-items: center; gap: 7px; }
 .field-name .req { color: var(--danger); font-weight: 700; }
 
