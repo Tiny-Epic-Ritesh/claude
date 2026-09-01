@@ -104,6 +104,14 @@ const CORE_ENTITIES = [
       ['mobile_invalid', 'Mobile Invalid', 'checkbox', {}],
       ['marketing_opt_out', 'Opted Out of Marketing', 'checkbox', {}],
       ['created_at', 'Created', 'datetime', {}],
+      /* Business figures that had no definition at all, so they could not be
+         relabelled, masked, reported on or used to build a dashboard panel.
+         AUM is the headline number on a lead and "total AUM by stage" is the
+         first thing a supervisor asks for; its absence from the metadata layer
+         was a gap rather than a decision. */
+      ['aum', 'AUM', 'currency', { indexed: 1 }],
+      ['score', 'Lead Score', 'number', { indexed: 1 }],
+      ['callback_at', 'Callback At', 'datetime', {}],
       ['next_follow_up_at', 'Next Follow-up', 'datetime', {}],
     ],
   },
@@ -118,6 +126,13 @@ const CORE_ENTITIES = [
       // security rather than row-level: everyone sees that a call happened and
       // how it went; the body and the recording need ownership or supervision.
       ['body', 'Notes', 'textarea', { read_scope: 'owner_or_manager' }],
+      /* `outcome` is NOT defined here, deliberately. The activities table has
+         both `outcome` and `disposition` holding the same concept, and their
+         values have drifted apart — disposition carries the three canonical
+         ones from the dispositions table, outcome carries a longer legacy set
+         nobody maintains. Defining it would bless a duplication rather than
+         record a field. It is written up as a finding instead: one question,
+         two columns, which is the shape the legacy audit kept finding. */
       ['disposition', 'Outcome', 'picklist', { indexed: 1 }],
       ['sub_disposition', 'Sub-outcome', 'picklist', { indexed: 1 }],
       ['reason', 'Reason', 'text', { read_scope: 'owner_or_manager' }],
@@ -151,6 +166,8 @@ const CORE_ENTITIES = [
       ['assignee_id', 'Assigned To', 'lookup', { indexed: 1, history_tracked: 1 }],
       ['resolution_due', 'Resolution Due', 'datetime', {}],
       ['breached', 'SLA Breached', 'checkbox', {}],
+      ['channel', 'Channel', 'picklist', {}],
+      ['csat', 'Satisfaction', 'number', {}],
     ],
   },
   {
@@ -196,6 +213,10 @@ const CORE_ENTITIES = [
       ['pan', 'PAN', 'encrypted_text', { encrypted: 1, read_scope: 'capability', read_capability: 'pii.unmask' }],
       ['bank_account', 'Bank Account', 'encrypted_text', { encrypted: 1, read_scope: 'capability', read_capability: 'pii.unmask' }],
       ['commission_pct', 'Commission %', 'percent', {}],
+      ['mobile', 'Mobile', 'phone', {}],
+      ['email', 'Email', 'email', {}],
+      ['city', 'City', 'text', {}],
+      ['sebi_reg_no', 'SEBI Registration', 'text', {}],
       ['owner_id', 'Partner RM', 'lookup', { indexed: 1 }],
     ],
   },
@@ -208,6 +229,7 @@ const CORE_ENTITIES = [
       ['due_at', 'Due', 'datetime', { required: 1, indexed: 1 }],
       ['priority', 'Priority', 'picklist', {}],
       ['status', 'Status', 'picklist', { required: 1, history_tracked: 1 }],
+      ['description', 'Notes', 'textarea', {}],
       ['assignee_id', 'Assigned To', 'lookup', { indexed: 1 }],
     ],
   },
@@ -272,19 +294,56 @@ export function seedMetadata() {
                (entity, api_name, label, type, storage, required, indexed, length,
                 precision, scale, encrypted, read_scope, read_capability,
                 history_tracked, is_custom, sort_order)
-             VALUES (?,?,?,?,'column',?,?,?,?,?,?,?,?,?,0,?)`,
+             VALUES (?,?,?,?,'column',?,?,?,?,?,?,?,?,?,0,
+                     (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM field_def WHERE entity = ?))`,
             [
               e.api_name, apiName, label, type,
               opts.required ?? 0, opts.indexed ?? 0, opts.length ?? null,
               opts.precision ?? null, opts.scale ?? null, opts.encrypted ?? 0,
               opts.read_scope ?? 'record', opts.read_capability ?? null,
-              opts.history_tracked ?? 0, j,
+              opts.history_tracked ?? 0,
+              /* Appended, not placed at its index in the list above. On a fresh
+                 install those are the same number; on an existing one they are
+                 not, and inserting a field mid-list would give it the position
+                 an existing field already holds. Two fields at one position
+                 cannot be put in a deliberate order. */
+              e.api_name,
             ],
           );
         }
         fields += 1;
       });
     });
+
+    /* Reconcile, because the list above is the source of truth for core fields.
+     *
+     * A core definition removed from CORE_ENTITIES has to go, or the list and
+     * the database drift and the screen shows a field nobody declared —
+     * `interaction.outcome` was exactly that. Custom fields are untouched:
+     * they are the administrator's, not ours. */
+    for (const e of CORE_ENTITIES) {
+      const declared = new Set(e.columns.map(([apiName]) => apiName));
+      for (const f of all('SELECT id, api_name FROM field_def WHERE entity = ? AND is_custom = 0', [e.api_name])) {
+        if (declared.has(f.api_name)) continue;
+        run('DELETE FROM picklist_value WHERE field_id = ?', [f.id]);
+        run('DELETE FROM field_def WHERE id = ?', [f.id]);
+      }
+    }
+
+    /* Two fields cannot share a position, or their order is decided by the
+     * label tiebreak rather than by anybody. Renumbering preserves the order
+     * they are already in — an administrator's arrangement survives, the tie
+     * does not. Only runs when there is actually a collision, so a settled
+     * layout is never rewritten. */
+    for (const e of CORE_ENTITIES) {
+      const rows = all(
+        'SELECT id, sort_order FROM field_def WHERE entity = ? ORDER BY sort_order, id',
+        [e.api_name],
+      );
+      const positions = new Set(rows.map((r) => r.sort_order));
+      if (positions.size === rows.length) continue;
+      rows.forEach((r, i) => run('UPDATE field_def SET sort_order = ? WHERE id = ?', [i, r.id]));
+    }
 
     return { entities: CORE_ENTITIES.length, fields };
   });
@@ -384,6 +443,11 @@ const CORE_PICKLISTS = {
     ['Active', 'Active'], ['Dormant', 'Dormant'], ['Suspended', 'Suspended'],
     ['Closed', 'Closed'],
   ],
+  'case.channel': [
+    ['Email', 'Email'], ['Phone', 'Phone'], ['WhatsApp', 'WhatsApp'],
+    ['Portal', 'Portal'], ['Branch', 'Branch'],
+  ],
+
   'client.risk_profile': [
     ['Conservative', 'Conservative'], ['Moderate', 'Moderate'], ['Aggressive', 'Aggressive'],
   ],

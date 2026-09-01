@@ -12,6 +12,7 @@ import LeadDetail from './LeadDetail.jsx';
 import Clients from './Clients.jsx';
 import LeadLists from './LeadLists.jsx';
 import Dashboard from './Dashboard.jsx';
+import Dashboards from './Dashboards.jsx';
 import Pipeline from './Pipeline.jsx';
 import Products from './Products.jsx';
 import Ccm from './Ccm.jsx';
@@ -74,6 +75,10 @@ const NAV = [
     { to: '/kyc', label: 'KYC Console', icon: 'verified_user', needs: ['kyc.view'] },
     { to: '/partners', label: 'Partners', icon: 'handshake', needs: ['partner.view'] },
     { to: '/reports', label: 'Reports', icon: 'assessment', needs: ['report.team', 'report.system'] },
+    /* No capability gate: anyone may build a dashboard about their own
+       records (Q-13). Publishing one to other people is what needs
+       report.team, and that is checked where it happens. */
+    { to: '/boards', label: 'My Dashboards', icon: 'space_dashboard' },
     { to: '/data', label: 'Data Tools', icon: 'swap_vert', needs: ['lead.create', 'lead.delete'] },
   ] },
   { section: 'Configuration', items: [
@@ -238,6 +243,9 @@ export default function Crm() {
                 stated preference. This tab renders the same component so
                 the launcher entry works without a second implementation. */}
             <Route path="/dashboards" element={<Dashboard />} />
+            {/* The role dashboard is what everyone lands on; this is the one
+                they build themselves (P2-17b). */}
+            <Route path="/boards" element={<Dashboards />} />
             <Route path="/tickets" element={<Tickets session={session} />} />
             <Route path="/tickets/:id" element={<Tickets session={session} />} />
             <Route path="/partners" element={<Partners session={session} />} />

@@ -711,6 +711,57 @@ CREATE TABLE IF NOT EXISTS db_size_sample (
   at                TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+/*
+ * Custom dashboards (P2-17b).
+ *
+ * The DEFINITION is stored, never the result. That is the whole design: a
+ * shared dashboard runs each viewer's own scope, so a supervisor sharing "my
+ * pipeline by stage" gives every RM the same question about their own book
+ * rather than a picture of the supervisor's. Storing rendered numbers would
+ * turn sharing a dashboard into sharing the rows behind it.
+ *
+ * shared_with is a JSON array of role codes. NULL means personal -- Q-13: a rep
+ * arranging their own view harms nobody, a rep publishing one to the desk is a
+ * different act and needs the capability.
+ */
+CREATE TABLE IF NOT EXISTS custom_dashboard (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  description TEXT,
+  owner_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- JSON array of role codes this is published to, or NULL for personal.
+  shared_with TEXT,
+  sales_org   TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT
+);
+
+/*
+ * One panel: a saved question.
+ *
+ * source + measure + group_by + filters compile to SQL in engine/panels.js.
+ * Field names are checked against field_def before they reach a query, which is
+ * the entire injection defence -- a grouping is a column name and cannot be a
+ * bound parameter.
+ */
+CREATE TABLE IF NOT EXISTS dashboard_panel (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  dashboard_id  INTEGER NOT NULL REFERENCES custom_dashboard(id) ON DELETE CASCADE,
+  title         TEXT NOT NULL,
+  source        TEXT NOT NULL,
+  kind          TEXT NOT NULL DEFAULT 'bar',
+  -- { fn: 'count' } or { fn: 'sum', field: 'aum' }
+  measure       TEXT NOT NULL DEFAULT '{\"fn\":\"count\"}',
+  group_by      TEXT,
+  -- { all: [ { field, op, value } ] }, same shape as a validation rule.
+  filters       TEXT,
+  use_range     INTEGER NOT NULL DEFAULT 1,
+  point_limit   INTEGER NOT NULL DEFAULT 8,
+  sort_order    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_panel_dashboard ON dashboard_panel (dashboard_id, sort_order);
+
 CREATE TABLE IF NOT EXISTS notifications (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
