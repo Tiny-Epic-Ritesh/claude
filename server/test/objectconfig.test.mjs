@@ -241,15 +241,18 @@ test('the settings an object links to actually exist', () => {
      A link is only worth having while it goes somewhere. Renaming a tab key
      would leave these pointing at a screen that silently falls back to Users. */
   const manager = readFileSync(new URL('../../client/src/crm/ObjectManager.jsx', import.meta.url), 'utf8');
-  const admin = readFileSync(new URL('../../client/src/crm/Admin.jsx', import.meta.url), 'utf8');
+  const registry = readFileSync(new URL('../../client/src/setup/registry.js', import.meta.url), 'utf8');
 
   const related = manager.slice(manager.indexOf('const RELATED = {'), manager.indexOf('function ObjectDetail'));
   const targets = [...related.matchAll(/\['([a-z_]+)',/g)].map((m) => m[1]);
   assert(targets.length > 0, 'the related-settings map has gone missing');
 
-  const known = new Set([...admin.matchAll(/key:\s*'([a-z_]+)'/g)].map((m) => m[1]));
+  // Checked against the Setup registry, which is now the one list every part
+  // of Setup is built from — sidebar, search, router and permission gate.
+  const known = new Set([...registry.matchAll(/^\s{4}key: '([a-z_]+)',$/gm)].map((m) => m[1]));
+  assert(known.size > 10, `only ${known.size} sections found in the registry — the pattern has drifted`);
   for (const t of new Set(targets)) {
-    assert(known.has(t), `an object links to "?tab=${t}", which is not a tab that exists`);
+    assert(known.has(t), `an object links to /setup/${t}, which is not a section that exists`);
   }
 
   // And the objects doing the linking have to be real objects.
@@ -259,12 +262,18 @@ test('the settings an object links to actually exist', () => {
   }
 });
 
-test('a tab can be linked to at all', () => {
-  /* `?tab=objects` looked supported and was read by nothing, so every link into
-     a particular tab landed on Users instead. */
-  const admin = readFileSync(new URL('../../client/src/crm/Admin.jsx', import.meta.url), 'utf8');
-  assert(/useSearchParams/.test(admin), 'the admin tab is back to internal state and cannot be linked to');
-  assert(!/useState\(tabs\[0\]\?\.key\)/.test(admin), 'the tab is chosen from state rather than the URL');
+test('every settings screen has an address of its own', () => {
+  /* Setup used to be one route with a tab in internal state, so no screen could
+     be linked to, bookmarked or sent to somebody. Each section is a real path
+     now, and the registry is what the router is built from. */
+  const registry = readFileSync(new URL('../../client/src/setup/registry.js', import.meta.url), 'utf8');
+  const shell = readFileSync(new URL('../../client/src/setup/SetupShell.jsx', import.meta.url), 'utf8');
+
+  assert(/path=\{key\}/.test(shell), 'sections are no longer routed by their own key');
+  assert(/sectionsFor/.test(shell), 'the shell no longer builds its routes from the registry');
+
+  const keys = [...registry.matchAll(/^\s{4}key: '([a-z_]+)',$/gm)].map((m) => m[1]);
+  assert.equal(new Set(keys).size, keys.length, 'two sections share a key, so one is unreachable');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -57,6 +57,7 @@ import {
   FEATURE_KEYS, FEATURE_LABEL,
 } from '../engine/tabs.js';
 import { TABS } from './apps.js';
+import { checkSetup, recentChanges, counts as setupCounts } from '../engine/setuphealth.js';
 import {
   MASKABLE, FIELD_LABEL, maskingMatrix, setMasking, clearMasking, maskedFieldsFor,
 } from '../engine/masking.js';
@@ -547,6 +548,26 @@ router.get('/me/access', (req, res) => res.json({
  */
 
 /** Everything an admin needs to render the object list. */
+/**
+ * The Setup home page.
+ *
+ * What an administrator actually arrives wanting to know: is anything wrong
+ * that I do not know about, and did somebody else already change this. The
+ * sidebar is the list of shortcuts; this is the reason to have a home page at
+ * all.
+ *
+ * Deliberately not gated on one narrow capability. Anyone who can reach Setup
+ * sees the state of it — the findings name a screen, and if they cannot open
+ * that screen the link simply is not offered to them.
+ */
+router.get('/health', (req, res) => {
+  res.json({
+    findings: checkSetup({ orgs: orgsFor(req.user) }),
+    recent: can(req.user.role, 'report.system') ? recentChanges(8) : [],
+    counts: setupCounts(orgsFor(req.user)),
+  });
+});
+
 router.get('/objects', requirePermission('admin.objects'), (req, res) => {
   res.json(entities().map((e) => ({
     ...e,
@@ -1003,7 +1024,7 @@ router.get('/database', requirePermission('report.system'), (req, res) => {
 router.get('/logs', requirePermission('report.system'), (req, res) => {
   res.json({
     kinds: retention(),
-    counts: counts(orgsFor(req.user)),
+    counts: setupCounts(orgsFor(req.user)),
   });
 });
 

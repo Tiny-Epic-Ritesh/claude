@@ -4845,3 +4845,375 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
 .kra-bar > span.tone-good { background: var(--ok); }
 .kra-bar > span.tone-warn { background: var(--warn); }
 .kra-bar > span.tone-bad { background: var(--danger); }
+
+/* ============================================================== SETUP =====
+   Setup is its own place, so it gets its own frame rather than borrowing the
+   CRM shell. A fixed sidebar and an independently scrolling content pane: an
+   administrator moving between eleven screens should never lose the map, and
+   the map should never scroll away with the thing they are reading.
+   ========================================================================= */
+
+.setup-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--bg);
+}
+
+.setup-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 18px;
+  height: 56px;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--glass-solid);
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+.setup-brand { display: flex; align-items: center; gap: 10px; }
+.setup-wordmark {
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0.2px;
+  padding-left: 10px;
+  border-left: 1px solid var(--hairline);
+  color: var(--ink-2);
+}
+.setup-org select {
+  border: 1px solid var(--hairline);
+  background: transparent;
+  border-radius: var(--r-pill);
+  padding: 5px 10px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+/* A label that screen readers read and nobody sees. The business selector
+   needs one: the control makes sense visually beside the brand, and makes no
+   sense at all announced as an unlabelled combo box. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.setup-exit { gap: 6px; }
+.setup-burger { display: none; }
+
+.setup-body {
+  display: grid;
+  grid-template-columns: 268px minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* ------------------------------------------------------------- sidebar */
+
+.setup-nav {
+  border-right: 1px solid var(--hairline);
+  padding: 14px 12px 22px;
+  overflow-y: auto;
+  position: sticky;
+  top: 56px;
+  height: calc(100vh - 56px);
+  height: calc(100dvh - 56px);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.setup-group { margin-top: 14px; }
+.setup-group-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 4px;
+  padding: 0 10px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+.setup-nav ul { list-style: none; margin: 0; padding: 0; }
+
+/* The active marker is a filled background, not a left rail: a rail on a
+   one-level list reads as a hierarchy that is not there. */
+.setup-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--r-xs);
+  color: var(--ink-2);
+  text-decoration: none;
+  font-size: 13.5px;
+  line-height: 1.3;
+  transition: background 0.13s ease, color 0.13s ease;
+}
+.setup-link:hover { background: var(--hairline-2); color: var(--ink); }
+.setup-link.is-active {
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-weight: 600;
+}
+.setup-link.is-active .material-symbols-rounded { color: var(--accent-dark); }
+.setup-link-home { margin-top: 2px; }
+
+.setup-signature {
+  margin-top: auto;
+  padding: 14px 10px 0;
+  border-top: 1px solid var(--hairline-2);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.linklike {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent-dark);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  width: fit-content;
+}
+.linklike:hover { text-decoration: underline; }
+
+/* ----------------------------------------------------------- Quick Find */
+
+.quickfind { position: relative; margin-bottom: 6px; }
+.quickfind-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-xs);
+  background: var(--glass);
+}
+.quickfind-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+/* The base input rule wraps its exclusions in :where(), so this wins without a
+   specificity contest — the ENH-19 / P2-10 lesson, applied on purpose. */
+.quickfind-box input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 13.5px;
+  color: var(--ink);
+  outline: none;
+}
+.quickfind-key {
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  color: var(--ink-4);
+  background: var(--hairline-2);
+}
+
+.quickfind-results {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 5px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--glass-solid);
+  box-shadow: 0 12px 28px rgba(12, 18, 28, 0.18);
+  max-height: 340px;
+  overflow-y: auto;
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 40;
+}
+.quickfind-hit {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  color: var(--ink-2);
+  font: inherit;
+}
+.quickfind-hit > span { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.quickfind-hit strong { color: var(--ink); font-size: 13.5px; font-weight: 600; }
+.quickfind-hit.is-active { background: var(--accent-soft); }
+.quickfind-empty { padding: 10px 11px; }
+
+/* ------------------------------------------------------------ content */
+
+.setup-main {
+  min-width: 0;
+  padding: 22px clamp(16px, 3vw, 34px) 60px;
+  overflow-x: hidden;
+}
+
+.setup-page-head { margin-bottom: 20px; }
+.setup-page-head h1 { margin: 0 0 4px; font-size: 1.6rem; letter-spacing: -0.02em; }
+.setup-page-head p { margin: 0; max-width: 62ch; font-size: 13.5px; }
+
+.setup-block {
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--glass);
+  margin-bottom: 18px;
+  overflow: hidden;
+}
+.setup-block-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--hairline-2);
+}
+.setup-block-head h2 { margin: 0; font-size: 0.95rem; font-weight: 650; }
+
+.setup-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+.setup-columns .setup-block { margin-bottom: 18px; }
+
+/* --------------------------------------------------------- findings */
+
+.finding-list, .change-list { list-style: none; margin: 0; padding: 0; }
+.finding {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--hairline-2);
+}
+.finding:last-child { border-bottom: none; }
+.finding-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.finding-body strong { font-size: 13.5px; font-weight: 600; }
+.finding-warn > .material-symbols-rounded { color: var(--warn); }
+.finding-info > .material-symbols-rounded { color: var(--info); }
+.finding .btn { flex: 0 0 auto; gap: 5px; }
+
+.setup-allclear {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 16px;
+}
+.setup-allclear > .material-symbols-rounded { color: var(--ok); }
+.setup-allclear div { display: flex; flex-direction: column; gap: 2px; }
+
+.change-list li {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--hairline-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.change-list li:last-child { border-bottom: none; }
+
+.setup-counts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(6rem, 1fr));
+  gap: 0;
+  margin: 0;
+  padding: 14px 16px 10px;
+}
+.setup-counts dt {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--ink-4);
+  font-weight: 600;
+}
+.setup-counts dd {
+  margin: 2px 0 0;
+  font-size: 1.35rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------ the map */
+
+.setup-map {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 4px 22px;
+  padding: 14px 16px 18px;
+}
+.setup-map-group h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 8px 0 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+.setup-map-group ul { list-style: none; margin: 0; padding: 0; }
+.setup-map-group a {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px;
+  border-radius: var(--r-xs);
+  text-decoration: none;
+  color: var(--ink-2);
+}
+.setup-map-group a:hover { background: var(--hairline-2); }
+.setup-map-group a strong { color: var(--ink); font-size: 13px; font-weight: 600; }
+
+/* --------------------------------------------------------- responsive */
+
+.setup-scrim { display: none; }
+
+@media (max-width: 900px) {
+  .setup-burger { display: inline-flex; }
+  .setup-body { grid-template-columns: minmax(0, 1fr); }
+  .setup-nav {
+    position: fixed;
+    top: 56px;
+    left: 0;
+    width: 280px;
+    max-width: 86vw;
+    background: var(--glass-solid);
+    transform: translateX(-102%);
+    transition: transform 0.18s ease;
+    z-index: 35;
+  }
+  .setup-body.nav-open .setup-nav { transform: translateX(0); }
+  .setup-body.nav-open .setup-scrim {
+    display: block;
+    position: fixed;
+    inset: 56px 0 0;
+    background: rgba(8, 12, 18, 0.42);
+    border: 0;
+    z-index: 34;
+  }
+  .setup-exit span { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .setup-nav, .setup-link { transition: none; }
+}

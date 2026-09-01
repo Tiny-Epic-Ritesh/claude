@@ -80,7 +80,19 @@ function usedIcons(vocabulary) {
    * add a glyph that nothing renders. */
   const strip = (src) => src
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ')
+    /* Search keywords are prose, not icon names, and the two vocabularies
+       overlap heavily — "workflow", "history", "storage", "privacy" and
+       "schema" are all real Material Symbols, and none of them is an icon in
+       the Setup registry. This is the same hazard the server scan further down
+       is already narrowed for, arriving on the client through a data file.
+       Blanking the array beats adding sixteen glyphs nothing renders. */
+    .replace(/keywords:\s*\[[^\]]*\]/g, ' ')
+    /* `key:` and `group:` are structural identifiers — a section's slug and the
+       group it sits in. "automation" is both a Setup group and a real Material
+       Symbol, and it is not an icon here. An icon is always declared as `icon:`
+       or passed as `name=`, so nothing real is hidden by ignoring these two. */
+    .replace(/\b(?:key|group):\s*(['"`])[a-z0-9_]+\1/g, ' ');
 
   for (const file of walk(CLIENT)) {
     const src = strip(readFileSync(file, 'utf8'));

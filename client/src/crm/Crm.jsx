@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { NavLink, Route, Routes, useNavigate } from 'react-router-dom';
+import { NavLink, Navigate, Route, Routes, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { api, token, ROLE_LABEL } from '../api.js';
 import GhostBar from './GhostBar.jsx';
 import { Loading, Icon, Avatar, OrgSwitcher, ThemeToggle } from '../components/ui.jsx';
@@ -49,7 +49,19 @@ import Copilot from './Copilot.jsx';
  * a loading flicker on the screens people live in would be a worse trade than
  * the bytes.
  */
-const Admin = lazy(() => import('./Admin.jsx'));
+const SetupShell = lazy(() => import('../setup/SetupShell.jsx'));
+
+/**
+ * `/admin` was Setup's address for the whole of the build so far, and
+ * `/admin?tab=sla` was made to work only days ago. Both keep working: the tab
+ * name and the section key are the same word, so the redirect is a rename
+ * rather than a translation table that would need maintaining.
+ */
+function AdminRedirect() {
+  const [search] = useSearchParams();
+  const tab = search.get('tab');
+  return <Navigate to={`/setup${tab ? `/${tab}` : ''}`} replace />;
+}
 const DataTools = lazy(() => import('./DataTools.jsx'));
 
 /**
@@ -82,7 +94,7 @@ const NAV = [
     { to: '/data', label: 'Data Tools', icon: 'swap_vert', needs: ['lead.create', 'lead.delete'] },
   ] },
   { section: 'Configuration', items: [
-    { to: '/admin', label: 'Administration', icon: 'settings', needs: ['admin.users', 'admin.products', 'admin.rules', 'admin.templates', 'admin.content', 'campaign.manage'] },
+    { to: '/setup', label: 'Setup', icon: 'settings', needs: ['admin.users', 'admin.products', 'admin.rules', 'admin.templates', 'admin.content', 'campaign.manage'] },
   ] },
 ];
 
@@ -99,6 +111,7 @@ export default function Crm() {
     try { return localStorage.getItem('bnz_active_org') || null; } catch { return null; }
   });
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     if (!token.get('crm')) { setSession(null); return; }
@@ -171,6 +184,40 @@ export default function Crm() {
 
   const orgName = orgs.find((o) => o.code === (activeOrg || session.sales_org))?.name ?? 'Bonanza';
 
+  /* Setup is its own place, not a page inside this one.
+   *
+   * Returned before the CRM shell is built rather than as a route inside it, so
+   * none of it renders: no Home / Leads / Pipeline tab strip, no market ticker,
+   * no app launcher. An administrator changing how permissions work should not
+   * have the sales navigation sitting above them, and 22 settings screens
+   * crammed into a second scrolling strip is what that produced.
+   *
+   * The ghost banner is the one thing that follows, and it has to: somebody
+   * acting as another user must be told so on every screen, and the screen
+   * where they can rewrite the permission model least of all. */
+  if (location.pathname === '/setup' || location.pathname.startsWith('/setup/')) {
+    return (
+      <>
+        {session.ghost_of && (
+          <GhostBar
+            ghostOf={session.ghost_of.name}
+            actingAs={session.name}
+            onLeave={() => window.location.reload()}
+          />
+        )}
+        <Suspense fallback={<Loading />}>
+          <SetupShell
+            session={session}
+            orgs={orgs}
+            activeOrg={activeOrg}
+            onSwitchOrg={switchOrg}
+            onSignOut={signOut}
+          />
+        </Suspense>
+      </>
+    );
+  }
+
   return (
     <div className={`app-shell${session.ghost_of ? ' is-ghosting' : ''}`}>
       {/* Fixed to the top of the window and not dismissible. See GhostBar. */}
@@ -201,7 +248,7 @@ export default function Crm() {
               administrator returns to most, and hiding it behind a grid of
               nine apps cost a click every time. */}
           {session.permissions.some((p) => ['admin.users', 'admin.products', 'admin.rules', 'admin.system'].includes(p)) && (
-            <NavLink to="/admin" className="btn-ghost btn-sm" title="Setup">
+            <NavLink to="/setup" className="btn-ghost btn-sm" title="Setup">
               <Icon name="settings" size={18} />
             </NavLink>
           )}
@@ -259,10 +306,10 @@ export default function Crm() {
               path="/data"
               element={<Suspense fallback={<Loading />}><DataTools session={session} /></Suspense>}
             />
-            <Route
-              path="/admin"
-              element={<Suspense fallback={<Loading />}><Admin session={session} /></Suspense>}
-            />
+            {/* Where Setup used to live. Kept as a redirect rather than
+                removed: bookmarks exist, and `?tab=` links were only just made
+                to work. `AdminRedirect` carries the tab across to its section. */}
+            <Route path="/admin" element={<AdminRedirect />} />
 
             {/* Every advertised module is built. Placeholder is kept only for
                 an unknown route, which is a genuine 404 rather than a promise. */}

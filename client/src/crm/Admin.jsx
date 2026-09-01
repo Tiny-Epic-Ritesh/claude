@@ -93,7 +93,7 @@ export default function Admin({ session }) {
 
 /* ---------------------------------------------------------------- users */
 
-function Users() {
+export function Users() {
   const [users, { loading, error, reload }] = useApi('/admin/users');
   const [creating, setCreating] = useState(false);
   const [link, setLink] = useState(null);
@@ -302,7 +302,7 @@ export function Roles() {
 
 /* ------------------------------------------------------------- products */
 
-function Products() {
+export function Products() {
   const [products, { loading, reload }] = useApi('/admin/products');
   if (loading) return <Loading />;
 
@@ -338,7 +338,7 @@ function Products() {
 
 /* ------------------------------------------------------- KYC composer */
 
-function Journeys() {
+export function Journeys() {
   const [data, { loading }] = useApi('/admin/kyc/journeys');
   if (loading || !data) return <Loading />;
 
@@ -374,7 +374,7 @@ function Journeys() {
 
 /* ---------------------------------------------------------------- rules */
 
-function Rules() {
+export function Rules() {
   const [data, { loading, reload }] = useApi('/admin/rules');
   const [meta] = useApi('/meta');
   const [result, setResult] = useState(null);
@@ -488,7 +488,7 @@ function Rules() {
 
 /* ------------------------------------------------------------------ SLA */
 
-function Sla() {
+export function Sla() {
   const [sla, { loading }] = useApi('/admin/sla');
   const [cats] = useApi('/admin/categories');
   if (loading || !sla) return <Loading />;
@@ -534,7 +534,7 @@ function Sla() {
 
 /* ------------------------------------------------------------ templates */
 
-function Templates() {
+export function Templates() {
   const [rows, { loading, reload }] = useApi('/admin/templates');
   if (loading) return <Loading />;
   return (
@@ -563,7 +563,7 @@ function Templates() {
 
 /* -------------------------------------------------------------- content */
 
-function Content() {
+export function Content() {
   const [rows, { loading }] = useApi('/admin/content');
   if (loading) return <Loading />;
   return (
@@ -607,7 +607,7 @@ function Content() {
  * them opted out" before the send makes the rule visible at the moment it
  * matters, and stops a marketer wondering why the reach was short afterwards.
  */
-function Campaigns() {
+export function Campaigns() {
   const [rows, { loading, reload }] = useApi('/admin/campaigns');
   const [editing, setEditing] = useState(null);   // campaign | 'new'
   const [audience, setAudience] = useState(null);
@@ -979,7 +979,7 @@ function AudiencePreview({ campaign, onClose, onSend }) {
   );
 }
 
-function Residency({ session }) {
+export function Residency({ session }) {
   const [data, { loading, error }] = useApi('/ai/residency');
   const canAudit = session.permissions.includes('audit.read');
   const [log] = useApi(canAudit ? '/ai/residency/log?limit=25' : null);
@@ -1068,7 +1068,7 @@ function Residency({ session }) {
   );
 }
 
-function Integrations() {
+export function Integrations() {
   const [data, { loading, reload }] = useApi('/admin/integrations');
   if (loading || !data) return <Loading />;
 
@@ -1159,7 +1159,7 @@ function Integrations() {
 
 /* ---------------------------------------------------------------- audit */
 
-function Audit() {
+export function Audit() {
   const [rows, { loading }] = useApi('/admin/audit');
   if (loading) return <Loading />;
   return (
@@ -1193,7 +1193,7 @@ function Audit() {
  * A connector page that shows four green ticks when nothing is configured is
  * how integrations get signed off before they work.
  */
-function MetaConnector() {
+export function MetaConnector() {
   const [data, { loading, reload }] = useApi('/admin/connectors/meta');
   const [leads] = useApi('/admin/connectors/meta/leads');
   if (loading || !data) return <Loading />;
@@ -1325,7 +1325,7 @@ function MetaConnector() {
  * in an NSE circular each year. Guessing them in code would be worse than
  * leaving them out.
  */
-function Calendars() {
+export function Calendars() {
   const [data, { loading, reload }] = useApi('/admin/calendars');
   const [adding, setAdding] = useState(null);   // kind
   const [error, setError] = useState(null);

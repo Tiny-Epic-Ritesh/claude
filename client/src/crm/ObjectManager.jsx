@@ -23,6 +23,7 @@ import ValidationRules from './ValidationRules.jsx';
 import PicklistValues from './PicklistValues.jsx';
 import ObjectSettings from './ObjectSettings.jsx';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner } from '../components/ui.jsx';
+import { Link } from 'react-router-dom';
 
 const TYPE_GROUPS = [
   ['Text', ['text', 'textarea', 'richtext', 'encrypted_text', 'email', 'phone', 'url']],
@@ -311,12 +312,15 @@ function ObjectDetail({ entity, onBack }) {
             <h3 style={{ fontSize: '0.95rem' }}>More settings for {data.object.label_plural}</h3>
             <span className="tiny muted">Configured on their own screens</span>
           </div>
+          {/* Links, not anchors: a raw href reloads the whole app to move one
+              screen sideways. The address is the section's own path, now that
+              every Setup screen has one. */}
           <div className="related-grid">
             {RELATED[entity].map(([tab, label, what]) => (
-              <a key={tab} className="related-link" href={`?tab=${tab}`}>
+              <Link key={tab} className="related-link" to={`/setup/${tab}`}>
                 <strong>{label}</strong>
                 <span className="tiny muted">{what}</span>
-              </a>
+              </Link>
             ))}
           </div>
         </section>
