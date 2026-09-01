@@ -24,6 +24,7 @@ import { rebuild } from './engine/metrics.js';
 import * as quickcall from './vendors/quickcall.js';
 import * as aisensy from './vendors/aisensy.js';
 import * as bonanzakyc from './vendors/bonanzakyc.js';
+import * as smtp from './vendors/smtp.js';
 import { vendorStatus, FORCE_SIMULATION } from './vendors/config.js';
 import { recordIntent } from './engine/callmatch.js';
 
@@ -96,8 +97,19 @@ const simulate = (live) => FORCE_SIMULATION || !live();
  * dispatch happens in the background and the entry's status is updated in place,
  * so the Admin outbox shows the true outcome without the caller having waited.
  */
-export function send(channel, { to, body, subject, leadId, partnerId, templateId, campaignName, templateOrder, templateVars, userName }) {
-  const simulated = channel === 'whatsapp' ? simulate(aisensy.isLive) : true;
+export function send(channel, {
+  to, body, subject, leadId, partnerId, templateId,
+  campaignName, templateOrder, templateVars, userName,
+  attachmentNames = [], userId = null,
+  text = null, attachments = [], replyTo = null,
+}) {
+  /* Email was hardcoded to simulate, so every message the composer produced was
+     recorded on the timeline and silently never delivered. It relays through a
+     mail server Bonanza runs, which keeps the data in India — the reason this
+     is SMTP and not Microsoft Graph, whose residency question is still open. */
+  const simulated = channel === 'whatsapp'
+    ? simulate(aisensy.isLive)
+    : channel === 'email' ? simulate(smtp.isLive) : true;
 
   const entry = record(channel, { to, body, subject, template_id: templateId }, {
     simulated,
@@ -106,19 +118,54 @@ export function send(channel, { to, body, subject, leadId, partnerId, templateId
     partner_id: partnerId ?? null,
   });
 
+  /* The single writer of the outbound timeline entry.
+   *
+   * The composer used to insert its own as well, so every email from it landed
+   * on the lead twice -- a mirrored interaction, which is the first
+   * non-negotiable in CLAUDE.md and the shape the LeadSquared audit spent
+   * findings on. The e2e check found the activity by id and so never noticed
+   * there were two of them; it counts now.
+   *
+   * Owning it here rather than adding a "do not log" flag means the next caller
+   * cannot reintroduce the duplicate by forgetting to pass one. Anything the
+   * caller knows and this does not -- attachment names -- comes in as an
+   * argument. */
   if (leadId) {
-    run('INSERT INTO activities (lead_id, type, direction, subject, body, user_id) VALUES (?,?,?,?,?,NULL)', [
-      leadId,
-      channel === 'email' ? 'Email' : channel === 'sms' ? 'SMS' : channel === 'ivr' ? 'Call' : 'WhatsApp',
-      'outbound',
-      subject || `${channel.toUpperCase()} sent`,
-      body,
-    ]);
+    entry.activity_id = Number(run(
+      'INSERT INTO activities (lead_id, type, direction, subject, body, user_id) VALUES (?,?,?,?,?,?)', [
+        leadId,
+        channel === 'email' ? 'Email' : channel === 'sms' ? 'SMS' : channel === 'ivr' ? 'Call' : 'WhatsApp',
+        'outbound',
+        subject || `${channel.toUpperCase()} sent`,
+        attachmentNames.length ? `${body}\n\nAttached: ${attachmentNames.join(', ')}` : body,
+        userId ?? null,
+      ],
+    ).lastInsertRowid);
   }
   if (partnerId) {
     run('INSERT INTO activities (partner_id, type, direction, subject, body) VALUES (?,?,?,?,?)', [
       partnerId, 'Partner Activity', 'outbound', `${channel.toUpperCase()} sent`, body,
     ]);
+  }
+
+  if (!simulated && channel === 'email') {
+    /* Same background shape as WhatsApp below: the RM has already been told the
+       mail is away, and a relay that is slow to answer must not hold the
+       request open behind it. A failure lands on the outbox entry and the audit
+       log, where the operator surface reads it. */
+    smtp.sendMail({
+      to, subject, html: body, text, userName, replyTo,
+      attachments,
+    })
+      .then((res) => {
+        entry.status = 'sent';
+        entry.message_id = res.message_id;
+      })
+      .catch((err) => {
+        entry.status = 'failed';
+        entry.error = err.message;
+        audit(null, 'vendor_send_failed', 'integration', leadId ?? null, { channel, vendor: err.vendor ?? null, reason: err.message });
+      });
   }
 
   if (!simulated && channel === 'whatsapp') {

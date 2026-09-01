@@ -4505,6 +4505,13 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     const logged = acts.find((a) => a.id === data.activity_id);
     assert(logged, 'the email is not on the lead timeline');
     eq(logged.type, 'Email', 'logged under the wrong type');
+
+    /* Once, not twice. Finding the activity by id says it was written; it does
+       not say it was written once, and both the composer and send() used to
+       write their own. A mirrored interaction is the first non-negotiable in
+       CLAUDE.md, and the shape the LeadSquared audit spent findings on. */
+    const mine = acts.filter((a) => a.type === 'Email' && a.subject === logged.subject);
+    eq(mine.length, 1, `the email landed on the timeline ${mine.length} times`);
     assert(!logged.subject.includes('{{'), `merge fields survived into the subject: ${logged.subject}`);
     assert(!logged.body.includes('{{'), 'merge fields survived into the body');
   });

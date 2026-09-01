@@ -289,35 +289,62 @@ router.post('/send', requirePermission('lead.contact'), (req, res) => {
   const finalBody = merge(safeBody, vars);
   const finalText = merge(textBody, vars);
 
-  const result = send('email', {
-    to: lead.email,
-    subject: finalSubject,
-    body: finalBody,
-    /* Both parts, carried together. The timeline, the search index and any
-       text-only mail client all want the plain rendering, and three callers
-       deriving their own would produce three different answers. */
-    text: finalText,
-    leadId: lead.id,
-    templateId: templateId ?? null,
-    userName: req.user.name,
-    templateVars: vars,
-  });
-
-  /* One interaction on the shared timeline, never a mirrored copy. */
   const attachmentNames = [
     ...library.map((l) => `${l.name} (v${l.version ?? 1})`),
     ...attachments.map((a) => a.name),
   ];
 
-  const info = run(
-    `INSERT INTO activities (lead_id, type, direction, subject, body, user_id)
-     VALUES (?, 'Email', 'outbound', ?, ?, ?)`,
-    [
-      lead.id, finalSubject,
-      attachmentNames.length ? `${finalBody}\n\nAttached: ${attachmentNames.join(', ')}` : finalBody,
-      req.user.id,
-    ],
-  );
+  /* Collateral is held as a link, not as bytes — the library stores a URL so a
+     document is corrected in one place rather than in every mailbox it was
+     ever sent to. But the link was never put in the message: the RM picked a
+     factsheet, our timeline recorded "Attached: factsheet", and the client
+     received an email with no attachment and no link to one. Naming a document
+     to ourselves is not sending it to them. */
+  const links = library.filter((l) => l.url);
+  /* Built as HTML and then run through the same sanitiser the RM's own body
+     goes through, rather than escaping it here. That reuses the scheme check on
+     href instead of adding a second, subtly different escaper — and a document
+     name is client-visible text that has to be escaped exactly as carefully. */
+  const bodyWithLinks = links.length
+    ? finalBody + sanitizeHtml(
+      `<p>Documents for you:</p><ul>${
+        links.map((l) => `<li><a href="${l.url}">${l.name}</a></li>`).join('')
+      }</ul>`,
+    )
+    : finalBody;
+  const textWithLinks = links.length
+    ? `${finalText}\n\nDocuments for you:\n${links.map((l) => `- ${l.name}: ${l.url}`).join('\n')}`
+    : finalText;
+
+  /* One interaction on the shared timeline, written by send() and nowhere else.
+     This route inserted its own as well, so every email from the composer
+     landed on the lead twice — a mirrored interaction, which is the first
+     non-negotiable in CLAUDE.md and the shape the LeadSquared audit spent
+     findings on. The e2e check found the activity by id and so never noticed
+     there were two of them; it counts now. */
+  const result = send('email', {
+    to: lead.email,
+    subject: finalSubject,
+    body: bodyWithLinks,
+    /* Both parts, carried together. The timeline, the search index and any
+       text-only mail client all want the plain rendering, and three callers
+       deriving their own would produce three different answers. */
+    text: textWithLinks,
+    leadId: lead.id,
+    templateId: templateId ?? null,
+    userName: req.user.name,
+    templateVars: vars,
+    attachmentNames,
+    userId: req.user.id,
+    /* The files themselves, not just their names. They were listed on the
+       timeline and then dropped, so a client was told a factsheet was attached
+       and received a message with nothing on it. */
+    attachments: attachments.map((a) => ({ name: a.name, content: a.data, type: a.type })),
+    /* A reply goes to the RM who wrote it. Sending as the RM's own address
+       would fail SPF and DKIM for the Bonanza domain and land in spam, so the
+       mail comes from the firm and the reply goes to the person. */
+    replyTo: req.user.email || null,
+  });
 
   for (const l of library) {
     run('UPDATE content_items SET send_count = send_count + 1 WHERE id = ?', [l.id]);
@@ -331,7 +358,7 @@ router.post('/send', requirePermission('lead.contact'), (req, res) => {
   res.json({
     ok: true,
     simulated: result?.simulated ?? true,
-    activity_id: Number(info.lastInsertRowid),
+    activity_id: result?.activity_id ?? null,
     attachments: attachmentNames,
     note: result?.simulated
       ? 'Recorded and logged. No mail was actually delivered — SMTP credentials are not configured yet.'
