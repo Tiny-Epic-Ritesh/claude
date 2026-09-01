@@ -5645,3 +5645,153 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
   .setup-main > .setup-page > .setup-block,
   .setup-main > .setup-pagehead { animation: none; }
 }
+
+/* ========================================== SETUP: finding things in a list ==
+   The pattern every long Setup screen needs: search, filters that carry their
+   own counts, and a bulk bar that only exists while something is selected.
+   ========================================================================= */
+
+.filter-bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.filter-search {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 8px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-pill);
+  background: var(--glass);
+  max-width: 26rem;
+}
+.filter-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.filter-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: var(--s-body);
+  color: var(--ink);
+  outline: none;
+}
+.filter-search .material-symbols-rounded { color: var(--ink-4); flex: 0 0 auto; }
+.filter-clear {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--hairline);
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.filter-clear:hover { background: var(--hairline-2); color: var(--ink); }
+
+.filter-row { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* Each chip carries its own count, so "how many Callers are there" is answered
+   without applying anything, and a filter that would return nothing says so
+   before it is clicked rather than after. */
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-pill);
+  background: var(--glass);
+  color: var(--ink-2);
+  font-size: var(--s-meta);
+  font-weight: 560;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
+}
+.filter-chip:hover:not(:disabled) { border-color: var(--accent); color: var(--ink); }
+.filter-chip.is-on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.filter-chip:disabled { opacity: 0.4; cursor: default; }
+.filter-count {
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--ink-4);
+}
+.filter-chip.is-on .filter-count { color: var(--accent-ink); }
+
+/* ------------------------------------------------------------ bulk bar */
+
+/* Present only while something is selected. A bulk bar that is always there is
+   a bulk action waiting to be clicked by accident. */
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 10px var(--sp-3);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  animation: setup-rise 0.16s ease both;
+}
+.bulk-bar strong { font-size: var(--s-body); color: var(--ink); }
+.bulk-bar .spacer { flex: 1; }
+
+/* --------------------------------------------------------- list rows */
+
+.pick-col { width: 34px; text-align: center; }
+.pick-col input { accent-color: var(--accent-dark); cursor: pointer; }
+
+.user-cell { display: flex; align-items: center; gap: var(--sp-2); }
+.user-cell strong { font-size: var(--s-body); font-weight: 600; }
+
+/* A deactivated row reads as deactivated at a glance rather than only in a
+   badge somebody has to look for. */
+tr.row-inactive td { opacity: 0.55; }
+tr.row-inactive td:first-child, tr.row-inactive td:nth-child(2) { opacity: 1; }
+tr.row-inactive .user-cell strong { color: var(--ink-3); }
+
+.chip-muted {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--hairline);
+  background: var(--hairline-2);
+  color: var(--ink-3);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+/* The permission grid: a real state per cell, not two glyphs that resolved to
+   the same colour because neither --green nor --border ever existed. */
+.perm-matrix .matrix-tab { min-width: 15rem; }
+.perm-label { display: flex; align-items: center; gap: 6px; font-size: var(--s-body); font-weight: 600; }
+.perm-matrix .matrix-tab .api-name { display: block; margin-top: 1px; }
+
+.perm-dot {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin: 0 auto;
+  border-radius: 50%;
+  background: var(--hairline-2);
+  color: var(--ink-4);
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.perm-dot.is-on { background: var(--accent-soft); color: var(--accent-dark); }
+:root[data-theme='dark'] .perm-dot.is-on { color: var(--accent); }
+
+.check-row { display: flex; align-items: flex-start; gap: 10px; }
+.check-row input { margin-top: 3px; }
+.check-row span { display: flex; flex-direction: column; gap: 2px; }

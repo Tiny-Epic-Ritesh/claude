@@ -33,6 +33,8 @@ export default function TabVisibility() {
   const [busy, setBusy] = useState(null);
   const [problem, setProblem] = useState(null);
   const [person, setPerson] = useState(null);
+  const [kind, setKind] = useState(null);
+  const [tabQuery, setTabQuery] = useState('');
 
   const draft = useDraft(
     async (changes) => {
@@ -58,6 +60,16 @@ export default function TabVisibility() {
   const toggle = (role, tabId, current) => draft.set({ role, tabId }, !current);
   const reset = (role, tabId) => draft.set({ role, tabId }, null);
 
+  /* 47 rows across three kinds. The question is almost never "show me all of
+     them" — it is "which Setup screens does Marketing see", so the kinds filter
+     the grid rather than only labelling it. */
+  const kinds = [...new Set(data.tabs.map((t) => t.kind))];
+  const rows = data.tabs.filter((t) => {
+    if (kind && t.kind !== kind) return false;
+    if (!tabQuery.trim()) return true;
+    return t.label.toLowerCase().includes(tabQuery.trim().toLowerCase());
+  });
+
   return (
     <div className="stack" style={{ gap: 14 }}>
       <div className="notice notice-warn">
@@ -76,7 +88,30 @@ export default function TabVisibility() {
           </span>
         </div>
 
-        <div className="card-body stack" style={{ gap: 8 }}>
+        <div className="card-body stack" style={{ gap: 10 }}>
+          <div className="filter-search" style={{ maxWidth: '20rem' }}>
+            <Icon name="search" size={16} />
+            <input
+              value={tabQuery}
+              onChange={(e) => setTabQuery(e.target.value)}
+              placeholder="Filter by name"
+              aria-label="Filter tabs and screens"
+            />
+          </div>
+          <div className="filter-row">
+            {kinds.map((k) => (
+              <button
+                key={k}
+                type="button"
+                className={`filter-chip${kind === k ? ' is-on' : ''}`}
+                aria-pressed={kind === k}
+                onClick={() => setKind(kind === k ? null : k)}
+              >
+                {KIND_LABEL[k] ?? k}
+                <span className="filter-count">{data.tabs.filter((t) => t.kind === k).length}</span>
+              </button>
+            ))}
+          </div>
           <div className="row wrap" style={{ gap: 12 }}>
             <span className="tiny muted"><span className="vis-key vis-on" /> Visible</span>
             <span className="tiny muted"><span className="vis-key vis-off" /> Hidden</span>
@@ -97,14 +132,14 @@ export default function TabVisibility() {
               </tr>
             </thead>
             <tbody>
-              {data.tabs.map((t, i) => (
+              {rows.map((t, i) => (
                 <Fragment key={t.id}>
                 {/* Three kinds ride this one grid: CRM tabs, the banner
                     features that use the same mechanism, and the Setup screens.
                     Without a heading between them "Users" the Setup screen sits
                     beside "Leads" the CRM tab and reads as the same kind of
                     thing. */}
-                {t.kind !== data.tabs[i - 1]?.kind && (
+                {t.kind !== rows[i - 1]?.kind && (
                   <tr className="matrix-section">
                     <th scope="row" colSpan={data.roles.length + 1}>{KIND_LABEL[t.kind] ?? t.kind}</th>
                   </tr>

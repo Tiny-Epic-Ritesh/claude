@@ -13,121 +13,23 @@ import Telephony from './Telephony.jsx';
 import Logs from './Logs.jsx';
 import Database from './Database.jsx';
 
-export default function Admin({ session }) {
-  const has = (p) => session.permissions.includes(p);
-  const tabs = [
-    has('admin.users') && { key: 'users', label: 'Users' },
-    { key: 'roles', label: 'Roles & permissions' },
-    has('admin.roles') && { key: 'navigation', label: 'Navigation' },
-    has('admin.users') && { key: 'masking', label: 'Field masking' },
-    has('admin.objects') && { key: 'objects', label: 'Objects & fields' },
-    has('admin.products') && { key: 'products', label: 'Products' },
-    has('admin.kyc.journeys') && { key: 'journeys', label: 'KYC journeys' },
-    has('admin.rules') && { key: 'rules', label: 'Rule builder' },
-    has('admin.rules') && { key: 'outcomes', label: 'Call outcomes' },
-    has('admin.rules') && { key: 'targets', label: 'Targets & incentives' },
-    has('admin.sla') && { key: 'sla', label: 'SLA & categories' },
-    has('admin.sla') && { key: 'calendars', label: 'Working calendars' },
-    has('admin.templates') && { key: 'templates', label: 'Templates' },
-    has('admin.content') && { key: 'content', label: 'Content library' },
-    has('campaign.manage') && { key: 'campaigns', label: 'Campaigns' },
-    has('admin.system') && { key: 'telephony', label: 'Telephony' },
-    { key: 'integrations', label: 'Integrations' },
-    has('admin.system') && { key: 'meta', label: 'Facebook & Instagram' },
-    { key: 'residency', label: 'Data residency' },
-    has('report.system') && { key: 'logs', label: 'API & logs' },
-    has('report.system') && { key: 'database', label: 'Database' },
-    has('report.system') && { key: 'audit', label: 'Audit log' },
-  ].filter(Boolean);
-
-  /* The tab lives in the URL rather than in state.
-   *
-   * `?tab=objects` looked supported and was not — it was read by nothing, so a
-   * link into a particular tab silently landed on Users. That matters now the
-   * object screen links to the settings that belong to it, and it means an
-   * administrator can bookmark or send "the SLA screen" like any other page. */
-  const [search, setSearch] = useSearchParams();
-  const wanted = search.get('tab');
-  const tab = tabs.some((t) => t.key === wanted) ? wanted : tabs[0]?.key;
-  const setTab = (key) => setSearch((prev) => {
-    const next = new URLSearchParams(prev);
-    next.set('tab', key);
-    return next;
-  }, { replace: true });
-
-  return (
-    <>
-      <div className="page-head">
-        <div>
-          <h1>Administration</h1>
-          <p>Configuration is data, not code — products, journeys, rules and SLAs are all editable here.</p>
-        </div>
-      </div>
-      <Tabs tabs={tabs} active={tab} onChange={setTab} />
-
-      {tab === 'users' && <Users />}
-      {tab === 'roles' && <RolesSetup />}
-      {tab === 'navigation' && <TabVisibility />}
-      {tab === 'masking' && <FieldMasking />}
-      {tab === 'objects' && <ObjectManager />}
-      {tab === 'products' && <Products />}
-      {tab === 'journeys' && <Journeys />}
-      {tab === 'rules' && <Rules />}
-      {tab === 'outcomes' && <Dispositions />}
-      {tab === 'targets' && <KraSetup />}
-      {tab === 'sla' && <Sla />}
-      {tab === 'calendars' && <Calendars />}
-      {tab === 'templates' && <Templates />}
-      {tab === 'content' && <Content />}
-      {tab === 'campaigns' && <Campaigns />}
-      {tab === 'telephony' && <Telephony />}
-      {tab === 'integrations' && <Integrations />}
-      {tab === 'meta' && <MetaConnector />}
-      {tab === 'residency' && <Residency session={session} />}
-      {tab === 'logs' && <Logs />}
-      {tab === 'database' && <Database />}
-      {tab === 'audit' && <Audit />}
-    </>
-  );
-}
+/*
+ * This file is now a module of Setup screens, not a screen of its own.
+ *
+ * It used to export an `Admin` component that owned a 22-item tab strip and
+ * rendered every settings screen inside it. Setup replaced that with its own
+ * shell, a sidebar and a route per screen, so the tab strip had no callers —
+ * and it still referenced <Users /> and <Products /> after those moved to their
+ * own files, which a bundler will not catch because an undeclared identifier in
+ * JSX is only an error when it renders. Dead code that cannot run is harmless
+ * right up until somebody imports it.
+ *
+ * What remains is the screens that still live here, each exported and mounted
+ * by `setup/registry.js`. Moving them out one at a time is safe; moving them
+ * all at once, to no benefit, is not.
+ */
 
 /* ---------------------------------------------------------------- users */
-
-export function Users() {
-  const [users, { loading, error, reload }] = useApi('/admin/users');
-  const [creating, setCreating] = useState(false);
-  const [link, setLink] = useState(null);
-  const [problem, setProblem] = useState(null);
-  if (loading) return <Loading />;
-  if (error) return <ErrorBanner error={error} />;
-
-  return (
-    <section className="card">
-      <ErrorBanner error={problem} onDismiss={() => setProblem(null)} />
-      {link && <ResetLink issued={link} onClose={() => setLink(null)} />}
-      <div className="card-head"><h2>{users.length} users</h2><button className="btn-sm btn-primary" onClick={() => setCreating(true)}>Create user</button></div>
-      <table>
-        <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Product</th><th>Manager</th><th className="num">Leads</th><th /></tr></thead>
-        <tbody>
-          {users.map((u) => (
-            <tr key={u.id}>
-              <td style={{ fontWeight: 545 }}>{u.name}</td>
-              <td className="small muted">{u.email}</td>
-              <td><span className="badge badge-blue">{ROLE_LABEL[u.role] || u.role}</span></td>
-              <td className="small">{u.product_name || '—'}</td>
-              <td className="small muted">{u.manager_name || '—'}</td>
-              <td className="num">{u.lead_count}</td>
-              <td className="num">
-                <UserActions user={u} reload={reload} onLink={setLink} onError={setProblem} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {creating && <NewUser onClose={() => setCreating(false)} onCreated={() => { setCreating(false); reload(); }} />}
-    </section>
-  );
-}
 
 /**
  * What an administrator can do to a user record (P2-04).
@@ -136,7 +38,7 @@ export function Users() {
  * things: these are the three that come up, and burying the dangerous one in a
  * list is how it gets clicked by accident.
  */
-function UserActions({ user, reload, onLink, onError }) {
+export function UserActions({ user, reload, onLink, onError }) {
   const [busy, setBusy] = useState(null);
 
   const ghost = async () => {
@@ -191,7 +93,7 @@ function UserActions({ user, reload, onLink, onError }) {
  * fails to send is worse than one the administrator can see they are holding —
  * they know whether they delivered it.
  */
-function ResetLink({ issued, onClose }) {
+export function ResetLink({ issued, onClose }) {
   const [copied, setCopied] = useState(false);
   return (
     <Modal title="Password reset link" subtitle={`${issued.user.name} · ${issued.user.email}`} onClose={onClose}>
@@ -219,7 +121,7 @@ function ResetLink({ issued, onClose }) {
   );
 }
 
-function NewUser({ onClose, onCreated }) {
+export function NewUser({ onClose, onCreated }) {
   const [meta] = useApi('/meta');
   const [form, setForm] = useState({ name: '', email: '', role: 'sales_rm', product_type_id: '', password: 'bonanza' });
   const [busy, setBusy] = useState(false);
@@ -271,76 +173,7 @@ function NewUser({ onClose, onCreated }) {
  *
  * Exported so RolesSetup can render it beneath the editable list.
  */
-export function Roles() {
-  const [data, { loading }] = useApi('/admin/roles');
-  if (loading || !data) return <Loading />;
-
-  const permissions = Object.keys(data.matrix).sort();
-  return (
-    <section className="card" style={{ overflowX: 'auto' }}>
-      <div className="card-head">
-        <h2>Permission matrix</h2>
-        <span className="tiny muted">Every role at once — enforced at the API, not hidden in the UI</span>
-      </div>
-      <table style={{ minWidth: 900 }}>
-        <thead>
-          <tr>
-            <th>Permission</th>
-            {data.roles.map((r) => <th key={r.code} className="num" style={{ writingMode: 'vertical-rl', height: 110 }}>{r.label}</th>)}
-          </tr>
-        </thead>
-        <tbody>
-          {permissions.map((p) => (
-            <tr key={p}>
-              <td className="small" style={{ fontWeight: 545 }}>{p}</td>
-              {data.roles.map((r) => (
-                <td key={r.code} className="num" style={{ color: data.matrix[p].includes(r.code) ? 'var(--green)' : 'var(--border)' }}>
-                  {data.matrix[p].includes(r.code) ? '●' : '·'}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </section>
-  );
-}
-
 /* ------------------------------------------------------------- products */
-
-export function Products() {
-  const [products, { loading, reload }] = useApi('/admin/products');
-  if (loading) return <Loading />;
-
-  return (
-    <section className="card">
-      <div className="card-head"><h2>{products.length} product types</h2><span className="tiny muted">Each generates a permanent card on every lead</span></div>
-      <table>
-        <thead><tr><th>Product</th><th>Category</th><th className="num">Minimum</th><th>Lock-in</th><th>Risk</th><th>KYC</th><th /></tr></thead>
-        <tbody>
-          {products.map((p) => (
-            <tr key={p.id}>
-              <td>
-                <div style={{ fontWeight: 570 }}>{p.name}</div>
-                <div className="tiny muted">{p.code}</div>
-              </td>
-              <td className="small">{p.category}</td>
-              <td className="num small">{p.min_investment ? rupees(p.min_investment) : '—'}</td>
-              <td className="small muted">{p.lock_in || '—'}</td>
-              <td className="small">{p.risk_category || '—'}</td>
-              <td>{p.requires_kyc ? <span className="badge badge-blue">Required</span> : <span className="badge">Not required</span>}</td>
-              <td className="num">
-                <button className="btn-sm" onClick={async () => { await api.patch(`/admin/products/${p.id}`, { active: p.active ? 0 : 1 }); reload(); }}>
-                  {p.active ? 'Disable' : 'Enable'}
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </section>
-  );
-}
 
 /* ------------------------------------------------------- KYC composer */
 

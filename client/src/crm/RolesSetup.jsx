@@ -26,7 +26,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Modal, Spinner, Empty } from '../components/ui.jsx';
-import { Roles as PermissionMatrix } from './Admin.jsx';
+import PermissionMatrix from './PermissionMatrix.jsx';
 
 const SCOPES = [
   { value: 'own', label: 'Own records', hint: 'Only what they own' },
@@ -113,7 +113,7 @@ export default function RolesSetup() {
       {/* The whole grid, underneath. Editing is one role at a time; "who can
           do X" is every role at once, and an auditor only ever asks the
           second. */}
-      <PermissionMatrix />
+      <PermissionMatrix caps={caps} />
 
       {selected && (
         <RoleEditor

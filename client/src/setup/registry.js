@@ -32,6 +32,8 @@ const KraSetup = lazy(() => import('../crm/KraSetup.jsx'));
 const FieldMasking = lazy(() => import('../crm/FieldMasking.jsx'));
 const ObjectManager = lazy(() => import('../crm/ObjectManager.jsx'));
 const RolesSetup = lazy(() => import('../crm/RolesSetup.jsx'));
+const UsersSetup = lazy(() => import('../crm/UsersSetup.jsx'));
+const ProductsSetup = lazy(() => import('../crm/ProductsSetup.jsx'));
 const Telephony = lazy(() => import('../crm/Telephony.jsx'));
 const Logs = lazy(() => import('../crm/Logs.jsx'));
 const Database = lazy(() => import('../crm/Database.jsx'));
@@ -70,7 +72,7 @@ export const SECTIONS = [
     needs: ['admin.users'],
     blurb: 'Who can sign in, what they are, and who they report to',
     keywords: ['user', 'staff', 'employee', 'agent', 'rm', 'joiner', 'leaver', 'deactivate', 'password', 'reset', 'manager', 'reporting line', 'ghost', 'impersonate'],
-    Component: from('Users'),
+    Component: UsersSetup,
   },
   {
     key: 'roles',
@@ -131,7 +133,7 @@ export const SECTIONS = [
     needs: ['admin.products'],
     blurb: 'What the firm sells, and the stages each product moves through',
     keywords: ['product', 'demat', 'mutual fund', 'pms', 'insurance', 'card', 'offering', 'stage'],
-    Component: from('Products'),
+    Component: ProductsSetup,
   },
 
   /* ----------------------------------------------------------- automation */
