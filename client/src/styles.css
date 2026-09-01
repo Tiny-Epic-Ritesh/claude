@@ -2141,6 +2141,12 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
 }
 .field-table tr:last-child td { border-bottom: none; }
 .field-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+/* The 760px floor above is sized for the six-column object table. A small
+   table inside a modal inherits it, overflows, and silently clips its last
+   column — which is how a confirmation lost the record count that was the
+   whole reason for asking. Qualified, not modifying the base rule, so the
+   big table is untouched whatever the source order. */
+.field-table.compact { min-width: 0; }
 
 .field-name { display: flex; align-items: center; gap: 7px; }
 .field-name .req { color: var(--danger); font-weight: 700; }

@@ -20,6 +20,7 @@
 import { useState } from 'react';
 import { api } from '../api.js';
 import ValidationRules from './ValidationRules.jsx';
+import PicklistValues from './PicklistValues.jsx';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner } from '../components/ui.jsx';
 
 const TYPE_GROUPS = [
@@ -84,6 +85,7 @@ function ObjectDetail({ entity, onBack }) {
   const [usage] = useApi(`/setup/field-usage/${entity}`);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [values, setValues] = useState(null);
 
   /* Layout order.
    *
@@ -241,7 +243,17 @@ function ObjectDetail({ entity, onBack }) {
                       </button>
                     </span>
                   ) : (
-                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(f)}>Edit</button>
+                    <span className="row" style={{ gap: 4 }}>
+                      {/* Values sit beside the field rather than inside Edit:
+                          changing what Stage offers is a different act from
+                          renaming it, and the one people come here to do. */}
+                      {(f.type === 'picklist' || f.type === 'multipicklist') && (
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setValues(f)}>
+                          Values
+                        </button>
+                      )}
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(f)}>Edit</button>
+                    </span>
                   )}
                 </td>
               </tr>
@@ -262,6 +274,14 @@ function ObjectDetail({ entity, onBack }) {
           types={data.types}
           onClose={() => setAdding(false)}
           onSaved={() => { setAdding(false); reload(); }}
+        />
+      )}
+      {values && (
+        <PicklistValues
+          entity={entity}
+          field={values}
+          onClose={() => setValues(null)}
+          onSaved={() => { setValues(null); reload(); }}
         />
       )}
       {editing && (

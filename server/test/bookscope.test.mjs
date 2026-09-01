@@ -121,6 +121,9 @@ const NOT_A_RECORD = {
   '/api/libraries/:id': 'A content library, not a client record. Readability is decided by owner_role and shared_with, and by sales_org where the library names one — asserted in library.test.mjs.',
   '/api/dashboards/:id': 'A dashboard definition. The panels inside it are scoped to whoever opens it, never to whoever built it.',
   '/api/setup/field-usage/:entity': 'Usage counts per field. Aggregate over configuration.',
+  '/api/setup/objects/:entity/fields/:apiName/value-usage':
+    'Record counts per picklist value. Both parameters are configuration api_names, not record ids. '
+    + 'The counts themselves ARE scoped to the administrator\'s books inside valueUsage().',
   '/api/setup/history/:entity/:id': 'Field-change history; the underlying record is scoped where it is read.',
   '/api/setup/users/:id/access': 'A user, not a client record. Guarded by mayUseOrg on the user row.',
   '/api/setup/users/:id/tabs': 'As above.',

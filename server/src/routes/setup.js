@@ -44,7 +44,7 @@ import {
 } from '../engine/apikeys.js';
 import { explainVisibility } from '../engine/sharing.js';
 import {
-  entities, entityDef, fieldsOf, fieldDef, picklistValues, historyFor,
+  entities, entityDef, fieldsOf, fieldDef, picklistValues, valueUsage, historyFor,
   stageDurations, auditConfig, typeOf, FIELD_TYPES,
 } from '../engine/metadata.js';
 import {
@@ -1268,6 +1268,19 @@ router.get('/objects/:entity/derivable', requirePermission('admin.objects'), (re
   res.json(catalogue(req.params.entity));
 });
 
+/**
+ * How many live records hold each value of a picklist.
+ *
+ * Asked before the edit, not after. Retiring a value leaves the string on every
+ * record that already had it, so those records go on showing something the
+ * picker no longer offers — and nothing said how many there were.
+ */
+router.get('/objects/:entity/fields/:apiName/value-usage', requirePermission('admin.objects'), (req, res) => {
+  const rows = valueUsage(req.params.entity, req.params.apiName, orgsFor(req.user));
+  if (!rows) return res.status(404).json({ error: 'No such picklist' });
+  return res.json({ values: rows });
+});
+
 /** Picklist values, including the cascade. */
 router.put('/objects/:entity/fields/:apiName/values', requirePermission('admin.objects'), (req, res) => {
   const field = fieldDef(req.params.entity, req.params.apiName);
@@ -1278,6 +1291,38 @@ router.put('/objects/:entity/fields/:apiName/values', requirePermission('admin.o
 
   const before = picklistValues(field.id);
   const values = Array.isArray(req.body?.values) ? req.body.values : [];
+
+  if (!values.length) {
+    return res.status(400).json({
+      error: `${field.label} would have nothing to choose from`,
+      fix: 'A picklist with no values promises a controlled vocabulary and delivers an empty dropdown. Deactivate the field instead.',
+    });
+  }
+
+  /* A default is a decision, and two of them is not one. Left unchecked the
+     picker takes whichever sorts first, which is nobody's choice. */
+  if (values.filter((v) => v.is_default).length > 1) {
+    return res.status(400).json({ error: 'Only one value can be the default', field: 'is_default' });
+  }
+
+  /* Retiring a value that records already hold is allowed — it is often exactly
+     what an administrator means — but it must be deliberate. Without this the
+     stored string stays on every one of those records, silently showing a value
+     the picker no longer offers, and nothing anywhere said how many. */
+  const keeping = new Set(values.map((v) => String(v.value ?? v.label)));
+  const inUse = (valueUsage(req.params.entity, req.params.apiName, orgsFor(req.user)) ?? [])
+    .filter((v) => v.defined && v.active && v.records > 0 && !keeping.has(String(v.value)));
+
+  if (inUse.length && !req.body?.retire_in_use) {
+    return res.status(409).json({
+      error: inUse.length === 1
+        ? `"${inUse[0].label}" is on ${inUse[0].records.toLocaleString('en-IN')} record(s)`
+        : `${inUse.length} values you are removing are still on records`,
+      in_use: inUse.map((v) => ({ value: v.value, label: v.label, records: v.records })),
+      fix: 'Those records keep the value and stop matching the picker. Confirm to retire them anyway, or leave the value in the list.',
+      confirm_with: 'retire_in_use',
+    });
+  }
 
   transact(() => {
     // Deactivate rather than delete: a value in use on live records must not

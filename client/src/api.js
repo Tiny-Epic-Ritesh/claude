@@ -48,6 +48,7 @@ export const api = {
   get: (p, kind) => request(`/api${p}`, { kind }),
   post: (p, body, kind) => request(`/api${p}`, { method: 'POST', body, kind }),
   patch: (p, body, kind) => request(`/api${p}`, { method: 'PATCH', body, kind }),
+  put: (p, body, kind) => request(`/api${p}`, { method: 'PUT', body, kind }),
   del: (p, kind) => request(`/api${p}`, { method: 'DELETE', kind }),
 };
 

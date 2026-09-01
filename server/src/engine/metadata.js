@@ -668,6 +668,90 @@ export function picklistValues(fieldId, controllingValue = null) {
     || String(v.controlling_value).toLowerCase() === String(controllingValue).toLowerCase());
 }
 
+/**
+ * How many live records hold each value of a picklist, including values no
+ * longer offered.
+ *
+ * Retiring a picklist value is the most common configuration change there is
+ * and the one with the least visible consequence. The stored string stays on
+ * every record that already had it, so those records go on displaying a value
+ * that is not in the list any more — reports group by it, filters do not offer
+ * it, and nothing anywhere says how many are affected.
+ *
+ * So the editor is given the counts before the change rather than after. An
+ * administrator retiring "Qualified" should be told it is on 12,481 leads
+ * while they can still change their mind.
+ *
+ * Values present on records but absent from the list come back too, with
+ * `defined: false`. That is the wreckage of exactly this edit being made
+ * without the counts, and it is worth being able to see.
+ */
+export function valueUsage(entity, apiName, orgs = null) {
+  const def = one('SELECT table_name FROM entity_def WHERE api_name = ?', [entity]);
+  const field = fieldDef(entity, apiName);
+  if (!def?.table_name || !field) return null;
+
+  const defined = all(
+    'SELECT value, label, active FROM picklist_value WHERE field_id = ? ORDER BY sort_order, label',
+    [field.id],
+  );
+
+  /* Identifiers come from our own registry and are checked against the shape a
+     column may have. Neither ever comes from the request — the same rule the
+     field-usage report follows. */
+  if (!/^[a-z_][a-z0-9_]*$/i.test(apiName) || !/^[a-z_][a-z0-9_]*$/i.test(def.table_name)) return null;
+
+  const counts = new Map();
+  if (field.storage === 'column') {
+    const cols = new Set(all(`PRAGMA table_info(${def.table_name})`).map((c) => c.name));
+    if (!cols.has(apiName)) return null;
+
+    const where = [];
+    const params = [];
+    // Soft-deleted records are not live, and counting them would overstate the
+    // consequence of a change nobody can see on screen anyway.
+    if (cols.has('deleted_at')) where.push('deleted_at IS NULL');
+    /* Counted within the administrator's own books. A Bigul admin deciding
+       whether to retire a stage should be told how many Bigul leads hold it,
+       not a number that silently includes Bonanza's — the same boundary as
+       every other count, reached here through a configuration screen. */
+    if (orgs && cols.has('sales_org')) {
+      where.push(`sales_org IN (${orgs.map(() => '?').join(',') || "''"})`);
+      params.push(...orgs);
+    }
+    const clause = where.length ? ` WHERE ${where.join(' AND ')}` : '';
+
+    for (const r of all(
+      `SELECT ${apiName} AS v, COUNT(*) AS n FROM ${def.table_name}${clause} GROUP BY ${apiName}`,
+      params,
+    )) {
+      if (r.v != null && r.v !== '') counts.set(String(r.v), r.n);
+    }
+  } else {
+    for (const r of all(
+      'SELECT text_value AS v, COUNT(*) AS n FROM field_value WHERE field_id = ? GROUP BY text_value',
+      [field.id],
+    )) {
+      if (r.v != null && r.v !== '') counts.set(String(r.v), r.n);
+    }
+  }
+
+  const rows = defined.map((v) => ({
+    value: v.value,
+    label: v.label,
+    active: v.active === 1,
+    defined: true,
+    records: counts.get(String(v.value)) ?? 0,
+  }));
+
+  const known = new Set(defined.map((v) => String(v.value)));
+  for (const [value, records] of counts) {
+    if (!known.has(value)) rows.push({ value, label: value, active: false, defined: false, records });
+  }
+
+  return rows;
+}
+
 /* ----------------------------------------------- field-level security */
 
 /**
