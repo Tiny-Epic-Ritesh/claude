@@ -26,6 +26,7 @@ import * as meta from '../vendors/meta.js';
 import { applyScore } from '../engine/rules.js';
 import { assignLead } from '../engine/assignment.js';
 import { kycStatusSql, kycStatusFor } from '../engine/kycstatus.js';
+import { resolveLead } from '../engine/callmatch.js';
 
 const router = Router();
 
@@ -43,21 +44,17 @@ const guard = (vendor, verify) => (req, res, next) => {
 const seen = (externalId) =>
   Boolean(externalId && one('SELECT id FROM activities WHERE external_id = ?', [externalId]));
 
-/** Find the lead a vendor event belongs to. */
-const findLead = ({ leadId, mobile }) => {
-  if (leadId) {
-    const byId = one('SELECT * FROM leads WHERE id = ? AND deleted_at IS NULL', [leadId]);
-    if (byId) return byId;
-  }
-  if (mobile) {
-    // Match on the last 10 digits: vendors are inconsistent about the 91 prefix.
-    return one(
-      "SELECT * FROM leads WHERE deleted_at IS NULL AND replace(replace(mobile,' ',''),'-','') LIKE ? ORDER BY id DESC LIMIT 1",
-      [`%${String(mobile).slice(-10)}`],
-    );
-  }
-  return null;
-};
+/**
+ * Find the lead a vendor event belongs to.
+ *
+ * Was `ORDER BY id DESC LIMIT 1` on the phone number, which silently picked
+ * whichever matching lead was created last — so a family sharing one handset
+ * got a confident, wrong entry on somebody's timeline. `resolveLead` refuses to
+ * choose instead, and the callers below record the call against nobody with the
+ * candidates named.
+ */
+const findLead = ({ leadId, mobile, callId = null }) =>
+  resolveLead({ leadId, mobile, callId }).lead;
 
 /* ------------------------------------------------------ QuickCall (CTI) */
 
@@ -75,14 +72,26 @@ router.post('/quickcall/call', guard('quickcall', quickcall.verifyWebhook), (req
     return res.json({ ok: true, duplicate: true, call_id: event.call_id });
   }
 
-  const lead = findLead({ leadId: event.lead_id, mobile: event.mobile });
+  const resolved = resolveLead({ leadId: event.lead_id, mobile: event.mobile, callId: event.call_id });
+  const lead = resolved.lead;
   if (!lead) {
-    // Record it rather than dropping it: an unmatched call is a real call, and
-    // usually means an inbound from someone not yet in the CRM.
-    audit(null, 'call_unmatched', 'integration', null, {
+    /* Record it rather than dropping it: an unmatched call is a real call, and
+       usually means an inbound from someone not yet in the CRM.
+
+       `ambiguous` is the other case, and it is deliberate — several leads share
+       this handset and nothing in the event says which of them was on it. A
+       call attributed to the wrong family member is worse than a call
+       attributed to nobody, so the candidates are recorded and a human places
+       it. */
+    audit(null, resolved.match === 'ambiguous' ? 'call_ambiguous' : 'call_unmatched', 'integration', null, {
       call_id: event.call_id, direction: event.direction, status: event.status,
+      candidates: resolved.candidates.map((c) => c.id),
     });
-    return res.json({ ok: true, matched: false, call_id: event.call_id });
+    return res.json({
+      ok: true, matched: false, call_id: event.call_id,
+      ambiguous: resolved.match === 'ambiguous',
+      candidates: resolved.candidates,
+    });
   }
 
   const agent = event.agent_id
@@ -124,7 +133,21 @@ router.post('/quickcall/call', guard('quickcall', quickcall.verifyWebhook), (req
  */
 router.get('/quickcall/screenpop', guard('quickcall', quickcall.verifyWebhook), (req, res) => {
   const mobile = quickcall.normaliseMsisdn(req.query.number || req.query.DialNumber);
-  const lead = findLead({ mobile });
+  const resolved = resolveLead({ mobile });
+  const lead = resolved.lead;
+
+  /* Several people share this handset. Popping one of their files would put
+     the wrong person's name in front of an agent who is about to say it out
+     loud, so the pop offers the choice instead — the one place where guessing
+     is not just wrong in the data but wrong in the room. */
+  if (resolved.match === 'ambiguous') {
+    return res.json({
+      found: false,
+      ambiguous: true,
+      candidates: resolved.candidates.map((c) => ({ id: c.id, name: c.name })),
+      url: `/leads?mobile=${encodeURIComponent(mobile)}`,
+    });
+  }
 
   if (!lead) {
     return res.json({

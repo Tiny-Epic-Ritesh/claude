@@ -25,6 +25,7 @@ import * as quickcall from './vendors/quickcall.js';
 import * as aisensy from './vendors/aisensy.js';
 import * as bonanzakyc from './vendors/bonanzakyc.js';
 import { vendorStatus, FORCE_SIMULATION } from './vendors/config.js';
+import { recordIntent } from './engine/callmatch.js';
 
 export { vendorStatus };
 export { bonanzakyc, quickcall, aisensy };
@@ -241,6 +242,11 @@ export async function click2call({ userId, leadId, mobile, campaign = null, prod
     record('telephony', { to: mobile, body: 'Click2Call placed' }, {
       simulated: res.simulated, call_id: res.call_id, lead_id: leadId, user_id: userId, status: res.status,
     });
+
+    /* Who we rang, so the result can be matched back to them exactly. CUBE's
+       call log does not return ClientId, and the phone number alone cannot
+       separate a family sharing one handset. */
+    recordIntent({ mobile, leadId, userId, callId: res.call_id });
     return {
       ...res,
       agent_mapped: Boolean(agent?.cti_agent_id),

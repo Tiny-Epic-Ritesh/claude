@@ -781,6 +781,31 @@ CREATE INDEX IF NOT EXISTS idx_panel_dashboard ON dashboard_panel (dashboard_id,
  * and four years later the library is full of documents nobody has checked.
  * A default means the question is answered by omission rather than skipped.
  */
+/*
+ * Who we dialled, so an inbound result can be matched back to a person.
+ *
+ * CUBE's AuthCallLog does not return ClientId, though both dialling endpoints
+ * accept it, so the only join from a call record back to a lead is the phone
+ * number -- which is ambiguous for family accounts sharing one mobile, common
+ * in Indian broking. Recording the intent at dial time makes an outbound call
+ * exact instead of inferred: we know who we rang because we rang them.
+ *
+ * It does nothing for genuinely inbound calls. Those stay ambiguous when a
+ * number matches several leads, and are reported as ambiguous rather than
+ * attributed to whichever record happens to sort first.
+ */
+CREATE TABLE IF NOT EXISTS call_intent (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  -- Last 10 digits only: vendors are inconsistent about the 91 prefix.
+  msisdn10    TEXT NOT NULL,
+  lead_id     INTEGER REFERENCES leads(id) ON DELETE CASCADE,
+  user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  call_id     TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_call_intent_lookup ON call_intent (msisdn10, created_at);
+CREATE INDEX IF NOT EXISTS idx_call_intent_callid ON call_intent (call_id);
+
 CREATE TABLE IF NOT EXISTS content_library (
   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
   name                TEXT NOT NULL,
