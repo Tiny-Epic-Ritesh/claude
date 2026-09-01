@@ -264,6 +264,7 @@ soon
 source
 space_dashboard
 stack
+stacked_bar_chart
 stage
 sticky_note_2
 subject

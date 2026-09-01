@@ -20,10 +20,12 @@
  */
 
 import { useState } from 'react';
-import { BarChart, Donut, LineChart, Treemap } from './charts.jsx';
+import { BarChart, Donut, LineChart, Treemap, MultiBar, seriesShade } from './charts.jsx';
 import { Icon } from './ui.jsx';
 
 const ICON = {
+  grouped: 'stacked_bar_chart',
+  stacked: 'stacked_bar_chart',
   bar: 'bar_chart',
   line: 'show_chart',
   area: 'area_chart',
@@ -34,6 +36,7 @@ const ICON = {
 
 const LABEL = {
   bar: 'Bar', line: 'Line', area: 'Area', donut: 'Donut', pie: 'Pie', treemap: 'Treemap',
+  grouped: 'Grouped', stacked: 'Stacked',
 };
 
 /**
@@ -44,7 +47,11 @@ const LABEL = {
  * round-trip to ask permission for a redraw would make the switcher feel broken
  * on a slow connection.
  */
-export function applicableKinds({ grain, groupBy, measureFn = 'count', points = 0 }) {
+export function applicableKinds({ grain, groupBy, splitBy, measureFn = 'count', points = 0 }) {
+  /* Split into series: the only question left is whether the reader is
+     comparing one series with another (grouped) or comparing wholes
+     (stacked). */
+  if (splitBy) return grain ? ['stacked', 'grouped'] : ['grouped', 'stacked'];
   if (grain) return ['line', 'area', 'bar'];
   if (!groupBy) return [];
   const partToWhole = measureFn === 'count';
@@ -55,38 +62,15 @@ export function applicableKinds({ grain, groupBy, measureFn = 'count', points = 
 }
 
 
-/**
- * The theme's accent at a given alpha, as a value an SVG attribute accepts.
- *
- * Reads the live custom property so it follows light and dark, and falls back
- * to the shipped green if the variable cannot be read — a chart with a
- * hard-coded colour is better than one with none.
- */
-function accentAlpha(alpha) {
-  let raw = '';
-  try { raw = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(); } catch { /* no DOM */ }
-
-  const hex = raw.match(/^#([0-9a-f]{6})$/i);
-  if (hex) {
-    const n = parseInt(hex[1], 16);
-    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
-  }
-  const rgb = raw.match(/rgba?\(([^)]+)\)/i);
-  if (rgb) {
-    const [r, g, b] = rgb[1].split(',').map((v) => parseFloat(v));
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-  return `rgba(82, 170, 110, ${alpha})`;
-}
-
 export default function ChartPanel({
-  data = [], kind = 'bar', grain = null, groupBy = null, measureFn = 'count',
+  data = [], kind = 'bar', grain = null, groupBy = null, splitBy = null,
+  series = null, folded = 0, measureFn = 'count',
   format = (v) => v, onPick, onKindChange, height = 170,
 }) {
   const [local, setLocal] = useState(kind);
   const shown = onKindChange ? kind : local;
 
-  const kinds = applicableKinds({ grain, groupBy, measureFn, points: data.length });
+  const kinds = applicableKinds({ grain, groupBy, splitBy, measureFn, points: data.length });
 
   const pick = (k) => {
     if (onKindChange) onKindChange(k);
@@ -105,10 +89,18 @@ export default function ChartPanel({
      product's single-hue look while making eight arcs tellable apart. */
   const shaded = data.map((d, i) => ({
     ...d,
-    colour: accentAlpha(Math.max(0.28, 1 - i * 0.11)),
+    colour: seriesShade(i),
   }));
 
   const body = () => {
+    if (splitBy) {
+      return (
+        <MultiBar
+          data={data} series={series ?? []} stacked={shown === 'stacked'}
+          height={height} format={format} folded={folded}
+        />
+      );
+    }
     switch (shown) {
       case 'line': return <LineChart data={data} height={height} format={format} />;
       case 'area': return <LineChart data={data} height={height} filled format={format} />;

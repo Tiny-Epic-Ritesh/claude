@@ -1,6 +1,6 @@
 # The exact names the bundled font was generated from, and the font it produced.
 # Regenerate both together — see the instructions at the top of icon-subset.txt.
-# font-sha256 4490d2fa69dbb33b21162d4f02eed0807ad7eb05e55b39ebbf00db7eea5b9845
+# font-sha256 f7c2da0943f25de11ca0be36181ace63e7c5a45d9cd539a28dddaaa70d165c98
 account_balance
 account_balance_wallet
 account_tree
@@ -234,6 +234,7 @@ soon
 source
 space_dashboard
 stack
+stacked_bar_chart
 stage
 sticky_note_2
 subject

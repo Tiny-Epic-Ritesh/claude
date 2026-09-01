@@ -196,25 +196,40 @@ function DashboardView({ id, onBack, onError }) {
   );
 }
 
+/*
+ * `.card` carries no padding of its own — `.card-head` pads itself, so anything
+ * below it has to as well. Wrapped once here rather than per branch, because
+ * the branch that gets forgotten is the one nobody looks at: a legend and a
+ * footnote sat flush against the card edge until a screenshot caught it.
+ */
 function PanelBody({ panel, onKindChange }) {
   if (panel.kind === 'error') {
-    return <div className="tiny warn-text">{panel.error}</div>;
+    return <div className="panel-body tiny warn-text">{panel.error}</div>;
   }
   if (panel.kind === 'tile') {
-    return <div className="stat-value" style={{ fontSize: '2rem' }}>{Number(panel.value).toLocaleString('en-IN')}</div>;
+    return (
+      <div className="panel-body">
+        <div className="stat-value" style={{ fontSize: '2rem' }}>{Number(panel.value).toLocaleString('en-IN')}</div>
+      </div>
+    );
   }
-  if (!panel.data?.length) return <Empty>Nothing in this window.</Empty>;
+  if (!panel.data?.length) return <div className="panel-body"><Empty>Nothing in this window.</Empty></div>;
 
   return (
+    <div className="panel-body">
     <ChartPanel
       data={panel.data}
       kind={panel.kind}
       grain={panel.grain ?? panel.definition?.grain ?? null}
       groupBy={panel.definition?.group_by ?? null}
+      splitBy={panel.split_by ?? panel.definition?.split_by ?? null}
+      series={panel.series ?? null}
+      folded={panel.folded ?? 0}
       measureFn={panel.definition?.measure?.fn ?? 'count'}
       format={(v) => Number(v).toLocaleString('en-IN')}
       onKindChange={onKindChange}
     />
+    </div>
   );
 }
 

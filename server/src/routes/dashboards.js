@@ -102,6 +102,7 @@ router.get('/:id', (req, res) => {
       filters: parse(p.filters),
       use_range: Boolean(p.use_range),
       grain: p.grain ?? null,
+      split_by: p.split_by ?? null,
       limit: p.point_limit,
     };
     try {
@@ -201,11 +202,11 @@ router.post('/:id/panels', (req, res) => {
 
   const p = req.body;
   const result = run(
-    `INSERT INTO dashboard_panel (dashboard_id, title, source, kind, measure, group_by, grain, filters, use_range, point_limit, sort_order)
-     VALUES (?,?,?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(sort_order),-1)+1 FROM dashboard_panel WHERE dashboard_id = ?))`,
+    `INSERT INTO dashboard_panel (dashboard_id, title, source, kind, measure, group_by, grain, split_by, filters, use_range, point_limit, sort_order)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(sort_order),-1)+1 FROM dashboard_panel WHERE dashboard_id = ?))`,
     [
       dash.id, String(p.title).trim(), p.source, p.kind ?? (p.group_by ? 'bar' : 'tile'),
-      JSON.stringify(p.measure ?? { fn: 'count' }), p.group_by || null, p.grain || null,
+      JSON.stringify(p.measure ?? { fn: 'count' }), p.group_by || null, p.grain || null, p.split_by || null,
       p.filters ? JSON.stringify(p.filters) : null,
       p.use_range === false ? 0 : 1, Math.min(Number(p.limit) || 8, 20), dash.id,
     ],
@@ -234,6 +235,7 @@ router.patch('/:id/panels/:panelId', (req, res) => {
   const allowed = kindsFor({
     grain: panel.grain,
     group_by: panel.group_by,
+    split_by: panel.split_by,
     measure: parse(panel.measure, { fn: 'count' }),
   });
   if (!allowed.includes(kind)) {

@@ -910,6 +910,7 @@ const COLUMNS = [
   ['content_items', 'approved_at', 'TEXT'],
   ['content_items', 'rejected_reason', 'TEXT'], // why it was sent back
   ['dashboard_panel', 'grain', 'TEXT'],        // group by time instead of a field
+  ['dashboard_panel', 'split_by', 'TEXT'],     // a second dimension, drawn as series
   ['sessions', 'ghost_of', 'INTEGER'],         // the admin behind a ghost session
   ['request_log', 'ghost_of', 'INTEGER'],      // and who they were really
   ['request_log', 'api_credential_id', 'INTEGER'],  // which API key made the call, if any

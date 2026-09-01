@@ -39,6 +39,17 @@ import { OPERATORS } from './validation.js';
 export const MAX_GROUPS = 20;
 
 /**
+ * How many series a split may produce.
+ *
+ * Six is where a grouped bar chart stops being readable — beyond that the bars
+ * are narrower than the gaps and the legend is longer than the chart. Anything
+ * past the sixth is summed into "Other" rather than dropped, so the totals
+ * still add up to what the same panel would show unsplit. Silently losing the
+ * tail would make two views of the same question disagree.
+ */
+export const MAX_SERIES = 6;
+
+/**
  * What a panel can be built from.
  *
  * `scope` is the function that narrows rows to what the viewer may see. Every
@@ -232,12 +243,24 @@ export function validatePanel(panel = {}) {
   if (panel.grain && !GRAINS[panel.grain]) {
     return { error: `"${panel.grain}" is not a time grain`, field: 'grain' };
   }
-  /* Grouping by a field and by time at once needs a second dimension, which is
-     the phase-two "split by" work. Refused rather than silently ignoring one of
-     them, because a panel that quietly drops half its definition is worse than
-     one that will not save. */
+  /* Still refused: two fields on one axis. `split_by` is the second dimension,
+     and it becomes the series rather than a second x-axis. */
   if (panel.grain && panel.group_by) {
     return { error: 'A panel groups by a field or by time, not both', field: 'grain' };
+  }
+
+  if (panel.split_by) {
+    const col = columnOf(panel.source, panel.split_by);
+    if (!col) return { error: `"${panel.split_by}" is not a field of ${src.label}`, field: 'split_by' };
+    if (!col.groupable) {
+      return { error: `${col.label} is free text — splitting by it makes one series per record`, field: 'split_by' };
+    }
+    if (!panel.group_by && !panel.grain) {
+      return { error: 'Splitting needs something to split — group by a field or by time first', field: 'split_by' };
+    }
+    if (panel.split_by === panel.group_by) {
+      return { error: 'Split by something other than what it is already grouped by', field: 'split_by' };
+    }
   }
 
   if (panel.group_by) {
@@ -303,6 +326,10 @@ export function runPanel(req, panel, range = null) {
     return { kind: 'tile', value: Number(row?.v ?? 0) };
   }
 
+  /* Split into series. The x-axis is still whatever the panel groups by — a
+     field or a time bucket — and the split becomes the series drawn across it. */
+  if (panel.split_by) return runSplit(req, panel, range, { src, where, params, value });
+
   /* Grouped by time. Buckets with nothing in them are filled below, because a
      line chart that skips an empty week draws a straight segment across it and
      reads as steady rather than as nothing happening. */
@@ -338,6 +365,80 @@ export function runPanel(req, panel, range = null) {
   return {
     kind: panel.kind ?? 'bar',
     data: rows.map((r) => ({ label: String(r.label), value: Number(r.value) || 0 })),
+  };
+}
+
+/**
+ * A panel with two dimensions: an axis, and a series.
+ *
+ * One query rather than one per series. N+1 queries would be simpler to read
+ * and would run the scope check N times on data that has already been narrowed
+ * once — and on 495,118 leads the difference stops being academic.
+ *
+ * Every axis point carries a value for every series, filled with zero where
+ * there is none. A stacked bar with a hole in it is not a shorter bar, it is a
+ * bar that silently means something different from its neighbours.
+ */
+function runSplit(req, panel, range, { src, where, params, value }) {
+  const axisCol = panel.grain
+    ? `strftime('${GRAINS[panel.grain].fmt}', ${src.alias}.${src.dateColumn})`
+    : `COALESCE(NULLIF(TRIM(${src.alias}.${columnOf(panel.source, panel.group_by).api_name}), ''), 'Not set')`;
+  const seriesCol = `COALESCE(NULLIF(TRIM(${src.alias}.${columnOf(panel.source, panel.split_by).api_name}), ''), 'Not set')`;
+
+  const extra = panel.grain ? ` AND ${src.alias}.${src.dateColumn} IS NOT NULL` : '';
+  const rows = all(
+    `SELECT ${axisCol} AS axis, ${seriesCol} AS series, ${value} AS value
+       FROM ${src.table} ${src.alias}
+      WHERE ${where.join(' AND ')}${extra}
+      GROUP BY axis, series`,
+    params,
+  );
+
+  /* Which series are big enough to draw, by their total across the whole
+     chart — not by their size at the first point, which would let a series
+     that matters everywhere else be dropped because it happens to be empty on
+     the left. */
+  const seriesTotals = new Map();
+  for (const r of rows) {
+    seriesTotals.set(r.series, (seriesTotals.get(r.series) ?? 0) + (Number(r.value) || 0));
+  }
+  const ranked = [...seriesTotals.entries()].sort((a, b) => b[1] - a[1]);
+  const kept = ranked.slice(0, MAX_SERIES).map(([name]) => name);
+  const foldedAway = ranked.length > MAX_SERIES;
+  const series = foldedAway ? [...kept, 'Other'] : kept;
+  const keptSet = new Set(kept);
+
+  // Axis points, in the order the single-dimension version would have used:
+  // time ascending, or biggest first for a category.
+  const axisTotals = new Map();
+  for (const r of rows) {
+    axisTotals.set(r.axis, (axisTotals.get(r.axis) ?? 0) + (Number(r.value) || 0));
+  }
+  let axes = [...axisTotals.keys()];
+  axes = panel.grain
+    ? axes.sort((a, b) => String(a).localeCompare(String(b)))
+    : axes.sort((a, b) => axisTotals.get(b) - axisTotals.get(a));
+  axes = axes.slice(0, Math.min(Number(panel.limit) || 8, MAX_GROUPS));
+
+  const byAxis = new Map(axes.map((a) => [a, Object.fromEntries(series.map((sName) => [sName, 0]))]));
+  for (const r of rows) {
+    const bucket = byAxis.get(r.axis);
+    if (!bucket) continue;
+    const name = keptSet.has(r.series) ? r.series : 'Other';
+    if (!foldedAway && name === 'Other') continue;
+    bucket[name] += Number(r.value) || 0;
+  }
+
+  return {
+    kind: panel.kind ?? 'grouped',
+    grain: panel.grain ?? null,
+    split_by: panel.split_by,
+    series,
+    /* Said out loud rather than left for somebody to notice the totals are
+       short: they are not short, but a reader deserves to know a tail was
+       folded together rather than each named. */
+    folded: foldedAway ? ranked.length - MAX_SERIES : 0,
+    data: axes.map((a) => ({ label: String(a), values: byAxis.get(a) })),
   };
 }
 
@@ -402,6 +503,10 @@ function fillGaps(rows, grainKey, range) {
  * chart of a time series is not a choice, it is a trap.
  */
 export function kindsFor(panel = {}) {
+  /* Split into series: the choice is how to show several series on one axis.
+     A pie of two dimensions is a Marimekko, which is the chart left out of the
+     six on purpose. */
+  if (panel.split_by) return panel.grain ? ['stacked', 'grouped'] : ['grouped', 'stacked'];
   if (panel.grain) return ['line', 'area', 'bar'];
   if (!panel.group_by) return ['tile'];
   // Part-to-whole only makes sense for a count. An average by stage does not
@@ -432,7 +537,10 @@ export const catalogue = () => ({
     { kind: 'donut', label: 'Donut' },
     { kind: 'pie', label: 'Pie chart' },
     { kind: 'treemap', label: 'Treemap' },
+    { kind: 'grouped', label: 'Grouped bars' },
+    { kind: 'stacked', label: 'Stacked bars' },
   ],
+  max_series: MAX_SERIES,
   grains: Object.entries(GRAINS).map(([key, g]) => ({ key, label: g.label })),
   max_groups: MAX_GROUPS,
 });

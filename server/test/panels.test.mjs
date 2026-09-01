@@ -17,7 +17,8 @@
 import { strict as assert } from 'node:assert';
 import { all, one, run } from '../src/db.js';
 import {
-  SOURCES, MEASURES, columnsFor, compileFilters, validatePanel, runPanel, MAX_GROUPS,
+  SOURCES, MEASURES, columnsFor, compileFilters, validatePanel, runPanel, kindsFor,
+  MAX_GROUPS, MAX_SERIES,
 } from '../src/engine/panels.js';
 
 let passed = 0;
@@ -170,6 +171,89 @@ test('every measure produces a finite number', () => {
     };
     const res = runPanel(asReq(userBy('superadmin')), panel, null);
     assert(Number.isFinite(res.value), `measure "${fn}" produced ${res.value}`);
+  }
+});
+
+/* ------------------------------------------------- the second dimension */
+
+test('splitting does not change the totals', () => {
+  /* The property that makes a split trustworthy. If the same question answered
+     two ways disagrees, one of the two is wrong and a reader has no way to
+     tell which — so a stacked column has to come to exactly what the plain bar
+     did. */
+  const req = asReq(userBy('superadmin'));
+  const base = { title: 'x', source: 'lead', measure: { fn: 'count' }, group_by: 'stage' };
+
+  const plain = runPanel(req, { ...base, kind: 'bar' }, null);
+  const split = runPanel(req, { ...base, kind: 'stacked', split_by: 'source' }, null);
+
+  const plainTotals = new Map(plain.data.map((d) => [d.label, d.value]));
+  for (const point of split.data) {
+    const summed = Object.values(point.values).reduce((a, b) => a + b, 0);
+    assert.equal(summed, plainTotals.get(point.label),
+      `"${point.label}" sums to ${summed} split but ${plainTotals.get(point.label)} unsplit`);
+  }
+  assert.equal(split.data.length, plain.data.length, 'the split lost or gained an axis point');
+});
+
+test('the tail is folded into Other rather than dropped', () => {
+  const split = runPanel(asReq(userBy('superadmin')),
+    { title: 'x', source: 'lead', kind: 'grouped', group_by: 'stage', split_by: 'source' }, null);
+
+  assert(split.series.length <= MAX_SERIES + 1, `${split.series.length} series is more than a chart can show`);
+  if (split.folded > 0) {
+    assert(split.series.includes('Other'), 'a tail was folded away with nowhere to put it');
+  }
+});
+
+test('every axis point carries a value for every series', () => {
+  /* A stacked bar with a hole in it is not a shorter bar — it is a bar that
+     silently means something different from its neighbours. */
+  const split = runPanel(asReq(userBy('superadmin')),
+    { title: 'x', source: 'lead', kind: 'stacked', group_by: 'stage', split_by: 'source' }, null);
+
+  for (const point of split.data) {
+    for (const name of split.series) {
+      assert(Number.isFinite(point.values[name]),
+        `"${point.label}" has no value for series "${name}"`);
+    }
+  }
+});
+
+test('a split is scoped like everything else', () => {
+  // A second dimension is a second chance to forget the scope.
+  const sup = runPanel(asReq(userBy('sales_supervisor')),
+    { title: 'x', source: 'lead', kind: 'grouped', group_by: 'stage', split_by: 'source' }, null);
+  const rm = runPanel(asReq(userBy('sales_rm')),
+    { title: 'x', source: 'lead', kind: 'grouped', group_by: 'stage', split_by: 'source' }, null);
+
+  const total = (r) => r.data.reduce((acc, p) => acc + Object.values(p.values).reduce((a, b) => a + b, 0), 0);
+  assert(total(rm) < total(sup), `an RM saw ${total(rm)} and their supervisor ${total(sup)}`);
+});
+
+test('a split over time keeps its buckets in order', () => {
+  const split = runPanel(asReq(userBy('superadmin')),
+    { title: 'x', source: 'lead', kind: 'stacked', grain: 'month', split_by: 'source' }, null);
+  const labels = split.data.map((d) => d.label);
+  assert.deepEqual(labels, [...labels].sort(), 'time buckets came back out of order');
+});
+
+test('a split needs something to split, and something else to split by', () => {
+  assert(validatePanel({ title: 'x', source: 'lead', kind: 'grouped', split_by: 'source' }),
+    'a split with no grouping was accepted');
+  assert(validatePanel({ title: 'x', source: 'lead', kind: 'grouped', group_by: 'stage', split_by: 'stage' }),
+    'a panel split by the field it is already grouped by was accepted');
+  assert(validatePanel({ title: 'x', source: 'lead', kind: 'grouped', group_by: 'stage', split_by: 'nope' }),
+    'a split by an unknown field was accepted');
+  assert.equal(validatePanel({ title: 'x', source: 'lead', kind: 'grouped', group_by: 'stage', split_by: 'source' }), null);
+});
+
+test('a split panel is only offered charts that can draw two dimensions', () => {
+  // A pie of two dimensions is a Marimekko, one of the four left out on purpose.
+  const kinds = kindsFor({ group_by: 'stage', split_by: 'source' });
+  assert.deepEqual([...kinds].sort(), ['grouped', 'stacked']);
+  for (const bad of ['pie', 'donut', 'treemap', 'tile']) {
+    assert(!kinds.includes(bad), `a split panel was offered "${bad}"`);
   }
 });
 

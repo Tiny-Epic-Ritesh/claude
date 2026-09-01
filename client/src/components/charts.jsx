@@ -28,6 +28,46 @@ const money = (n) => {
   return `₹${v}`;
 };
 
+/**
+ * The theme's accent at a given alpha, as a value an SVG attribute accepts.
+ *
+ * Reads the live custom property so it follows light and dark, and falls back
+ * to the shipped green if the variable cannot be read — a chart with a
+ * hard-coded colour is better than one with none.
+ *
+ * `color-mix()` is not an option here: it does not resolve inside an SVG
+ * presentation attribute, and the failure is silent — the attribute is simply
+ * ignored and the shape falls back to black.
+ */
+export function accentAlpha(alpha) {
+  let raw = '';
+  try { raw = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(); } catch { /* no DOM */ }
+
+  const hex = raw.match(/^#([0-9a-f]{6})$/i);
+  if (hex) {
+    const n = parseInt(hex[1], 16);
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+  }
+  const rgb = raw.match(/rgba?\(([^)]+)\)/i);
+  if (rgb) {
+    const [r, g, b] = rgb[1].split(',').map((v) => parseFloat(v));
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  return `rgba(82, 170, 110, ${alpha})`;
+}
+
+/**
+ * The colour of the nth series, wherever series are drawn.
+ *
+ * One definition so a donut slice, a legend swatch and a stacked segment for
+ * the same series cannot drift to different greens. The floor keeps the last
+ * series visible: past roughly a quarter alpha it is indistinguishable from
+ * the card behind it.
+ */
+export function seriesShade(i) {
+  return accentAlpha(Math.max(0.28, 1 - i * 0.11));
+}
+
 /** A rounded-rectangle path, so bars can have square feet and round shoulders. */
 function topRounded(x, y, w, h, r) {
   const rr = Math.min(r, w / 2, h);
@@ -450,6 +490,92 @@ export function Treemap({ data = [], height = 170, format = (v) => v }) {
           </g>
         ))}
       </svg>
+    </div>
+  );
+}
+
+/**
+ * Several series on one axis: grouped side by side, or stacked (P2-17a phase 2).
+ *
+ * One component with a `stacked` prop rather than two. The two differ only in
+ * where each bar starts — grouped puts them next to each other, stacked puts
+ * them on top — and duplicating the axis and scale arithmetic would give it two
+ * places to drift apart.
+ *
+ * The scale differs, and that is the whole reason they are different charts:
+ * grouped scales to the largest single value, because the reader compares one
+ * bar with another; stacked scales to the largest column total, because the
+ * reader compares wholes. Using one scale for both would make one of the two
+ * silently wrong.
+ */
+export function MultiBar({
+  data = [], series = [], stacked = false, height = 190, format = (v) => v, folded = 0,
+}) {
+  if (!data.length || !series.length) return <div className="chart-empty">Nothing to show yet</div>;
+
+  const H = height;
+  const foot = 30;
+  const inner = H - foot;
+
+  const max = stacked
+    ? Math.max(...data.map((d) => series.reduce((s, k) => s + (d.values[k] ?? 0), 0)), 1)
+    : Math.max(...data.flatMap((d) => series.map((k) => d.values[k] ?? 0)), 1);
+
+  // Room for every series in a group, plus a gap between groups.
+  const band = Math.max(stacked ? 56 : 22 * series.length + 26, bandWidth(data.map((d) => d.label)));
+  const W = Math.max(data.length * band, 260);
+  const barW = stacked ? Math.min(band * 0.5, 40) : Math.min((band - 18) / series.length, 22);
+
+  return (
+    <div className="stack" style={{ gap: 6 }}>
+      <ul className="legend legend-inline">
+        {series.map((k, i) => (
+          <li key={k}>
+            <span className="swatch" style={{ background: seriesShade(i) }} />
+            <span className="legend-label">{k}</span>
+          </li>
+        ))}
+      </ul>
+
+      <div className="chart-scroll">
+        <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img">
+          {data.map((d, di) => {
+            const x0 = di * band;
+            let stackTop = inner;
+            return (
+              <g key={d.label}>
+                {series.map((k, si) => {
+                  const v = d.values[k] ?? 0;
+                  const h = (v / max) * (inner - 8);
+                  const x = stacked
+                    ? x0 + (band - barW) / 2
+                    : x0 + 9 + si * barW;
+                  const y = stacked ? (stackTop -= h) : inner - h;
+                  return (
+                    <rect
+                      key={k} x={x} y={y} width={Math.max(1, barW - (stacked ? 0 : 2))} height={Math.max(0, h)}
+                      fill={seriesShade(si)} rx="2"
+                    >
+                      <title>{`${d.label} · ${k}: ${format(v)}`}</title>
+                    </rect>
+                  );
+                })}
+                <text x={x0 + band / 2} y={H - 9} className="bar-label" textAnchor="middle">
+                  {fitLabel(d.label, band)}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+
+      {/* The tail is summed rather than dropped, so the totals still match the
+          same panel unsplit — but a reader deserves to be told it happened. */}
+      {folded > 0 && (
+        <p className="tiny muted" style={{ margin: 0 }}>
+          {folded} smaller {folded === 1 ? 'value is' : 'values are'} summed into “Other”.
+        </p>
+      )}
     </div>
   );
 }

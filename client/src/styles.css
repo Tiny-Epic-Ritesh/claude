@@ -332,6 +332,10 @@ h3 { font-size: 13.5px; font-weight: 600; }
 }
 .card-head h2 { display: flex; align-items: center; gap: 8px; }
 
+/* The other half of .card-head: what sits below it needs the same inset, since
+   .card itself has none. */
+.panel-body { padding: 13px 16px; }
+
 .card-body { padding: 16px; }
 
 /* Cards that are themselves buttons or links. */
@@ -433,6 +437,24 @@ h3 { font-size: 13.5px; font-weight: 600; }
   outline-offset: 2px;
   border-radius: var(--r-xs);
 }
+
+/* A legend that runs along the top of a multi-series chart rather than down
+   the side of it, because the chart beneath is wide and the side is where the
+   bars are. */
+/* Qualified with .legend, which is defined further down this file at the same
+   specificity and would otherwise win on source order alone — its `display:
+   grid` put every series on its own line. The same collision as .cap-row span,
+   arriving from the other direction: there the selector was too broad, here it
+   was not specific enough. */
+.legend.legend-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.legend.legend-inline li { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-3); }
 
 /* P2-17a chart types. The line and its area share one geometry, so they share
    most of their styling too. */
