@@ -70,8 +70,8 @@ export function accessLog(req, res, next) {
 
       run(
         `INSERT INTO request_log
-           (user_id, role, sales_org, partner_id, method, path, status, duration_ms, ip)
-         VALUES (?,?,?,?,?,?,?,?,?)`,
+           (user_id, role, sales_org, partner_id, method, path, status, duration_ms, ip, api_credential_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
         [
           user?.id ?? null,
           user?.role ?? (req.partner ? 'partner' : null),
@@ -85,6 +85,10 @@ export function accessLog(req, res, next) {
           res.statusCode,
           Math.round(ms),
           req.ip ?? null,
+          /* Which integration made the call, when it was not a person. The
+             user_id alone cannot answer that: a key authenticates AS a user,
+             so an integration and its owner look identical without this. */
+          req.api_credential?.id ?? null,
         ],
       );
     } catch (err) {

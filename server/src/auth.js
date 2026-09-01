@@ -11,6 +11,7 @@
  */
 
 import { one, run, audit, SALES_ORGS } from './db.js';
+import { authenticate as authenticateKey, scopedCapabilities } from './engine/apikeys.js';
 import { queueScopeSql } from './engine/queues.js';
 import { maskedFieldsFor } from './engine/masking.js';
 import { managerScopeSql, explainVisibility } from './engine/sharing.js';
@@ -239,10 +240,35 @@ export const publicPartner = (p) => ({
 
 const tokenFrom = (req) => (req.headers.authorization || '').replace(/^Bearer\s+/i, '') || null;
 
-/** Attaches req.user (CRM) or req.partner (portal) when a valid token is present. */
+/**
+ * Attaches req.user (CRM) or req.partner (portal) when a valid token is
+ * present, or when a valid API credential is.
+ *
+ * An API key authenticates AS a user, producing the same req.user a sign-in
+ * would — so every downstream scope check, mask and capability gate applies
+ * unchanged. The only difference is req.api_credential, which the access log
+ * records so "which integration did this" is answerable.
+ */
 export function attachSession(req, _res, next) {
   const token = tokenFrom(req);
-  if (!token) return next();
+
+  /* Tried only when there is no session token, so a signed-in browser session
+     always wins. A request carrying both is a confused client, and resolving
+     it towards the human is the safer reading. */
+  if (!token) {
+    const keyId = req.get('x-api-key');
+    const secret = req.get('x-api-secret');
+    if (keyId && secret) {
+      const auth = authenticateKey(keyId, secret);
+      if (auth) {
+        req.user = auth.user;
+        req.api_credential = auth.credential;
+        // Scopes narrow; they never widen. See engine/apikeys.js.
+        req.caps = scopedCapabilities(effectiveCapabilities(auth.user), auth.scopes);
+      }
+    }
+    return next();
+  }
 
   const session = one('SELECT * FROM sessions WHERE token = ?', [token]);
   if (!session) return next();

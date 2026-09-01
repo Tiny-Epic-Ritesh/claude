@@ -32,7 +32,7 @@ export default function Admin({ session }) {
     { key: 'integrations', label: 'Integrations' },
     has('admin.system') && { key: 'meta', label: 'Facebook & Instagram' },
     { key: 'residency', label: 'Data residency' },
-    has('report.system') && { key: 'logs', label: 'Logs' },
+    has('report.system') && { key: 'logs', label: 'API & logs' },
     has('report.system') && { key: 'audit', label: 'Audit log' },
   ].filter(Boolean);
 

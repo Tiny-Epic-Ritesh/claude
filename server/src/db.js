@@ -647,6 +647,38 @@ CREATE TABLE IF NOT EXISTS log_retention (
   updated_by  INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
 
+/*
+ * API credentials (P2-02).
+ *
+ * Each is bound to a user and authenticates AS that user, so an API caller is
+ * scoped by exactly the machinery that scopes a person -- the book boundary,
+ * the field masking and the capability checks all apply unchanged. A separate
+ * authorization model for machines would need a second implementation of all
+ * three, and the second one is the one that gets it wrong.
+ *
+ * secret_hash is SHA-256 of a 32-byte random secret, not scrypt. The secret is
+ * high-entropy, so a work factor buys nothing against an offline attack and
+ * costs 50-100ms on every API request. See engine/apikeys.js.
+ *
+ * scopes NARROW. A caller gets the intersection of this list with what its user
+ * could already do, so issuing a key can never be an escalation.
+ */
+CREATE TABLE IF NOT EXISTS api_credential (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  key_id       TEXT NOT NULL UNIQUE,
+  secret_hash  TEXT NOT NULL,
+  label        TEXT NOT NULL,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- JSON array of capabilities, or NULL for everything the user has.
+  scopes       TEXT,
+  active       INTEGER NOT NULL DEFAULT 1,
+  last_used_at TEXT,
+  rotated_at   TEXT,
+  revoked_at   TEXT,
+  created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS notifications (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -754,6 +786,7 @@ const COLUMNS = [
   ['users', 'cti_agent_id', 'TEXT'],           // agent id as known to QuickCall
   ['users', 'kyc_shortcode', 'TEXT'],          // RM attribution on the eKYC portal
   ['partners', 'kyc_shortcode', 'TEXT'],       // partner attribution, drives commission
+  ['request_log', 'api_credential_id', 'INTEGER'],  // which API key made the call, if any
   ['activities', 'external_id', 'TEXT'],       // vendor call/message id, for de-duplication
   ['activities', 'recording_url', 'TEXT'],     // QuickCall voice-logger file
   /* An interaction logged against the account after conversion. The lead's own

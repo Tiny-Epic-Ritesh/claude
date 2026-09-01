@@ -34,6 +34,10 @@ import {
   validateRule, operatorCatalogue, wouldRefuseExisting,
 } from '../engine/validation.js';
 import { retention, counts, readLog, purge } from '../engine/logs.js';
+import {
+  issue as issueCredential, rotate as rotateCredential,
+  revoke as revokeCredential, list as listCredentials,
+} from '../engine/apikeys.js';
 import { explainVisibility } from '../engine/sharing.js';
 import {
   entities, entityDef, fieldsOf, fieldDef, picklistValues, historyFor,
@@ -780,6 +784,93 @@ router.patch('/objects/:entity/fields/:apiName', requirePermission('admin.object
   const after = one('SELECT * FROM field_def WHERE id = ?', [field.id]);
   auditConfig('field', `${req.params.entity}.${req.params.apiName}`, 'updated', field, after, req.user.id);
   return res.json(after);
+});
+
+/* --------------------------------------------------------- API access
+ *
+ * P2-02. Issuing a credential is admin.system: it hands a machine the ability
+ * to act as a person, which is a bigger decision than adding a user.
+ *
+ * A key is bound to a user and authenticates as them, so it is scoped by the
+ * same machinery that scopes a person. Scopes narrow that further and can never
+ * widen it — see engine/apikeys.js.
+ */
+
+router.get('/api-credentials', requirePermission('admin.system'), (req, res) => {
+  res.json({
+    // What an integration is told to call. Never guessed from the request host,
+    // which behind a proxy is the proxy.
+    base_url: process.env.CRM_PUBLIC_URL || `${req.protocol}://${req.get('host')}`,
+    credentials: listCredentials(orgsFor(req.user)),
+    /* Only users who could hold a key. A credential bound to somebody who
+       leaves is a credential that outlives them, so service accounts are the
+       right home and real people are offered with that said plainly. */
+    users: all(
+      `SELECT id, name, email, role, sales_org FROM users
+       WHERE active = 1 AND sales_org IN (${orgsFor(req.user).map(() => '?').join(',') || "''"})
+       ORDER BY name`,
+      orgsFor(req.user),
+    ),
+    capabilities: CAPABILITY_CATALOGUE.map((c) => ({ code: c.code, label: c.label, category: c.category })),
+  });
+});
+
+router.post('/api-credentials', requirePermission('admin.system'), (req, res) => {
+  const { label, user_id: userId, scopes = null } = req.body;
+  if (!label || !String(label).trim()) {
+    return res.status(400).json({ error: 'A credential needs a label — it is how you know what to revoke', field: 'label' });
+  }
+
+  const user = one('SELECT id, name, sales_org, active FROM users WHERE id = ?', [userId]);
+  if (!user || !user.active) return res.status(400).json({ error: 'Choose an active user for the key to act as', field: 'user_id' });
+  if (!mayUseOrg(req.user, user.sales_org)) {
+    return res.status(403).json({ error: 'That user is outside your access', field: 'user_id' });
+  }
+
+  if (scopes && !Array.isArray(scopes)) {
+    return res.status(400).json({ error: 'Scopes are a list of capabilities', field: 'scopes' });
+  }
+
+  const issued = issueCredential({
+    label, userId: user.id, scopes, createdBy: req.user.id,
+  });
+
+  audit(req.user.id, 'api_credential_issued', 'api_credential', null, {
+    key_id: issued.key_id, acts_as: user.id, scopes: scopes ?? 'all the user has',
+  });
+
+  /* The secret, exactly once. It is not stored in a form anything can read
+     back, so this response is the only place it will ever exist. */
+  return res.status(201).json({ ...issued, shown_once: true });
+});
+
+router.post('/api-credentials/:id/rotate', requirePermission('admin.system'), (req, res) => {
+  const cred = one(
+    `SELECT c.id, c.key_id, u.sales_org FROM api_credential c
+     JOIN users u ON u.id = c.user_id WHERE c.id = ?`, [req.params.id],
+  );
+  if (!cred) return res.status(404).json({ error: 'No such credential' });
+  if (!mayUseOrg(req.user, cred.sales_org)) return res.status(403).json({ error: 'That credential is outside your access' });
+
+  const rotated = rotateCredential(cred.id);
+  audit(req.user.id, 'api_credential_rotated', 'api_credential', cred.id, { key_id: cred.key_id });
+  // The old secret stopped working the moment this returned.
+  return res.json({ ...rotated, shown_once: true });
+});
+
+router.delete('/api-credentials/:id', requirePermission('admin.system'), (req, res) => {
+  const cred = one(
+    `SELECT c.id, c.key_id, u.sales_org FROM api_credential c
+     JOIN users u ON u.id = c.user_id WHERE c.id = ?`, [req.params.id],
+  );
+  if (!cred) return res.status(404).json({ error: 'No such credential' });
+  if (!mayUseOrg(req.user, cred.sales_org)) return res.status(403).json({ error: 'That credential is outside your access' });
+
+  /* Revoked, not deleted. The request log references it, and a log pointing at
+     a row that no longer exists cannot answer "what did this key do". */
+  revokeCredential(cred.id);
+  audit(req.user.id, 'api_credential_revoked', 'api_credential', cred.id, { key_id: cred.key_id });
+  return res.status(204).end();
 });
 
 /* ----------------------------------------------------------------- logs

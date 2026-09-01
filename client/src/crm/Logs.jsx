@@ -22,8 +22,35 @@
 import { useState } from 'react';
 import { api } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty, Spinner } from '../components/ui.jsx';
+import ApiAccess from './ApiAccess.jsx';
 
-export default function Logs() {
+/**
+ * API access and Logs, on one screen (Q-02).
+ *
+ * P2-02 and P2-15 were raised as separate items and are the same screen: one is
+ * the credentials an integration uses, the other is the record of what it did.
+ * Two screens over the same credentials is exactly the duplication the legacy
+ * audit spent ten findings on — if a key can be seen in two places, one of them
+ * will drift.
+ */
+export default function ApiAndLogs() {
+  const [half, setHalf] = useState('logs');
+  return (
+    <section className="stack" style={{ gap: 14 }}>
+      <div className="tabs tabs-sub" style={{ margin: 0 }}>
+        <button className={half === 'access' ? 'is-active' : ''} onClick={() => setHalf('access')}>
+          API access
+        </button>
+        <button className={half === 'logs' ? 'is-active' : ''} onClick={() => setHalf('logs')}>
+          Logs
+        </button>
+      </div>
+      {half === 'access' ? <ApiAccess /> : <Logs />}
+    </section>
+  );
+}
+
+function Logs() {
   const [meta, { loading, error, reload }] = useApi('/setup/logs');
   const [kind, setKind] = useState('api');
   const [q, setQ] = useState('');
