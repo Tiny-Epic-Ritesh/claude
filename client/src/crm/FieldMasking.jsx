@@ -11,6 +11,8 @@
  */
 
 import { useState } from 'react';
+import { useDraft } from '../components/useDraft.js';
+import PendingBar from '../components/PendingBar.jsx';
 import { api } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner } from '../components/ui.jsx';
 
@@ -19,17 +21,27 @@ export default function FieldMasking() {
   const [busy, setBusy] = useState(null);
   const [problem, setProblem] = useState(null);
 
+  const draft = useDraft(
+    async (changes) => {
+      for (const c of changes) {
+        // eslint-disable-next-line no-await-in-loop
+        await api.post('/setup/field-masking', { role: c.role, field: c.field, masked: c.value });
+      }
+      reload();
+    },
+    (c) => `${c.role}|${c.field}`,
+  );
+
   if (loading && !data) return <Loading label="Loading masking settings…" />;
   if (error) return <ErrorBanner error={error} />;
   if (!data) return null;
 
-  const change = async (role, field, masked) => {
-    const key = `${role}|${field}`;
-    setBusy(key); setProblem(null);
-    try { await api.post('/setup/field-masking', { role, field, masked }); reload(); }
-    catch (e) { setProblem(e.message); }
-    finally { setBusy(null); }
-  };
+  /* P2-06. Held as a draft rather than written per toggle.
+   *
+   * Q-07 named this screen exactly: a wrong masking rule affects everybody at
+   * once and nobody notices for a week. Setting up a role means a dozen cells,
+   * and a write per cell means a dozen chances to leave it half-applied. */
+  const change = (role, field, masked) => draft.set({ role, field }, masked);
 
   return (
     <div className="stack" style={{ gap: 14 }}>
@@ -72,15 +84,21 @@ export default function FieldMasking() {
                     <div className="small muted mono">{f.field}</div>
                   </th>
                   {data.roles.map((r) => {
-                    const cell = data.matrix.find((m) => m.role === r.code)?.fields[f.field]
+                    const stored = data.matrix.find((m) => m.role === r.code)?.fields[f.field]
                       ?? { masked: true, source: 'default' };
                     const key = `${r.code}|${f.field}`;
+                    /* A pending change shows immediately, so the grid reads as
+                       what it will be rather than what it was. */
+                    const pending = draft.valueOf({ role: r.code, field: f.field }, undefined);
+                    const cell = pending === undefined
+                      ? stored
+                      : { masked: pending, source: pending === null ? 'default' : 'configured' };
                     const set = cell.source === 'configured';
                     return (
                       <td key={r.code} className="matrix-cell">
                         <button
                           type="button"
-                          disabled={busy === key}
+                          disabled={draft.saving}
                           className={`vis ${cell.masked ? 'vis-on' : 'vis-off'} ${set ? 'vis-set' : ''}`}
                           aria-pressed={cell.masked}
                           aria-label={`${f.label} for ${r.name}: ${cell.masked ? 'masked' : 'visible'}${set ? ', set by an administrator' : ', shipped default'}`}
@@ -100,6 +118,7 @@ export default function FieldMasking() {
           </table>
         </div>
       </div>
+      <PendingBar draft={draft} what="masking changes" />
     </div>
   );
 }

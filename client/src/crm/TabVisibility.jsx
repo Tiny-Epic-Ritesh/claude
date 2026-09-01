@@ -15,6 +15,8 @@
  */
 
 import { useState } from 'react';
+import { useDraft } from '../components/useDraft.js';
+import PendingBar from '../components/PendingBar.jsx';
 import { api } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty } from '../components/ui.jsx';
 
@@ -24,28 +26,29 @@ export default function TabVisibility() {
   const [problem, setProblem] = useState(null);
   const [person, setPerson] = useState(null);
 
+  const draft = useDraft(
+    async (changes) => {
+      for (const c of changes) {
+        // eslint-disable-next-line no-await-in-loop
+        await api.post('/setup/tab-visibility/role', { role: c.role, tab_id: c.tabId, visible: c.value });
+      }
+      reload();
+    },
+    (c) => `${c.role}|${c.tabId}`,
+  );
+
   if (loading && !data) return <Loading label="Loading navigation settings…" />;
   if (error) return <ErrorBanner error={error} />;
   if (!data) return null;
 
-  const toggle = async (role, tabId, current) => {
-    const key = `${role}|${tabId}`;
-    setBusy(key); setProblem(null);
-    try {
-      await api.post('/setup/tab-visibility/role', { role, tab_id: tabId, visible: !current });
-      reload();
-    } catch (e) { setProblem(e.message); }
-    finally { setBusy(null); }
-  };
-
-  const reset = async (role, tabId) => {
-    setBusy(`${role}|${tabId}`); setProblem(null);
-    try {
-      await api.post('/setup/tab-visibility/role', { role, tab_id: tabId, visible: null });
-      reload();
-    } catch (e) { setProblem(e.message); }
-    finally { setBusy(null); }
-  };
+  /* P2-06. Held as a draft rather than written per toggle.
+   *
+   * Hiding a tab from a role is invisible to the administrator doing it and
+   * very visible to the eleven people who lose it. Setting up a role means a
+   * dozen cells, and a write per cell is a dozen chances to leave it half
+   * applied. `null` means "back to the shipped default". */
+  const toggle = (role, tabId, current) => draft.set({ role, tabId }, !current);
+  const reset = (role, tabId) => draft.set({ role, tabId }, null);
 
   return (
     <div className="stack" style={{ gap: 14 }}>
@@ -92,15 +95,22 @@ export default function TabVisibility() {
                     <Icon name={t.icon} size={15} /> {t.label}
                   </th>
                   {data.roles.map((r) => {
-                    const cell = data.matrix.find((m) => m.role === r.code)?.tabs[t.id]
+                    const stored = data.matrix.find((m) => m.role === r.code)?.tabs[t.id]
                       ?? { visible: false, source: 'default' };
                     const key = `${r.code}|${t.id}`;
+                    /* A pending change shows immediately, so the grid reads as
+                       what it will be rather than what it was. */
+                    const pending = draft.valueOf({ role: r.code, tabId: t.id }, undefined);
+                    const cell = pending === undefined
+                      ? stored
+                      : { visible: pending === null ? stored.visible : pending,
+                          source: pending === null ? 'default' : 'role' };
                     const set = cell.source === 'role';
                     return (
                       <td key={r.code} className="matrix-cell">
                         <button
                           type="button"
-                          disabled={busy === key}
+                          disabled={draft.saving}
                           className={`vis ${cell.visible ? 'vis-on' : 'vis-off'} ${set ? 'vis-set' : ''}`}
                           aria-pressed={cell.visible}
                           aria-label={`${t.label} for ${r.name}: ${cell.visible ? 'visible' : 'hidden'}${set ? ', set by an administrator' : ', shipped default'}`}
@@ -207,6 +217,7 @@ function PersonOverrides({ person, onPick }) {
           </div>
         )}
       </div>
+      <PendingBar draft={draft} what="navigation changes" />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 # The exact names the bundled font was generated from, and the font it produced.
 # Regenerate both together — see the instructions at the top of icon-subset.txt.
-# font-sha256 defe86bf339f44fed22f8aea4b5796fc6bb56d44f6ade58619e48e721efbe485
+# font-sha256 45f2d78fba946980839669d2552135d159c314de1e8b6c1c2b2b949c22496d68
 account_balance
 account_balance_wallet
 account_tree
@@ -84,6 +84,7 @@ edit
 edit_note
 email
 encrypted
+error
 event
 event_upcoming
 expand_less

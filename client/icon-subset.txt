@@ -114,6 +114,7 @@ edit
 edit_note
 email
 encrypted
+error
 event
 event_upcoming
 expand_less

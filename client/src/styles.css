@@ -434,6 +434,28 @@ h3 { font-size: 13.5px; font-weight: 600; }
   border-radius: var(--r-xs);
 }
 
+/* The unsaved-changes bar (P2-06). Bottom, not top: the grid it belongs to is
+   what the reader is looking at, and a bar above it would push their work down
+   every time they touched a switch. */
+.pending-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  color: var(--ink-2);
+  font-size: 13px;
+  box-shadow: 0 -6px 18px -12px rgba(0,0,0,.5);
+}
+.pending-bar strong { color: var(--ink); }
+.pending-bar .material-symbols-rounded { flex: 0 0 auto; }
+
 /* The ghost session banner. Deliberately the loudest thing on the page:
    somebody acting as another person by accident is the failure it exists to
    prevent, and a subtle warning is one you stop seeing by the second day. */
