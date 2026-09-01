@@ -34,6 +34,9 @@ import {
   validateRule, operatorCatalogue, wouldRefuseExisting,
 } from '../engine/validation.js';
 import { retention, counts, readLog, purge } from '../engine/logs.js';
+import {
+  totalBytes, breakdown, nonObjectBytes, growth, history as sizeHistory,
+} from '../engine/dbsize.js';
 import { start as ghostStart, stop as ghostStop } from '../engine/ghost.js';
 import {
   issue as issueCredential, rotate as rotateCredential,
@@ -948,6 +951,28 @@ router.delete('/api-credentials/:id', requirePermission('admin.system'), (req, r
   revokeCredential(cred.id);
   audit(req.user.id, 'api_credential_revoked', 'api_credential', cred.id, { key_id: cred.key_id });
   return res.status(204).end();
+});
+
+/* ------------------------------------------------------------ database
+ *
+ * P2-19. Size per book and per object. Reading is report.system, the same
+ * capability as the logs: it is a health figure, not a configuration change.
+ */
+router.get('/database', requirePermission('report.system'), (req, res) => {
+  const orgs = orgsFor(req.user);
+  res.json({
+    total: totalBytes(),
+    objects: breakdown(orgs),
+    other: nonObjectBytes(),
+    growth: growth(),
+    history: sizeHistory(90),
+    orgs,
+    /* Said once, plainly, and repeated on the screen: the per-book split is
+       apportioned by row share, because both books share the same pages and
+       nothing short of reading every row would say otherwise. */
+    split_note: 'Per-business figures are estimated from row share. One database holds both books, '
+      + 'so the bytes cannot be attributed exactly.',
+  });
 });
 
 /* ----------------------------------------------------------------- logs

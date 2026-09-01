@@ -1285,6 +1285,11 @@ seedCustomFields();
  * demonstrations of the feature: a lead cannot be marked Won without the PAN
  * that opening an account needs, a client cannot be closed while it still holds
  * a balance, and a case cannot be resolved without saying what was done. */
+/* Configuration history goes with the configuration. A reseed resets settings
+   to the shipped state, so the record of changes to the old ones is not
+   history, it is residue — 2,876 rows of it had built up in ten days, mostly
+   from end-to-end runs, and nothing was clearing it. */
+db.exec('DELETE FROM config_audit');
 db.exec('DELETE FROM validation_rule');
 for (const [entity, name, message, condition] of [
   ['lead', 'PAN before Won',

@@ -697,6 +697,20 @@ CREATE TABLE IF NOT EXISTS password_reset (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+/*
+ * One database-size sample a day, taken at start-up (P2-19).
+ *
+ * Growth rate needs history, and there is no history without keeping some. A
+ * sample is four numbers, so a decade of them is smaller than a single lead.
+ */
+CREATE TABLE IF NOT EXISTS db_size_sample (
+  day               TEXT PRIMARY KEY,
+  total_bytes       INTEGER NOT NULL,
+  reclaimable_bytes INTEGER NOT NULL DEFAULT 0,
+  lead_count        INTEGER NOT NULL DEFAULT 0,
+  at                TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS notifications (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

@@ -78,6 +78,19 @@ export const LOG_KINDS = [
     note: 'Journey callbacks and their outcomes. The KYC record itself is not a log and is not purged.',
   },
   {
+    /* Separate from `config` because it is a different table and, on a young
+       database, by far the largest thing in the file — it stores the whole
+       before and after payload of every setting change, which is what makes it
+       useful and what makes it grow. It had no retention policy at all until
+       the size screen (P2-19) showed it was 41% of the database. */
+    kind: 'config_detail',
+    label: 'Configuration change detail',
+    source: 'config_audit',
+    days: 2555,
+    note: 'Before and after values for every setting change. The largest log by '
+      + 'some margin, because it keeps the payloads — which is the point of it.',
+  },
+  {
     kind: 'config',
     label: 'Configuration changes',
     source: 'audit_log',
@@ -133,6 +146,8 @@ export function purge() {
 
     if (k.source === 'request_log') {
       n = run("DELETE FROM request_log WHERE at < datetime('now', ?)", [cutoff]).changes;
+    } else if (k.source === 'config_audit') {
+      n = run("DELETE FROM config_audit WHERE at < datetime('now', ?)", [cutoff]).changes;
     } else if (k.source === 'audit_log') {
       // audit_log stamps created_at, not at. The three log tables were not
       // designed together, which is exactly why this module exists.
@@ -183,6 +198,19 @@ export function readLog(kind, { orgs = [], limit = 200, offset = 0, status = nul
         [...params, Number(limit), Number(offset)],
       ),
       total: one(`SELECT COUNT(*) n FROM request_log r WHERE ${where.join(' AND ')}`, params).n,
+    };
+  }
+
+  if (def.source === 'config_audit') {
+    return {
+      source: def.source,
+      rows: all(
+        `SELECT c.id, c.at, c.area, c.target, c.action, u.name AS user_name
+         FROM config_audit c LEFT JOIN users u ON u.id = c.actor_id
+         ORDER BY c.at DESC, c.id DESC LIMIT ? OFFSET ?`,
+        [Number(limit), Number(offset)],
+      ),
+      total: one('SELECT COUNT(*) n FROM config_audit').n,
     };
   }
 

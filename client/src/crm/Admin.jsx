@@ -10,6 +10,7 @@ import RolesSetup from './RolesSetup.jsx';
 import { stashParentToken } from './GhostBar.jsx';
 import Telephony from './Telephony.jsx';
 import Logs from './Logs.jsx';
+import Database from './Database.jsx';
 
 export default function Admin({ session }) {
   const has = (p) => session.permissions.includes(p);
@@ -34,6 +35,7 @@ export default function Admin({ session }) {
     has('admin.system') && { key: 'meta', label: 'Facebook & Instagram' },
     { key: 'residency', label: 'Data residency' },
     has('report.system') && { key: 'logs', label: 'API & logs' },
+    has('report.system') && { key: 'database', label: 'Database' },
     has('report.system') && { key: 'audit', label: 'Audit log' },
   ].filter(Boolean);
 
@@ -69,6 +71,7 @@ export default function Admin({ session }) {
       {tab === 'meta' && <MetaConnector />}
       {tab === 'residency' && <Residency session={session} />}
       {tab === 'logs' && <Logs />}
+      {tab === 'database' && <Database />}
       {tab === 'audit' && <Audit />}
     </>
   );
