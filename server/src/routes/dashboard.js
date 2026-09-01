@@ -395,12 +395,35 @@ router.get('/', (req, res) => {
 
   const layout = LAYOUT[req.user.role] ?? LAYOUT.sales_rm;
 
+  /* P2-17d. A builder that throws used to vanish silently: the tile simply was
+   * not there, the dashboard looked complete, and nobody found out. A missing
+   * figure is not a safe failure — it is the same reader drawing the same
+   * conclusion from less information, without knowing any is absent.
+   *
+   * So a failure is now logged with the tile that caused it, and the reader is
+   * told that something did not load rather than being shown a tidy dashboard
+   * with a hole in it. The rest of the dashboard still renders: one broken
+   * builder must not take the page down either. */
+  const broken = [];
+
   const tiles = layout.tiles.flatMap((k) => {
-    try { return TILE_BUILDERS[k]?.(req, range) ?? []; } catch { return []; }
+    try {
+      return TILE_BUILDERS[k]?.(req, range) ?? [];
+    } catch (err) {
+      console.error(`[dashboard] tile "${k}" failed for ${req.user.role}:`, err.message);
+      broken.push(k);
+      return [];
+    }
   });
 
   const charts = layout.charts.map((k) => {
-    try { return CHART_BUILDERS[k]?.(req, range) ?? null; } catch { return null; }
+    try {
+      return CHART_BUILDERS[k]?.(req, range) ?? null;
+    } catch (err) {
+      console.error(`[dashboard] chart "${k}" failed for ${req.user.role}:`, err.message);
+      broken.push(k);
+      return null;
+    }
   }).filter(Boolean);
 
   res.json({
@@ -413,6 +436,10 @@ router.get('/', (req, res) => {
     tiles: [...tiles].sort((a, b) => Number(b.alert) - Number(a.alert)),
     charts,
     role: req.user.role,
+    /* Named, not counted. "2 panels failed" tells a reader nothing they can
+       act on or report; "leads, cases" tells them which numbers on this page
+       they should not trust today. */
+    broken: broken.length ? broken : null,
   });
 });
 

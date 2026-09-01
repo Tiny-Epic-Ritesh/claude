@@ -113,6 +113,21 @@ export default function Dashboard({ embedded = false }) {
         </div>
       </div>
 
+      {/* P2-17d. A panel that failed to build used to vanish, leaving a tidy
+          dashboard with a hole in it — the same reader drawing the same
+          conclusion from less information, without knowing any was missing.
+          Named rather than counted: "2 panels failed" is not something anybody
+          can act on. */}
+      {data.broken && (
+        <div className="glass notice notice-warn" style={{ marginBottom: 14 }}>
+          <Icon name="warning" size={16} />
+          <div>
+            Some figures could not be calculated and are missing from this page:{' '}
+            <strong>{data.broken.join(', ')}</strong>. Everything else here is current.
+          </div>
+        </div>
+      )}
+
       <div className="grid-auto" style={{ marginBottom: 18 }}>
         {data.tiles.map((t) => {
           const body = (

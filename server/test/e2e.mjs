@@ -2331,6 +2331,67 @@ async function run() {
       `${offered.length - granted.length} of the offered permissions were dropped on save`);
   });
 
+  /* ---------------------------------- P2-17d: the dashboard holds up
+   *
+   * Every role, every window. The shape assertions live in the unit suite;
+   * what this proves is that the thing actually builds for everybody without
+   * losing a panel — which is the failure that used to be invisible, because a
+   * builder that threw simply vanished from the response.
+   */
+
+  await check('every role gets a complete dashboard in every window', async () => {
+    const roles = {
+      superadmin: T.superadmin, admin: T.admin, sales_rm: T.sales_rm,
+      caller: T.caller, sales_supervisor: T.sales_supervisor,
+      product_rm: T.product_rm, customer_care: T.customer_care,
+      marketing_manager: T.marketing_manager, partner_rm: T.partner_rm,
+    };
+
+    for (const [role, tok] of Object.entries(roles)) {
+      for (const range of ['today', 'week', 'month', 'quarter', 'fy']) {
+        // eslint-disable-next-line no-await-in-loop
+        const { data } = await req(`/api/dashboard?range=${range}`, { token: tok, expect: 200 });
+        assert(!data.broken, `${role}/${range}: panels failed to build — ${(data.broken ?? []).join(', ')}`);
+        assert(Array.isArray(data.tiles) && data.tiles.length, `${role}/${range}: no tiles at all`);
+
+        for (const t of data.tiles) {
+          const v = String(t.value ?? '');
+          assert(v !== '', `${role}/${range}: "${t.label}" has no value`);
+          assert(!/NaN|Infinity|undefined/.test(v), `${role}/${range}: "${t.label}" = ${v}`);
+          /* Twelve characters is what the tile is drawn to hold. A wider value
+             does not wrap, it overlaps the label beside it. */
+          assert(v.length <= 12, `${role}/${range}: "${t.label}" is ${v.length} characters — ${v}`);
+        }
+      }
+    }
+  });
+
+  await check('a window with nothing in it renders zeroes, not blanks or errors', async () => {
+    /* The first day of a month, and every day of a new deployment. An empty
+       period is the normal state, not an edge case. */
+    const { data } = await req('/api/dashboard?range=custom&from=2099-01-01&to=2099-01-02', {
+      token: T.admin, expect: 200,
+    });
+    assert(!data.broken, `panels failed on an empty window: ${(data.broken ?? []).join(', ')}`);
+    assert(data.tiles.length, 'an empty window produced no tiles at all');
+    for (const t of data.tiles) {
+      assert(!/NaN|Infinity/.test(String(t.value)), `"${t.label}" = ${t.value} on an empty window`);
+    }
+  });
+
+  await check('a chart never returns more points than a chart can draw', async () => {
+    const { data } = await req('/api/dashboard?range=fy', { token: T.superadmin, expect: 200 });
+    for (const c of data.charts) {
+      const points = c.data ?? c.stages ?? [];
+      assert(points.length <= 20, `"${c.title}" returned ${points.length} points`);
+      for (const p of points) {
+        assert(p.label !== null && p.label !== '', `"${c.title}" has an unlabelled point`);
+        assert(Number.isFinite(Number(p.value)), `"${c.title}" point ${p.label} = ${p.value}`);
+        assert(Number(p.value) >= 0, `"${c.title}" point ${p.label} is negative`);
+      }
+    }
+  });
+
   /* ------------------------------------------ P2-21: validation rules
    *
    * The engine's edges are covered by unit tests. What these cover is that the
