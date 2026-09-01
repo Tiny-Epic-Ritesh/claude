@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { NavLink, Route, Routes, useNavigate } from 'react-router-dom';
 import { api, token, ROLE_LABEL } from '../api.js';
+import GhostBar from './GhostBar.jsx';
 import { Loading, Icon, Avatar, OrgSwitcher, ThemeToggle } from '../components/ui.jsx';
 import { AppLauncher, TabBar, GlobalSearch, UserMenu } from '../components/AppNav.jsx';
 import { applyOrgAccent } from '../theme.js';
@@ -97,7 +98,7 @@ export default function Crm() {
   useEffect(() => {
     if (!token.get('crm')) { setSession(null); return; }
     api.get('/auth/me')
-      .then((d) => setSession(d.user))
+      .then((d) => setSession({ ...d.user, ghost_of: d.ghost_of ?? null }))
       .catch(() => { token.clear('crm'); setSession(null); });
   }, []);
 
@@ -166,7 +167,15 @@ export default function Crm() {
   const orgName = orgs.find((o) => o.code === (activeOrg || session.sales_org))?.name ?? 'Bonanza';
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${session.ghost_of ? ' is-ghosting' : ''}`}>
+      {/* Fixed to the top of the window and not dismissible. See GhostBar. */}
+      {session.ghost_of && (
+        <GhostBar
+          ghostOf={session.ghost_of.name}
+          actingAs={session.name}
+          onLeave={() => window.location.reload()}
+        />
+      )}
       <div className="main-content">
         <header className="topbar">
           <span className="topbar-brand">

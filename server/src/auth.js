@@ -288,6 +288,13 @@ export function attachSession(req, _res, next) {
     const user = one('SELECT * FROM users WHERE id = ? AND active = 1', [session.user_id]);
     if (user) {
       req.user = user;
+      /* A ghost session carries the administrator behind it. req.user stays the
+         impersonated person — every scope, mask and permission check must see
+         exactly what they would see, which is the entire point — and this is
+         what the audit trail and the banner are built from. */
+      if (session.ghost_of) {
+        req.ghost_of = one('SELECT id, name, role FROM users WHERE id = ?', [session.ghost_of]) ?? null;
+      }
       // Resolved once per request: role capabilities plus any permission sets
       // granted to this person. Field-level security and route guards both
       // read it, and recomputing per call site would be three lookups a row.

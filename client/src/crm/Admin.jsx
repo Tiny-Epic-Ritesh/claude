@@ -3,10 +3,11 @@ import TabVisibility from './TabVisibility.jsx';
 import Dispositions from './Dispositions.jsx';
 import KraSetup from './KraSetup.jsx';
 import FieldMasking from './FieldMasking.jsx';
-import { api, rupees, dateTime, shortDate, ROLE_LABEL } from '../api.js';
+import { api, appUrl, token, rupees, dateTime, shortDate, ROLE_LABEL } from '../api.js';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, Icon, useDropUp } from '../components/ui.jsx';
 import ObjectManager from './ObjectManager.jsx';
 import RolesSetup from './RolesSetup.jsx';
+import { stashParentToken } from './GhostBar.jsx';
 import Telephony from './Telephony.jsx';
 import Logs from './Logs.jsx';
 
@@ -78,11 +79,15 @@ export default function Admin({ session }) {
 function Users() {
   const [users, { loading, error, reload }] = useApi('/admin/users');
   const [creating, setCreating] = useState(false);
+  const [link, setLink] = useState(null);
+  const [problem, setProblem] = useState(null);
   if (loading) return <Loading />;
   if (error) return <ErrorBanner error={error} />;
 
   return (
     <section className="card">
+      <ErrorBanner error={problem} onDismiss={() => setProblem(null)} />
+      {link && <ResetLink issued={link} onClose={() => setLink(null)} />}
       <div className="card-head"><h2>{users.length} users</h2><button className="btn-sm btn-primary" onClick={() => setCreating(true)}>Create user</button></div>
       <table>
         <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Product</th><th>Manager</th><th className="num">Leads</th><th /></tr></thead>
@@ -96,9 +101,7 @@ function Users() {
               <td className="small muted">{u.manager_name || '—'}</td>
               <td className="num">{u.lead_count}</td>
               <td className="num">
-                <button className="btn-sm" onClick={async () => { await api.patch(`/admin/users/${u.id}`, { active: u.active ? 0 : 1 }); reload(); }}>
-                  {u.active ? 'Disable' : 'Enable'}
-                </button>
+                <UserActions user={u} reload={reload} onLink={setLink} onError={setProblem} />
               </td>
             </tr>
           ))}
@@ -106,6 +109,90 @@ function Users() {
       </table>
       {creating && <NewUser onClose={() => setCreating(false)} onCreated={() => { setCreating(false); reload(); }} />}
     </section>
+  );
+}
+
+/**
+ * What an administrator can do to a user record (P2-04).
+ *
+ * Sign in as, send a reset link, disable. Deliberately not a menu of twenty
+ * things: these are the three that come up, and burying the dangerous one in a
+ * list is how it gets clicked by accident.
+ */
+function UserActions({ user, reload, onLink, onError }) {
+  const [busy, setBusy] = useState(null);
+
+  const ghost = async () => {
+    setBusy('ghost');
+    try {
+      const r = await api.post(`/setup/users/${user.id}/ghost`, {});
+      /* The administrator's own token is stashed, not discarded, so leaving is
+         a swap back rather than a second sign-in. sessionStorage, so closing
+         the tab cannot leave it lying about. */
+      stashParentToken(token.get('crm'));
+      token.set('crm', r.token);
+      window.location.assign(appUrl('/'));
+    } catch (err) { onError(err.message); setBusy(null); }
+  };
+
+  const resetLink = async () => {
+    setBusy('reset');
+    try { onLink(await api.post(`/setup/users/${user.id}/reset-link`, {})); }
+    catch (err) { onError(err.message); }
+    finally { setBusy(null); }
+  };
+
+  return (
+    <span className="row" style={{ gap: 6, justifyContent: 'flex-end' }}>
+      {Boolean(user.active) && (
+        <>
+          <button className="btn-sm" disabled={busy} onClick={ghost} title={`See the product as ${user.name} sees it`}>
+            {busy === 'ghost' ? <Spinner /> : 'Sign in as'}
+          </button>
+          <button className="btn-sm" disabled={busy} onClick={resetLink}>
+            {busy === 'reset' ? <Spinner /> : 'Reset link'}
+          </button>
+        </>
+      )}
+      <button className="btn-sm" onClick={async () => { await api.patch(`/admin/users/${user.id}`, { active: user.active ? 0 : 1 }); reload(); }}>
+        {user.active ? 'Disable' : 'Enable'}
+      </button>
+    </span>
+  );
+}
+
+/**
+ * The reset link, shown once.
+ *
+ * Not emailed: SMTP is configured per environment, and a link that silently
+ * fails to send is worse than one the administrator can see they are holding —
+ * they know whether they delivered it.
+ */
+function ResetLink({ issued, onClose }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Modal title="Password reset link" subtitle={`${issued.user.name} · ${issued.user.email}`} onClose={onClose}>
+      <div className="stack" style={{ gap: 13 }}>
+        <div className="glass notice notice-warn">
+          <Icon name="warning" size={16} />
+          <div>
+            Send this to {issued.user.name} yourself — nothing was emailed. It works
+            once and expires in {issued.expires_in_minutes} minutes, and using it ends
+            every session they currently have.
+          </div>
+        </div>
+        <div className="row" style={{ gap: 8 }}>
+          <input readOnly value={issued.link} className="api-name" onFocus={(e) => e.target.select()} />
+          <button className="btn-ghost btn-sm" onClick={async () => {
+            try { await navigator.clipboard.writeText(issued.link); setCopied(true); } catch { setCopied(false); }
+          }}>{copied ? 'Copied' : 'Copy'}</button>
+        </div>
+        <div className="modal-actions">
+          <span style={{ flex: 1 }} />
+          <button className="btn btn-primary" onClick={onClose}>Done</button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

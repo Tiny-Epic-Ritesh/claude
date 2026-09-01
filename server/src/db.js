@@ -6,6 +6,7 @@
  */
 
 import { DatabaseSync } from 'node:sqlite';
+import { actingActor } from './engine/reqcontext.js';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -679,6 +680,23 @@ CREATE TABLE IF NOT EXISTS api_credential (
   created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+/*
+ * Single-use password reset links (P2-04).
+ *
+ * Not emailed from the server: SMTP is configured per environment and a link
+ * that silently fails to send is worse than one the administrator can see they
+ * are holding. One per user at a time -- issuing a second invalidates the
+ * first, so a link forwarded twice cannot be used twice.
+ */
+CREATE TABLE IF NOT EXISTS password_reset (
+  token      TEXT PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at TEXT NOT NULL,
+  used_at    TEXT,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS notifications (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -786,6 +804,8 @@ const COLUMNS = [
   ['users', 'cti_agent_id', 'TEXT'],           // agent id as known to QuickCall
   ['users', 'kyc_shortcode', 'TEXT'],          // RM attribution on the eKYC portal
   ['partners', 'kyc_shortcode', 'TEXT'],       // partner attribution, drives commission
+  ['sessions', 'ghost_of', 'INTEGER'],         // the admin behind a ghost session
+  ['request_log', 'ghost_of', 'INTEGER'],      // and who they were really
   ['request_log', 'api_credential_id', 'INTEGER'],  // which API key made the call, if any
   ['activities', 'external_id', 'TEXT'],       // vendor call/message id, for de-duplication
   ['activities', 'recording_url', 'TEXT'],     // QuickCall voice-logger file
@@ -1884,9 +1904,15 @@ export const daysSince = (iso) =>
   iso ? Math.floor((Date.now() - new Date(`${iso.replace(' ', 'T')}Z`).getTime()) / 86_400_000) : null;
 
 export function audit(userId, action, entity, entityId, detail) {
-  run('INSERT INTO audit_log (user_id, action, entity, entity_id, detail) VALUES (?,?,?,?,?)', [
+  /* `actor` carries the real human when a ghost session means user_id is
+     somebody else — "Kavita Nair acting as Sneha Kulkarni". Read from the
+     request context rather than passed in, because this is called from 132
+     places and threading a second argument through all of them would guarantee
+     some were missed, which is the same failure as not doing it. */
+  run('INSERT INTO audit_log (user_id, action, entity, entity_id, detail, actor) VALUES (?,?,?,?,?,?)', [
     userId ?? null, action, entity ?? null, entityId ?? null,
     typeof detail === 'string' ? detail : JSON.stringify(detail ?? null),
+    actingActor(),
   ]);
 }
 

@@ -434,6 +434,41 @@ h3 { font-size: 13.5px; font-weight: 600; }
   border-radius: var(--r-xs);
 }
 
+/* The ghost session banner. Deliberately the loudest thing on the page:
+   somebody acting as another person by accident is the failure it exists to
+   prevent, and a subtle warning is one you stop seeing by the second day. */
+.ghostbar {
+  /* Fixed, not sticky. .app-shell is a ROW flex, so a sticky child became a
+     full-height column beside the content rather than a bar above it. Fixed
+     takes it out of that flow entirely; .is-ghosting below reserves the space
+     so nothing hides underneath. */
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-bottom: 1px solid var(--warn);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.ghostbar strong { color: var(--ink); font-weight: 620; }
+.ghostbar button { margin-left: auto; flex: 0 0 auto; }
+.ghostbar .material-symbols-rounded { flex: 0 0 auto; }
+
+/* The shell moves down by exactly the bar's height while a ghost session is
+   open, so the top of the product is not underneath it. */
+.app-shell.is-ghosting { padding-top: 56px; }
+/* The bar wraps to two lines on a narrow window, so the reserve is sized for
+   the wrapped height. A few pixels of gap when it fits on one line is harmless;
+   content hidden underneath it is not. */
+@media (min-width: 1100px) { .app-shell.is-ghosting { padding-top: 40px; } }
+
 /* A second-level tab strip, inside a card. Lighter than the page tabs so the
    two do not read as the same level of navigation. */
 .tabs-sub {

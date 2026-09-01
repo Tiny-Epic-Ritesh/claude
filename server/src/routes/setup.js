@@ -24,7 +24,7 @@ import { all, one, run, audit, transact, SALES_ORGS, CARD_STATES } from '../db.j
 import {
   requireUser, requirePermission, orgsFor, mayUseOrg, can, permissionsFor,
 } from '../auth.js';
-import { hashPassword, validate } from '../security.js';
+import { hashPassword, validate, newSessionToken } from '../security.js';
 import {
   invalidate, explainAccess, dataScope, CAPABILITY_CATALOGUE,
 } from '../engine/access.js';
@@ -34,6 +34,7 @@ import {
   validateRule, operatorCatalogue, wouldRefuseExisting,
 } from '../engine/validation.js';
 import { retention, counts, readLog, purge } from '../engine/logs.js';
+import { start as ghostStart, stop as ghostStop } from '../engine/ghost.js';
 import {
   issue as issueCredential, rotate as rotateCredential,
   revoke as revokeCredential, list as listCredentials,
@@ -784,6 +785,82 @@ router.patch('/objects/:entity/fields/:apiName', requirePermission('admin.object
   const after = one('SELECT * FROM field_def WHERE id = ?', [field.id]);
   auditConfig('field', `${req.params.entity}.${req.params.apiName}`, 'updated', field, after, req.user.id);
   return res.json(after);
+});
+
+/* ---------------------------------------------------------- ghost login
+ *
+ * P2-04. Seeing the product as somebody else sees it — the fastest answer to
+ * "it looks wrong on my screen", and the most dangerous thing an administrator
+ * can do. The rules are in engine/ghost.js; these routes are the doors.
+ */
+
+router.post('/users/:id/ghost', requirePermission('admin.users'), (req, res) => {
+  const target = one('SELECT * FROM users WHERE id = ?', [req.params.id]);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  if (!mayUseOrg(req.user, target.sales_org)) {
+    return res.status(403).json({ error: 'That user is outside your access' });
+  }
+
+  /* Refused while already ghosting. Chaining sessions makes "who is really
+     acting" a list rather than a name, and the audit trail only has room for
+     one honest answer. */
+  if (req.ghost_of) {
+    return res.status(409).json({ error: 'Leave the current session before starting another' });
+  }
+
+  const started = ghostStart(req.user, target);
+  if (started.error) return res.status(403).json({ error: started.error });
+
+  audit(req.user.id, 'ghost_started', 'user', target.id, {
+    acting_as: target.name, role: target.role, minutes: started.expires_in_minutes,
+  });
+  return res.json(started);
+});
+
+/**
+ * Leave a ghost session.
+ *
+ * Not permission-gated: whoever holds the ghost token must always be able to
+ * put it down, and requiring a capability the impersonated user may not have
+ * would strand the administrator inside somebody else's account.
+ */
+router.post('/ghost/exit', requireUser, (req, res) => {
+  if (!req.ghost_of) return res.status(400).json({ error: 'This is not a ghost session' });
+
+  const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  ghostStop(token);
+  audit(req.ghost_of.id, 'ghost_ended', 'user', req.user.id, { acting_as: req.user.name });
+  return res.json({ ok: true, returned_to: req.ghost_of.name });
+});
+
+/**
+ * A password reset link, handed to the administrator to pass on.
+ *
+ * Not emailed from here. SMTP is configured per environment and a link that
+ * silently fails to send is worse than one an administrator can see they are
+ * holding — they know whether they delivered it. Single use, one hour.
+ */
+router.post('/users/:id/reset-link', requirePermission('admin.users'), (req, res) => {
+  const user = one('SELECT * FROM users WHERE id = ?', [req.params.id]);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (!mayUseOrg(req.user, user.sales_org)) {
+    return res.status(403).json({ error: 'That user is outside your access' });
+  }
+
+  const token = newSessionToken();
+  run('DELETE FROM password_reset WHERE user_id = ?', [user.id]);
+  run(`INSERT INTO password_reset (token, user_id, expires_at, created_by)
+       VALUES (?,?,datetime('now', '+1 hour'),?)`, [token, user.id, req.user.id]);
+
+  audit(req.user.id, 'password_reset_link_issued', 'user', user.id, { email: user.email });
+
+  const base = process.env.CRM_PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
+  return res.json({
+    // Shown once, like an API secret, and for the same reason.
+    link: `${base}/ai-crm/reset/${token}`,
+    expires_in_minutes: 60,
+    user: { id: user.id, name: user.name, email: user.email },
+  });
 });
 
 /* --------------------------------------------------------- API access

@@ -7,7 +7,8 @@ import { existsSync } from 'node:fs';
 
 import { attachSession, login, partnerLogin, logout, publicUser, publicPartner } from './auth.js';
 import { rateLimiter, usingDevKey } from './security.js';
-import { ROLE_LABELS } from './db.js';
+import { ROLE_LABELS, one, run, audit } from './db.js';
+import { hashPassword } from './security.js';
 
 import crm from './routes/crm.js';
 import tickets from './routes/tickets.js';
@@ -49,6 +50,7 @@ import { sweepReminders } from './engine/followups.js';
 import { sweepMetrics } from './engine/metrics.js';
 import { seedMetadata, seedPicklists } from './engine/metadata.js';
 import { seedRetention, purge } from './engine/logs.js';
+import { contextMiddleware } from './engine/reqcontext.js';
 import { seedCalendars } from './engine/calendar.js';
 import { seedQueues } from './engine/queues.js';
 import { seedKra, seedIncentives } from './engine/kra.js';
@@ -121,13 +123,80 @@ app.post('/api/auth/partner-login', loginLimiter, (req, res) => {
 
 app.use(attachSession);
 
+/**
+ * Redeem a password reset link (P2-04).
+ *
+ * Public by necessity — the person using it cannot sign in, which is the whole
+ * reason they were sent it. Everything that makes that safe is in the token:
+ * single use, one hour, and issued only by an administrator who could already
+ * reset the password directly.
+ *
+ * A wrong or expired token says only that it is no longer valid. Distinguishing
+ * "never existed" from "already used" tells somebody probing which of the two
+ * they found.
+ */
+app.post('/api/auth/reset/:token', (req, res) => {
+  const row = one(
+    `SELECT * FROM password_reset
+     WHERE token = ? AND used_at IS NULL AND expires_at > datetime('now')`,
+    [req.params.token],
+  );
+  if (!row) {
+    return res.status(400).json({ error: 'That link is no longer valid. Ask for a new one.' });
+  }
+
+  const password = String(req.body.password ?? '');
+  if (password.length < 8) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters', field: 'password' });
+  }
+
+  const user = one('SELECT id, name, email, active FROM users WHERE id = ?', [row.user_id]);
+  if (!user || !user.active) {
+    return res.status(400).json({ error: 'That link is no longer valid. Ask for a new one.' });
+  }
+
+  run('UPDATE users SET password = ? WHERE id = ?', [hashPassword(password), user.id]);
+  run("UPDATE password_reset SET used_at = datetime('now') WHERE token = ?", [row.token]);
+  /* Every existing session ends. Resetting a password because it may be known
+     to somebody else and leaving their session alive achieves nothing. */
+  run('DELETE FROM sessions WHERE user_id = ?', [user.id]);
+
+  audit(user.id, 'password_reset_used', 'user', user.id, { issued_by: row.created_by });
+  return res.json({ ok: true, email: user.email });
+});
+
+/** Is this link still good? Lets the page say so before asking for a password. */
+app.get('/api/auth/reset/:token', (req, res) => {
+  const row = one(
+    `SELECT p.token, u.name, u.email FROM password_reset p
+     JOIN users u ON u.id = p.user_id
+     WHERE p.token = ? AND p.used_at IS NULL AND p.expires_at > datetime('now') AND u.active = 1`,
+    [req.params.token],
+  );
+  if (!row) return res.status(404).json({ error: 'That link is no longer valid. Ask for a new one.' });
+  return res.json({ ok: true, name: row.name, email: row.email });
+});
+
+/* Runs after the session, so it can see who is really acting. Everything the
+   request awaits from here is inside the context, which is how a ghost
+   session reaches audit() without 132 call sites changing. */
+app.use(contextMiddleware);
+
 app.post('/api/auth/logout', (req, res) => {
   if (req.token) logout(req.token);
   res.json({ ok: true });
 });
 
 app.get('/api/auth/me', (req, res) => {
-  if (req.user) return res.json({ kind: 'crm', user: publicUser(req.user), role_label: ROLE_LABELS[req.user.role] });
+  if (req.user) {
+    return res.json({
+      kind: 'crm', user: publicUser(req.user), role_label: ROLE_LABELS[req.user.role],
+      /* The banner is built from this. A ghost session that looks like an
+         ordinary one is how an administrator spends an afternoon acting as
+         somebody else by accident. */
+      ghost_of: req.ghost_of ? { id: req.ghost_of.id, name: req.ghost_of.name } : null,
+    });
+  }
   if (req.partner) return res.json({ kind: 'partner', partner: publicPartner(req.partner) });
   res.status(401).json({ error: 'Not signed in' });
 });
