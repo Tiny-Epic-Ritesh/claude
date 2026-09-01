@@ -92,7 +92,15 @@ function usedIcons(vocabulary) {
        group it sits in. "automation" is both a Setup group and a real Material
        Symbol, and it is not an icon here. An icon is always declared as `icon:`
        or passed as `name=`, so nothing real is hidden by ignoring these two. */
-    .replace(/\b(?:key|group):\s*(['"`])[a-z0-9_]+\1/g, ' ');
+    .replace(/\b(?:key|group):\s*(['"`])[a-z0-9_]+\1/g, ' ')
+    /* A className is never an icon reference. Icons arrive three ways and none
+       of them is a class attribute: `<Icon name="x">`, `icon: 'x'`, or as the
+       text child of a material-symbols span — which is matched separately below
+       and deliberately still scanned. Class names overlap the icon vocabulary
+       constantly ("skeleton", "search", "input", "menu"), and every one of
+       those is a false positive sending somebody to add a glyph nothing
+       renders. */
+    .replace(/className=(['"`])[^'"`]*\1/g, ' ');
 
   for (const file of walk(CLIENT)) {
     const src = strip(readFileSync(file, 'utf8'));

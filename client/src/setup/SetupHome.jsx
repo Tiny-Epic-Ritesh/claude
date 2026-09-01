@@ -16,7 +16,8 @@
  */
 
 import { Link } from 'react-router-dom';
-import { useApi, Loading, ErrorBanner, Icon } from '../components/ui.jsx';
+import { useApi, ErrorBanner, Icon } from '../components/ui.jsx';
+import SetupSkeleton from './SetupSkeleton.jsx';
 import { sectionByKey, sectionsFor, GROUPS } from './registry.js';
 
 const AREA_LABEL = {
@@ -43,7 +44,9 @@ export default function SetupHome({ session }) {
   const available = sectionsFor(session.permissions);
   const canOpen = (key) => available.some((s) => s.key === key);
 
-  if (loading) return <Loading />;
+  /* The page head is drawn immediately and the panels arrive under it, rather
+     than the whole screen being replaced by a spinner and then jumping. */
+  if (loading) return <SetupSkeleton rows={7} />;
 
   return (
     <div className="setup-page">
@@ -155,24 +158,41 @@ export default function SetupHome({ session }) {
           <h2>Everything you can configure</h2>
           <span className="tiny muted">Press <kbd>/</kbd> to search</span>
         </div>
+        {/* Group name in its own column, screens beside it.
+        
+            The settings-index pattern Stripe, GitHub and Salesforce Setup all
+            use, and it fixes a real inversion: the heading was 10.5px uppercase
+            while the item titles under it were 13px semibold, so the thing
+            being headed looked more important than the heading. Grouping is
+            structural here rather than typographic, which means the header
+            cannot be misread as another item in the list however it is
+            styled. */}
         <div className="setup-map">
           {GROUPS
             .map((g) => ({ ...g, items: available.filter((s) => s.group === g.key) }))
             .filter((g) => g.items.length)
             .map((g) => (
-              <div key={g.key} className="setup-map-group">
-                <h3><Icon name={g.icon} size={15} />{g.label}</h3>
-                <ul>
+              <section key={g.key} className="setup-map-group">
+                <div className="setup-map-label">
+                  <h3>{g.label}</h3>
+                  <span className="tiny muted">
+                    {g.items.length} screen{g.items.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+                <ul className="setup-map-items">
                   {g.items.map((s) => (
                     <li key={s.key}>
                       <Link to={`/setup/${s.key}`}>
-                        <strong>{s.label}</strong>
-                        <span className="tiny muted">{s.blurb}</span>
+                        <Icon name={s.icon} size={16} />
+                        <span>
+                          <strong>{s.label}</strong>
+                          <span className="tiny muted">{s.blurb}</span>
+                        </span>
                       </Link>
                     </li>
                   ))}
                 </ul>
-              </div>
+              </section>
             ))}
         </div>
       </section>

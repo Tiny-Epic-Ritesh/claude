@@ -526,9 +526,16 @@ h3 { font-size: 13.5px; font-weight: 600; }
   align-items: center;
   gap: 10px;
   padding: 9px 16px;
-  background: var(--warn-soft);
+  /* OPAQUE. --warn-soft is 14% alpha, so a fixed bar painted with it let the
+     page show straight through — as somebody scrolled, the content underneath
+     appeared through the banner and the two sets of text overlapped. The tint
+     is composited over an opaque ground instead of being the whole background,
+     which keeps the colour and stops the bleed-through. */
+  background-color: var(--ground);
+  background-image: linear-gradient(var(--warn-soft), var(--warn-soft));
   color: var(--warn);
   border-bottom: 1px solid var(--warn);
+  box-shadow: 0 2px 10px rgba(12, 18, 28, 0.12);
   font-size: 13px;
   line-height: 1.4;
 }
@@ -543,6 +550,18 @@ h3 { font-size: 13.5px; font-weight: 600; }
    the wrapped height. A few pixels of gap when it fits on one line is harmless;
    content hidden underneath it is not. */
 @media (min-width: 1100px) { .app-shell.is-ghosting { padding-top: 40px; } }
+
+/* Setup needs the same reserve, and did not have it — the banner sat directly
+   on top of the Setup header. Its topbar is sticky at top:0, so that has to
+   move down by the same amount or it slides underneath while scrolling. */
+.setup-shell.is-ghosting { padding-top: 56px; }
+.setup-shell.is-ghosting .setup-topbar { top: 56px; }
+.setup-shell.is-ghosting .setup-nav { top: 112px; height: calc(100dvh - 112px); }
+@media (min-width: 1100px) {
+  .setup-shell.is-ghosting { padding-top: 40px; }
+  .setup-shell.is-ghosting .setup-topbar { top: 40px; }
+  .setup-shell.is-ghosting .setup-nav { top: 96px; height: calc(100dvh - 96px); }
+}
 
 /* A second-level tab strip, inside a card. Lighter than the page tabs so the
    two do not read as the same level of navigation. */
@@ -5172,35 +5191,6 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
 
 /* ------------------------------------------------------------ the map */
 
-.setup-map {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
-  gap: 4px 22px;
-  padding: 14px 16px 18px;
-}
-.setup-map-group h3 {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin: 8px 0 6px;
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.7px;
-  text-transform: uppercase;
-  color: var(--ink-2);
-}
-.setup-map-group ul { list-style: none; margin: 0; padding: 0; }
-.setup-map-group a {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding: 6px 8px;
-  border-radius: var(--r-xs);
-  text-decoration: none;
-  color: var(--ink-2);
-}
-.setup-map-group a:hover { background: var(--hairline-2); }
-.setup-map-group a strong { color: var(--ink); font-size: 13px; font-weight: 600; }
 
 /* --------------------------------------------------------- responsive */
 
@@ -5458,4 +5448,161 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
 @media (max-width: 900px) {
   /* The pin is hover-revealed, and there is no hover on a phone. */
   .setup-pin { opacity: 1; }
+}
+
+/* ================================================ SETUP: visual identity ==
+   Every complaint about this area has been hierarchy, alignment or colour —
+   never a missing feature. So this is a type scale, a spacing rhythm, and the
+   states that were missing, rather than more things on the page.
+   ========================================================================= */
+
+.setup-shell {
+  /* Four sizes, used consistently. More than four and nothing reads as a
+     level; fewer and everything is either a heading or body text. */
+  --s-title: 1.375rem;   /* the one page title */
+  --s-head: 0.9375rem;   /* section and group headings */
+  --s-body: 0.8125rem;   /* item titles, table cells, controls */
+  --s-meta: 0.75rem;     /* descriptions, counts, timestamps */
+
+  /* An 8px rhythm. Named so the intent survives somebody adjusting a number. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 16px;
+  --sp-4: 24px;
+  --sp-5: 32px;
+}
+
+/* ------------------------------------------------------- the map, in two */
+
+.setup-map { display: block; padding: 0; }
+
+.setup-map-group {
+  display: grid;
+  grid-template-columns: 13rem minmax(0, 1fr);
+  gap: 0 var(--sp-4);
+  padding: var(--sp-3) var(--sp-3);
+  border-top: 1px solid var(--hairline-2);
+}
+.setup-map-group:first-child { border-top: none; }
+
+/* The group name at full weight, in its own column. It cannot be mistaken for
+   an item because it is not in the same column as the items. */
+.setup-map-label { padding-top: 2px; }
+.setup-map-label h3 {
+  margin: 0 0 2px;
+  font-size: var(--s-head);
+  font-weight: 640;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  text-transform: none;
+}
+
+.setup-map-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: var(--sp-1);
+}
+.setup-map-items a {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  padding: var(--sp-2) 10px;
+  border-radius: var(--r-xs);
+  text-decoration: none;
+  color: var(--ink-2);
+  transition: background 0.13s ease;
+}
+.setup-map-items a > span { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.setup-map-items a strong {
+  color: var(--ink);
+  font-size: var(--s-body);
+  font-weight: 600;
+}
+.setup-map-items a .material-symbols-rounded { color: var(--ink-4); margin-top: 1px; flex: 0 0 auto; }
+.setup-map-items a:hover { background: var(--hairline-2); }
+.setup-map-items a:hover .material-symbols-rounded { color: var(--accent-dark); }
+
+@media (max-width: 720px) {
+  /* Stacked rather than squeezed: a 13rem label column on a phone leaves the
+     items too narrow to read. */
+  .setup-map-group { grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); }
+  .setup-map-label { display: flex; align-items: baseline; gap: var(--sp-2); }
+}
+
+/* ----------------------------------------------------- the scale, applied */
+
+.setup-page-head h1, .setup-pagehead h1 { font-size: var(--s-title); }
+.setup-block-head h2 { font-size: var(--s-head); font-weight: 640; }
+.setup-pagehead p, .setup-page-head p { font-size: var(--s-body); }
+.setup-link { font-size: var(--s-body); }
+.finding-body strong { font-size: var(--s-body); }
+
+/* ----------------------------------------------------------- skeletons */
+
+/* A bare "Loading…" tells somebody nothing about what is coming. A skeleton
+   in the shape of the answer means the page does not jump when it arrives,
+   and the wait reads as progress rather than as a stall. */
+.skeleton {
+  border-radius: var(--r-xs);
+  background: linear-gradient(90deg, var(--hairline-2) 25%, var(--hairline) 37%, var(--hairline-2) 63%);
+  background-size: 400% 100%;
+  animation: skeleton-sweep 1.4s ease infinite;
+}
+@keyframes skeleton-sweep {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+.skeleton-rows { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3); }
+.skeleton-row { height: 14px; }
+.skeleton-row:nth-child(3n) { width: 72%; }
+.skeleton-row:nth-child(3n + 1) { width: 94%; }
+.skeleton-row:nth-child(3n + 2) { width: 84%; }
+
+/* --------------------------------------------------------- empty states */
+
+.setup-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-5) var(--sp-3);
+  text-align: center;
+  color: var(--ink-3);
+}
+.setup-empty .material-symbols-rounded { color: var(--ink-4); font-size: 30px; }
+.setup-empty strong { color: var(--ink); font-size: var(--s-head); font-weight: 620; }
+.setup-empty p { margin: 0; max-width: 46ch; font-size: var(--s-body); }
+
+/* ------------------------------------------------------------- focus */
+
+/* Every interactive thing in Setup shows where the keyboard is. It was
+   inheriting whatever the browser does, which on a dark ground is close to
+   nothing. */
+.setup-shell :is(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+.setup-shell .setup-link:focus-visible { outline-offset: -2px; }
+
+/* ------------------------------------------------------------ motion */
+
+/* Restrained: things that appear, appear quickly and once. Nothing loops, and
+   nothing moves on a page an administrator is trying to read. */
+@keyframes setup-rise {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.setup-main > .setup-page > .setup-block,
+.setup-main > .setup-pagehead { animation: setup-rise 0.22s ease both; }
+.setup-main > .setup-page > .setup-block:nth-child(2) { animation-delay: 0.03s; }
+.setup-main > .setup-page > .setup-block:nth-child(3) { animation-delay: 0.06s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+  .setup-main > .setup-page > .setup-block,
+  .setup-main > .setup-pagehead { animation: none; }
 }

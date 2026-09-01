@@ -31,12 +31,13 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import BrandLogo from '../components/BrandLogo.jsx';
-import { Icon, Loading, OrgSwitcher, ThemeToggle } from '../components/ui.jsx';
+import { Icon, OrgSwitcher, ThemeToggle } from '../components/ui.jsx';
 import Copilot from '../crm/Copilot.jsx';
 import { api } from '../api.js';
 import { GROUPS, sectionsFor, sectionByKey, searchSections } from './registry.js';
 import SetupHome from './SetupHome.jsx';
 import SetupBoundary from './SetupBoundary.jsx';
+import SetupSkeleton from './SetupSkeleton.jsx';
 
 /* --------------------------------------------------------- preferences */
 
@@ -274,7 +275,9 @@ export default function SetupShell({ session, orgs = [], activeOrg, onSwitchOrg,
   const pinned = pins.map((k) => available.find((s) => s.key === k)).filter(Boolean);
 
   return (
-    <div className="setup-shell">
+    /* The same reserve the CRM shell makes. Without it the fixed ghost banner
+       sits on top of the Setup header rather than above it. */
+    <div className={`setup-shell${session.ghost_of ? ' is-ghosting' : ''}`}>
       <header className="setup-topbar">
         <button
           type="button"
@@ -408,7 +411,7 @@ export default function SetupShell({ session, orgs = [], activeOrg, onSwitchOrg,
           {/* Keyed on the path so a crash on one screen clears when you leave
               it, rather than sticking until a full reload. */}
           <SetupBoundary resetKey={location.pathname}>
-            <Suspense fallback={<Loading />}>
+            <Suspense fallback={<SetupSkeleton />}>
               <Routes>
                 <Route path="/setup">
                   <Route index element={<SetupHome session={session} />} />
