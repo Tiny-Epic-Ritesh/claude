@@ -293,9 +293,36 @@ test('group headings line up with the items beneath them', () => {
      in the column shared a left edge. The indent is the row padding plus the
      icon plus the gap, which is what puts the two on one line. */
   const css = readFileSync(new URL('../../client/src/styles.css', import.meta.url), 'utf8');
-  const head = css.slice(css.indexOf('.setup-group-head {'), css.indexOf('.setup-nav ul'));
-  assert(/padding: 0 10px 0 37px/.test(head), 'the heading indent no longer matches the item text');
+  const head = css.slice(css.indexOf('.setup-group-head {'), css.indexOf('.setup-group-head::before'));
+  assert(/padding: 3px 10px 3px 37px/.test(head), 'the heading indent no longer matches the item text');
   assert(/white-space: nowrap/.test(head), 'headings can wrap again');
+});
+
+test('a group heading is bigger than the items it heads', () => {
+  /* The inversion that made this look wrong however it was coloured: 10.5px
+     uppercase above 13px semibold items, so the heading was the smallest thing
+     in its own group. A heading smaller than its content is not subtle, it is
+     backwards. */
+  const css = readFileSync(new URL('../../client/src/styles.css', import.meta.url), 'utf8');
+  const head = css.slice(css.indexOf('.setup-group-head {'), css.indexOf('.setup-group-head::before'));
+  assert(/font-size: var\(--s-head\)/.test(head), 'the heading is back to a hand-rolled size');
+  assert(/text-transform: none/.test(head),
+    'uppercase is ~15% wider at this size and puts "Objects & fields" back on two lines');
+
+  // --s-head must actually be larger than --s-body, or the rule above is empty.
+  const scale = css.slice(css.indexOf('--s-title:'), css.indexOf('--sp-1:'));
+  const head_px = Number(/--s-head:\s*([\d.]+)rem/.exec(scale)[1]);
+  const body_px = Number(/--s-body:\s*([\d.]+)rem/.exec(scale)[1]);
+  assert(head_px > body_px, `--s-head (${head_px}rem) is not bigger than --s-body (${body_px}rem)`);
+});
+
+test('the heading reacts, and the marker is in the icon column', () => {
+  // Asked for: a little bigger, highlighted, with a transition, on one line.
+  const css = readFileSync(new URL('../../client/src/styles.css', import.meta.url), 'utf8');
+  const before = css.slice(css.indexOf('.setup-group-head::before'), css.indexOf('.setup-group:hover .setup-group-head {'));
+  assert(/left: 14px/.test(before), 'the accent marker has left the icon column');
+  assert(/transition:/.test(before), 'the marker no longer animates');
+  assert(/\.setup-group:hover \.setup-group-head \{/.test(css), 'the heading no longer responds to hover');
 });
 
 test('an icon inside an uppercase heading keeps its ligature', () => {

@@ -4969,25 +4969,64 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
 }
 
 .setup-group { margin-top: 16px; }
+/* Pinned has no collapse control, so its heading is static — but it keeps the
+   same marker and size so it reads as one of the group headings, not a label. */
+.setup-group:first-of-type .setup-group-head { margin-top: 0; }
 /* Indented to 37px so the heading text starts exactly where the item labels
    start — 10px of row padding, a 17px icon, then the 10px gap. The heading
    used to sit at 10px, 27px left of everything beneath it, so nothing in the
    column shared a left edge and the whole sidebar read as unaligned. */
+/* A real heading, not a label.
+ *
+ * It was 10.5px uppercase above 13px items — smaller than the thing it headed,
+ * which is an inverted hierarchy no amount of recolouring fixes. It now takes
+ * the same size as every other heading in Setup, in sentence case: uppercase at
+ * this size is roughly 15% wider and would put "Objects & fields" back on two
+ * lines, which is the one thing it must never do.
+ *
+ * The accent bar sits in the icon column, so the marker lines up with the item
+ * icons while the text lines up with the item labels — two columns, both
+ * aligned, without the heading needing an icon of its own. */
 .setup-group-head {
+  position: relative;
   display: flex;
   align-items: center;
-  margin: 0 0 3px;
-  padding: 0 10px 0 37px;
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-  /* Was --ink-4, which measured 2.52:1 in light — a label nobody can read is
-     not a subtle label. Size, case and weight carry the hierarchy; the colour
-     does not have to as well. */
-  color: var(--ink-3);
+  margin: 0 0 var(--sp-1);
+  padding: 3px 10px 3px 37px;
+  border-radius: var(--r-xs);
+  font-size: var(--s-head);
+  font-weight: 640;
+  letter-spacing: -0.005em;
+  text-transform: none;
+  color: var(--ink);
   white-space: nowrap;
+  transition: background 0.16s ease;
 }
+.setup-group-head::before {
+  content: '';
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  width: 3px;
+  height: 12px;
+  margin-top: -6px;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0.45;
+  transition: opacity 0.18s ease, height 0.18s ease, margin-top 0.18s ease;
+}
+.setup-group:hover .setup-group-head { background: var(--hairline-2); }
+.setup-group:hover .setup-group-head::before {
+  opacity: 1;
+  height: 18px;
+  margin-top: -9px;
+}
+.setup-group-toggle { transition: color 0.16s ease; }
+.setup-group:hover .setup-group-toggle { color: var(--accent-dark); }
+/* Folded shut, the bar stays lit so a collapsed group still reads as a group
+   rather than as a gap somebody left. */
+.setup-group-toggle[aria-expanded='false'] { color: var(--ink-3); }
+.setup-group-head:has(.setup-group-toggle[aria-expanded='false'])::before { opacity: 0.8; }
 .setup-nav ul { list-style: none; margin: 0; padding: 0; }
 
 /* The active marker is a filled background, not a left rail: a rail on a
