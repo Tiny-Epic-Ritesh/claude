@@ -1063,6 +1063,23 @@ const COLUMNS = [
      `geo_status` carries declined and unavailable as values in their own right
      -- a refusal is a fact worth keeping, and NULL means the question never
      arose. */
+  /* Lead list governance.
+   *
+   * The legacy tenant reached 4,810 lists against 495,118 leads, and the audit
+   * calls it "the single clearest governance failure in the tenant": somebody
+   * exports a CSV, re-imports it as a static list, uses it once, and never
+   * deletes it. Names like `All Active Clients 210826.csv` show it was a daily
+   * habit.
+   *
+   * A snapshot is now an explicit, expiring, audited artefact. It has to say
+   * why it is frozen, and it lapses on its own -- which is the only thing that
+   * stops four thousand of them accumulating. Live queries have no expiry
+   * because they cannot rot. */
+  ['lead_lists', 'snapshot_reason', 'TEXT'],
+  ['lead_lists', 'expires_at', 'TEXT'],
+  ['lead_lists', 'archived_at', 'TEXT'],
+  ['lead_lists', 'columns', 'TEXT'],
+
   ['activities', 'geo_status', 'TEXT'],            // captured / declined / unavailable / expired
   ['activities', 'geo_lat', 'REAL'],
   ['activities', 'geo_lng', 'REAL'],

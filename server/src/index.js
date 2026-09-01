@@ -58,6 +58,7 @@ import { seedCalendars } from './engine/calendar.js';
 import { seedQueues } from './engine/queues.js';
 import { seedKra, seedIncentives } from './engine/kra.js';
 import { purge as purgeLocations } from './engine/geolocation.js';
+import { archiveExpired as archiveExpiredLists } from './engine/leadlists.js';
 
 /* Register the core entities and fields as metadata. Idempotent, and it
    preserves any label an administrator has renamed. */
@@ -73,6 +74,11 @@ purge();
    enforces would make both of those statements false. The meeting itself is
    kept -- only where the RM was standing is cleared. */
 purgeLocations();
+/* Snapshots that have lapsed are archived, not deleted — somebody may need to
+   prove who was in a list when a campaign went out, and that is exactly the
+   evidence a delete destroys. Archiving is what stops 4,810 of them
+   accumulating, which is the legacy tenant's clearest governance failure. */
+archiveExpiredLists();
 /* One size sample a day. Growth rate needs history and there is no history
    without keeping some — four numbers, so a decade is smaller than one lead. */
 sampleDbSize();

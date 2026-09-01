@@ -267,11 +267,29 @@ export const operatorsForType = (type) =>
     .map(([code, o]) => ({ code, label: o.label }));
 
 /** The whole vocabulary, for the query-builder UI. */
+/**
+ * Operators that take no value, and operators that take several.
+ *
+ * A builder has to know both or it draws the wrong control: a text box beside
+ * "is empty" invites somebody to type into a field that is ignored, and a
+ * single-value box beside "is any of" makes a list operator behave like an
+ * equality one. Declared here rather than guessed in the interface, so the
+ * builder and the compiler cannot disagree about what an operator means.
+ */
+export const NO_VALUE_OPERATORS = new Set(['is_set', 'is_empty', 'is_true', 'is_false']);
+export const LIST_OPERATORS = new Set(['in', 'not_in', 'has_any', 'between']);
+
 export const conditionSchema = () => ({
   fields: Object.entries(FIELDS).map(([code, f]) => ({
     code, label: f.label, type: f.type, operators: operatorsForType(f.type),
   })),
-  operators: Object.entries(OPERATORS).map(([code, o]) => ({ code, label: o.label, types: o.types })),
+  operators: Object.entries(OPERATORS).map(([code, o]) => ({
+    code,
+    label: o.label,
+    types: o.types,
+    arity: NO_VALUE_OPERATORS.has(code) ? 0 : 1,
+    list: LIST_OPERATORS.has(code),
+  })),
 });
 
 /* ---------------------------------------------------------- validation */

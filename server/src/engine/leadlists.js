@@ -37,6 +37,81 @@ export const KIND_HELP = {
 };
 
 /**
+ * Which kinds are snapshots — frozen at a moment, and therefore able to rot.
+ *
+ * The legacy tenant's 4,810 lists were overwhelmingly these. A static list of
+ * "active clients" is wrong the next day, and nothing in that system said so.
+ */
+export const SNAPSHOT_KINDS = new Set(['static']);
+export const isSnapshot = (kind) => SNAPSHOT_KINDS.has(normaliseKind(kind));
+
+/** How long a snapshot lives before it lapses, unless somebody chooses otherwise. */
+export const DEFAULT_SNAPSHOT_DAYS = 90;
+
+/**
+ * What a list must state before it may be created.
+ *
+ * A live query needs a question. A snapshot needs a reason as well, because
+ * "why is this frozen" is the question nobody could answer about the 4,810 —
+ * and an expiry, because a snapshot that never lapses is how they accumulated.
+ *
+ * Returns an error object or null, in the shape every other validator here uses.
+ */
+export function validateGovernance({ kind, criteria, snapshot_reason: reason, expires_at: expires }) {
+  const k = normaliseKind(kind);
+
+  if (!isSnapshot(k)) {
+    if (!criteria) {
+      return { error: 'A live list needs a filter — that is what makes it live', field: 'criteria' };
+    }
+    return null;
+  }
+
+  if (!String(reason ?? '').trim()) {
+    return {
+      error: 'Say why this is a snapshot rather than a live list',
+      field: 'snapshot_reason',
+      fix: 'A frozen list is wrong the day after it is made. If it does not need to be frozen, use a live list instead.',
+    };
+  }
+  if (!expires) {
+    return { error: 'A snapshot needs a date it expires on', field: 'expires_at' };
+  }
+  if (Number.isNaN(Date.parse(expires))) {
+    return { error: 'That expiry date cannot be read', field: 'expires_at' };
+  }
+  if (new Date(expires) <= new Date()) {
+    return { error: 'That expiry is already in the past', field: 'expires_at' };
+  }
+  return null;
+}
+
+/** The default expiry offered for a new snapshot, as a date string. */
+export function defaultExpiry(days = DEFAULT_SNAPSHOT_DAYS) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Archive snapshots whose expiry has passed.
+ *
+ * Archived, never deleted: somebody may need to prove who was in a list at the
+ * time a campaign went out, and that is exactly the evidence a delete destroys.
+ * It simply stops appearing in the list of lists.
+ */
+export function archiveExpired() {
+  const res = run(
+    `UPDATE lead_lists
+        SET archived_at = datetime('now')
+      WHERE archived_at IS NULL
+        AND expires_at IS NOT NULL
+        AND date(expires_at) < date('now')`,
+  );
+  return Number(res.changes ?? 0);
+}
+
+/**
  * A campaign may not send to a dynamic list.
  *
  * Enforced here rather than trusted to the caller, because there are three

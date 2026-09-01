@@ -1073,7 +1073,12 @@ async function run() {
   await check('a lead list can be created and populated', async () => {
     const { data } = await req('/api/lists', {
       method: 'POST', token: T.marketing_manager, expect: 201,
-      body: { name: 'E2E list', kind: 'static', shared_with: ['sales_rm'] },
+      body: {
+        name: 'E2E list', kind: 'static', shared_with: ['sales_rm'],
+        // A snapshot has to say why it is one and when it stops being trusted.
+        snapshot_reason: 'Fixed cohort for the end-to-end run',
+        expires_at: '2030-01-01',
+      },
     });
     REF.listId = data.id;
     const { data: added } = await req(`/api/lists/${REF.listId}/members`, {
@@ -3499,7 +3504,11 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     // assuming the superadmin happens to own one.
     const { data: made } = await req('/api/lists', {
       method: 'POST', token: T.superadmin, expect: 201,
-      body: { name: `Audience probe ${RUN}` },
+      body: {
+        name: `Audience probe ${RUN}`,
+        snapshot_reason: 'Probe list for the audience refusal check',
+        expires_at: '2030-01-01',
+      },
     });
 
     const { data } = await req('/api/admin/connectors/meta/audiences', {
@@ -3654,7 +3663,13 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     const mk = async (kind, criteria) => {
       const { data } = await req('/api/lists', {
         method: 'POST', token: T.admin, expect: 201,
-        body: { name: `${kind} ${RUN}`, kind, criteria },
+        body: {
+          name: `${kind} ${RUN}`, kind, criteria,
+          // Only a snapshot is asked to justify itself; the other two carry a
+          // filter and re-derive, so these two fields are ignored for them.
+          snapshot_reason: 'Frozen for the kind-comparison check',
+          expires_at: '2030-01-01',
+        },
       });
       return data;
     };

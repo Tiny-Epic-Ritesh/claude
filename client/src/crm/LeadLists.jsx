@@ -7,10 +7,11 @@
  * because the alternative is someone discovering it at send time.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, shortDate, dateTime } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty, Modal } from '../components/ui.jsx';
+import ConditionBuilder from '../components/ConditionBuilder.jsx';
 
 const KIND_BADGE = {
   static: 'badge-blue',
@@ -125,21 +126,38 @@ export default function LeadLists({ session }) {
  */
 function NewList({ meta, onClose, onCreated }) {
   const [name, setName] = useState('');
-  const [kind, setKind] = useState('static');
-  const [stage, setStage] = useState('');
+  /* A live query is the default, per the audit: "make saved queries the default
+     and snapshots an explicit, expiring, audited artefact". A snapshot is wrong
+     the day after it is made, and 4,810 of them is what happens when it is as
+     easy to freeze a list as to keep it live. */
+  const [kind, setKind] = useState('refreshable');
+  const [criteria, setCriteria] = useState(null);
+  const [reason, setReason] = useState('');
+  const [expires, setExpires] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
-  const needsFilter = kind !== 'static';
+  const chosen = (meta?.kinds ?? []).find((k) => k.code === kind);
+  const isSnapshot = Boolean(chosen?.snapshot);
+  const needsFilter = !isSnapshot;
+
+  // The default expiry is offered rather than imposed, but it is filled in so
+  // the common case is one click rather than a date somebody has to invent.
+  useEffect(() => {
+    if (isSnapshot && !expires && meta?.default_expiry) setExpires(meta.default_expiry);
+  }, [isSnapshot, expires, meta?.default_expiry]);
 
   const submit = async (e) => {
     e.preventDefault();
     setSaving(true); setError(null);
     try {
-      const criteria = needsFilter && stage
-        ? { op: 'AND', children: [{ field: 'stage', operator: 'in', value: [stage] }] }
-        : null;
-      const created = await api.post('/lists', { name, kind, criteria });
+      const created = await api.post('/lists', {
+        name,
+        kind,
+        criteria: needsFilter ? criteria : null,
+        snapshot_reason: isSnapshot ? reason : null,
+        expires_at: isSnapshot ? expires : null,
+      });
       onCreated(created.id);
     } catch (err) {
       setError(err.message);
@@ -175,21 +193,45 @@ function NewList({ meta, onClose, onCreated }) {
 
         {needsFilter && (
           <div className="field">
-            <label htmlFor="list-stage">Build from stage</label>
-            <select id="list-stage" value={stage} onChange={(e) => setStage(e.target.value)}>
-              <option value="">Choose a stage…</option>
-              {(meta?.stages ?? []).map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-            <span className="tiny muted">
-              A {kind} list is built from a filter. Richer filters come from Advanced Search — save any search as a list.
-            </span>
+            <span className="field-label">Who is in it</span>
+            {/* The engine has always taken nested AND/OR over 27 fields. This
+                screen offered one stage, which is why anything real was done in
+                Excel and re-imported — the habit the audit traces 4,810 lists
+                back to. */}
+            <ConditionBuilder value={criteria} schema={meta?.schema} onChange={setCriteria} />
+          </div>
+        )}
+
+        {isSnapshot && (
+          /* A snapshot has to say why it is frozen and when it lapses. These are
+             the two questions nobody could answer about the legacy tenant's
+             lists, and asking them here is what stops the pile forming. */
+          <div className="stack" style={{ gap: 10 }}>
+            <div className="field">
+              <label htmlFor="list-reason">Why is this frozen?</label>
+              <input
+                id="list-reason"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="Audit evidence for the Q3 campaign"
+              />
+              <span className="tiny muted">
+                A snapshot is wrong the day after it is made. If it does not need to be
+                frozen, a live list stays correct on its own.
+              </span>
+            </div>
+            <div className="field">
+              <label htmlFor="list-expiry">Expires on</label>
+              <input id="list-expiry" type="date" value={expires} onChange={(e) => setExpires(e.target.value)} />
+              <span className="tiny muted">Archived automatically after this date. Never deleted.</span>
+            </div>
           </div>
         )}
 
         <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
           <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
           <button type="submit" className="btn-primary"
-            disabled={saving || !name.trim() || (needsFilter && !stage)}>
+            disabled={saving || !name.trim() || (needsFilter && !criteria) || (isSnapshot && (!reason.trim() || !expires))}>
             {saving ? 'Creating…' : 'Create list'}
           </button>
         </div>

@@ -21,6 +21,7 @@ import {
   operatorsFor, describe, searchableObjects, OPERATORS,
 } from '../engine/search.js';
 import { picklistValues, fieldDef } from '../engine/metadata.js';
+import { defaultExpiry } from '../engine/leadlists.js';
 
 const router = Router();
 router.use(requireUser);
@@ -298,11 +299,19 @@ router.post('/lead/to-list', requirePermission('list.create'), (req, res) => {
     registry, scopeSql: scope.sql, scopeParams: scope.params, cap: 20_000,
   });
 
+  /* This freezes a search into rows, which makes it a snapshot like any other,
+     so it carries the same two obligations: a reason, and a date it stops being
+     trusted. Saving a search is the easiest way in the product to make a list,
+     and a route that skipped governance here would be the hole the whole rule
+     drains through — 4,810 lists in the legacy tenant were made exactly this
+     way. The reason writes itself, because the search itself is the reason. */
   const list = run(
-    `INSERT INTO lead_lists (name, description, created_by, owner_id, kind, sales_org)
-     VALUES (?,?,?,?, 'static', ?)`,
+    `INSERT INTO lead_lists
+       (name, description, created_by, owner_id, kind, sales_org, snapshot_reason, expires_at)
+     VALUES (?,?,?,?, 'static', ?,?,?)`,
     [name.trim(), where ? describe(where, registry) : 'Everything visible',
-      req.user.id, req.user.id, req.user.sales_org],
+      req.user.id, req.user.id, req.user.sales_org,
+      'Saved from an advanced search', defaultExpiry()],
   );
   for (const id of ids) {
     run('INSERT OR IGNORE INTO lead_list_members (list_id, lead_id) VALUES (?,?)', [list.lastInsertRowid, id]);

@@ -19,13 +19,14 @@ import {
   requireUser, requirePermission, reqScope, activeOrg, orgsFor, can,
 } from '../auth.js';
 import { validate } from '../security.js';
-import { validateTree, describe } from '../engine/conditions.js';
+import { validateTree, describe, conditionSchema, FIELDS } from '../engine/conditions.js';
 import {
   LIST_KINDS, KIND_LABEL, KIND_HELP, normaliseKind, membersSql, refreshList,
-  mayReadList, mayWriteList,
+  mayReadList, mayWriteList, isSnapshot, validateGovernance, defaultExpiry,
+  DEFAULT_SNAPSHOT_DAYS,
 } from '../engine/leadlists.js';
 import { checkConsent } from '../engine/consent.js';
-import { send } from '../integrations.js';
+import { send, pushToAutodialler } from '../integrations.js';
 
 const router = Router();
 router.use(requireUser);
@@ -83,12 +84,53 @@ function memberCount(list, req) {
   ).n;
 }
 
+/**
+ * The condition schema, with real choices attached to the enum fields.
+ *
+ * The engine knows a field is an enum; it does not know that `stage` means
+ * New / Contacted / Qualified. Those live in the metadata layer, which is where
+ * an administrator edits them. Joining the two here means the builder offers
+ * the same values the pickers on a lead offer — a filter written against a
+ * value nobody can select is a filter that matches nothing.
+ */
+function enrichedSchema() {
+  const schema = conditionSchema();
+  return {
+    ...schema,
+    fields: schema.fields.map((f) => {
+      if (f.type !== 'enum') return f;
+      const def = one(
+        "SELECT id FROM field_def WHERE entity = 'lead' AND api_name = ? AND active = 1",
+        [f.code],
+      );
+      if (!def) return f;
+      const values = all(
+        'SELECT value, label FROM picklist_value WHERE field_id = ? AND active = 1 ORDER BY sort_order, label',
+        [def.id],
+      );
+      return values.length ? { ...f, values } : f;
+    }),
+  };
+}
+
 /* --------------------------------------------------------------- meta */
 
 router.get('/meta', (_req, res) => res.json({
-  kinds: LIST_KINDS.map((k) => ({ code: k, label: KIND_LABEL[k], help: KIND_HELP[k] })),
+  kinds: LIST_KINDS.map((k) => ({
+    code: k, label: KIND_LABEL[k], help: KIND_HELP[k], snapshot: isSnapshot(k),
+  })),
   stages: LEAD_STAGES,
   bulk_cap: BULK_CAP,
+  /* The 27 fields and their operators, so a builder can be driven by the same
+     definitions the query compiler uses. The engine has always supported nested
+     AND/OR groups over all of them; nothing exposed the catalogue, so the only
+     filter anybody could express through the interface was a single stage. */
+  schema: enrichedSchema(),
+  /* What a snapshot costs to make, stated where it is made. */
+  snapshot_default_days: DEFAULT_SNAPSHOT_DAYS,
+  default_expiry: defaultExpiry(),
+  /* Which lead columns a list may choose to show. */
+  columns: COLUMN_CHOICES,
 }));
 
 /* --------------------------------------------------------------- list */
@@ -118,7 +160,10 @@ router.get('/', (req, res) => {
 /* ------------------------------------------------------------- create */
 
 router.post('/', requirePermission('list.create'), (req, res) => {
-  const { name, kind = 'static', criteria = null, description = null, shared_with = [] } = req.body ?? {};
+  const {
+    name, kind = 'static', criteria = null, description = null, shared_with = [],
+    snapshot_reason: reason = null, expires_at: expires = null, columns = null,
+  } = req.body ?? {};
 
   const bad = validate(req.body, { name: ['required', 'max:120'] });
   if (bad) return res.status(400).json(bad);
@@ -128,24 +173,37 @@ router.post('/', requirePermission('list.create'), (req, res) => {
     return res.status(400).json({ error: `Kind must be one of: ${LIST_KINDS.join(', ')}` });
   }
 
-  // A filter-driven list without a filter is not a list, it is an empty set
-  // waiting to confuse someone.
+  /* A filter-driven list without a filter is not a list, it is an empty set
+     waiting to confuse someone. And a snapshot has to say why it is frozen and
+     when it lapses — the two questions nobody could answer about the legacy
+     tenant's 4,810 lists. */
   if (k !== 'static') {
-    if (!criteria) {
-      return res.status(400).json({ error: `A ${KIND_LABEL[k].toLowerCase()} list needs a filter to build from.` });
+    const problems = validateTree(criteria ?? null);
+    if (!criteria || problems.length) {
+      return res.status(400).json(
+        problems.length
+          ? { error: problems[0].error, problems }
+          : { error: `A ${KIND_LABEL[k].toLowerCase()} list needs a filter to build from.` },
+      );
     }
-    const problems = validateTree(criteria);
-    if (problems.length) return res.status(400).json({ error: problems[0].error, problems });
   }
+
+  const governance = validateGovernance({ kind: k, criteria, snapshot_reason: reason, expires_at: expires });
+  if (governance) return res.status(400).json(governance);
 
   const org = activeOrg(req) || req.user.sales_org;
   const result = run(
-    `INSERT INTO lead_lists (name, kind, criteria, description, owner_id, created_by, shared_with, sales_org, updated_at)
-     VALUES (?,?,?,?,?,?,?,?, datetime('now'))`,
+    `INSERT INTO lead_lists
+       (name, kind, criteria, description, owner_id, created_by, shared_with, sales_org,
+        snapshot_reason, expires_at, columns, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?, datetime('now'))`,
     [
       String(name).trim(), k, criteria ? JSON.stringify(criteria) : null,
       description || (criteria ? describe(criteria) : null),
       req.user.id, req.user.id, JSON.stringify(shared_with), org,
+      isSnapshot(k) ? String(reason).trim() : null,
+      isSnapshot(k) ? expires : null,
+      columns ? JSON.stringify(columns) : null,
     ],
   );
 
@@ -302,6 +360,374 @@ router.post('/:id/preview', (req, res) => {
 });
 
 /** Reassign every member to one owner. */
+/* --------------------------------------------------- columns and export */
+
+/**
+ * The lead columns a list may choose to show, and how to read each one.
+ *
+ * Salesforce list views let every view pick and order its own columns. Ours
+ * showed one fixed set, so anybody needing a different field exported to Excel
+ * instead — which the audit identifies as the real signal behind 4,810 lists.
+ *
+ * `pii` marks the ones masked unless the reader may unmask, so an export cannot
+ * quietly become the way client identifiers leave the building.
+ */
+export const COLUMN_CHOICES = [
+  { key: 'name', label: 'Name' },
+  { key: 'mobile', label: 'Mobile', pii: true },
+  { key: 'email', label: 'Email', pii: true },
+  { key: 'stage', label: 'Stage' },
+  { key: 'source', label: 'Source' },
+  { key: 'owner_name', label: 'Owner' },
+  { key: 'city', label: 'City' },
+  { key: 'state', label: 'State' },
+  { key: 'language', label: 'Language' },
+  { key: 'risk_profile', label: 'Risk profile' },
+  { key: 'aum', label: 'AUM' },
+  { key: 'score', label: 'Lead score' },
+  { key: 'client_code', label: 'Client code' },
+  { key: 'sales_org', label: 'Business' },
+  { key: 'created_at', label: 'Created' },
+  { key: 'next_follow_up_at', label: 'Next follow-up' },
+];
+
+const DEFAULT_COLUMNS = ['name', 'mobile', 'stage', 'owner_name', 'city'];
+
+const columnsOf = (list) => {
+  try {
+    const saved = JSON.parse(list.columns ?? 'null');
+    if (Array.isArray(saved) && saved.length) {
+      return saved.filter((k) => COLUMN_CHOICES.some((c) => c.key === k));
+    }
+  } catch { /* a column set that will not parse is one nobody chose */ }
+  return DEFAULT_COLUMNS;
+};
+
+/** One CSV cell. Quotes everything, so a comma in a name cannot shift a column. */
+const csvCell = (v) => {
+  if (v === null || v === undefined) return '""';
+  return `"${String(v).replace(/"/g, '""')}"`;
+};
+
+/**
+ * Export a list.
+ *
+ * People are exporting anyway — they were just doing it outside the product,
+ * which is why the trail ended at the list. Recording who exported what, when,
+ * how many rows and whether identifiers were in the clear turns an invisible
+ * habit into evidence, which for a SEBI-regulated broker is the point.
+ *
+ * Masked by default. Unmasking is a separate capability and is recorded as
+ * such — an export is the highest-volume way client data leaves, and it should
+ * not be the one path where masking is skipped by omission.
+ */
+router.post('/:id/export', (req, res) => {
+  const list = loadList(req);
+  if (!list || !mayReadList(list, req.user)) return res.status(404).json({ error: 'List not found' });
+
+  const chosen = Array.isArray(req.body?.columns) && req.body.columns.length
+    ? req.body.columns.filter((k) => COLUMN_CHOICES.some((c) => c.key === k))
+    : columnsOf(list);
+  if (!chosen.length) return res.status(400).json({ error: 'Choose at least one column' });
+
+  const wantsClear = Boolean(req.body?.unmask);
+  const mayUnmask = can(req.user.role, 'pii.unmask');
+  if (wantsClear && !mayUnmask) {
+    return res.status(403).json({
+      error: 'Exporting identifiers in the clear needs the unmask permission',
+      required: 'pii.unmask',
+    });
+  }
+  const unmasked = wantsClear && mayUnmask;
+
+  const members = membersSql(list);
+  const scope = reqScope(req, 'l');
+  const rows = all(
+    `SELECT l.*, u.name AS owner_name FROM leads l
+       LEFT JOIN users u ON u.id = l.owner_id
+      WHERE l.deleted_at IS NULL AND (${members.sql}) AND (${scope.sql})
+      ORDER BY l.id
+      LIMIT ?`,
+    [...members.params, ...scope.params, BULK_CAP],
+  );
+
+  const mask = (key, value) => {
+    const col = COLUMN_CHOICES.find((c) => c.key === key);
+    if (!col?.pii || unmasked || !value) return value;
+    const str = String(value);
+    return key === 'email'
+      ? str.replace(/^(.).*(@.*)$/, '$1***$2')
+      : `******${str.slice(-4)}`;
+  };
+
+  const header = chosen.map((k) => csvCell(COLUMN_CHOICES.find((c) => c.key === k)?.label ?? k)).join(',');
+  const body = rows.map((r) => chosen.map((k) => csvCell(mask(k, r[k]))).join(',')).join('\n');
+
+  /* One audit row for the export itself, naming what left. Not one per lead:
+     this is a single act by one person, and 5,000 rows would bury the fact. */
+  audit(req.user.id, 'list.export', 'lead_list', list.id, {
+    list: list.name, rows: rows.length, columns: chosen, unmasked,
+  });
+
+  res.json({
+    filename: `${list.name.replace(/[^\w\- ]+/g, '').trim() || 'list'}.csv`,
+    rows: rows.length,
+    unmasked,
+    truncated: rows.length >= BULK_CAP,
+    csv: `${header}\n${body}`,
+  });
+});
+
+/**
+ * Import a CSV of identifiers into a snapshot list.
+ *
+ * The other half of the round-trip the audit describes: somebody has a column
+ * of client codes or mobiles from somewhere else and needs the leads behind
+ * them. Doing it here makes the matching visible — what matched, what did not,
+ * and why — instead of it happening in a spreadsheet nobody keeps.
+ *
+ * Only into a snapshot: adding rows by hand to a live query would make the
+ * query a lie.
+ */
+router.post('/:id/import', (req, res) => {
+  const list = loadList(req);
+  if (!list || !mayWriteList(list, req.user)) return res.status(404).json({ error: 'List not found' });
+  if (!isSnapshot(list.kind)) {
+    return res.status(400).json({
+      error: 'A live list is defined by its filter, so rows cannot be added to it',
+      fix: 'Import into a snapshot, or widen the filter.',
+    });
+  }
+
+  const field = ['client_code', 'mobile', 'pan'].includes(req.body?.match_on) ? req.body.match_on : 'client_code';
+  const values = String(req.body?.values ?? '')
+    .split(/[\r\n,;\t]+/)
+    .map((v) => v.trim())
+    .filter(Boolean);
+
+  if (!values.length) return res.status(400).json({ error: 'Nothing to import' });
+  if (values.length > BULK_CAP) {
+    return res.status(400).json({ error: `That is ${values.length} rows — the most one import may carry is ${BULK_CAP}` });
+  }
+
+  const scope = reqScope(req, 'l');
+  const matched = [];
+  const missed = [];
+
+  for (const v of values) {
+    /* Mobile is matched on the last ten digits, because a column pasted out of
+       a spreadsheet carries +91, spaces and hyphens inconsistently. */
+    const row = field === 'mobile'
+      ? one(
+        `SELECT l.id FROM leads l WHERE l.deleted_at IS NULL AND (${scope.sql})
+           AND replace(replace(replace(l.mobile,' ',''),'-',''),'+','') LIKE ?
+         LIMIT 1`,
+        [...scope.params, `%${v.replace(/\D/g, '').slice(-10)}`],
+      )
+      : one(
+        `SELECT l.id FROM leads l WHERE l.deleted_at IS NULL AND (${scope.sql})
+           AND lower(l.${field}) = lower(?) LIMIT 1`,
+        [...scope.params, v],
+      );
+    if (row) matched.push(row.id); else missed.push(v);
+  }
+
+  let added = 0;
+  for (const id of new Set(matched)) {
+    if (one('SELECT 1 v FROM lead_list_members WHERE list_id = ? AND lead_id = ?', [list.id, id])) continue;
+    run('INSERT INTO lead_list_members (list_id, lead_id) VALUES (?,?)', [list.id, id]);
+    added += 1;
+  }
+
+  audit(req.user.id, 'list.import', 'lead_list', list.id, {
+    match_on: field, offered: values.length, matched: matched.length, added, missed: missed.length,
+  });
+
+  res.json({
+    ok: true,
+    offered: values.length,
+    matched: matched.length,
+    added,
+    already_present: matched.length - added,
+    /* The rows that did not match come back, not just a count. "43 did not
+       match" is not actionable; the 43 values are. */
+    missed: missed.slice(0, 200),
+    missed_total: missed.length,
+  });
+});
+
+/* ------------------------------------------------------- more bulk actions */
+
+/**
+ * Push every member into the dialler campaign.
+ *
+ * Goes through the same `pushToAutodialler` the single-lead button uses, so a
+ * list push and a one-off push load the campaign identically and report the
+ * same partial-load truth. Inventing a second queue here would have given the
+ * two paths different behaviour on the day one of them mattered.
+ */
+router.post('/:id/bulk/dialler', requirePermission('lead.contact'), async (req, res, next) => {
+  const list = loadList(req);
+  if (!list || !mayReadList(list, req.user)) return res.status(404).json({ error: 'List not found' });
+
+  const ids = memberIds(list, req);
+  const skipped = new Map();
+  const eligible = [];
+
+  for (const id of ids) {
+    const lead = one('SELECT * FROM leads WHERE id = ?', [id]);
+    if (!lead?.mobile) { skipped.set('no_destination', (skipped.get('no_destination') ?? 0) + 1); continue; }
+    if (lead.mobile_invalid) { skipped.set('invalid_destination', (skipped.get('invalid_destination') ?? 0) + 1); continue; }
+
+    // A dial is contact, so consent is checked the same way a send is.
+    const verdict = checkConsent(lead, 'call', 'service');
+    if (!verdict.allowed) {
+      const code = verdict.code ?? 'opted_out';
+      skipped.set(code, (skipped.get(code) ?? 0) + 1);
+      continue;
+    }
+    eligible.push(id);
+  }
+
+  try {
+    const result = eligible.length
+      ? await pushToAutodialler(eligible, req.user.id)
+      : { queued: 0, rejected: 0 };
+
+    for (const id of eligible) {
+      audit(req.user.id, 'lead.dialler.push', 'lead', id, { via_list: list.id });
+    }
+
+    return res.json({
+      ok: true,
+      requested: ids.length,
+      pushed: result.queued ?? eligible.length,
+      rejected: result.rejected ?? 0,
+      simulated: result.simulated ?? undefined,
+      skipped: tally(skipped),
+    });
+  } catch (err) {
+    if (err.name === 'VendorError') return res.status(502).json({ error: err.message, vendor: err.vendor });
+    return next(err);
+  }
+});
+
+/** Add every member to another list, or take them out of one. */
+router.post('/:id/bulk/membership', (req, res) => {
+  const list = loadList(req);
+  if (!list || !mayReadList(list, req.user)) return res.status(404).json({ error: 'List not found' });
+
+  const target = one('SELECT * FROM lead_lists WHERE id = ?', [Number(req.body?.target_id)]);
+  if (!target || !mayWriteList(target, req.user)) return res.status(404).json({ error: 'Target list not found' });
+  if (target.id === list.id) return res.status(400).json({ error: 'That is the same list' });
+  if (!isSnapshot(target.kind)) {
+    return res.status(400).json({ error: `"${target.name}" is a live list — its members come from its filter` });
+  }
+
+  const remove = req.body?.action === 'remove';
+  const ids = memberIds(list, req);
+  let changed = 0;
+
+  for (const id of ids) {
+    if (remove) {
+      const r = run('DELETE FROM lead_list_members WHERE list_id = ? AND lead_id = ?', [target.id, id]);
+      changed += Number(r.changes ?? 0);
+    } else if (!one('SELECT 1 v FROM lead_list_members WHERE list_id = ? AND lead_id = ?', [target.id, id])) {
+      run('INSERT INTO lead_list_members (list_id, lead_id) VALUES (?,?)', [target.id, id]);
+      changed += 1;
+    }
+  }
+
+  audit(req.user.id, remove ? 'list.members.remove' : 'list.members.add', 'lead_list', target.id, {
+    from_list: list.id, requested: ids.length, changed,
+  });
+
+  res.json({ ok: true, requested: ids.length, changed, target: target.name, action: remove ? 'removed' : 'added' });
+});
+
+/**
+ * Set one field to one value across the list.
+ *
+ * Deliberately narrow: only fields somebody would sensibly set in bulk, never
+ * an identifier. `mobile` in this list would be a way to destroy the thing
+ * every other record is matched on, and renaming 1,200 people at once is not a
+ * feature anybody asked for.
+ */
+const BULK_EDITABLE = new Set(['stage', 'source', 'city', 'state', 'language', 'risk_profile', 'marketing_opt_out']);
+
+router.post('/:id/bulk/field', requirePermission('lead.edit'), (req, res) => {
+  const list = loadList(req);
+  if (!list || !mayReadList(list, req.user)) return res.status(404).json({ error: 'List not found' });
+
+  const field = String(req.body?.field ?? '');
+  if (!BULK_EDITABLE.has(field)) {
+    return res.status(400).json({
+      error: `"${field}" cannot be set in bulk`,
+      fix: `Bulk editing is limited to: ${[...BULK_EDITABLE].join(', ')}.`,
+    });
+  }
+
+  const value = req.body?.value ?? null;
+  const ids = memberIds(list, req);
+  let changed = 0;
+  let unchanged = 0;
+
+  for (const id of ids) {
+    const before = one(`SELECT ${field} AS v FROM leads WHERE id = ?`, [id]);
+    if (!before) continue;
+    if (String(before.v ?? '') === String(value ?? '')) { unchanged += 1; continue; }
+    run(`UPDATE leads SET ${field} = ?, updated_at = datetime('now') WHERE id = ?`, [value, id]);
+    // One row per record: "what did this used to be" is the question asked
+    // after a bulk edit goes wrong.
+    audit(req.user.id, 'lead.bulk.field', 'lead', id, { field, from: before.v, to: value, via_list: list.id });
+    changed += 1;
+  }
+
+  res.json({ ok: true, requested: ids.length, changed, unchanged });
+});
+
+/**
+ * Delete every member of the list.
+ *
+ * Built at Ritesh's explicit instruction, against my recommendation, with the
+ * safeguards that make it defensible: a soft delete the recovery path can undo,
+ * its own capability, and a count the caller has to have seen. A mis-scoped
+ * list is the likeliest input here — the audit shows lists are frequently
+ * wrong — so the confirmation names the number rather than asking "are you
+ * sure".
+ */
+router.post('/:id/bulk/delete', requirePermission('lead.delete'), (req, res) => {
+  const list = loadList(req);
+  if (!list || !mayReadList(list, req.user)) return res.status(404).json({ error: 'List not found' });
+
+  const ids = memberIds(list, req);
+  const confirmed = Number(req.body?.confirm_count);
+
+  /* The count has to match what the caller was shown. A live query changes
+     constantly, and this is the difference between deleting what they saw and
+     deleting what they did not. */
+  if (confirmed !== ids.length) {
+    return res.status(409).json({
+      error: `This list now holds ${ids.length} leads, not ${Number.isFinite(confirmed) ? confirmed : 'the number shown'}`,
+      fix: 'It changed since you last looked. Check it again before deleting.',
+      count: ids.length,
+    });
+  }
+
+  let deleted = 0;
+  for (const id of ids) {
+    run(
+      "UPDATE leads SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL",
+      [id],
+    );
+    audit(req.user.id, 'lead.delete', 'lead', id, { via_list: list.id, soft: true });
+    deleted += 1;
+  }
+
+  audit(req.user.id, 'list.bulk.delete', 'lead_list', list.id, { deleted, list: list.name });
+  res.json({ ok: true, deleted, recoverable: true });
+});
+
 router.post('/:id/bulk/reassign', requirePermission('lead.reassign'), (req, res) => {
   const list = loadList(req);
   if (!list || !mayReadList(list, req.user)) return res.status(404).json({ error: 'List not found' });

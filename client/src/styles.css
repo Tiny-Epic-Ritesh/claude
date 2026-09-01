@@ -5795,3 +5795,123 @@ tr.row-inactive .user-cell strong { color: var(--ink-3); }
 .check-row { display: flex; align-items: flex-start; gap: 10px; }
 .check-row input { margin-top: 3px; }
 .check-row span { display: flex; flex-direction: column; gap: 2px; }
+
+/* ================================================= the condition builder ==
+   Nesting is shown by indentation and a left rule, not by boxes inside boxes:
+   at three levels deep, nested cards leave the innermost row about forty
+   pixels narrower than the outermost and the eye reads the padding rather than
+   the logic.
+   ========================================================================= */
+
+.cond-builder { display: block; }
+
+.cond-group {
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--glass);
+  padding: 10px;
+}
+/* Nested groups drop the box and keep a rule, so depth reads as depth. */
+.cond-group .cond-group {
+  border: 0;
+  border-left: 2px solid var(--accent-soft);
+  border-radius: 0;
+  background: none;
+  padding: 4px 0 4px 12px;
+}
+.cond-group .cond-group .cond-group { border-left-color: var(--hairline); }
+
+.cond-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.cond-group-head .spacer { flex: 1; }
+
+/* All of / Any of as two visible states rather than a dropdown: the whole
+   meaning of the group turns on this word and it should be readable without
+   opening anything. */
+.cond-op {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-pill);
+  background: var(--hairline-2);
+}
+.cond-op button {
+  padding: 3px 10px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: none;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.cond-op button.is-on {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.cond-children { display: flex; flex-direction: column; gap: 4px; }
+.cond-child { display: flex; flex-direction: column; gap: 4px; }
+
+/* The joiner is the sentence the tree reads as. Without it a stack of rows is
+   ambiguous about whether it means "and" or "or". */
+.cond-joiner {
+  align-self: flex-start;
+  padding: 0 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+
+.cond-leaf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--r-xs);
+  background: var(--glass-2);
+}
+.cond-leaf select,
+.cond-leaf input {
+  min-width: 0;
+  font-size: var(--s-body, 13px);
+}
+/* The field is the subject of the sentence, so it gets the room. */
+.cond-leaf select:first-child { flex: 2 1 10rem; }
+.cond-leaf select:nth-child(2) { flex: 1 1 8rem; }
+.cond-leaf select:nth-child(3),
+.cond-leaf input { flex: 2 1 9rem; }
+
+.cond-remove {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--ink-4);
+  cursor: pointer;
+  transition: background 0.13s ease, color 0.13s ease;
+}
+.cond-remove:hover:not(:disabled) { background: var(--danger-soft); color: var(--danger); }
+.cond-remove:disabled { opacity: 0.3; cursor: not-allowed; }
+
+@media (max-width: 620px) {
+  /* Stacked rather than squeezed: three controls and a button on one line
+     leaves each about sixty pixels wide on a phone. */
+  .cond-leaf select:first-child,
+  .cond-leaf select:nth-child(2),
+  .cond-leaf select:nth-child(3),
+  .cond-leaf input { flex: 1 1 100%; }
+}
