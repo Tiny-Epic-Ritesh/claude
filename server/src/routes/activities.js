@@ -28,6 +28,7 @@ import {
 import {
   createFollowUp, followUpBoard, cancelReminders, scheduleReminders, withinBusinessHours,
 } from '../engine/followups.js';
+import * as geolocation from '../engine/geolocation.js';
 
 const router = Router();
 router.use(requireUser);
@@ -50,6 +51,15 @@ router.get('/meta', (_req, res) => {
     ),
     meeting_modes: ['Physical', 'Virtual', 'Branch Visit'],
     sentiments: ['Positive', 'Neutral', 'Negative'],
+    /* P2-01. The form asks for a position only when told to, and shows the
+       notice while it asks. One wording, served from one place, rather than
+       each screen inventing its own -- notice is a DPDP requirement and it is
+       also just fair. */
+    geolocation: {
+      enabled: geolocation.isEnabled(),
+      modes: [...geolocation.PHYSICAL_MODES],
+      notice: geolocation.notice(),
+    },
   });
 });
 
@@ -101,6 +111,7 @@ router.post('/', requirePermission('lead.contact'), (req, res) => {
     lead_id, card_id, type, direction = 'outbound', subject, body,
     disposition: code, duration_s, sentiment,
     follow_up_at, meeting_at, meeting_mode, meeting_location, reason,
+    geo = null,
     respect_business_hours = true,
   } = req.body;
 
@@ -143,8 +154,9 @@ router.post('/', requirePermission('lead.contact'), (req, res) => {
     `INSERT INTO activities
        (lead_id, card_id, type, direction, subject, body, outcome, duration_s, user_id,
         disposition, sub_disposition, follow_up_at, meeting_at, meeting_mode,
-        meeting_location, reason, sentiment)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        meeting_location, reason, sentiment,
+        geo_status, geo_lat, geo_lng, geo_accuracy_m, geo_address, geo_captured_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       lead.id, card_id ?? null, type, direction,
       subject || disposition?.label || type,
@@ -160,6 +172,16 @@ router.post('/', requirePermission('lead.contact'), (req, res) => {
       meeting_location ?? null,
       reason ?? null,
       sentiment ?? null,
+      /* P2-01. Only for a meeting held in person, and only when Compliance has
+         turned the capture on. `wants()` answers both questions, so a refusal
+         on a phone call is not even asked for -- and every outcome, including
+         a refusal, is stored as a value rather than blocking the save. */
+      ...(geolocation.wants(type, meeting_mode)
+        ? (() => {
+          const g = geolocation.normalise(geo ?? { status: 'unavailable' });
+          return [g.status, g.lat, g.lng, g.accuracy_m, g.address, new Date().toISOString()];
+        })()
+        : [null, null, null, null, null, null]),
     ],
   );
   const activityId = Number(result.lastInsertRowid);

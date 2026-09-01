@@ -1034,6 +1034,21 @@ const COLUMNS = [
   ['activities', 'reason', 'TEXT'],                // required on negative outcomes
   ['activities', 'sentiment', 'TEXT'],
 
+  /* Where an in-person meeting was logged from (P2-01). Personal data about a
+     member of staff, so: captured only for physical meetings, never mandatory,
+     and cleared after twelve months by engine/geolocation.js purge(). The
+     accuracy radius is stored because a 2 km cell-tower fix presented as a
+     street address is evidence that will not survive being challenged.
+     `geo_status` carries declined and unavailable as values in their own right
+     -- a refusal is a fact worth keeping, and NULL means the question never
+     arose. */
+  ['activities', 'geo_status', 'TEXT'],            // captured / declined / unavailable / expired
+  ['activities', 'geo_lat', 'REAL'],
+  ['activities', 'geo_lng', 'REAL'],
+  ['activities', 'geo_accuracy_m', 'INTEGER'],
+  ['activities', 'geo_address', 'TEXT'],
+  ['activities', 'geo_captured_at', 'TEXT'],
+
   // Routing and reachability, set by dispositions rather than typed by hand.
   ['leads', 'mobile_invalid', 'INTEGER NOT NULL DEFAULT 0'],
   ['leads', 'marketing_opt_out', 'INTEGER NOT NULL DEFAULT 0'],

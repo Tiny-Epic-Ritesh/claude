@@ -315,7 +315,16 @@ const other = one("SELECT id FROM users WHERE role = 'sales_rm' AND active = 1 A
 
 test('the notes body and recording are restricted; the outcome is not', () => {
   const restricted = fieldsOf('interaction').filter((f) => f.read_scope !== 'record').map((f) => f.api_name);
-  assert.deepEqual(restricted.sort(), ['body', 'reason', 'recording_url']);
+  /* The five geo_* fields joined this list with P2-01. They hold where a member
+     of staff was standing, which is exactly the kind of field that should need
+     ownership or supervision to read — a colleague has no business browsing
+     another RM's movements. Asserted as an exact list on purpose: a field
+     quietly leaving it is the failure worth catching. */
+  assert.deepEqual(restricted.sort(), [
+    'body',
+    'geo_accuracy_m', 'geo_address', 'geo_lat', 'geo_lng', 'geo_status',
+    'reason', 'recording_url',
+  ]);
 
   for (const open of ['type', 'disposition', 'sub_disposition', 'created_at', 'duration_s']) {
     assert.equal(fieldDef('interaction', open).read_scope, 'record',

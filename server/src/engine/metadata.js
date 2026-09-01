@@ -140,6 +140,41 @@ const CORE_ENTITIES = [
       ['recording_url', 'Recording', 'url', { read_scope: 'owner_or_manager' }],
       ['follow_up_at', 'Follow-up At', 'datetime', {}],
       ['meeting_at', 'Meeting At', 'datetime', {}],
+      ['meeting_mode', 'Meeting Mode', 'picklist', {}],
+      ['meeting_location', 'Meeting Location', 'text', {}],
+      /* P2-01. Personal data about a member of staff, so the purpose is on the
+         definition itself rather than in a document beside it — under DPDP the
+         purpose has to be stated, and stating it where the field is defined
+         means it cannot drift away from the field it justifies.
+
+         Visible to the person it is about (`owner_or_manager` includes the
+         owner), because somebody should be able to see what has been recorded
+         about their own movements. That is both fair and the defensible
+         position if it is ever questioned. */
+      ['geo_status', 'Location Capture', 'picklist', {
+        read_scope: 'owner_or_manager',
+        purpose: 'Confirming an in-person client meeting took place where it was recorded. Kept 12 months.',
+        help_text: 'Captured only for meetings held in person, and only with the RM\'s agreement. A refusal is recorded as a refusal.',
+      }],
+      ['geo_lat', 'Latitude', 'number', {
+        read_scope: 'owner_or_manager', precision: 10, scale: 6,
+        purpose: 'Confirming an in-person client meeting took place where it was recorded. Kept 12 months.',
+      }],
+      ['geo_lng', 'Longitude', 'number', {
+        read_scope: 'owner_or_manager', precision: 10, scale: 6,
+        purpose: 'Confirming an in-person client meeting took place where it was recorded. Kept 12 months.',
+      }],
+      /* Stored and shown, never hidden. A 2 km cell-tower fix presented as a
+         precise address is evidence that will not survive being challenged. */
+      ['geo_accuracy_m', 'Location Accuracy (m)', 'number', {
+        read_scope: 'owner_or_manager',
+        purpose: 'Confirming an in-person client meeting took place where it was recorded. Kept 12 months.',
+        help_text: 'How large a circle the device was confident about. A large number means the address below is approximate.',
+      }],
+      ['geo_address', 'Location', 'text', {
+        read_scope: 'owner_or_manager', length: 300,
+        purpose: 'Confirming an in-person client meeting took place where it was recorded. Kept 12 months.',
+      }],
       ['created_at', 'Occurred', 'datetime', { indexed: 1 }],
     ],
   },
@@ -279,13 +314,20 @@ export function seedMetadata() {
             `UPDATE field_def SET type = ?, storage = 'column', required = ?, indexed = ?,
                     length = ?, precision = ?, scale = ?, encrypted = ?,
                     read_scope = ?, read_capability = ?, history_tracked = ?,
+                    purpose = ?, help_text = ?,
                     is_custom = 0
              WHERE id = ?`,
             [
               type, opts.required ?? 0, opts.indexed ?? 0,
               opts.length ?? null, opts.precision ?? null, opts.scale ?? null,
               opts.encrypted ?? 0, opts.read_scope ?? 'record', opts.read_capability ?? null,
-              opts.history_tracked ?? 0, existing.id,
+              opts.history_tracked ?? 0,
+              /* Platform-owned like the rest of this list. A stated purpose is
+                 a DPDP obligation for a field holding personal data, so it has
+                 to travel with the definition rather than being set once by
+                 hand and lost at the next reconcile. */
+              opts.purpose ?? null, opts.help_text ?? null,
+              existing.id,
             ],
           );
         } else {
@@ -293,8 +335,8 @@ export function seedMetadata() {
             `INSERT INTO field_def
                (entity, api_name, label, type, storage, required, indexed, length,
                 precision, scale, encrypted, read_scope, read_capability,
-                history_tracked, is_custom, sort_order)
-             VALUES (?,?,?,?,'column',?,?,?,?,?,?,?,?,?,0,
+                history_tracked, purpose, help_text, is_custom, sort_order)
+             VALUES (?,?,?,?,'column',?,?,?,?,?,?,?,?,?,?,?,0,
                      (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM field_def WHERE entity = ?))`,
             [
               e.api_name, apiName, label, type,
@@ -302,6 +344,7 @@ export function seedMetadata() {
               opts.precision ?? null, opts.scale ?? null, opts.encrypted ?? 0,
               opts.read_scope ?? 'record', opts.read_capability ?? null,
               opts.history_tracked ?? 0,
+              opts.purpose ?? null, opts.help_text ?? null,
               /* Appended, not placed at its index in the list above. On a fresh
                  install those are the same number; on an existing one they are
                  not, and inserting a field mid-list would give it the position
@@ -391,6 +434,20 @@ const CORE_PICKLISTS = {
   ],
   'interaction.direction': [
     ['outbound', 'Outbound'], ['inbound', 'Inbound'], ['system', 'System'],
+  ],
+  /* Physical and Branch Visit both mean somebody was actually somewhere, which
+     is the distinction P2-01's location capture rests on. */
+  'interaction.meeting_mode': [
+    ['Physical', 'In person'], ['Branch Visit', 'Branch visit'], ['Virtual', 'Virtual'],
+  ],
+  /* Every outcome of asking is a value, including the two that are not a
+     position. "Declined" is a fact worth keeping — a pattern of refusals is the
+     management signal that made the capture optional in the first place. */
+  'interaction.geo_status': [
+    ['captured', 'Captured'],
+    ['declined', 'Declined by the user'],
+    ['unavailable', 'Unavailable on the device'],
+    ['expired', 'Deleted after 12 months'],
   ],
   'case.priority': [
     ['Critical', 'Critical'], ['High', 'High'], ['Medium', 'Medium'], ['Low', 'Low'],

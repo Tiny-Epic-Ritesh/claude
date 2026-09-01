@@ -57,6 +57,7 @@ import { contextMiddleware } from './engine/reqcontext.js';
 import { seedCalendars } from './engine/calendar.js';
 import { seedQueues } from './engine/queues.js';
 import { seedKra, seedIncentives } from './engine/kra.js';
+import { purge as purgeLocations } from './engine/geolocation.js';
 
 /* Register the core entities and fields as metadata. Idempotent, and it
    preserves any label an administrator has renamed. */
@@ -67,6 +68,11 @@ seedPicklists();
    written down how long it keeps personal data and then kept it longer. */
 seedRetention();
 purge();
+/* The same argument, for staff location (P2-01). Twelve months is written into
+   the field definition and told to the person at capture; a period nothing
+   enforces would make both of those statements false. The meeting itself is
+   kept -- only where the RM was standing is cleared. */
+purgeLocations();
 /* One size sample a day. Growth rate needs history and there is no history
    without keeping some — four numbers, so a decade is smaller than one lead. */
 sampleDbSize();
