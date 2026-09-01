@@ -794,6 +794,27 @@ CREATE INDEX IF NOT EXISTS idx_panel_dashboard ON dashboard_panel (dashboard_id,
  * number matches several leads, and are reported as ambiguous rather than
  * attributed to whichever record happens to sort first.
  */
+/*
+ * What one person prefers, as opposed to what the firm has configured.
+ *
+ * Kept on the server rather than in localStorage on purpose. An administrator
+ * who pins six screens on the office machine should find them pinned on the
+ * laptop; a preference that lives in a browser is one the person has to set
+ * again every time they move, which is how a convenience becomes an annoyance.
+ *
+ * Deliberately NOT where configuration goes. Nothing here changes what anybody
+ * may do or see -- it is pins, density and which groups are folded shut. That
+ * is why it is unaudited and why anyone may write their own without a
+ * capability: a wrong value costs the person who set it a click.
+ */
+CREATE TABLE IF NOT EXISTS user_pref (
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  key        TEXT NOT NULL,
+  value      TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, key)
+);
+
 CREATE TABLE IF NOT EXISTS call_intent (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   -- Last 10 digits only: vendors are inconsistent about the 91 prefix.

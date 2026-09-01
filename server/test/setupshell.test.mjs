@@ -19,6 +19,7 @@
 import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { CAPABILITY_CATALOGUE } from '../src/engine/access.js';
+import { SETUP_SECTIONS, setupTabId, isSetupTabId, sectionKeyOf } from '../src/engine/setupsections.js';
 
 let passed = 0;
 let failed = 0;
@@ -179,6 +180,100 @@ test('every finding names the screen that fixes it', () => {
   // A warning you have to go and hunt for is half a warning.
   assert(/sectionByKey\(f\.section\)/.test(home), 'findings no longer resolve to a section');
   assert(/to=\{`\/setup\/\$\{f\.section\}`\}/.test(home), 'findings no longer link anywhere');
+});
+
+/* ------------------------------------------- the two lists must agree */
+
+test('the server and the client know the same screens', () => {
+  /* The client registry holds how a screen looks; the server holds what it is
+     called and what it takes to open. Visibility is configuration and cannot be
+     validated against a list that only exists in a browser — so both exist, and
+     a screen added to one and forgotten in the other is either a settings row
+     that configures nothing or a screen nobody can hide. */
+  const clientKeys = new Set(sections.map((sec) => sec.key));
+  const serverKeys = new Set(SETUP_SECTIONS.map((sec) => sec.key));
+
+  for (const k of serverKeys) assert(clientKeys.has(k), `the server knows "${k}" and the client does not`);
+  for (const k of clientKeys) assert(serverKeys.has(k), `the client knows "${k}" and the server does not`);
+});
+
+test('both sides agree on what a screen takes to open', () => {
+  // A capability on one side and not the other is a screen that appears in the
+  // sidebar and refuses when clicked, or hides from somebody entitled to it.
+  for (const server of SETUP_SECTIONS) {
+    const client = sections.find((sec) => sec.key === server.key);
+    assert.deepEqual(
+      [...client.needs].sort(), [...(server.needs ?? [])].sort(),
+      `"${server.label}" needs different capabilities on each side`,
+    );
+  }
+});
+
+test('a Setup screen cannot collide with a CRM tab', () => {
+  /* `products` is both. Without the prefix, hiding the Products tab from a role
+     would also hide the Products settings screen — one setting quietly doing
+     two jobs. */
+  assert(isSetupTabId(setupTabId('products')), 'setup ids are no longer prefixed');
+  assert.equal(sectionKeyOf(setupTabId('products')), 'products');
+  assert.notEqual(setupTabId('products'), 'products');
+});
+
+/* -------------------------------------------- what each person keeps */
+
+test('preferences cannot change what anybody may see', () => {
+  /* Pins, density and folded groups are conveniences. The moment one of them
+     could hide a screen from somebody it would be an access control with no
+     audit trail behind it. */
+  assert(/sectionsFor\(session\.permissions\)/.test(shell), 'the capability filter is gone');
+  assert(/allowed\.includes\(s\.key\)/.test(shell), 'role visibility is no longer applied');
+  // Pins reorder; they never filter.
+  assert(/pins\.map/.test(shell), 'pinning no longer builds from the pins list');
+  assert(!/available\.filter\(\(s\) => pins/.test(shell), 'pinning filters the sidebar rather than reordering it');
+});
+
+test('hiding a screen is tidying, never security', () => {
+  /* Capability AND visibility, in that order — a screen the role cannot open is
+     never listed whatever the visibility says, and a merely hidden screen is
+     still refused by the API if somebody types the URL. */
+  const routes = readFileSync(new URL('../src/routes/setup.js', import.meta.url), 'utf8');
+  const handler = routes.slice(routes.indexOf("router.get('/preferences'"), routes.indexOf("router.put('/preferences"));
+  assert(/sec\.needs\.some\(\(c\) => can\(req\.user\.role, c\)\)/.test(handler),
+    'the preferences endpoint no longer checks capability');
+  assert(/visible\.has\(setupTabId\(sec\.key\)\)/.test(handler),
+    'the preferences endpoint no longer applies role visibility');
+});
+
+/* ------------------------------------------- one screen, one crash */
+
+test('a broken screen does not take Setup with it', () => {
+  /* Not hypothetical. TabVisibility rendered PendingBar from a nested component
+     where `draft` was not in scope, so opening Navigation threw and React
+     unmounted everything — sidebar, header, the lot. An administrator could not
+     navigate away from the screen that was broken. */
+  assert(/SetupBoundary/.test(shell), 'the error boundary is gone from the shell');
+  const boundary = readFileSync(new URL('../../client/src/setup/SetupBoundary.jsx', import.meta.url), 'utf8');
+  assert(/getDerivedStateFromError/.test(boundary), 'the boundary no longer catches');
+  assert(/resetKey/.test(boundary), 'a crash is sticky — it never clears when you navigate away');
+});
+
+test('the screen that crashed has its save bar back in scope', () => {
+  const src = readFileSync(new URL('../../client/src/crm/TabVisibility.jsx', import.meta.url), 'utf8');
+  const person = src.slice(src.indexOf('function PersonOverrides'));
+  assert(!/PendingBar/.test(person),
+    'the save bar is inside PersonOverrides again, where `draft` does not exist');
+  const main = src.slice(src.indexOf('export default function TabVisibility'), src.indexOf('function PersonOverrides'));
+  assert(/PendingBar/.test(main), 'the role grid has no save bar at all');
+});
+
+/* --------------------------------------------- the header controls */
+
+test('the Setup header carries what was asked for', () => {
+  // Theme and Copilot were chosen for this header and then not built. Named
+  // individually so a silent removal fails rather than passing quietly.
+  assert(/ThemeToggle/.test(shell), 'the light/dark toggle is missing from Setup');
+  assert(/Copilot/.test(shell), 'the copilot is missing from Setup');
+  assert(/OrgSwitcher/.test(shell), 'the business switcher is missing from Setup');
+  assert(!/<select/.test(shell), 'the business switcher is a bare select rather than the shared control');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

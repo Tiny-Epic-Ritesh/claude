@@ -428,9 +428,20 @@ const CORE_PICKLISTS = {
     ['Walk-in branch', 'Walk-in branch'], ['IPO enquiry', 'IPO enquiry'],
     ['Manual', 'Manual'], ['Import', 'Import'],
   ],
+  /* The seven a person may log, then the five the system writes itself.
+   *
+   * All twelve belong here because this list is what the column may contain —
+   * it is what filters offer and what reports group by, and 69 interactions
+   * were sitting on values no filter could reach. What a human may log by hand
+   * is a different question, answered by MANUAL_TYPES in routes/activities.js,
+   * which is where it belongs: nobody should be able to hand-write "AI Call
+   * Summary" onto a timeline, and nobody can. */
   'interaction.type': [
     ['Call', 'Call'], ['WhatsApp', 'WhatsApp'], ['Email', 'Email'], ['SMS', 'SMS'],
     ['Meeting', 'Meeting'], ['Note', 'Note'], ['Visit', 'Visit'],
+    ['AI Call Summary', 'AI Call Summary'], ['Assignment', 'Assignment'],
+    ['KYC Event', 'KYC Event'], ['Ticket Event', 'Ticket Event'],
+    ['Partner Activity', 'Partner Activity'],
   ],
   'interaction.direction': [
     ['outbound', 'Outbound'], ['inbound', 'Inbound'], ['system', 'System'],
@@ -452,8 +463,18 @@ const CORE_PICKLISTS = {
   'case.priority': [
     ['Critical', 'Critical'], ['High', 'High'], ['Medium', 'Medium'], ['Low', 'Low'],
   ],
+  /* `Normal` is the column default in db.js and is written by six code paths —
+     the rules engine, the AI task suggester, two routes in crm.js and the seed.
+     It was missing here, so 27 of the 47 tasks held a priority no filter could
+     reach and no picker offered.
+     
+     Added rather than renamed, because renaming would mean rewriting live
+     records. But Normal and Medium plainly mean the same thing, and 13 tasks
+     use the other one — one concept with two words, which is the shape the
+     legacy audit kept finding. Worth resolving deliberately; recorded here so
+     the choice is visible rather than buried. */
   'task.priority': [
-    ['High', 'High'], ['Medium', 'Medium'], ['Low', 'Low'],
+    ['High', 'High'], ['Normal', 'Normal'], ['Medium', 'Medium'], ['Low', 'Low'],
   ],
   'task.status': [
     ['Open', 'Open'], ['Done', 'Done'], ['Cancelled', 'Cancelled'],
@@ -500,9 +521,12 @@ const CORE_PICKLISTS = {
     ['Active', 'Active'], ['Dormant', 'Dormant'], ['Suspended', 'Suspended'],
     ['Closed', 'Closed'],
   ],
+  /* CRM and Chat were missing, and cases raised from inside the CRM are the
+     most common kind there is — six of them could not be filtered by how they
+     arrived. */
   'case.channel': [
     ['Email', 'Email'], ['Phone', 'Phone'], ['WhatsApp', 'WhatsApp'],
-    ['Portal', 'Portal'], ['Branch', 'Branch'],
+    ['Portal', 'Portal'], ['Branch', 'Branch'], ['CRM', 'CRM'], ['Chat', 'Chat'],
   ],
 
   'client.risk_profile': [

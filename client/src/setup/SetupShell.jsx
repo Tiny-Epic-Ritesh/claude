@@ -18,14 +18,53 @@
  * So: one level of grouping, never two, and a search box that is the fastest
  * way to anything. The sidebar is the map for somebody who does not yet know
  * what the system can do; search is for everybody after their first week.
+ *
+ * WHAT EACH PERSON CONTROLS
+ * -------------------------
+ * Pins, density and folded groups are per person and live on the server, not in
+ * the browser — an administrator who arranges Setup on the office machine
+ * should find it arranged on the laptop. None of it changes what anybody may do
+ * or see. Which screens a ROLE sees is the separate thing, configured on the
+ * Navigation screen and applied here.
  */
 
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import BrandLogo from '../components/BrandLogo.jsx';
-import { Icon, Loading } from '../components/ui.jsx';
-import { GROUPS, sectionsFor, searchSections } from './registry.js';
+import { Icon, Loading, OrgSwitcher, ThemeToggle } from '../components/ui.jsx';
+import Copilot from '../crm/Copilot.jsx';
+import { api } from '../api.js';
+import { GROUPS, sectionsFor, sectionByKey, searchSections } from './registry.js';
 import SetupHome from './SetupHome.jsx';
+import SetupBoundary from './SetupBoundary.jsx';
+
+/* --------------------------------------------------------- preferences */
+
+/**
+ * Per-person preferences, saved as they change.
+ *
+ * Written optimistically: a pin should feel instant, and a failed write costs
+ * the person a star that comes back on reload rather than anything real.
+ */
+function usePrefs() {
+  const [prefs, setPrefs] = useState(null);
+  const [sections, setSections] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    api.get('/setup/preferences')
+      .then((d) => { if (alive) { setPrefs(d.prefs ?? {}); setSections(d.sections ?? null); } })
+      .catch(() => { if (alive) { setPrefs({}); setSections(null); } });
+    return () => { alive = false; };
+  }, []);
+
+  const set = useCallback((key, value) => {
+    setPrefs((p) => ({ ...(p ?? {}), [key]: value }));
+    api.put(`/setup/preferences/${key}`, { value }).catch(() => { /* see above */ });
+  }, []);
+
+  return { prefs, sections, set, ready: prefs !== null };
+}
 
 /* ------------------------------------------------------------ Quick Find */
 
@@ -34,16 +73,16 @@ import SetupHome from './SetupHome.jsx';
  *
  * Keyboard-first because this is a screen administrators live in: "/" focuses
  * it from anywhere, arrows move, Enter opens, Escape gets out. An admin console
- * that requires the mouse for its primary navigation is slower than the tab
- * strip it replaced.
+ * that needs the mouse for its primary navigation is slower than the tab strip
+ * it replaced.
  */
-function QuickFind({ permissions }) {
+function QuickFind({ sections }) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const inputRef = useRef(null);
   const navigate = useNavigate();
 
-  const results = useMemo(() => searchSections(query, permissions), [query, permissions]);
+  const results = useMemo(() => searchSections(query, sections), [query, sections]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -111,9 +150,7 @@ function QuickFind({ permissions }) {
             </li>
           ))}
           {!results.length && (
-            <li className="quickfind-empty tiny muted">
-              Nothing matches &ldquo;{query}&rdquo;.
-            </li>
+            <li className="quickfind-empty tiny muted">Nothing matches &ldquo;{query}&rdquo;.</li>
           )}
         </ul>
       )}
@@ -121,22 +158,120 @@ function QuickFind({ permissions }) {
   );
 }
 
+/* ----------------------------------------------------------- sidebar row */
+
+function SectionLink({ section, pinned, onTogglePin }) {
+  return (
+    <div className="setup-row">
+      <NavLink
+        to={`/setup/${section.key}`}
+        className={({ isActive }) => `setup-link${isActive ? ' is-active' : ''}`}
+        title={section.blurb}
+      >
+        <Icon name={section.icon} size={17} />
+        <span>{section.label}</span>
+      </NavLink>
+      {/* Appears on hover or focus so the sidebar is not a column of stars,
+          but is reachable by keyboard rather than hover alone. */}
+      <button
+        type="button"
+        className={`setup-pin${pinned ? ' is-pinned' : ''}`}
+        onClick={() => onTogglePin(section.key)}
+        aria-label={pinned ? `Unpin ${section.label}` : `Pin ${section.label}`}
+        title={pinned ? 'Unpin' : 'Pin to the top'}
+      >
+        <Icon name={pinned ? 'star' : 'star_border'} size={15} />
+      </button>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------ page head */
+
+/**
+ * The header every screen gets, drawn here rather than by each screen.
+ *
+ * Before this, one screen said "12 roles", another "API access", another
+ * nothing at all — 22 screens each inventing their own opening. The group name
+ * above the title is the answer to "where am I", which a flat sidebar of 22
+ * items does not otherwise give.
+ */
+function PageHead({ section }) {
+  if (!section) return null;
+  const group = GROUPS.find((g) => g.key === section.group);
+  return (
+    <header className="setup-pagehead">
+      <div>
+        {group && (
+          <span className="setup-crumb">
+            <Icon name={group.icon} size={13} />
+            {group.label}
+          </span>
+        )}
+        <h1>{section.label}</h1>
+        <p>{section.blurb}</p>
+      </div>
+      {/* Screens promote their primary action into here. Empty until one does,
+          which is why it collapses rather than reserving space. */}
+      <div id="setup-actions" className="setup-actions" />
+    </header>
+  );
+}
+
 /* ---------------------------------------------------------------- shell */
 
 export default function SetupShell({ session, orgs = [], activeOrg, onSwitchOrg, onSignOut }) {
   const location = useLocation();
-  const available = useMemo(() => sectionsFor(session.permissions), [session.permissions]);
+  const navigate = useNavigate();
+  const { prefs, sections: allowed, set, ready } = usePrefs();
   const [navOpen, setNavOpen] = useState(false);
+  const [copilotOpen, setCopilotOpen] = useState(false);
+
+  const pins = prefs?.pins ?? [];
+  const density = prefs?.density ?? 'comfortable';
+  const collapsed = prefs?.collapsed ?? [];
+
+  /* What this person may open: their capabilities, narrowed by what their role
+     has been configured to see. `allowed` null means the preferences call has
+     not answered — fall back to capability alone rather than an empty sidebar. */
+  const available = useMemo(() => {
+    const byCapability = sectionsFor(session.permissions);
+    if (!allowed) return byCapability;
+    return byCapability.filter((s) => allowed.includes(s.key));
+  }, [session.permissions, allowed]);
+
+  const current = location.pathname.startsWith('/setup/')
+    ? sectionByKey(location.pathname.slice('/setup/'.length))
+    : null;
 
   // Close the mobile drawer when the destination changes, or it covers the
   // screen the person just asked for.
   useEffect(() => { setNavOpen(false); }, [location.pathname]);
 
+  /* Remember where they were, and go back there. Only from Setup home, so a
+     link straight to a screen is never overridden — the last place you were is
+     a default, not a redirect. */
+  useEffect(() => {
+    if (!ready) return;
+    if (location.pathname !== '/setup') return;
+    const last = prefs?.last;
+    if (last && available.some((s) => s.key === last)) navigate(`/setup/${last}`, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+
+  useEffect(() => {
+    if (current && prefs?.last !== current.key) set('last', current.key);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current?.key]);
+
+  const togglePin = (key) => set('pins', pins.includes(key) ? pins.filter((k) => k !== key) : [...pins, key]);
+  const toggleGroup = (key) => set('collapsed', collapsed.includes(key) ? collapsed.filter((k) => k !== key) : [...collapsed, key]);
+
   const grouped = GROUPS
     .map((g) => ({ ...g, items: available.filter((s) => s.group === g.key) }))
     .filter((g) => g.items.length);
 
-  const orgName = orgs.find((o) => o.code === (activeOrg || session.sales_org))?.name ?? 'Bonanza';
+  const pinned = pins.map((k) => available.find((s) => s.key === k)).filter(Boolean);
 
   return (
     <div className="setup-shell">
@@ -160,16 +295,23 @@ export default function SetupShell({ session, orgs = [], activeOrg, onSwitchOrg,
 
         {/* Kept, because settings are not all firm-wide: permission sets,
             content libraries and campaigns each carry a business. Without this
-            an administrator cannot tell which book they are configuring. */}
-        {orgs.length > 1 && (
-          <label className="setup-org">
-            <span className="sr-only">Business</span>
-            <select value={activeOrg || ''} onChange={(e) => onSwitchOrg(e.target.value)}>
-              <option value="">All businesses</option>
-              {orgs.map((o) => <option key={o.code} value={o.code}>{o.name}</option>)}
-            </select>
-          </label>
-        )}
+            an administrator cannot tell which book they are configuring.
+            The same control the CRM header uses, rather than a bare select —
+            it carries the business's own colour, which is how you tell at a
+            glance which one you are changing. */}
+        <OrgSwitcher orgs={orgs} value={activeOrg} onChange={onSwitchOrg} />
+
+        <ThemeToggle />
+
+        <button
+          type="button"
+          className="btn-ghost btn-sm"
+          onClick={() => setCopilotOpen(true)}
+          title="Ask the copilot"
+          aria-label="Ask the copilot"
+        >
+          <Icon name="auto_awesome" size={18} />
+        </button>
 
         {/* The way out is a first-class control, not a browser Back. Setup is a
             place you leave deliberately. */}
@@ -181,43 +323,72 @@ export default function SetupShell({ session, orgs = [], activeOrg, onSwitchOrg,
 
       <div className={`setup-body${navOpen ? ' nav-open' : ''}`}>
         <nav className="setup-nav" aria-label="Settings">
-          <QuickFind permissions={session.permissions} />
+          <QuickFind sections={available} />
 
-          <NavLink to="/setup" end className="setup-link setup-link-home">
+          <NavLink
+            to="/setup"
+            end
+            className={({ isActive }) => `setup-link setup-link-home${isActive ? ' is-active' : ''}`}
+          >
             <Icon name="home" size={17} />
             <span>Setup home</span>
           </NavLink>
 
-          {grouped.map((g) => (
-            <div key={g.key} className="setup-group">
-              {/* A heading, not a collapsible. One level means everything is
-                  already visible, and a disclosure that hides five items is a
-                  click that buys nothing. */}
-              <h2 className="setup-group-head">
-                <Icon name={g.icon} size={14} />
-                {g.label}
-              </h2>
-              <ul>
-                {g.items.map((s) => (
-                  <li key={s.key}>
-                    <NavLink
-                      to={`/setup/${s.key}`}
-                      className={({ isActive }) => `setup-link${isActive ? ' is-active' : ''}`}
-                      title={s.blurb}
-                    >
-                      <Icon name={s.icon} size={17} />
-                      <span>{s.label}</span>
-                    </NavLink>
-                  </li>
+          {pinned.length > 0 && (
+            <div className="setup-group">
+              <h2 className="setup-group-head"><Icon name="star" size={14} />Pinned</h2>
+              <div>
+                {pinned.map((s) => (
+                  <SectionLink key={s.key} section={s} pinned onTogglePin={togglePin} />
                 ))}
-              </ul>
+              </div>
             </div>
-          ))}
+          )}
 
-          <p className="setup-signature tiny muted">
-            Signed in as {session.name} · {orgName}
-            <button type="button" className="linklike" onClick={onSignOut}>Sign out</button>
-          </p>
+          {grouped.map((g) => {
+            const shut = collapsed.includes(g.key);
+            return (
+              <div key={g.key} className="setup-group">
+                <h2 className="setup-group-head">
+                  <button type="button" className="setup-group-toggle" onClick={() => toggleGroup(g.key)} aria-expanded={!shut}>
+                    <Icon name={g.icon} size={14} />
+                    <span>{g.label}</span>
+                    <Icon name={shut ? 'expand_more' : 'expand_less'} size={15} />
+                  </button>
+                </h2>
+                {!shut && (
+                  <div>
+                    {g.items.map((s) => (
+                      <SectionLink key={s.key} section={s} pinned={pins.includes(s.key)} onTogglePin={togglePin} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          <div className="setup-footer">
+            {/* Density is here rather than buried in a preferences screen,
+                because it is the kind of thing you change while looking at the
+                table that is too tall. */}
+            <div className="setup-density" role="group" aria-label="Row density">
+              {[['comfortable', 'Comfortable'], ['compact', 'Compact']].map(([k, label]) => (
+                <button
+                  key={k}
+                  type="button"
+                  className={density === k ? 'is-on' : ''}
+                  onClick={() => set('density', k)}
+                  aria-pressed={density === k}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="setup-signature tiny muted">
+              {session.name}
+              <button type="button" className="linklike" onClick={onSignOut}>Sign out</button>
+            </p>
+          </div>
         </nav>
 
         {/* Tapping the page behind the drawer closes it, which is what every
@@ -229,28 +400,31 @@ export default function SetupShell({ session, orgs = [], activeOrg, onSwitchOrg,
           />
         )}
 
-        <main className="setup-main">
-          <Suspense fallback={<Loading />}>
-            {/* Nested under an explicit `/setup` parent. This <Routes> is not
-                inside a parent <Route> — the shell is returned before the CRM
-                router is built — so without the parent path, `index` would be
-                matched against "/" while the location is "/setup", and every
-                screen would render as nothing at all. */}
-            <Routes>
-              <Route path="/setup">
-                <Route index element={<SetupHome session={session} />} />
-                {available.map(({ key, Component }) => (
-                  <Route key={key} path={key} element={<Component session={session} />} />
-                ))}
-                {/* A settings screen this role cannot open is not a 404 — it
-                    exists, they may not see it. Home says so rather than the
-                    router pretending the URL is wrong. */}
-                <Route path="*" element={<Navigate to="/setup" replace />} />
-              </Route>
-            </Routes>
-          </Suspense>
+        <main className="setup-main" data-density={density}>
+          <PageHead section={current} />
+
+          {/* Keyed on the path so a crash on one screen clears when you leave
+              it, rather than sticking until a full reload. */}
+          <SetupBoundary resetKey={location.pathname}>
+            <Suspense fallback={<Loading />}>
+              <Routes>
+                <Route path="/setup">
+                  <Route index element={<SetupHome session={session} />} />
+                  {available.map(({ key, Component }) => (
+                    <Route key={key} path={key} element={<Component session={session} />} />
+                  ))}
+                  {/* A settings screen this role cannot open is not a 404 — it
+                      exists, they may not see it. Home says so rather than the
+                      router pretending the URL is wrong. */}
+                  <Route path="*" element={<Navigate to="/setup" replace />} />
+                </Route>
+              </Routes>
+            </Suspense>
+          </SetupBoundary>
         </main>
       </div>
+
+      <Copilot open={copilotOpen} onClose={() => setCopilotOpen(false)} session={session} />
     </div>
   );
 }

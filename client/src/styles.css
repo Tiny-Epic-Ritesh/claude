@@ -1728,7 +1728,10 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
   border-radius: var(--r-pill);
   background: var(--accent-soft);
   border: 1px solid var(--accent);
-  color: var(--accent-dark);
+  /* Was --accent-dark, which measured 3.07:1 on its own tint. This is the
+     control that says which business you are configuring — the one place a
+     pale label is least affordable. */
+  color: var(--accent-ink);
   font-weight: 600;
   font-size: 12.5px;
 }
@@ -4858,7 +4861,9 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
   flex-direction: column;
   min-height: 100vh;
   min-height: 100dvh;
-  background: var(--bg);
+  /* --ground, not --bg. There is no --bg token, so this painted nothing and
+     quietly relied on body's background showing through. */
+  background: var(--ground);
 }
 
 .setup-topbar {
@@ -4941,7 +4946,10 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
   font-weight: 700;
   letter-spacing: 0.7px;
   text-transform: uppercase;
-  color: var(--ink-4);
+  /* Was --ink-4, which measured 2.52:1 in light — a label nobody can read is
+     not a subtle label. Size, case and weight carry the hierarchy; the colour
+     does not have to as well. */
+  color: var(--ink-2);
 }
 .setup-nav ul { list-style: none; margin: 0; padding: 0; }
 
@@ -4968,14 +4976,6 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
 .setup-link.is-active .material-symbols-rounded { color: var(--accent-dark); }
 .setup-link-home { margin-top: 2px; }
 
-.setup-signature {
-  margin-top: auto;
-  padding: 14px 10px 0;
-  border-top: 1px solid var(--hairline-2);
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
 .linklike {
   background: none;
   border: 0;
@@ -5169,7 +5169,7 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
   font-weight: 700;
   letter-spacing: 0.7px;
   text-transform: uppercase;
-  color: var(--ink-4);
+  color: var(--ink-2);
 }
 .setup-map-group ul { list-style: none; margin: 0; padding: 0; }
 .setup-map-group a {
@@ -5216,4 +5216,205 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
 
 @media (prefers-reduced-motion: reduce) {
   .setup-nav, .setup-link { transition: none; }
+}
+
+/* ------------------------------------------- Setup: rows, pins, density */
+
+/* The link and its pin sit on one row. The pin is invisible until the row is
+   hovered or the button itself is focused, so the sidebar is a list of names
+   rather than a column of stars — but it is still reachable by keyboard, which
+   a hover-only control is not. */
+.setup-row { display: flex; align-items: center; gap: 2px; }
+.setup-row .setup-link { flex: 1; min-width: 0; }
+.setup-row .setup-link span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.setup-pin {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--ink-4);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+.setup-row:hover .setup-pin,
+.setup-pin:focus-visible { opacity: 1; }
+.setup-pin:hover { color: var(--ink-2); background: var(--hairline-2); }
+.setup-pin.is-pinned { opacity: 1; color: var(--accent-dark); }
+
+.setup-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+}
+.setup-group-toggle span { flex: 1; text-align: left; }
+.setup-group-toggle:hover { color: var(--ink-2); }
+
+.setup-footer {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline-2);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Two buttons in one pill, the pressed one filled. A select would need a click
+   to see the options; this shows both states at once and is one click either
+   way. */
+.setup-density {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-pill);
+  background: var(--hairline-2);
+}
+.setup-density button {
+  flex: 1;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: none;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.setup-density button.is-on {
+  background: var(--glass-solid);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(12, 18, 28, 0.16);
+}
+
+.setup-signature {
+  margin: 0;
+  padding: 0 4px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* ------------------------------------------------------ the page header */
+
+.setup-pagehead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding-bottom: 14px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--hairline);
+}
+.setup-crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.setup-pagehead h1 {
+  margin: 3px 0 3px;
+  font-size: 1.45rem;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+.setup-pagehead p {
+  margin: 0;
+  max-width: 68ch;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+/* Collapses to nothing until a screen puts a button in it, rather than
+   reserving a gap that reads as a missing control. */
+.setup-actions:empty { display: none; }
+.setup-actions { display: flex; align-items: center; gap: 8px; }
+
+/* ------------------------------------------------------------- density */
+
+/* Compact is a real information-density change, not a smaller font: rows get
+   tighter and cards lose their outer air, while type stays the size it was so
+   nothing becomes harder to read. */
+.setup-main[data-density='compact'] table th,
+.setup-main[data-density='compact'] table td { padding-top: 6px; padding-bottom: 6px; }
+.setup-main[data-density='compact'] .field-table th,
+.setup-main[data-density='compact'] .field-table td { padding: 6px 10px; }
+.setup-main[data-density='compact'] .card-head,
+.setup-main[data-density='compact'] .setup-block-head { padding-top: 9px; padding-bottom: 9px; }
+.setup-main[data-density='compact'] .card-body { padding-top: 10px; padding-bottom: 10px; }
+.setup-main[data-density='compact'] .finding { padding-top: 8px; padding-bottom: 8px; }
+.setup-main[data-density='compact'] .change-list li { padding-top: 6px; padding-bottom: 6px; }
+.setup-main[data-density='compact'] .stack { gap: 9px; }
+.setup-main[data-density='compact'] .setup-block { margin-bottom: 12px; }
+
+/* --------------------------------------------------------- the crash panel */
+
+.setup-crash {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  padding: 20px;
+  border: 1px solid var(--warn);
+  border-radius: var(--r-sm);
+  background: var(--warn-soft);
+}
+.setup-crash > .material-symbols-rounded { color: var(--warn); }
+.setup-crash h2 { margin: 0 0 5px; font-size: 1rem; }
+.setup-crash p { margin: 0 0 10px; max-width: 62ch; font-size: 13.5px; }
+.setup-crash pre {
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: var(--r-xs);
+  background: var(--glass-solid);
+  border: 1px solid var(--hairline);
+  font-size: 12px;
+  overflow-x: auto;
+  color: var(--ink-2);
+}
+
+/* A heading row inside the visibility grid. Sticky-left so it stays readable
+   while the roles scroll sideways. */
+.matrix-section th {
+  position: sticky;
+  left: 0;
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  background: var(--hairline-2);
+  padding: 7px 12px;
+}
+
+/* ---------------------------------------------------- topbar refinements */
+
+/* The business selector is the app's own control now, not a bare select. It
+   carries the business's colour, which is how you tell at a glance which book
+   you are configuring — the previous select rendered its name in the same pale
+   grey as everything else and read as decoration. */
+.setup-topbar .org-switch { flex: 0 0 auto; }
+
+@media (max-width: 900px) {
+  /* The pin is hover-revealed, and there is no hover on a phone. */
+  .setup-pin { opacity: 1; }
 }

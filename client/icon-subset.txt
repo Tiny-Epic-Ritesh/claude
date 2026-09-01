@@ -266,6 +266,8 @@ space_dashboard
 stack
 stacked_bar_chart
 stage
+star
+star_border
 sticky_note_2
 subject
 support

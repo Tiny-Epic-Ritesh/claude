@@ -35,7 +35,7 @@ const finding = (severity, section, title, detail) => ({ severity, section, titl
 function orphanedValues(orgs) {
   const out = [];
   const fields = all(
-    `SELECT f.id, f.entity, f.api_name, f.label, e.table_name
+    `SELECT f.id, f.entity, f.api_name, f.label, e.table_name, e.label AS entity_label
        FROM field_def f JOIN entity_def e ON e.api_name = f.entity
       WHERE f.active = 1 AND f.storage = 'column' AND f.type IN ('picklist', 'multipicklist')
         AND e.active = 1`,
@@ -70,7 +70,11 @@ function orphanedValues(orgs) {
       const records = stray.reduce((a, r) => a + r.n, 0);
       out.push(finding(
         'warn', 'objects',
-        `${f.label} holds ${stray.length === 1 ? 'a value' : `${stray.length} values`} it no longer offers`,
+        /* Named with its object. "Priority" alone sent somebody looking at
+           Cases when the field was on Tasks — half a dozen objects have a
+           Priority and a Status, and a finding you cannot locate is a finding
+           nobody acts on. */
+        `${f.entity_label} · ${f.label} holds ${stray.length === 1 ? 'a value' : `${stray.length} values`} it no longer offers`,
         `${records.toLocaleString('en-IN')} record(s) are set to `
         + `${stray.slice(0, 3).map((r) => `"${r.v}"`).join(', ')}`
         + `${stray.length > 3 ? ', and others' : ''}, which nobody can pick and no filter will match.`,

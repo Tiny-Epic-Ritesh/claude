@@ -14,11 +14,19 @@
  * legacy audit found nobody could answer.
  */
 
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { useDraft } from '../components/useDraft.js';
 import PendingBar from '../components/PendingBar.jsx';
 import { api } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty } from '../components/ui.jsx';
+
+/* What each row of the grid actually is. Three mechanisms share one table
+   because they share one storage shape, not because they are one thing. */
+const KIND_LABEL = {
+  tab: 'CRM tabs',
+  feature: 'Features',
+  setup: 'Setup screens',
+};
 
 export default function TabVisibility() {
   const [data, { loading, error, reload }] = useApi('/setup/tab-visibility');
@@ -89,8 +97,19 @@ export default function TabVisibility() {
               </tr>
             </thead>
             <tbody>
-              {data.tabs.map((t) => (
-                <tr key={t.id}>
+              {data.tabs.map((t, i) => (
+                <Fragment key={t.id}>
+                {/* Three kinds ride this one grid: CRM tabs, the banner
+                    features that use the same mechanism, and the Setup screens.
+                    Without a heading between them "Users" the Setup screen sits
+                    beside "Leads" the CRM tab and reads as the same kind of
+                    thing. */}
+                {t.kind !== data.tabs[i - 1]?.kind && (
+                  <tr className="matrix-section">
+                    <th scope="row" colSpan={data.roles.length + 1}>{KIND_LABEL[t.kind] ?? t.kind}</th>
+                  </tr>
+                )}
+                <tr>
                   <th scope="row" className="matrix-tab">
                     <Icon name={t.icon} size={15} /> {t.label}
                   </th>
@@ -127,6 +146,7 @@ export default function TabVisibility() {
                     );
                   })}
                 </tr>
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -134,6 +154,13 @@ export default function TabVisibility() {
       </div>
 
       <PersonOverrides person={person} onPick={setPerson} />
+
+      {/* The save bar belongs to the role grid above, which is the only thing
+          on this screen held as a draft — PersonOverrides writes immediately.
+          It had been placed inside PersonOverrides instead, where `draft` is
+          not in scope, so rendering this screen threw a ReferenceError and took
+          the whole page down with it. */}
+      <PendingBar draft={draft} what="navigation changes" />
     </div>
   );
 }
@@ -217,7 +244,6 @@ function PersonOverrides({ person, onPick }) {
           </div>
         )}
       </div>
-      <PendingBar draft={draft} what="navigation changes" />
     </div>
   );
 }

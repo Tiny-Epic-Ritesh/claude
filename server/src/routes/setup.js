@@ -53,11 +53,14 @@ import {
 
 import {
   matrix as tabMatrix, setRoleTab, clearRoleTab, setUserTab, clearUserTab,
-  overridesFor, resolveTab, shippedDefault, overrideCount,
+  overridesFor, resolveTab, shippedDefault, overrideCount, visibleTabs,
   FEATURE_KEYS, FEATURE_LABEL,
 } from '../engine/tabs.js';
 import { TABS } from './apps.js';
 import { checkSetup, recentChanges, counts as setupCounts } from '../engine/setuphealth.js';
+import {
+  SETUP_SECTIONS, setupTabId, setupTabList, isSetupTabId, isSetupSection, sectionKeyOf,
+} from '../engine/setupsections.js';
 import {
   MASKABLE, FIELD_LABEL, maskingMatrix, setMasking, clearMasking, maskedFieldsFor,
 } from '../engine/masking.js';
@@ -560,6 +563,63 @@ router.get('/me/access', (req, res) => res.json({
  * sees the state of it — the findings name a screen, and if they cannot open
  * that screen the link simply is not offered to them.
  */
+/**
+ * One person's own preferences for Setup.
+ *
+ * Pins, density, which groups are folded, and where they were last. None of it
+ * changes what anybody may do or see, which is why it needs no capability and
+ * is not audited -- a wrong value costs the person who set it one click.
+ *
+ * The visible sections come back on the same call, because the sidebar cannot
+ * render until it knows both, and two round trips to draw one menu is two
+ * chances to draw it half-built.
+ */
+router.get('/preferences', (req, res) => {
+  const rows = all('SELECT key, value FROM user_pref WHERE user_id = ? AND key LIKE ?', [req.user.id, 'setup.%']);
+  const prefs = {};
+  for (const r of rows) {
+    try { prefs[r.key.slice('setup.'.length)] = JSON.parse(r.value); }
+    catch { /* a preference that will not parse is one nobody set on purpose */ }
+  }
+
+  const ids = SETUP_SECTIONS.map((sec) => setupTabId(sec.key));
+  const visible = visibleTabs(req.user, ids);
+
+  res.json({
+    prefs,
+    /* Capability AND visibility. A screen the role cannot open is never listed
+       whatever the visibility says -- hiding is for tidying a sidebar, never
+       for keeping somebody out, and the API enforces the capability regardless
+       of what the menu shows. */
+    sections: SETUP_SECTIONS
+      .filter((sec) => !sec.needs || sec.needs.some((c) => can(req.user.role, c)))
+      .filter((sec) => visible.has(setupTabId(sec.key)))
+      .map((sec) => sec.key),
+  });
+});
+
+/** Set one preference, or clear it by sending null. */
+router.put('/preferences/:key', (req, res) => {
+  const key = String(req.params.key || '').replace(/[^a-z_]/g, '');
+  if (!key) return res.status(400).json({ error: 'Name the preference' });
+
+  if (req.body?.value === null || req.body?.value === undefined) {
+    run('DELETE FROM user_pref WHERE user_id = ? AND key = ?', [req.user.id, `setup.${key}`]);
+    return res.json({ ok: true, cleared: true });
+  }
+
+  const value = JSON.stringify(req.body.value);
+  // A preference is a convenience, not a place to park data.
+  if (value.length > 4000) return res.status(400).json({ error: 'That preference is too large to store' });
+
+  run(
+    `INSERT INTO user_pref (user_id, key, value, updated_at) VALUES (?,?,?, datetime('now'))
+     ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    [req.user.id, `setup.${key}`, value],
+  );
+  return res.json({ ok: true });
+});
+
 router.get('/health', (req, res) => {
   res.json({
     findings: checkSetup({ orgs: orgsFor(req.user) }),
@@ -1483,6 +1543,11 @@ const TAB_LIST = () => [
   // administrator can see that turning one off hides a banner rather than a
   // destination (ENH-04).
   ...FEATURE_KEYS.map((k) => ({ id: k, label: FEATURE_LABEL[k] ?? k, icon: 'monitoring', kind: 'feature' })),
+  /* Setup screens ride the same mechanism, prefixed so `products` the CRM tab
+     and `products` the Setup screen cannot share one setting. Hiding one tidies
+     an administrator's sidebar; the capability behind it is untouched, which is
+     what the note on this endpoint already says about navigation. */
+  ...setupTabList(),
 ];
 
 router.get('/tab-visibility', requirePermission('admin.roles'), (_req, res) => {
@@ -1500,7 +1565,10 @@ router.get('/tab-visibility', requirePermission('admin.roles'), (_req, res) => {
 router.post('/tab-visibility/role', requirePermission('admin.roles'), (req, res) => {
   const { role, tab_id: tabId, visible } = req.body ?? {};
   if (!role || !tabId) return res.status(400).json({ error: 'Give a role and a tab' });
-  if (!TABS[tabId] && !FEATURE_KEYS.includes(tabId)) return res.status(400).json({ error: `There is no tab called "${tabId}"` });
+  const knownSetup = isSetupTabId(tabId) && isSetupSection(sectionKeyOf(tabId));
+  if (!TABS[tabId] && !FEATURE_KEYS.includes(tabId) && !knownSetup) {
+    return res.status(400).json({ error: `There is no tab called "${tabId}"` });
+  }
 
   const before = shippedDefault(role, tabId);
 
@@ -1543,7 +1611,10 @@ router.post('/users/:id/tabs', requirePermission('admin.roles'), (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   const { tab_id: tabId, visible } = req.body ?? {};
-  if (!TABS[tabId] && !FEATURE_KEYS.includes(tabId)) return res.status(400).json({ error: `There is no tab called "${tabId}"` });
+  const knownSetup = isSetupTabId(tabId) && isSetupSection(sectionKeyOf(tabId));
+  if (!TABS[tabId] && !FEATURE_KEYS.includes(tabId) && !knownSetup) {
+    return res.status(400).json({ error: `There is no tab called "${tabId}"` });
+  }
 
   const before = resolveTab(user, tabId);
   if (visible === null) clearUserTab(user.id, tabId);

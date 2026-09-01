@@ -296,11 +296,14 @@ export const sectionByKey = (key) => SECTIONS.find((s) => s.key === key);
  * before Campaigns even though both contain the letters. A label match beats a
  * blurb match beats a keyword match, and a prefix beats a match in the middle.
  */
-export function searchSections(query, permissions = []) {
+export function searchSections(query, sections = SECTIONS) {
   const q = String(query || '').trim().toLowerCase();
   if (!q) return [];
 
-  return sectionsFor(permissions)
+  /* Searches what this person can actually open, not the whole catalogue. A
+     result you cannot follow is worse than no result: it tells somebody the
+     screen exists and then refuses to show it. */
+  return sections
     .map((s) => {
       const label = s.label.toLowerCase();
       let score = 0;
