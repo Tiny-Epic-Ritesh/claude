@@ -434,6 +434,37 @@ h3 { font-size: 13.5px; font-weight: 600; }
   border-radius: var(--r-xs);
 }
 
+/* P2-17a chart types. The line and its area share one geometry, so they share
+   most of their styling too. */
+.line-path { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.area-fill { fill: var(--accent); opacity: 0.14; stroke: none; }
+.line-dot { fill: var(--accent); stroke: var(--panel); stroke-width: 1.5; }
+.grid-line { stroke: var(--hairline); stroke-width: 1; }
+.axis-label { font-size: 10px; fill: var(--ink-4); }
+
+.treemap-box { stroke: var(--panel); stroke-width: 2; }
+.treemap-box.tone-0 { fill: var(--accent); opacity: 0.85; }
+.treemap-box.tone-1 { fill: var(--accent); opacity: 0.70; }
+.treemap-box.tone-2 { fill: var(--accent); opacity: 0.58; }
+.treemap-box.tone-3 { fill: var(--accent); opacity: 0.46; }
+.treemap-box.tone-4 { fill: var(--accent); opacity: 0.36; }
+.treemap-box.tone-5 { fill: var(--accent); opacity: 0.28; }
+.treemap-label { font-size: 11.5px; font-weight: 600; fill: var(--ink); }
+.treemap-value { font-size: 11px; fill: var(--ink-2); }
+
+/* The switcher, sitting inside the chart's own header. */
+.chart-kinds { display: inline-flex; gap: 2px; }
+.chart-kinds button {
+  padding: 3px 7px;
+  font-size: 11px;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-4);
+}
+.chart-kinds button:hover { color: var(--ink); background: var(--glass-2); }
+.chart-kinds button.is-on { color: var(--ink); background: var(--glass-2); border-color: var(--hairline); }
+
 /* The unsaved-changes bar (P2-06). Bottom, not top: the grid it belongs to is
    what the reader is looking at, and a bar above it would push their work down
    every time they touched a switch. */

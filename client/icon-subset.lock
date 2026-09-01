@@ -1,6 +1,6 @@
 # The exact names the bundled font was generated from, and the font it produced.
 # Regenerate both together — see the instructions at the top of icon-subset.txt.
-# font-sha256 45f2d78fba946980839669d2552135d159c314de1e8b6c1c2b2b949c22496d68
+# font-sha256 a4a3c36b8c6d66ece3a65c4bdc86dc02877e1eaa2e80157562c335fbe31bf83d
 account_balance
 account_balance_wallet
 account_tree
@@ -11,6 +11,7 @@ api
 approval
 approvals
 apps
+area_chart
 arrow_back
 arrow_downward
 arrow_drop_down
@@ -26,6 +27,7 @@ auto
 auto_awesome
 auto_stories
 badge
+bar_chart
 block
 bolt
 bookmark
@@ -77,6 +79,7 @@ details
 dialler
 dialpad
 done
+donut_small
 download
 draw
 duplicate
@@ -106,6 +109,7 @@ format_underlined
 forum
 forward
 gavel
+grid_view
 group
 group_add
 groups
@@ -220,6 +224,7 @@ shield
 shield_lock
 shield_person
 shopping_basket
+show_chart
 slideshow
 smart_toy
 sms

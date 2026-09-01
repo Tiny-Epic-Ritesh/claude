@@ -753,6 +753,8 @@ CREATE TABLE IF NOT EXISTS dashboard_panel (
   -- { fn: 'count' } or { fn: 'sum', field: 'aum' }
   measure       TEXT NOT NULL DEFAULT '{\"fn\":\"count\"}',
   group_by      TEXT,
+  -- 'day' | 'week' | 'month' when the panel groups by time instead of a field.
+  grain         TEXT,
   -- { all: [ { field, op, value } ] }, same shape as a validation rule.
   filters       TEXT,
   use_range     INTEGER NOT NULL DEFAULT 1,
@@ -869,6 +871,7 @@ const COLUMNS = [
   ['users', 'cti_agent_id', 'TEXT'],           // agent id as known to QuickCall
   ['users', 'kyc_shortcode', 'TEXT'],          // RM attribution on the eKYC portal
   ['partners', 'kyc_shortcode', 'TEXT'],       // partner attribution, drives commission
+  ['dashboard_panel', 'grain', 'TEXT'],        // group by time instead of a field
   ['sessions', 'ghost_of', 'INTEGER'],         // the admin behind a ghost session
   ['request_log', 'ghost_of', 'INTEGER'],      // and who they were really
   ['request_log', 'api_credential_id', 'INTEGER'],  // which API key made the call, if any

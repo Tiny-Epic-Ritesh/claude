@@ -455,3 +455,23 @@ existing ticket capabilities govern writes. Written up as §6a of the security
 record with three options; I did not pick one, because adding a read capability
 means re-granting across twelve roles and doing that without knowing who
 genuinely needs case access would cut people off mid-work.
+
+---
+
+## Confirmed 1 September 2026
+
+| Ref | Decision |
+|---|---|
+| **P2-17a** | **Six chart types**, not fourteen: bar/column, pie, donut, line, area, treemap. The switcher offers only the ones valid for that panel's shape. The feedback itself says "whichever are applicable to the data being displayed", so this is the request rather than a narrowing of it. |
+| **P2-17a** | **Add "over time" grouping** — by day, week or month. Line, area and step need a date axis and no panel produced one; grouping by time is worth having on its own, since "leads per week" was a question nobody could ask. |
+| **P2-17a** | **A second "split by" dimension in a later phase**, unlocking grouped and stacked bars. Not in the first release, which would otherwise be held up by roughly doubling the builder. |
+| **P2-20 + P2-22** | **These are one screen.** `/content` is labelled "Marketing Hub" in the app, so "manage content libraries" and "edit and configuration in the Marketing Hub" describe the same place — the same duplication P2-02 and P2-15 turned out to be. Scope: named libraries owned by a role and shared to roles (Q-15), plus **who must approve an item before it can be sent**, and a **default expiry per library**. |
+
+**Not offered, and why.** Marimekko encodes two dimensions as variable widths
+and heights and is reliably misread — on "leads by source × stage" a reader
+will compare areas wrongly and act on it. Sunburst needs genuine hierarchy,
+which none of our data has. Stream needs time *and* multiple series and is
+decorative below a few hundred points. Radial bars distort comparison, because
+the same value draws a longer arc further from the centre. None of these are
+refusals — if any are wanted, say so and they get built; they are simply not
+worth the first six slots.

@@ -41,6 +41,7 @@ api
 approval
 approvals
 apps
+area_chart
 arrow_back
 arrow_downward
 arrow_drop_down
@@ -56,6 +57,7 @@ auto
 auto_awesome
 auto_stories
 badge
+bar_chart
 block
 bolt
 bookmark
@@ -107,6 +109,7 @@ details
 dialler
 dialpad
 done
+donut_small
 download
 draw
 duplicate
@@ -136,6 +139,7 @@ format_underlined
 forum
 forward
 gavel
+grid_view
 group
 group_add
 groups
@@ -250,6 +254,7 @@ shield
 shield_lock
 shield_person
 shopping_basket
+show_chart
 slideshow
 smart_toy
 sms

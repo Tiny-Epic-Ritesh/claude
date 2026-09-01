@@ -21,7 +21,7 @@
 import { useState } from 'react';
 import { api } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty, Modal, Spinner, Segmented } from '../components/ui.jsx';
-import { BarChart, Donut } from '../components/charts.jsx';
+import ChartPanel from '../components/ChartPanel.jsx';
 
 export default function Dashboards() {
   const [list, { loading, error, reload }] = useApi('/dashboards');
@@ -109,6 +109,11 @@ function DashboardView({ id, onBack, onError }) {
 
   const d = data.dashboard;
 
+  const saveKind = async (panelId, kind) => {
+    try { await api.patch(`/dashboards/${id}/panels/${panelId}`, { kind }); reload(); }
+    catch (err) { onError(err.message); }
+  };
+
   const removePanel = async (panelId) => {
     try { await api.del(`/dashboards/${id}/panels/${panelId}`); reload(); }
     catch (err) { onError(err.message); }
@@ -168,7 +173,12 @@ function DashboardView({ id, onBack, onError }) {
                 </button>
               )}
             </div>
-            <PanelBody panel={p} />
+            <PanelBody
+              panel={p}
+              /* The owner's choice is saved, because it is their panel. A
+                 viewer of a shared one switches for themselves only. */
+              onKindChange={d.mine ? (k) => saveKind(p.id, k) : undefined}
+            />
           </div>
         ))}
       </div>
@@ -186,7 +196,7 @@ function DashboardView({ id, onBack, onError }) {
   );
 }
 
-function PanelBody({ panel }) {
+function PanelBody({ panel, onKindChange }) {
   if (panel.kind === 'error') {
     return <div className="tiny warn-text">{panel.error}</div>;
   }
@@ -194,9 +204,18 @@ function PanelBody({ panel }) {
     return <div className="stat-value" style={{ fontSize: '2rem' }}>{Number(panel.value).toLocaleString('en-IN')}</div>;
   }
   if (!panel.data?.length) return <Empty>Nothing in this window.</Empty>;
-  // Donut takes `segments`, not `data`.
-  if (panel.kind === 'donut') return <Donut segments={panel.data} />;
-  return <BarChart data={panel.data} />;
+
+  return (
+    <ChartPanel
+      data={panel.data}
+      kind={panel.kind}
+      grain={panel.grain ?? panel.definition?.grain ?? null}
+      groupBy={panel.definition?.group_by ?? null}
+      measureFn={panel.definition?.measure?.fn ?? 'count'}
+      format={(v) => Number(v).toLocaleString('en-IN')}
+      onKindChange={onKindChange}
+    />
+  );
 }
 
 /* ---------------------------------------------------------- creating */

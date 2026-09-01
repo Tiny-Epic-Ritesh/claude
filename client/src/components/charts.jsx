@@ -323,3 +323,133 @@ export function StatTile({ label, value, sub, trend, tone, icon, goodWhen = 'up'
 }
 
 export { money as compactMoney };
+
+/* ------------------------------------------------- P2-17a chart types */
+
+/**
+ * Line and area, for a panel grouped by time.
+ *
+ * One component with a `filled` prop rather than two, because an area chart IS
+ * a line chart with the region beneath it shaded — duplicating the geometry
+ * would mean two places for the axis arithmetic to drift apart.
+ *
+ * Only every nth label is drawn. Fifty-two weekly labels along an axis overlap
+ * into a grey smear, which is the same defect P2-17 fixed on the bar chart,
+ * arriving from a different direction.
+ */
+export function LineChart({ data = [], height = 170, filled = false, format = (v) => v }) {
+  if (!data.length) return <div className="chart-empty">Nothing to show yet</div>;
+  if (data.length === 1) {
+    // A line needs two points. One is a number, so say the number.
+    return <div className="stat-value" style={{ fontSize: '1.6rem' }}>{format(data[0].value)}</div>;
+  }
+
+  const W = 520;
+  const H = height;
+  const pad = { top: 12, right: 10, bottom: 26, left: 40 };
+  const max = Math.max(...data.map((d) => d.value), 1);
+  const innerW = W - pad.left - pad.right;
+  const innerH = H - pad.top - pad.bottom;
+
+  const x = (i) => pad.left + (i * innerW) / (data.length - 1);
+  const y = (v) => pad.top + innerH - (v / max) * innerH;
+
+  const line = data.map((d, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(d.value).toFixed(1)}`).join(' ');
+  const area = `${line} L${x(data.length - 1).toFixed(1)},${(pad.top + innerH).toFixed(1)} L${x(0).toFixed(1)},${(pad.top + innerH).toFixed(1)} Z`;
+
+  // Aim for about eight labels whatever the point count.
+  const every = Math.max(1, Math.ceil(data.length / 8));
+
+  return (
+    <div className="chart-scroll">
+      <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img" aria-label={`${data.length} points`}>
+        {[0, 0.5, 1].map((f) => (
+          <line key={f} x1={pad.left} x2={W - pad.right}
+            y1={pad.top + innerH * f} y2={pad.top + innerH * f} className="grid-line" />
+        ))}
+        <text x={pad.left - 6} y={pad.top + 4} className="axis-label" textAnchor="end">{format(max)}</text>
+        <text x={pad.left - 6} y={pad.top + innerH} className="axis-label" textAnchor="end">0</text>
+
+        {filled && <path d={area} className="area-fill" />}
+        <path d={line} className="line-path" />
+
+        {data.map((d, i) => (
+          <circle key={d.label} cx={x(i)} cy={y(d.value)} r="2.5" className="line-dot">
+            <title>{`${d.label}: ${format(d.value)}`}</title>
+          </circle>
+        ))}
+
+        {data.map((d, i) => (i % every === 0 ? (
+          <text key={`l-${d.label}`} x={x(i)} y={H - 8} className="bar-label" textAnchor="middle">
+            {String(d.label).replace(/^\d{4}-/, '')}
+          </text>
+        ) : null))}
+      </svg>
+    </div>
+  );
+}
+
+/**
+ * Treemap, by slice-and-dice rather than squarified.
+ *
+ * Squarified layout produces better aspect ratios and needs a good deal more
+ * code; with a cap of eight boxes the difference is not visible, and the simpler
+ * algorithm is one somebody can read and check. Alternating the split direction
+ * is what stops it degenerating into stripes.
+ */
+export function Treemap({ data = [], height = 170, format = (v) => v }) {
+  if (!data.length) return <div className="chart-empty">Nothing to show yet</div>;
+
+  const W = 520;
+  const total = data.reduce((s, d) => s + d.value, 0);
+  if (total <= 0) return <div className="chart-empty">Nothing to show yet</div>;
+
+  const boxes = [];
+  const place = (items, x, y, w, h, horizontal) => {
+    if (!items.length) return;
+    if (items.length === 1) { boxes.push({ ...items[0], x, y, w, h }); return; }
+
+    // Split the list where the running total passes half.
+    const sum = items.reduce((s, d) => s + d.value, 0);
+    let acc = 0;
+    let cut = 1;
+    for (let i = 0; i < items.length; i += 1) {
+      acc += items[i].value;
+      if (acc >= sum / 2) { cut = i + 1; break; }
+    }
+    const headSum = items.slice(0, cut).reduce((s, d) => s + d.value, 0);
+    const frac = headSum / sum;
+
+    if (horizontal) {
+      place(items.slice(0, cut), x, y, w * frac, h, !horizontal);
+      place(items.slice(cut), x + w * frac, y, w * (1 - frac), h, !horizontal);
+    } else {
+      place(items.slice(0, cut), x, y, w, h * frac, !horizontal);
+      place(items.slice(cut), x, y + h * frac, w, h * (1 - frac), !horizontal);
+    }
+  };
+  place([...data].sort((a, b) => b.value - a.value), 0, 0, W, height, true);
+
+  return (
+    <div className="chart-scroll">
+      <svg viewBox={`0 0 ${W} ${height}`} className="chart" role="img">
+        {boxes.map((b, i) => (
+          <g key={b.label}>
+            <rect x={b.x + 1} y={b.y + 1} width={Math.max(0, b.w - 2)} height={Math.max(0, b.h - 2)}
+              className={`treemap-box tone-${i % 6}`} rx="3">
+              <title>{`${b.label}: ${format(b.value)}`}</title>
+            </rect>
+            {/* Only labelled when the box can hold the words. A truncated
+                label on a small tile is noise; the tooltip still has it. */}
+            {b.w > 64 && b.h > 26 && (
+              <>
+                <text x={b.x + 8} y={b.y + 18} className="treemap-label">{fitLabel(b.label, b.w - 12)}</text>
+                <text x={b.x + 8} y={b.y + 33} className="treemap-value">{format(b.value)}</text>
+              </>
+            )}
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}

@@ -109,6 +109,24 @@ export const MEASURES = {
   distinct: { label: 'Distinct values of', needsField: true, sql: (col) => `COUNT(DISTINCT ${col})` },
 };
 
+/**
+ * Grouping by time rather than by a field (P2-17a).
+ *
+ * Line, area and step charts need a date axis, and no panel produced one — every
+ * grouping was a category. "Leads per week" was a question nobody could ask,
+ * which made three of the six chart types decorative rather than useful.
+ *
+ * The format strings are SQLite's strftime. Week starts Monday: %W counts weeks
+ * from the first Monday, which is what a desk means by "this week" — a Sunday
+ * start would put Monday's calls in the previous week and quietly disagree with
+ * every other report in the product.
+ */
+export const GRAINS = {
+  day: { label: 'Day', fmt: '%Y-%m-%d', maxSpanDays: 92 },
+  week: { label: 'Week', fmt: '%Y-W%W', maxSpanDays: 730 },
+  month: { label: 'Month', fmt: '%Y-%m', maxSpanDays: 3650 },
+};
+
 /* ------------------------------------------------------ the whitelist */
 
 /**
@@ -211,6 +229,17 @@ export function validatePanel(panel = {}) {
     }
   }
 
+  if (panel.grain && !GRAINS[panel.grain]) {
+    return { error: `"${panel.grain}" is not a time grain`, field: 'grain' };
+  }
+  /* Grouping by a field and by time at once needs a second dimension, which is
+     the phase-two "split by" work. Refused rather than silently ignoring one of
+     them, because a panel that quietly drops half its definition is worse than
+     one that will not save. */
+  if (panel.grain && panel.group_by) {
+    return { error: 'A panel groups by a field or by time, not both', field: 'grain' };
+  }
+
   if (panel.group_by) {
     const col = columnOf(panel.source, panel.group_by);
     if (!col) return { error: `"${panel.group_by}" is not a field of ${src.label}`, field: 'group_by' };
@@ -219,7 +248,7 @@ export function validatePanel(panel = {}) {
     }
   }
 
-  if (!panel.group_by && panel.kind && panel.kind !== 'tile') {
+  if (!panel.group_by && !panel.grain && panel.kind && panel.kind !== 'tile') {
     return { error: 'A chart needs something to group by. Without one this is a single number.', field: 'group_by' };
   }
 
@@ -266,12 +295,31 @@ export function runPanel(req, panel, range = null) {
     : null;
   const value = measure.sql(measureCol);
 
-  if (!panel.group_by) {
+  if (!panel.group_by && !panel.grain) {
     const row = one(
       `SELECT ${value} AS v FROM ${src.table} ${src.alias} WHERE ${where.join(' AND ')}`,
       params,
     );
     return { kind: 'tile', value: Number(row?.v ?? 0) };
+  }
+
+  /* Grouped by time. Buckets with nothing in them are filled below, because a
+     line chart that skips an empty week draws a straight segment across it and
+     reads as steady rather than as nothing happening. */
+  if (panel.grain) {
+    const grain = GRAINS[panel.grain];
+    const rows = all(
+      `SELECT strftime('${grain.fmt}', ${src.alias}.${src.dateColumn}) AS label, ${value} AS value
+         FROM ${src.table} ${src.alias}
+        WHERE ${where.join(' AND ')} AND ${src.alias}.${src.dateColumn} IS NOT NULL
+        GROUP BY label ORDER BY label`,
+      params,
+    );
+    return {
+      kind: panel.kind ?? 'line',
+      grain: panel.grain,
+      data: fillGaps(rows, panel.grain, range),
+    };
   }
 
   const groupCol = `${src.alias}.${columnOf(panel.source, panel.group_by).api_name}`;
@@ -293,6 +341,75 @@ export function runPanel(req, panel, range = null) {
   };
 }
 
+/**
+ * Put the empty buckets back.
+ *
+ * A period with no records simply has no row, and a line drawn through the rows
+ * that exist crosses the gap as a straight segment — which reads as steady
+ * business rather than as a fortnight where nothing happened. Capped, because a
+ * daily grain over a financial year is 365 points and no chart draws that
+ * legibly.
+ */
+function fillGaps(rows, grainKey, range) {
+  if (!range || !rows.length) return rows.map((r) => ({ label: String(r.label), value: Number(r.value) || 0 }));
+
+  const grain = GRAINS[grainKey];
+  const found = new Map(rows.map((r) => [String(r.label), Number(r.value) || 0]));
+  const out = [];
+
+  const step = { day: 1, week: 7, month: 31 }[grainKey];
+  const from = new Date(`${range.from}T00:00:00Z`);
+  const to = new Date(`${range.to}T00:00:00Z`);
+  const spanDays = (to - from) / 86400000;
+
+  // Too long a span for this grain: return what was found rather than draw
+  // hundreds of points nobody can read.
+  if (spanDays > grain.maxSpanDays) {
+    return rows.map((r) => ({ label: String(r.label), value: Number(r.value) || 0 }));
+  }
+
+  const stamp = (d) => {
+    if (grainKey === 'month') return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+    if (grainKey === 'day') return d.toISOString().slice(0, 10);
+    // Week number the same way strftime('%W') counts it.
+    const start = Date.UTC(d.getUTCFullYear(), 0, 1);
+    const days = Math.floor((d - start) / 86400000);
+    const jan1 = new Date(start).getUTCDay();
+    const week = Math.floor((days + ((jan1 + 6) % 7)) / 7);
+    return `${d.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+  };
+
+  for (let d = new Date(from); d <= to; d.setUTCDate(d.getUTCDate() + step)) {
+    const label = stamp(d);
+    if (out.some((o) => o.label === label)) continue;
+    out.push({ label, value: found.get(label) ?? 0 });
+    if (out.length > 200) break;
+  }
+
+  // Anything the walk missed — a bucket the arithmetic did not land on — is
+  // added rather than dropped. A real record must never vanish from a chart.
+  for (const [label, value] of found) {
+    if (!out.some((o) => o.label === label)) out.push({ label, value });
+  }
+  return out.sort((a, b) => String(a.label).localeCompare(String(b.label)));
+}
+
+/**
+ * Which chart types suit this panel's shape (P2-17a).
+ *
+ * The feedback asks for "whichever are applicable to the data being displayed",
+ * so applicability is computed rather than left to the reader. Offering a pie
+ * chart of a time series is not a choice, it is a trap.
+ */
+export function kindsFor(panel = {}) {
+  if (panel.grain) return ['line', 'area', 'bar'];
+  if (!panel.group_by) return ['tile'];
+  // Part-to-whole only makes sense for a count. An average by stage does not
+  // add up to anything, so a pie of it is meaningless.
+  const partToWhole = (panel.measure?.fn ?? 'count') === 'count';
+  return partToWhole ? ['bar', 'donut', 'pie', 'treemap'] : ['bar', 'treemap'];
+}
+
 /** The catalogue the builder screen needs to offer choices without guessing. */
 export const catalogue = () => ({
   sources: Object.entries(SOURCES).map(([key, s]) => ({
@@ -305,10 +422,17 @@ export const catalogue = () => ({
     // Only the ones this file can compile to SQL.
     .filter(([op]) => !['longer_than', 'shorter_than'].includes(op))
     .map(([op, d]) => ({ op, label: d.label, takes_value: d.takesValue !== false })),
+  /* Six, not fourteen. Marimekko, sunburst, stream and radial bars are left
+     out deliberately — recorded with the reasoning in RECOMMENDATIONS-ROUND-2. */
   kinds: [
     { kind: 'tile', label: 'A single number' },
     { kind: 'bar', label: 'Bar chart' },
+    { kind: 'line', label: 'Line chart' },
+    { kind: 'area', label: 'Area chart' },
     { kind: 'donut', label: 'Donut' },
+    { kind: 'pie', label: 'Pie chart' },
+    { kind: 'treemap', label: 'Treemap' },
   ],
+  grains: Object.entries(GRAINS).map(([key, g]) => ({ key, label: g.label })),
   max_groups: MAX_GROUPS,
 });

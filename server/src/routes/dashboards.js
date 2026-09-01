@@ -21,7 +21,7 @@
 import { Router } from 'express';
 import { all, one, run, audit, transact, SALES_ORGS } from '../db.js';
 import { requireUser, requirePermission, can, orgsFor, mayUseOrg } from '../auth.js';
-import { runPanel, validatePanel, catalogue } from '../engine/panels.js';
+import { runPanel, validatePanel, catalogue, kindsFor } from '../engine/panels.js';
 import { resolveRange, RANGES, DEFAULT_RANGE } from '../engine/daterange.js';
 
 const router = Router();
@@ -101,6 +101,7 @@ router.get('/:id', (req, res) => {
       measure: parse(p.measure, { fn: 'count' }),
       filters: parse(p.filters),
       use_range: Boolean(p.use_range),
+      grain: p.grain ?? null,
       limit: p.point_limit,
     };
     try {
@@ -200,17 +201,50 @@ router.post('/:id/panels', (req, res) => {
 
   const p = req.body;
   const result = run(
-    `INSERT INTO dashboard_panel (dashboard_id, title, source, kind, measure, group_by, filters, use_range, point_limit, sort_order)
-     VALUES (?,?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(sort_order),-1)+1 FROM dashboard_panel WHERE dashboard_id = ?))`,
+    `INSERT INTO dashboard_panel (dashboard_id, title, source, kind, measure, group_by, grain, filters, use_range, point_limit, sort_order)
+     VALUES (?,?,?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(sort_order),-1)+1 FROM dashboard_panel WHERE dashboard_id = ?))`,
     [
       dash.id, String(p.title).trim(), p.source, p.kind ?? (p.group_by ? 'bar' : 'tile'),
-      JSON.stringify(p.measure ?? { fn: 'count' }), p.group_by ?? null,
+      JSON.stringify(p.measure ?? { fn: 'count' }), p.group_by || null, p.grain || null,
       p.filters ? JSON.stringify(p.filters) : null,
       p.use_range === false ? 0 : 1, Math.min(Number(p.limit) || 8, 20), dash.id,
     ],
   );
 
   return res.status(201).json(one('SELECT * FROM dashboard_panel WHERE id = ?', [Number(result.lastInsertRowid)]));
+});
+
+/**
+ * Change how a panel is drawn.
+ *
+ * Only the kind, and only to one the panel's shape actually supports — the
+ * switcher is a display choice, not a way to edit the question behind it. A
+ * viewer of a shared dashboard cannot reach this at all: they switch for
+ * themselves, in their own browser, and the owner's saved choice is untouched.
+ */
+router.patch('/:id/panels/:panelId', (req, res) => {
+  const dash = load(req.params.id, req.user);
+  if (!dash) return res.status(404).json({ error: 'No such dashboard' });
+  if (!isOwner(dash, req.user)) return res.status(403).json({ error: 'Only the person who built this can change it' });
+
+  const panel = one('SELECT * FROM dashboard_panel WHERE id = ? AND dashboard_id = ?', [req.params.panelId, dash.id]);
+  if (!panel) return res.status(404).json({ error: 'No such panel' });
+
+  const kind = String(req.body.kind ?? '');
+  const allowed = kindsFor({
+    grain: panel.grain,
+    group_by: panel.group_by,
+    measure: parse(panel.measure, { fn: 'count' }),
+  });
+  if (!allowed.includes(kind)) {
+    return res.status(400).json({
+      error: `This panel cannot be shown as a ${kind}. It supports: ${allowed.join(', ')}.`,
+      field: 'kind',
+    });
+  }
+
+  run('UPDATE dashboard_panel SET kind = ? WHERE id = ?', [kind, panel.id]);
+  return res.json(one('SELECT * FROM dashboard_panel WHERE id = ?', [panel.id]));
 });
 
 router.delete('/:id/panels/:panelId', (req, res) => {
