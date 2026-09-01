@@ -3725,6 +3725,49 @@ await check('a per-channel withdrawal closes only that channel', async () => {
       'member rows are malformed');
   });
 
+  await check('a list carries its own columns, and the rows arrive holding them', async () => {
+    // The chooser is only real if the row actually carries the field. Before
+    // this the member query selected five fixed columns, so a chooser offering
+    // sixteen would have rendered eleven empty ones.
+    const { data: saved } = await req(`/api/lists/${staticList.id}/columns`, {
+      method: 'PATCH', token: T.admin, expect: 200,
+      body: { columns: ['name', 'risk_profile', 'aum', 'next_follow_up_at', 'name'] },
+    });
+    eq(saved.columns.join(','), 'name,risk_profile,aum,next_follow_up_at',
+      'a column ticked twice should be shown once, in the order it was chosen');
+
+    const { data: list } = await req(`/api/lists/${refreshableList.id}`, { token: T.admin, expect: 200 });
+    const row = list.members[0];
+    for (const key of ['city', 'state', 'language', 'risk_profile', 'aum', 'score', 'next_follow_up_at']) {
+      assert(key in row, `a member row cannot be shown in the ${key} column it does not carry`);
+    }
+  });
+
+  await check('a column nobody defined cannot be chosen', async () => {
+    // Straight into a SELECT if it were not filtered.
+    await req(`/api/lists/${staticList.id}/columns`, {
+      method: 'PATCH', token: T.admin, expect: 400,
+      body: { columns: ['name); DROP TABLE leads;--'] },
+    });
+    const { data } = await req(`/api/lists/${staticList.id}`, { token: T.admin, expect: 200 });
+    eq(data.columns.join(','), 'name,risk_profile,aum,next_follow_up_at', 'a refused choice still changed the list');
+  });
+
+  await check('columns belong to the list, so a reader cannot rewrite them', async () => {
+    // The choice is part of what is shared. Someone the list was shared with
+    // sees it and cannot silently change what everyone else sees.
+    const { data: shared } = await req('/api/lists', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: {
+        name: `Columns ${RUN}`, kind: 'dynamic', shared_with: ['sales_rm'],
+        criteria: { op: 'AND', children: [{ field: 'stage', operator: 'in', value: ['Qualified'] }] },
+      },
+    });
+    await req(`/api/lists/${shared.id}/columns`, {
+      method: 'PATCH', token: T.sales_rm, expect: 403, body: { columns: ['name'] },
+    });
+  });
+
   await check('membership cannot be edited on a dynamic list', async () => {
     await req(`/api/lists/${dynamicList.id}/members`, {
       method: 'POST', token: T.admin, expect: 400, body: { lead_ids: [1] },

@@ -1019,6 +1019,7 @@ h3 { font-size: 13.5px; font-weight: 600; }
    .btn:hover's near-white background under white text. */
 .btn-danger:hover { background: var(--danger); box-shadow: var(--lift-2), 0 0 0 4px var(--danger-soft); }
 
+
 .btn-ghost {
   background: transparent;
   border: 1px solid transparent;
@@ -1034,6 +1035,28 @@ h3 { font-size: 13.5px; font-weight: 600; }
   color: var(--ink-2);
 }
 .btn-sm:hover { background: var(--glass-solid); color: var(--ink); }
+
+/* A destructive action sitting in a row of ordinary ones. Quiet until reached
+   for — a solid red button among six grey ones pulls the eye to the one thing
+   nobody should click by reflex.
+
+   Written twice on purpose. It is always worn as `btn-sm btn-danger-ghost`,
+   and a lone `.btn-danger-ghost` ties with `.btn-sm` on specificity, so the
+   later of the two would win on source order alone — which is how this button
+   came out grey the first time. The compound selector settles it by weight
+   instead of position; the bare one keeps the class usable on its own. */
+.btn-sm.btn-danger-ghost,
+.btn-danger-ghost {
+  background: transparent;
+  border: 1px solid var(--hairline);
+  color: var(--danger);
+}
+.btn-sm.btn-danger-ghost:hover,
+.btn-danger-ghost:hover {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  color: var(--danger);
+}
 
 .btn:disabled, .btn-primary:disabled, .btn-sm:disabled, .btn-ghost:disabled {
   opacity: 0.45;
@@ -2237,6 +2260,10 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .notice p:last-child { margin-bottom: 0; }
 .notice-warn { border-left-color: var(--warn); }
 .notice-warn > .material-symbols-rounded { color: var(--warn); }
+/* For the one thing on a screen that cannot be undone. Distinct from
+   .notice-warn on purpose: a warning and a deletion should not read the same. */
+.notice-danger { border-left-color: var(--danger); }
+.notice-danger > .material-symbols-rounded { color: var(--danger); }
 
 /* Two columns on desktop, one on anything narrow. `span-2` is the escape hatch
    for the fields that need the full width — labels, purposes, textareas. */

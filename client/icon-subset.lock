@@ -1,6 +1,6 @@
 # The exact names the bundled font was generated from, and the font it produced.
 # Regenerate both together — see the instructions at the top of icon-subset.txt.
-# font-sha256 b7512df8693685bd642773eb5825bad156d39d37ab0614520c844aa2f99e9874
+# font-sha256 083d0a5d0800f24b93826424a74cc0b4ab5f8ec9fa6dc085bdcf396a88e6443d
 account_balance
 account_balance_wallet
 account_tree
@@ -263,11 +263,13 @@ trending_flat
 trending_up
 unsubscribe
 upgrade
+upload
 uppercase
 user
 user_or_queue
 verified
 verified_user
+view_column
 view_kanban
 visibility
 visibility_off

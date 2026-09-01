@@ -131,6 +131,10 @@ router.get('/meta', (_req, res) => res.json({
   default_expiry: defaultExpiry(),
   /* Which lead columns a list may choose to show. */
   columns: COLUMN_CHOICES,
+  /* Which fields a bulk edit may set. Stated here rather than repeated in the
+     interface, so a dialog cannot offer a field the route will refuse. Labels
+     and values come from the schema above, which is where they already live. */
+  bulk_editable: [...BULK_EDITABLE],
 }));
 
 /* --------------------------------------------------------------- list */
@@ -229,8 +233,15 @@ router.get('/:id', (req, res) => {
 
   const total = memberCount(list, req);
   const rows = all(
+    /* Every choosable column, not just the five the table used to show. The
+       chooser can only offer what the row actually carries, and at a 500-row
+       cap the extra seven columns cost nothing worth measuring. The consent
+       flags are not choosable — they are why a send count differs from a member
+       count, so they are never hidden. */
     `SELECT l.id, l.name, l.mobile, l.email, l.stage, l.source, l.sales_org,
-            l.client_code, l.marketing_opt_out, l.no_call, l.no_sms, l.no_email,
+            l.client_code, l.city, l.state, l.language, l.risk_profile,
+            l.aum, l.score, l.next_follow_up_at,
+            l.marketing_opt_out, l.no_call, l.no_sms, l.no_email,
             l.no_whatsapp, l.mobile_invalid, l.created_at,
             u.name AS owner_name
        FROM leads l
@@ -256,8 +267,37 @@ router.get('/:id', (req, res) => {
     may_edit: mayWriteList(list, req.user),
     // Stated on the list itself, so nobody has to remember the rule.
     campaign_safe: normaliseKind(list.kind) !== 'dynamic',
+    columns: columnsOf(list),
     members: rows,
   });
+});
+
+/**
+ * Choose which columns this list shows.
+ *
+ * The choice belongs to the list, not to the person looking at it: a list is
+ * shared, and the columns are part of what is being shared. Someone who sends
+ * "leads with no follow-up date" wants the recipient to see the follow-up
+ * column without being told to add it.
+ */
+router.patch('/:id/columns', (req, res) => {
+  const list = loadList(req);
+  if (!list || !mayReadList(list, req.user)) return res.status(404).json({ error: 'List not found' });
+  if (!mayWriteList(list, req.user)) {
+    return res.status(403).json({ error: 'Only the owner of a list can change its columns' });
+  }
+
+  const chosen = (Array.isArray(req.body?.columns) ? req.body.columns : [])
+    .filter((k) => COLUMN_CHOICES.some((c) => c.key === k));
+  // Order is the caller's, deduplicated — dragging a column twice is a slip,
+  // not an instruction to show it twice.
+  const columns = [...new Set(chosen)];
+  if (!columns.length) return res.status(400).json({ error: 'A list has to show at least one column' });
+
+  run("UPDATE lead_lists SET columns = ?, updated_at = datetime('now') WHERE id = ?",
+    [JSON.stringify(columns), list.id]);
+  audit(req.user.id, 'list.columns', 'lead_list', list.id, { columns });
+  res.json({ columns });
 });
 
 /* ------------------------------------------------------------ refresh */

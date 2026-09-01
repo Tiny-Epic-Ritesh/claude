@@ -305,3 +305,5 @@ warn
 warning
 weight
 whatsapp
+view_column
+upload
