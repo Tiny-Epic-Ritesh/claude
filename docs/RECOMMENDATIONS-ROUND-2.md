@@ -475,3 +475,62 @@ decorative below a few hundred points. Radial bars distort comparison, because
 the same value draws a longer arc further from the centre. None of these are
 refusals — if any are wanted, say so and they get built; they are simply not
 worth the first six slots.
+
+---
+
+## P2-21 — delivered 1 September 2026
+
+Scope was **A-6 as agreed: Lead, Client and Ticket**, done properly to establish
+the pattern before spreading it.
+
+Two of the four surfaces already existed — fields (add, rename, reorder,
+retire, formula and roll-up, usage reporting) and validation rules. The gaps
+were the other two, and both had a working route with no screen behind it.
+
+| Surface | Was | Now |
+|---|---|---|
+| Fields | Complete | Unchanged |
+| Validation rules | Complete | Unchanged |
+| **Picklist values** | Route only. An administrator could see that Stage offers six values and change none of them. | Add, rename, reorder, set a default, retire — with a record count against every value |
+| **Object settings** | Route only. An object could not be renamed. | Name, plural, description and icon, with the API name shown and frozen |
+| **Related settings** | Scattered across other tabs, unlinked | Linked from the object, not duplicated |
+
+**The counts are the point of the values editor.** Retiring a value leaves the
+string on every record that already held it: those records go on showing
+something the picker no longer offers, reports group by it, and nothing said how
+many there were. So the count sits beside every value, scoped to the
+administrator's own books, and removing one that is in use returns 409 with the
+list and has to be confirmed. It stays *possible* — it is usually what is meant
+— but never accidental.
+
+Values found on records and absent from the list are reported rather than
+hidden. The seed already carries two on `lead.source`.
+
+**Renaming an object is what makes freezing its API name worth doing.** Non-
+negotiable 5 is that a label is not an API name; keeping the label editable is
+the whole benefit. Verified by round-trip: renaming Cases to Tickets updates
+every heading while `case` stays the API name and `/api/tickets` keeps
+answering.
+
+### Found and not fixed — one finding
+
+`has_history`, `has_activities`, `has_record_types` and `has_approvals` are
+columns on `entity_def`, written at seed and **read by nothing at all**. They
+look like object settings and are decorative.
+
+They are deliberately not on the settings screen. A toggle that changes no
+behaviour is worse than a missing one: an administrator turns "Approvals" off,
+approvals go on working, and nothing on the screen can be trusted afterwards.
+`objectconfig.test.mjs` now fails if anybody adds them without wiring them
+first.
+
+Deciding what they should mean is a separate piece of work — `has_activities`
+in particular would have to hide the interaction timeline, which has real blast
+radius.
+
+### Also fixed on the way
+
+`?tab=` looked supported and was read by nothing — the admin tab was internal
+state, so every link into a particular tab landed on Users. It comes from the
+URL now, which is what makes the related-settings links work and lets an
+administrator bookmark a screen.
