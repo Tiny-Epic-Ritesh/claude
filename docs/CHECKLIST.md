@@ -5,10 +5,10 @@ the record of what shipped is as useful as the list of what has not.
 
 Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 
-**Status: 122 done, 1 open** (31 Aug 2026). The single open item is blocked on
+**Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 734** — 477 end-to-end and 257 unit. All green.
+**Tests: 1,057** — 528 end-to-end and 529 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -450,3 +450,62 @@ silently skipping every lead after it, with nothing recording that it happened.
   and leaves the judgement to someone who knows the book.
 - Rules sharing a priority are reported separately: ordering is only explicit if
   it is actually ordered.
+
+---
+
+## Lead lists rebuilt to market standard — done 2 Sep 2026
+
+Triggered by the observation that the lead list was "not upto the mark … does
+not have all the features available in market". Checked against the Salesforce
+List View anatomy (`docs/salesforce-reference/ui-layer.md` §3) and the
+LeadSquared lists audit (`docs/legacy-leadsquared/views-tasks-lists.md`), which
+between them describe the 4,810-list failure and the shape of the fix.
+
+The legacy signal: **4,810 lists against 495,118 leads**, with names like
+`All Active Clients 210826.csv` — someone exports to Excel, filters there,
+re-imports as a static list, uses it once, never deletes it. Daily habit.
+
+- [x] **Governance.** A live list is the default; a snapshot must state a
+      reason and an expiry (90 days unless said otherwise). Lapsed snapshots
+      archive rather than delete — a campaign may still reference one.
+- [x] **The saved-search hole.** `POST /search-advanced/lead/to-list` inserted
+      a static list directly and skipped every check. It is the easiest way in
+      the product to make a snapshot, so it was the hole the rule would have
+      drained through. Now stamps its own reason and expiry.
+- [x] **Nested query builder.** The engine supported AND/OR trees over 27 typed
+      fields since it was written; nothing exposed the catalogue, so the only
+      expressible filter was a single stage from a dropdown. That gap is what
+      sent people to Excel.
+- [x] **Export**, audited by row count and filter, masked unless the exporter
+      holds `pii.unmask`.
+- [x] **Import** on client code, mobile or PAN, reporting misses by value —
+      "43 did not match" is not actionable; the 43 values are.
+- [x] **Column chooser.** The choice belongs to the list, not the viewer, since
+      a list is a shared object.
+- [x] **Four more bulk actions** — dialler, field edit, membership, delete.
+      Delete is soft, gated on `lead.delete`, and needs the count typed.
+- [x] **Pagination.** The table showed at most 100 rows of any list with no
+      control to reach the rest and no indication rows were missing. On the
+      legacy tenant, lists of 12,519 and 21,379 were routine — that table
+      showed half a percent of one and presented it as all of it.
+- [x] **Sort on every column.** Rows came back hard-ordered by `updated_at`.
+      "Who in this list holds the most" was a question you answered by
+      exporting, which is the habit the rest of this work exists to end.
+- [x] **Search within a list** (Salesforce's "Search this list…"). Narrows the
+      view only: `member_count` is deliberately unaffected, so a search cannot
+      shrink what a bulk action takes. Covered by its own test — a search
+      followed by "delete all" still demands the full count and refuses.
+
+### Notes from building it
+
+- **`.btn-danger-ghost` rendered grey.** `.btn-sm` is declared later and the two
+  tie on specificity, so source order decided it — the same trap `.btn-primary`
+  hit before. Written now as a compound selector that wins by weight.
+- **Three e2e fixtures created snapshots with no reason** and now state one.
+  That is the new contract, not a test workaround.
+- **The icon scanner flagged `sort`**, which is not an icon here —
+  `query.set('sort', sort)` is a parameter name. The scan already strips two
+  false-positive contexts (`className`, `key:`/`group:`); a `.set`/`.get` first
+  argument was a third, and is stripped now rather than adding a dead glyph.
+  `view_column`, `upload`, `unfold_more` and `chevron_left` were real and were
+  added to the subset.

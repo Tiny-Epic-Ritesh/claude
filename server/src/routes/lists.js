@@ -231,7 +231,42 @@ router.get('/:id', (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
   const offset = Math.max(Number(req.query.offset) || 0, 0);
 
+  /* Sort, from a whitelist rather than the query string, because this lands in
+     an ORDER BY. A list that can only be read in the order it happens to be
+     stored is a list somebody exports to sort — the habit this whole feature
+     exists to stop. */
+  const sort = COLUMN_CHOICES.some((c) => c.key === req.query.sort) ? req.query.sort : null;
+  const dir = String(req.query.dir).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+  const orderBy = sort
+    ? `${sort === 'owner_name' ? 'u.name' : `l.${sort}`} ${dir}, l.id ASC`
+    : 'l.updated_at DESC';
+
+  /* Search within the list. Not a filter on the list itself — the list is still
+     whatever its criteria say — just a way to find one row among thousands
+     without paging to it. Bound to the identifiers somebody would actually
+     search a lead by. */
+  const q = String(req.query.q ?? '').trim();
+  const search = q
+    ? {
+      sql: '(l.name LIKE ? OR l.mobile LIKE ? OR l.email LIKE ? OR l.client_code LIKE ?)',
+      params: Array(4).fill(`%${q}%`),
+    }
+    : { sql: '1=1', params: [] };
+
+  /* The list's own size, never narrowed by the search box. Every bulk action
+     acts on the whole list, and the delete guard compares against this number —
+     if a search could shrink it, "delete all 41" would fire after someone
+     searched their way down to 3. */
   const total = memberCount(list, req);
+
+  const matched = q
+    ? one(
+      `SELECT COUNT(*) n FROM leads l
+         LEFT JOIN users u ON u.id = l.owner_id
+        WHERE l.deleted_at IS NULL AND (${members.sql}) AND (${scope.sql}) AND ${search.sql}`,
+      [...members.params, ...scope.params, ...search.params],
+    ).n
+    : total;
   const rows = all(
     /* Every choosable column, not just the five the table used to show. The
        chooser can only offer what the row actually carries, and at a 500-row
@@ -246,10 +281,10 @@ router.get('/:id', (req, res) => {
             u.name AS owner_name
        FROM leads l
        LEFT JOIN users u ON u.id = l.owner_id
-      WHERE l.deleted_at IS NULL AND (${members.sql}) AND (${scope.sql})
-      ORDER BY l.updated_at DESC
+      WHERE l.deleted_at IS NULL AND (${members.sql}) AND (${scope.sql}) AND ${search.sql}
+      ORDER BY ${orderBy}
       LIMIT ? OFFSET ?`,
-    [...members.params, ...scope.params, limit, offset],
+    [...members.params, ...scope.params, ...search.params, limit, offset],
   );
 
   let criteria = null;
@@ -268,6 +303,18 @@ router.get('/:id', (req, res) => {
     // Stated on the list itself, so nobody has to remember the rule.
     campaign_safe: normaliseKind(list.kind) !== 'dynamic',
     columns: columnsOf(list),
+    /* What the caller is actually holding, so the interface can say "41 of
+       12,519" instead of showing a hundred rows as though they were all of
+       them. The legacy tenant had lists of 21,379; a table with no way past
+       row 100 shows half a percent of one and says nothing about it. */
+    limit,
+    offset,
+    shown: rows.length,
+    matched,
+    has_more: offset + rows.length < matched,
+    sort,
+    dir: dir.toLowerCase(),
+    q: q || null,
     members: rows,
   });
 });

@@ -2797,6 +2797,42 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
   min-width: 140px;
 }
 
+/* A sortable column header. The button carries the header's own typography so
+   the row still reads as a header rather than a strip of controls; only the
+   cursor and the arrow say it is clickable.
+
+   The arrow is safe inside an uppercased, letter-spaced `thead th` because
+   `.material-symbols-rounded` sets `text-transform: none` and
+   `letter-spacing: normal` on itself, and those beat inheritance. Any icon
+   that loses that class here renders as the word "unfold_more". */
+.th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: color 0.13s ease;
+}
+.th-sort:hover { color: var(--ink); }
+/* The arrow is a hint until the column is the one being sorted by. */
+.th-sort .mi { opacity: 0.35; transition: opacity 0.13s ease; }
+.th-sort:hover .mi { opacity: 0.7; }
+th[aria-sort] .th-sort .mi { opacity: 1; }
+
+/* The strip under a table that says where you are in it. */
+.card-foot {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  border-top: 1px solid var(--hairline-2);
+}
+
 .table-scroll { overflow-x: auto; }
 .table-scroll table { min-width: 520px; }
 

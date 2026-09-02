@@ -307,3 +307,5 @@ weight
 whatsapp
 view_column
 upload
+unfold_more
+chevron_left

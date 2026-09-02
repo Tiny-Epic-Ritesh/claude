@@ -1,6 +1,6 @@
 # The exact names the bundled font was generated from, and the font it produced.
 # Regenerate both together — see the instructions at the top of icon-subset.txt.
-# font-sha256 083d0a5d0800f24b93826424a74cc0b4ab5f8ec9fa6dc085bdcf396a88e6443d
+# font-sha256 c37c990f33cc4b816326ac9c1912078af852bfb73fb69d9b77618fe3a33aabaf
 account_balance
 account_balance_wallet
 account_tree
@@ -54,6 +54,7 @@ ccm
 chat
 check
 check_circle
+chevron_left
 chevron_right
 clients
 close
@@ -261,6 +262,7 @@ toolbar
 trending_down
 trending_flat
 trending_up
+unfold_more
 unsubscribe
 upgrade
 upload

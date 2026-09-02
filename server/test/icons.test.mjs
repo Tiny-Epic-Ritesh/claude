@@ -100,7 +100,13 @@ function usedIcons(vocabulary) {
        constantly ("skeleton", "search", "input", "menu"), and every one of
        those is a false positive sending somebody to add a glyph nothing
        renders. */
-    .replace(/className=(['"`])[^'"`]*\1/g, ' ');
+    .replace(/className=(['"`])[^'"`]*\1/g, ' ')
+    /* A key passed to .set/.get/.append/.setItem is a parameter name, not an
+       icon. `query.set('sort', sort)` sent somebody off to add a `sort` glyph
+       that nothing renders — the same false positive as the two strips above,
+       arriving from a third direction. Only the quoted first argument is
+       blanked, so an icon name sitting in a later one is still scanned. */
+    .replace(/\.(?:set|get|append|setItem|getItem|has|delete)\((['"`])[a-z][a-z0-9_]*\1/g, '.x(0');
 
   for (const file of walk(CLIENT)) {
     const src = strip(readFileSync(file, 'utf8'));

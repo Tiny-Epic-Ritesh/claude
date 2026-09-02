@@ -3768,6 +3768,59 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     });
   });
 
+  await check('a big list can be read past its first page', async () => {
+    // The table showed a hundred rows of however many there were and said
+    // nothing about the rest. On the legacy tenant, lists of 12,519 and 21,379
+    // were routine — half a percent of one of those, presented as all of it.
+    const { data: first } = await req(`/api/lists/${refreshableList.id}?limit=2`, { token: T.admin, expect: 200 });
+    assert(first.member_count > 2, 'the fixture is too small to page through');
+    eq(first.shown, 2, 'a page bigger than asked for');
+    eq(first.offset, 0, 'the first page does not start at the beginning');
+    assert(first.has_more, 'a list longer than its page claims to be complete');
+
+    const { data: next } = await req(`/api/lists/${refreshableList.id}?limit=2&offset=2`, { token: T.admin, expect: 200 });
+    const overlap = next.members.filter((m) => first.members.some((f) => f.id === m.id));
+    eq(overlap.length, 0, 'the second page repeats rows from the first');
+  });
+
+  await check('a list can be ordered by any column it can show', async () => {
+    const { data: asc } = await req(`/api/lists/${refreshableList.id}?sort=aum&dir=asc`, { token: T.admin, expect: 200 });
+    const { data: desc } = await req(`/api/lists/${refreshableList.id}?sort=aum&dir=desc`, { token: T.admin, expect: 200 });
+    const values = (d) => d.members.map((m) => m.aum ?? 0);
+    const up = values(asc);
+    eq(JSON.stringify(up), JSON.stringify([...up].sort((a, b) => a - b)), 'ascending is not ascending');
+    assert(values(desc)[0] >= up[0], 'both directions returned the same order');
+  });
+
+  await check('an invented sort column is ignored, not run', async () => {
+    // Straight into an ORDER BY if it were not whitelisted.
+    const { data } = await req(`/api/lists/${refreshableList.id}?sort=(SELECT 1)`, { token: T.admin, expect: 200 });
+    eq(data.sort, null, 'a column nobody defined was accepted as a sort');
+  });
+
+  await check('searching inside a list narrows the view and nothing else', async () => {
+    const { data: all } = await req(`/api/lists/${refreshableList.id}`, { token: T.admin, expect: 200 });
+    const target = all.members[0];
+    const { data: hit } = await req(
+      `/api/lists/${refreshableList.id}?q=${encodeURIComponent(target.name)}`,
+      { token: T.admin, expect: 200 },
+    );
+    assert(hit.matched >= 1 && hit.matched < all.member_count, 'the search matched everything or nothing');
+    /* The property that matters. Every bulk action runs on the whole list, and
+       the delete guard compares against member_count — if a search could shrink
+       that number, "delete all 900" would fire after somebody searched their
+       way down to one row. */
+    eq(hit.member_count, all.member_count, 'a search changed the size of the list itself');
+  });
+
+  await check('a search cannot shrink what a bulk delete would take', async () => {
+    const { data } = await req(`/api/lists/${refreshableList.id}/bulk/delete`, {
+      method: 'POST', token: T.admin, expect: 409,
+      body: { confirm_count: 1 },
+    });
+    assert(/not 1$/.test(data.error), `the guard did not name the real count: ${data.error}`);
+  });
+
   await check('membership cannot be edited on a dynamic list', async () => {
     await req(`/api/lists/${dynamicList.id}/members`, {
       method: 'POST', token: T.admin, expect: 400, body: { lead_ids: [1] },

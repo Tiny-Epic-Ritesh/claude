@@ -22,6 +22,10 @@ import { useApi, Icon, Loading, ErrorBanner, Empty, Modal } from '../components/
 
 const KIND_BADGE = { static: 'badge-blue', refreshable: 'badge-green', dynamic: 'badge-amber' };
 
+/* Rows per page. Fifty fills a screen without making the first paint wait on
+   five hundred, and the server caps the request at five hundred regardless. */
+const PAGE = 50;
+
 const ACTIONS = [
   { code: 'reassign', label: 'Reassign owner', icon: 'person_pin', needs: 'lead.reassign' },
   { code: 'stage', label: 'Change stage', icon: 'trending_flat', needs: 'lead.stage.change' },
@@ -78,7 +82,30 @@ function cell(row, key) {
 export default function ListDetail({ session }) {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [list, { loading, error, reload }] = useApi(`/lists/${id}`, [id]);
+
+  /* Paging, sort and search live in the URL the table is fetched with, so the
+     server does the work. The alternative — pull everything and sort in the
+     browser — is what the old table effectively assumed, and it was only
+     honest because it never fetched past the first hundred rows. */
+  const [offset, setOffset] = useState(0);
+  const [sort, setSort] = useState(null);
+  const [dir, setDir] = useState('desc');
+  const [typed, setTyped] = useState('');
+  const [q, setQ] = useState('');
+
+  /* A request per keystroke would be a request per keystroke against a table
+     of half a million leads. */
+  useEffect(() => {
+    const t = setTimeout(() => { setQ(typed.trim()); setOffset(0); }, 300);
+    return () => clearTimeout(t);
+  }, [typed]);
+
+  const query = new URLSearchParams({ limit: String(PAGE), offset: String(offset) });
+  if (sort) { query.set('sort', sort); query.set('dir', dir); }
+  if (q) query.set('q', q);
+  const path = `/lists/${id}?${query}`;
+
+  const [list, { loading, error, reload }] = useApi(path, [path]);
   /* Column labels come from the server's own catalogue rather than a second
      copy here — a column added to the API should not need this file edited to
      get a heading. */
@@ -183,7 +210,21 @@ export default function ListDetail({ session }) {
         <div className="card-head">
           <h2>Members</h2>
           <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
-            <span className="tiny muted">{list.member_count} total</span>
+            {/* Finding one person in a list of thousands, without paging to
+                them. It narrows what is displayed and nothing else — every
+                bulk action below still applies to the whole list. */}
+            <input
+              className="input-sm"
+              type="search"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              placeholder="Search this list…"
+              aria-label="Search within this list"
+              style={{ maxWidth: 200 }}
+            />
+            <span className="tiny muted">
+              {q ? `${list.matched} of ${list.member_count}` : `${list.member_count} total`}
+            </span>
             {/* The round trip, brought inside. */}
             <button className="btn-ghost btn-sm" onClick={() => { setDone(null); setTool('columns'); }}
               disabled={!list.may_edit}
@@ -205,16 +246,44 @@ export default function ListDetail({ session }) {
         </div>
         {(list.members ?? []).length === 0 ? (
           <Empty>
-            {list.kind === 'dynamic'
-              ? 'Nothing matches this filter right now.'
-              : 'This list is empty. Add leads from the Leads tab, or save a search as a list.'}
+            {q
+              ? `Nobody in this list matches "${q}".`
+              : list.kind === 'dynamic'
+                ? 'Nothing matches this filter right now.'
+                : 'This list is empty. Add leads from the Leads tab, or save a search as a list.'}
           </Empty>
         ) : (
           <div className="table-scroll">
             <table className="table">
               <thead>
                 <tr>
-                  {columns.map((k) => <th key={k}>{columnLabel[k] ?? k}</th>)}
+                  {columns.map((k) => (
+                    /* aria-sort tells a screen reader which column the table is
+                       ordered by, and is what the arrow's full-opacity state
+                       hangs off in CSS. */
+                    <th key={k} aria-sort={sort === k ? (dir === 'asc' ? 'ascending' : 'descending') : undefined}>
+                      {/* Every column sorts. Without this, "who in this list
+                          holds the most" is a question you answer by exporting
+                          — which is the habit the rest of this page exists to
+                          end. */}
+                      <button
+                        type="button"
+                        className="th-sort"
+                        aria-label={`Sort by ${columnLabel[k] ?? k}`}
+                        onClick={() => {
+                          setDir(sort === k && dir === 'asc' ? 'desc' : 'asc');
+                          setSort(k);
+                          setOffset(0);
+                        }}
+                      >
+                        {columnLabel[k] ?? k}
+                        <Icon
+                          name={sort !== k ? 'unfold_more' : dir === 'asc' ? 'arrow_upward' : 'arrow_downward'}
+                          size={13}
+                        />
+                      </button>
+                    </th>
+                  ))}
                   <th>Contactable</th>
                 </tr>
               </thead>
@@ -241,6 +310,28 @@ export default function ListDetail({ session }) {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* Where you are in the list, and how to leave. A table that shows a
+            hundred rows of twenty thousand and says nothing about the rest is
+            how somebody concludes the CRM lost their leads. */}
+        {list.matched > 0 && (list.matched > PAGE || offset > 0) && (
+          <div className="card-foot row wrap" style={{ gap: 10, justifyContent: 'space-between' }}>
+            <span className="tiny muted">
+              {offset + 1}–{offset + list.shown} of {list.matched}
+              {q && <> matching &ldquo;{q}&rdquo;</>}
+            </span>
+            <div className="row" style={{ gap: 6 }}>
+              <button className="btn-ghost btn-sm" disabled={offset === 0}
+                onClick={() => setOffset(Math.max(offset - PAGE, 0))}>
+                <Icon name="chevron_left" size={15} /> Previous
+              </button>
+              <button className="btn-ghost btn-sm" disabled={!list.has_more}
+                onClick={() => setOffset(offset + PAGE)}>
+                Next <Icon name="chevron_right" size={15} />
+              </button>
+            </div>
           </div>
         )}
       </div>
