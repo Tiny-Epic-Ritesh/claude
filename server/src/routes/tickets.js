@@ -4,7 +4,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
-import { can, requireUser, requirePermission, mayUseOrg, ticketScope } from '../auth.js';
+import { can, requireUser, requirePermission, mayUseOrg, reqTicketScope } from '../auth.js';
 import { assertValid } from '../engine/validation.js';
 import { applySla, sweepSla, handleStatusChange, slaRemaining, DEFAULT_SLA } from '../engine/sla.js';
 import { send } from '../integrations.js';
@@ -15,6 +15,43 @@ router.use(requireUser);
 
 const STATUSES = ['Open', 'Pending', 'Waiting on Client', 'Resolved', 'Closed'];
 const PRIORITIES = ['Critical', 'High', 'Medium', 'Low'];
+
+/**
+ * The columns a case queue can be ordered by or exported as.
+ *
+ * The default order is not one of them: a queue sorts breached-first, then by
+ * priority, then by what is due soonest, because that is the order somebody
+ * should work them in. Sorting is for asking a different question of the same
+ * rows — "which of these has been open longest" — and it never becomes the
+ * default.
+ */
+export const TICKET_COLUMNS = [
+  { key: 'ref', label: 'Ref', sql: 't.ref' },
+  { key: 'subject', label: 'Subject', sql: 't.subject' },
+  { key: 'status', label: 'Status', sql: 't.status' },
+  { key: 'priority', label: 'Priority', sql: "CASE t.priority WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END" },
+  { key: 'channel', label: 'Channel', sql: 't.channel' },
+  { key: 'category_name', label: 'Category', sql: 'c.name' },
+  { key: 'lead_name', label: 'Linked to', sql: 'l.name' },
+  { key: 'lead_mobile', label: 'Mobile', sql: 'l.mobile', pii: true },
+  { key: 'assignee_name', label: 'Assignee', sql: 'u.name' },
+  { key: 'partner_name', label: 'Partner', sql: 'p.name' },
+  { key: 'breached', label: 'Breached', sql: 't.breached' },
+  { key: 'resolution_due', label: 'Resolution due', sql: 't.resolution_due' },
+  { key: 'first_response_at', label: 'First response', sql: 't.first_response_at' },
+  { key: 'resolved_at', label: 'Resolved', sql: 't.resolved_at' },
+  { key: 'created_at', label: 'Raised', sql: 't.created_at' },
+  { key: 'csat', label: 'CSAT', sql: 't.csat' },
+  { key: 'sales_org', label: 'Business', sql: 't.sales_org' },
+];
+
+const ticketColumn = (key) => TICKET_COLUMNS.find((col) => col.key === key);
+
+/* The most one export may carry, matching leads and clients. */
+const EXPORT_CAP = 5000;
+
+/** One CSV cell. Quotes everything, so a comma in a subject cannot shift a column. */
+const csvCell = (v) => (v === null || v === undefined ? '""' : `"${String(v).replace(/"/g, '""')}"`);
 
 const decorate = (t) => ({
   ...t,
@@ -44,7 +81,14 @@ async function refreshSummary(ticketId) {
 
 /* -------------------------------------------------------------- queries */
 
-router.get('/', (req, res) => {
+/**
+ * The filters behind the case queue, as one clause.
+ *
+ * Shared by the queue and its export, so what leaves is what was on screen. The
+ * alternative — rebuilding these conditions in the export — is how the two come
+ * to disagree about which cases somebody actually took.
+ */
+function ticketFilter(req) {
   const { status, priority, mine, breached, lead_id, category_id } = req.query;
   const where = ['t.merged_into IS NULL'];
   const params = [];
@@ -61,7 +105,7 @@ router.get('/', (req, res) => {
      until now every signed-in user read every case in their own book. The
      scope carries the org check itself, so this is one rule rather than two
      that have to agree. */
-  const scope = ticketScope(req.user, 't');
+  const scope = reqTicketScope(req, 't');
   where.push(scope.sql);
   params.push(...scope.params);
 
@@ -81,22 +125,78 @@ router.get('/', (req, res) => {
   if (lead_id) { where.push('t.lead_id = ?'); params.push(lead_id); }
   if (category_id) { where.push('t.category_id = ?'); params.push(category_id); }
 
-  res.json(all(
-    `SELECT t.*, l.name AS lead_name, l.mobile AS lead_mobile, u.name AS assignee_name,
-            c.name AS category_name, pt.name AS product_name, p.name AS partner_name
-     FROM tickets t
+  /* Find one case among hundreds without paging to it. Bound to what somebody
+     would actually search a case by — its reference, its subject, or the person
+     it was raised for. */
+  const q = String(req.query.q ?? '').trim();
+  if (q) {
+    where.push('(t.ref LIKE ? OR t.subject LIKE ? OR l.name LIKE ? OR l.mobile LIKE ?)');
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+  }
+
+  return { clause: where.join(' AND '), params };
+}
+
+/** Which filters are in play, for an audit row. */
+const appliedTicketFilters = (req) => Object.fromEntries(
+  ['q', 'status', 'priority', 'mine', 'breached', 'open', 'lead_id', 'category_id',
+    'created_from', 'created_to', 'resolved_from', 'resolved_to']
+    .filter((k) => req.query[k])
+    .map((k) => [k, req.query[k]]),
+);
+
+/* The joins the queue and the export both read from. Written once because the
+   column table above names `c.name`, `l.name` and `u.name` in its sort SQL, and
+   those aliases have to mean the same thing wherever they are used. */
+const TICKET_FROM = `FROM tickets t
      LEFT JOIN leads l ON l.id = t.lead_id
      LEFT JOIN partners p ON p.id = t.partner_id
      LEFT JOIN users u ON u.id = t.assignee_id
      LEFT JOIN ticket_categories c ON c.id = t.category_id
      LEFT JOIN product_cards pc ON pc.id = t.card_id
-     LEFT JOIN product_types pt ON pt.id = pc.product_type_id
-     WHERE ${where.join(' AND ')}
-     ORDER BY t.breached DESC, CASE t.priority WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END, t.resolution_due
-     LIMIT 300`,
-    params,
+     LEFT JOIN product_types pt ON pt.id = pc.product_type_id`;
+
+router.get('/', (req, res) => {
+  const { clause, params } = ticketFilter(req);
+
+  const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+  /* Breached first, then priority, then what is due soonest — the order a queue
+     should be worked in. A chosen sort replaces it for the length of the
+     question being asked, and never becomes the default. */
+  const sortCol = ticketColumn(req.query.sort);
+  const dir = String(req.query.dir).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+  const orderBy = sortCol
+    ? `${sortCol.sql} ${dir}, t.id ASC`
+    : `t.breached DESC, CASE t.priority WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END, t.resolution_due`;
+
+  const total = one(`SELECT COUNT(*) n ${TICKET_FROM} WHERE ${clause}`, params).n;
+  res.set('X-Total-Count', String(total));
+
+  res.json(all(
+    `SELECT t.*, l.name AS lead_name, l.mobile AS lead_mobile, u.name AS assignee_name,
+            c.name AS category_name, pt.name AS product_name, p.name AS partner_name
+     ${TICKET_FROM}
+     WHERE ${clause}
+     ORDER BY ${orderBy}
+     LIMIT ? OFFSET ?`,
+    [...params, limit, offset],
   ).map(decorate));
 });
+
+/* Declared before `/:id`, or Express reads "meta" as a ticket id. */
+router.get('/meta', (req, res) => res.json({
+  statuses: STATUSES,
+  priorities: PRIORITIES,
+  /* What the queue can be ordered by and exported as, so the interface cannot
+     offer a column the route would refuse. `sql` stays here — it is an ORDER BY
+     fragment and no business of the browser's. */
+  columns: TICKET_COLUMNS.map(({ key, label, pii }) => ({ key, label, pii: Boolean(pii) })),
+  export_cap: EXPORT_CAP,
+  may_export: can(req.user.role, 'data.export'),
+  may_unmask: can(req.user.role, 'pii.unmask'),
+}));
 
 router.get('/:id', (req, res) => {
   const ticket = one(
@@ -123,7 +223,7 @@ router.get('/:id', (req, res) => {
   /* §6a. Right book is not the same question as your case. Asked against the
      same scope the list uses, so a case that cannot be found in the list
      cannot be opened by guessing its id either. */
-  const scope = ticketScope(req.user, 't');
+  const scope = reqTicketScope(req, 't');
   const visible = one(`SELECT 1 v FROM tickets t WHERE t.id = ? AND ${scope.sql}`, [req.params.id, ...scope.params]);
   if (!visible) return res.status(403).json({ error: 'This case is outside your visibility scope' });
 
@@ -305,6 +405,65 @@ router.post('/:id/csat', (req, res) => {
 /* --------------------------------------------------------- maintenance */
 
 /** Auto-close resolved tickets after 72h, then re-run the SLA sweep. */
+/**
+ * Export the case queue, as filtered.
+ *
+ * The queue is the record of how the desk performed — first response, breach,
+ * CSAT — and it is what gets asked for when somebody outside support wants to
+ * see the month. Without this the answer was a screenshot.
+ *
+ * Masked and audited like every other export here: the queue joins the client's
+ * name and mobile in, so it carries identifiers even though a case is not a
+ * person.
+ */
+router.post('/export', requirePermission('data.export'), (req, res) => {
+  const chosen = (Array.isArray(req.body?.columns) && req.body.columns.length
+    ? req.body.columns.filter((k) => ticketColumn(k))
+    : ['ref', 'subject', 'status', 'priority', 'assignee_name', 'created_at', 'resolution_due', 'breached']);
+  if (!chosen.length) return res.status(400).json({ error: 'Choose at least one column' });
+
+  const wantsClear = Boolean(req.body?.unmask);
+  const mayUnmask = can(req.user.role, 'pii.unmask');
+  if (wantsClear && !mayUnmask) {
+    return res.status(403).json({
+      error: 'Exporting identifiers in the clear needs the unmask permission',
+      required: 'pii.unmask',
+    });
+  }
+  const unmasked = wantsClear && mayUnmask;
+
+  const { clause, params } = ticketFilter(req);
+  const rows = all(
+    `SELECT t.*, l.name AS lead_name, l.mobile AS lead_mobile, u.name AS assignee_name,
+            c.name AS category_name, pt.name AS product_name, p.name AS partner_name
+     ${TICKET_FROM}
+     WHERE ${clause}
+     ORDER BY t.id
+     LIMIT ?`,
+    [...params, EXPORT_CAP],
+  );
+
+  const mask = (key, value) => {
+    if (!ticketColumn(key)?.pii || unmasked || !value) return value;
+    return `******${String(value).slice(-4)}`;
+  };
+
+  const header = chosen.map((k) => csvCell(ticketColumn(k).label)).join(',');
+  const body = rows.map((r) => chosen.map((k) => csvCell(mask(k, r[k]))).join(',')).join('\n');
+
+  audit(req.user.id, 'ticket.export', 'ticket', null, {
+    rows: rows.length, columns: chosen, unmasked, filters: appliedTicketFilters(req),
+  });
+
+  res.json({
+    filename: `cases-${new Date().toISOString().slice(0, 10)}.csv`,
+    rows: rows.length,
+    unmasked,
+    truncated: rows.length >= EXPORT_CAP,
+    csv: `${header}\n${body}`,
+  });
+});
+
 router.post('/sweep', (_req, res) => {
   run("UPDATE tickets SET status = 'Closed', closed_at = datetime('now') WHERE status = 'Resolved' AND resolved_at <= datetime('now', '-72 hours')");
   res.json(sweepSla());

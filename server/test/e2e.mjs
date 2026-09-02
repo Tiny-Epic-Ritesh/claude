@@ -434,6 +434,135 @@ async function run() {
   /* ----------------------------------------------------------- 9. tickets */
   suite('09 ticketing & SLA');
 
+  await check('searching cases never shows more of them than the queue does', async () => {
+    /* This one was not hypothetical. `tickets` carries a sales_org column, so
+       the generic scope in advanced search found one and applied the book
+       boundary — which made the gap look handled while every role rule was
+       absent. Measured before the fix: a dealer who could open one case in the
+       queue read all twelve in the business through the search box, and a
+       caller three of twelve. */
+    let compared = 0;
+    for (const who of ['dealer', 'caller', 'product_rm', 'customer_care']) {
+      const token = T[who];
+      if (!token) continue;
+      compared += 1;
+      // eslint-disable-next-line no-await-in-loop
+      const { data: queue } = await req('/api/tickets?limit=500', { token, expect: 200 });
+      // eslint-disable-next-line no-await-in-loop
+      const { data: found } = await req('/api/search-advanced/case', {
+        method: 'POST', token, expect: 200, body: { where: null },
+      });
+      eq(found.total, queue.length, `${who}: search and the queue disagree about how many cases exist`);
+    }
+    /* A loop that skips every role is a test that proves nothing while
+       reporting success — the shape of two mistakes already made in this
+       suite. */
+    eq(compared, 4, 'the roles this test exists to compare were not signed in');
+  });
+
+  await check('a merged case leaves the queue and the search together', async () => {
+    /* The queue has always excluded merged cases and the search never did,
+       which is why the two disagreed by exactly one row for every role. Merged
+       here through the API rather than read out of the seed, so this exercises
+       the path that creates the condition. */
+    const { data: meta } = await req('/api/meta', { token: T.admin, expect: 200 });
+    const category = meta.ticket_categories[0];
+    const make = async (subject) => {
+      const { data } = await req('/api/tickets', {
+        method: 'POST', token: T.admin, expect: 201,
+        body: { subject, description: subject, priority: 'Low', category_id: category.id, lead_id: REF.leadId },
+      });
+      return data.id;
+    };
+
+    const keep = await make(`Merge target ${RUN}`);
+    const fold = await make(`Merge source ${RUN}`);
+
+    const before = await req('/api/tickets?limit=500', { token: T.admin, expect: 200 });
+    await req(`/api/tickets/${fold}/merge`, {
+      method: 'POST', token: T.admin, expect: 200, body: { into_id: keep },
+    });
+
+    const { data: queue } = await req('/api/tickets?limit=500', { token: T.admin, expect: 200 });
+    assert(!queue.some((t) => t.id === fold), 'a merged case is still in the queue');
+    eq(queue.length, before.data.length - 1, 'the queue did not shrink by exactly the merged case');
+
+    const { data: found } = await req('/api/search-advanced/case', {
+      method: 'POST', token: T.admin, expect: 200, body: { where: null },
+    });
+    eq(found.total, queue.length, 'search counts a case the queue does not');
+  });
+
+  await check('the queue reports its true size and pages through it', async () => {
+    const { res, data } = await req('/api/tickets?limit=2&sort=ref&dir=asc', { token: T.admin, expect: 200 });
+    assert(data.length <= 2, `limit ignored: got ${data.length}`);
+    const total = Number(res.headers.get('x-total-count'));
+    assert(total >= data.length, 'X-Total-Count missing or smaller than the page');
+
+    const { data: next } = await req('/api/tickets?limit=2&offset=2&sort=ref&dir=asc', { token: T.admin, expect: 200 });
+    const overlap = next.filter((t) => data.some((f) => f.id === t.id));
+    eq(overlap.length, 0, 'the second page repeats rows from the first');
+  });
+
+  await check('a queue sorts without losing the order it should be worked in', async () => {
+    const refs = (d) => d.map((t) => t.ref);
+    const { data: asc } = await req('/api/tickets?sort=ref&dir=asc&limit=50', { token: T.admin, expect: 200 });
+    const { data: desc } = await req('/api/tickets?sort=ref&dir=desc&limit=50', { token: T.admin, expect: 200 });
+    eq(JSON.stringify(refs(asc)), JSON.stringify([...refs(asc)].sort()), 'ascending is not ascending');
+    assert(refs(asc)[0] !== refs(desc)[0], 'both directions returned the same order');
+
+    /* Breached first, then priority, is the order a desk works. It has to
+       survive being the default rather than becoming one sort among many. */
+    const { data: def } = await req('/api/tickets?limit=50', { token: T.admin, expect: 200 });
+    const firstUnbreached = def.findIndex((t) => !t.breached);
+    const lastBreached = def.map((t) => Boolean(t.breached)).lastIndexOf(true);
+    if (firstUnbreached !== -1 && lastBreached !== -1) {
+      assert(lastBreached < firstUnbreached, 'a breached case sorted below an unbreached one by default');
+    }
+  });
+
+  await check('an invented sort column is ignored, not run', async () => {
+    const { data } = await req('/api/tickets?sort=(SELECT 1)&limit=5', { token: T.admin, expect: 200 });
+    assert(Array.isArray(data), 'a bad sort broke the queue instead of being ignored');
+  });
+
+  await check('the queue can be searched by reference, subject or who it is for', async () => {
+    const { data: all } = await req('/api/tickets?limit=500', { token: T.admin, expect: 200 });
+    const target = all[0];
+    const { data: hit } = await req(`/api/tickets?q=${encodeURIComponent(target.ref)}&limit=50`, { token: T.admin, expect: 200 });
+    assert(hit.some((t) => t.id === target.id), 'a case could not be found by its own reference');
+    assert(hit.length < all.length, 'the search matched everything');
+  });
+
+  await check('cases can be exported, masked, filtered and scoped', async () => {
+    const { data } = await req('/api/tickets/export', {
+      method: 'POST', token: T.admin, expect: 200,
+      body: { columns: ['ref', 'subject', 'lead_mobile'] },
+    });
+    assert(data.csv.startsWith('"Ref","Subject","Mobile"'), `unexpected header: ${data.csv.slice(0, 60)}`);
+    assert(/"\*{6}\d{4}"/.test(data.csv), 'a mobile left the export in the clear');
+    eq(data.unmasked, false, 'an export unmasked without being asked to');
+
+    // The export takes the queue's filter, so what leaves is what was on screen.
+    const { data: breached } = await req('/api/tickets/export?breached=true', {
+      method: 'POST', token: T.admin, expect: 200, body: { columns: ['ref'] },
+    });
+    assert(breached.rows <= data.rows, 'a filtered export returned more rows than an unfiltered one');
+
+    // And the caller's own scope, not just the filter.
+    const { data: queue } = await req('/api/tickets?limit=500', { token: T.sales_supervisor, expect: 200 });
+    const { data: theirs } = await req('/api/tickets/export', {
+      method: 'POST', token: T.sales_supervisor, expect: 200, body: { columns: ['ref'] },
+    });
+    eq(theirs.rows, queue.length, 'an export carried cases the exporter cannot open');
+  });
+
+  await check('exporting the queue is a permission', async () => {
+    await req('/api/tickets/export', {
+      method: 'POST', token: T.dealer, expect: 403, body: { columns: ['ref'] },
+    });
+  });
+
   await check('a ticket is created with a reference and SLA deadlines', async () => {
     const { data: meta } = await req('/api/meta', { token: T.sales_rm, expect: 200 });
     const category = meta.ticket_categories[0];

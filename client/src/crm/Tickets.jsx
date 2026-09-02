@@ -1,23 +1,93 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, dateTime, shortDate } from '../api.js';
-import { useApi, Loading, ErrorBanner, Empty, Spinner, PriorityBadge, Tabs } from '../components/ui.jsx';
+import {
+  useApi, Icon, Loading, ErrorBanner, Empty, Spinner, PriorityBadge, Tabs, Modal,
+} from '../components/ui.jsx';
 
 const STATUSES = ['Open', 'Pending', 'Waiting on Client', 'Resolved', 'Closed'];
+
+/* Rows per page. The queue used to ask for whatever the server would give and
+   render all of it — three hundred, silently, with no count and nothing saying
+   there were more. */
+const PAGE = 50;
+
+/** Hand the browser a file without a round trip to the server for it. */
+function download(filename, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8;' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 export default function Tickets({ session }) {
   const { id } = useParams();
   return id ? <TicketDetail id={id} session={session} /> : <TicketQueue session={session} />;
 }
 
+/**
+ * A sortable column header.
+ *
+ * Declared here rather than inside the queue on purpose: a component defined in
+ * a render body is a new type on every render, so React tears down the whole
+ * header row and builds it again — on every keystroke of the search box, and
+ * between one click of a header and the next.
+ */
+function Th({ label, col, className, sort, dir, onSort }) {
+  if (!col) return <th className={className}>{label}</th>;
+  return (
+    <th className={className} aria-sort={sort === col ? (dir === 'asc' ? 'ascending' : 'descending') : undefined}>
+      <button type="button" className="th-sort" aria-label={`Sort by ${label}`} onClick={() => onSort(col)}>
+        {label}
+        <Icon name={sort !== col ? 'unfold_more' : dir === 'asc' ? 'arrow_upward' : 'arrow_downward'} size={13} />
+      </button>
+    </th>
+  );
+}
+
 /* ---------------------------------------------------------------- queue */
 
 function TicketQueue({ session }) {
   const [filter, setFilter] = useState(session.role === 'customer_care' ? 'mine' : 'open');
-  const query = { mine: '?mine=true&open=true', open: '?open=true', breached: '?breached=true', all: '' }[filter];
-  const [tickets, { loading, error, reload }] = useApi(`/tickets${query}`);
+  const [sort, setSort] = useState(null);
+  const [dir, setDir] = useState('desc');
+  const [offset, setOffset] = useState(0);
+  const [typed, setTyped] = useState('');
+  const [q, setQ] = useState('');
+  const [exporting, setExporting] = useState(false);
+
+  // A request per keystroke against a desk with thousands of cases.
+  useEffect(() => {
+    const t = setTimeout(() => { setQ(typed.trim()); setOffset(0); }, 300);
+    return () => clearTimeout(t);
+  }, [typed]);
+
+  // Changing tab is a different question; page 4 of the old one means nothing.
+  useEffect(() => { setOffset(0); }, [filter]);
+
+  const base = { mine: { mine: 'true', open: 'true' }, open: { open: 'true' }, breached: { breached: 'true' }, all: {} }[filter];
+  const params = new URLSearchParams({ ...base, limit: String(PAGE), offset: String(offset) });
+  if (sort) { params.set('sort', sort); params.set('dir', dir); }
+  if (q) params.set('q', q);
+  const query = `?${params}`;
+
+  const [tickets, { loading, error, reload, total }] = useApi(`/tickets${query}`, [query]);
   const [report] = useApi(session.permissions.includes('report.team') ? '/tickets/reports/summary' : null);
+  const [meta] = useApi('/tickets/meta');
   const navigate = useNavigate();
+
+  const count = total ?? tickets?.length ?? 0;
+  const orderBy = (key) => {
+    setDir(sort === key && dir === 'asc' ? 'desc' : 'asc');
+    setSort(key);
+    setOffset(0);
+  };
+
+
 
   return (
     <>
@@ -44,12 +114,53 @@ function TicketQueue({ session }) {
         onChange={setFilter}
       />
 
+      <div className="card" style={{ marginBottom: 14 }}>
+        <div className="card-body row wrap" style={{ gap: 10, alignItems: 'center' }}>
+          {/* The queue had no way to find one case except paging to it. */}
+          <input
+            type="search"
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            placeholder="Search ref, subject or who it is for"
+            aria-label="Search this queue"
+            style={{ flex: '1 1 260px' }}
+          />
+          <span className="tiny muted">
+            {q ? `${count} matching` : `${count} case${count === 1 ? '' : 's'}`}
+          </span>
+          <span style={{ flex: 1 }} />
+          {sort && (
+            <button className="btn-ghost btn-sm" onClick={() => { setSort(null); setOffset(0); }}>
+              <Icon name="close" size={14} /> Back to queue order
+            </button>
+          )}
+          {meta?.may_export && (
+            <button className="btn-ghost btn-sm" onClick={() => setExporting(true)}>
+              <Icon name="download" size={15} /> Export
+            </button>
+          )}
+        </div>
+      </div>
+
       <ErrorBanner error={error} />
 
       <section className="card">
-        {loading ? <Loading /> : !tickets?.length ? <Empty>No tickets here.</Empty> : (
+        {loading ? <Loading /> : !tickets?.length ? (
+          <Empty>{q ? `No case matches "${q}".` : 'No tickets here.'}</Empty>
+        ) : (
           <table>
-            <thead><tr><th>Ref</th><th>Subject & AI summary</th><th>Linked to</th><th>Priority</th><th>Status</th><th className="num">SLA</th></tr></thead>
+            <thead>
+              <tr>
+                <Th label="Ref" col="ref" sort={sort} dir={dir} onSort={orderBy} />
+                {/* A subject is a paragraph and the SLA is computed per row
+                    after the query, so neither is something to order by. */}
+                <Th label="Subject & AI summary" />
+                <Th label="Linked to" col="lead_name" sort={sort} dir={dir} onSort={orderBy} />
+                <Th label="Priority" col="priority" sort={sort} dir={dir} onSort={orderBy} />
+                <Th label="Status" col="status" sort={sort} dir={dir} onSort={orderBy} />
+                <Th label="SLA" className="num" />
+              </tr>
+            </thead>
             <tbody>
               {tickets.map((t) => (
                 <tr key={t.id} className="row-link" onClick={() => navigate(`/tickets/${t.id}`)}>
@@ -77,7 +188,32 @@ function TicketQueue({ session }) {
             </tbody>
           </table>
         )}
+
+        {/* Where you are in the queue. Three hundred cases rendered as though
+            they were all of them is how a desk loses track of its backlog. */}
+        {!loading && count > 0 && (count > PAGE || offset > 0) && (
+          <div className="card-foot row wrap" style={{ gap: 10, justifyContent: 'space-between' }}>
+            <span className="tiny muted">
+              {offset + 1}–{offset + (tickets?.length ?? 0)} of {count.toLocaleString('en-IN')}
+            </span>
+            <div className="row" style={{ gap: 6 }}>
+              <button className="btn-ghost btn-sm" disabled={offset === 0}
+                onClick={() => { setOffset(Math.max(offset - PAGE, 0)); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
+                <Icon name="chevron_left" size={15} /> Previous
+              </button>
+              <button className="btn-ghost btn-sm" disabled={offset + (tickets?.length ?? 0) >= count}
+                onClick={() => { setOffset(offset + PAGE); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
+                Next <Icon name="chevron_right" size={15} />
+              </button>
+            </div>
+          </div>
+        )}
       </section>
+
+      {exporting && (
+        <ExportCases meta={meta} count={count} query={query}
+          onClose={() => setExporting(false)} />
+      )}
 
       {report && (
         <div className="grid grid-2" style={{ marginTop: 14 }}>
@@ -113,6 +249,79 @@ function TicketQueue({ session }) {
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Export the queue, as filtered.
+ *
+ * The desk's own record of how it performed — first response, breach, CSAT —
+ * which is exactly what gets asked for when somebody outside support wants to
+ * see the month, and which used to be answerable only with a screenshot. The
+ * queue's query string goes with it, so what leaves is what was on screen.
+ */
+function ExportCases({ meta, count, query, onClose }) {
+  const columns = meta?.columns ?? [];
+  const [picked, setPicked] = useState(
+    ['ref', 'subject', 'status', 'priority', 'assignee_name', 'created_at', 'resolution_due', 'breached'],
+  );
+  const [unmask, setUnmask] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState(null);
+
+  const toggle = (key) => setPicked((p) => (p.includes(key) ? p.filter((k) => k !== key) : [...p, key]));
+  const hasPii = picked.some((k) => columns.find((c) => c.key === k)?.pii);
+
+  const run = async () => {
+    setBusy(true); setProblem(null);
+    try {
+      const r = await api.post(`/tickets/export${query}`, { columns: picked, unmask });
+      download(r.filename, r.csv);
+      onClose();
+    } catch (e) { setProblem(e.message); setBusy(false); }
+  };
+
+  return (
+    <Modal title="Export cases"
+      subtitle={`${count.toLocaleString('en-IN')} case${count === 1 ? '' : 's'}, as currently filtered`}
+      onClose={onClose}>
+      <div className="stack" style={{ gap: 14 }}>
+        <ErrorBanner error={problem} onDismiss={() => setProblem(null)} />
+
+        <div className="stack" style={{ gap: 2, maxHeight: '40vh', overflowY: 'auto' }}>
+          {columns.map((c) => (
+            <label key={c.key} className="row" style={{ gap: 8, padding: '6px 2px', cursor: 'pointer' }}>
+              <input type="checkbox" checked={picked.includes(c.key)} onChange={() => toggle(c.key)} />
+              <span style={{ flex: 1 }}>{c.label}</span>
+              {c.pii && <span className="chip chip-muted tiny">Identifier</span>}
+            </label>
+          ))}
+        </div>
+
+        {hasPii && (
+          meta?.may_unmask ? (
+            <label className="row" style={{ gap: 8, cursor: 'pointer' }}>
+              <input type="checkbox" checked={unmask} onChange={(e) => setUnmask(e.target.checked)} />
+              <span className="small">
+                Include the client's mobile in full.
+                <span className="muted"> Recorded against your name in the audit log.</span>
+              </span>
+            </label>
+          ) : (
+            <div className="tiny muted">
+              <Icon name="lock" size={13} /> The mobile leaves masked — unmasking is a separate permission.
+            </div>
+          )
+        )}
+
+        <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+          <button className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" disabled={busy || !picked.length} onClick={run}>
+            {busy ? 'Building…' : 'Download CSV'}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

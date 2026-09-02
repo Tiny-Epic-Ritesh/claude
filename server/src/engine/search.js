@@ -84,8 +84,19 @@ export const SEARCHABLE = {
     label: 'Cases',
     table: 'tickets l',
     id: 'l.id',
-    select: 'l.id, l.ref, l.subject, l.priority, l.status, l.assignee_id, l.lead_id, l.created_at',
-    scope: 'none',
+    select: `l.id, l.ref, l.subject, l.priority, l.status, l.channel, l.breached,
+             l.assignee_id, l.lead_id, l.sales_org, l.response_due, l.resolution_due,
+             l.first_response_at, l.resolved_at, l.created_at`,
+    /* A merged case is a duplicate folded into another one; its content now
+       lives on the survivor. The Cases list has always excluded them and search
+       never did, which is why the two disagreed by exactly one row for every
+       role. The slot is named for soft deletes, but what it means is "rows that
+       do not count", and a merged case is that. */
+    soft_delete: 'l.merged_into IS NULL',
+    /* Its own scope, in scopeFor. `tickets` carries a sales_org column, so the
+       generic branch applied the book boundary and looked like it was working
+       while every role rule was absent. */
+    scope: 'ticket',
   },
   task: {
     label: 'Tasks',

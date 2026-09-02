@@ -653,6 +653,16 @@ export const reqScope = (req, alias = 'l') => leadScope(req.user, alias, activeO
 /** The same, for clients. Bigul users never see Bonanza accounts, and back. */
 export const reqClientScope = (req, alias = 'c') => clientScope(req.user, alias, activeOrg(req));
 
+/**
+ * The same, for cases.
+ *
+ * The routes were calling `ticketScope(req.user, 't')` directly and dropping
+ * the third argument, which is precisely the "?org= does nothing" bug the
+ * comment above warns about: switching business narrowed leads and clients and
+ * left cases alone.
+ */
+export const reqTicketScope = (req, alias = 't') => ticketScope(req.user, alias, activeOrg(req));
+
 /** Product RMs never get write access to a lead record (BRD §3.2). */
 export const isReadOnlyOnLeads = (role) => ['product_rm', 'marketing_manager'].includes(role);
 

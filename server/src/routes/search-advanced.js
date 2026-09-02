@@ -16,7 +16,7 @@
 import { Router } from 'express';
 import { all, one, run, audit } from '../db.js';
 import {
-  requireUser, requirePermission, reqScope, reqClientScope, orgsFor, maskFor,
+  requireUser, requirePermission, reqScope, reqClientScope, reqTicketScope, orgsFor, maskFor,
 } from '../auth.js';
 import { maskRecords } from '../security.js';
 import {
@@ -49,6 +49,18 @@ function scopeFor(entity, req) {
      path quietly granting what the list path refuses. */
   if (entity === 'client') {
     const s = reqClientScope(req, 'l');
+    return { sql: s.sql, params: s.params };
+  }
+
+  /* Cases, for the same reason, and it was not hypothetical here. `tickets`
+     carries a sales_org column, so the generic branch below found one and
+     applied the book boundary — which made the gap invisible while leaving
+     every role rule off. A dealer who could open one case in the Cases tab
+     could read all twelve in the business through the search box; a caller,
+     three of twelve. Search is a different way to ask, never a different
+     answer. */
+  if (entity === 'case') {
+    const s = reqTicketScope(req, 'l');
     return { sql: s.sql, params: s.params };
   }
 

@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,073** — 544 end-to-end and 529 unit. All green.
+**Tests: 1,081** — 552 end-to-end and 529 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -636,3 +636,58 @@ account book onto.
   one matched on `entity` (the display name) instead of `key`, and one asserted
   against a parsed object for a `text/csv` response, so the masked half passed
   without reading a row. Both now assert the row count first.
+
+
+---
+
+## The case queue checked the same way — done 2 Sep 2026
+
+Same method again, and this one had a live privilege escalation in it.
+
+- [x] **Search was showing cases the queue refuses.** `SEARCHABLE.case` had
+      `scope: 'none'`, so advanced search fell through to the generic branch —
+      which applies the `sales_org` boundary and nothing else. Because `tickets`
+      does carry a `sales_org` column, the generic branch found one and applied
+      it, which made the gap look handled while every role rule was absent.
+      Measured before fixing: a **dealer read 12 cases through the search box
+      and 1 in the queue**; a caller 12 against 3; a Product RM 12 against 7.
+      Now scoped through `ticketScope`, and every role's two numbers match.
+- [x] **`reqTicketScope`**, for symmetry with leads and clients. The routes were
+      calling `ticketScope(req.user, 't')` and dropping the active-org argument
+      — exactly the "?org= does nothing" bug the comment beside `reqScope`
+      warns about. Switching business narrowed leads and clients and left cases
+      alone.
+- [x] **Merged cases are excluded from search**, as the queue has always
+      excluded them. This is why the two disagreed by exactly one row for every
+      role even after the scope was fixed.
+- [x] **Sort on the columns worth sorting.** Subject is a paragraph and the SLA
+      figure is computed per row after the query, so neither is offered. The
+      queue's own order — breached, then priority, then due soonest — stays the
+      default and has a way back to it.
+- [x] **Paging and a count.** The route had a hardcoded `LIMIT 300`, no offset
+      and no total; the queue rendered whatever came back as though it were
+      everything.
+- [x] **Search within the queue** by reference, subject or the person it was
+      raised for. There was no way to find one case except paging to it.
+- [x] **Export**, audited and masked. The queue joins the client's name and
+      mobile in, so it carries identifiers even though a case is not a person.
+      It inherits the caller's scope as well as the filter — a supervisor
+      exports 10 where an admin exports 11.
+
+### Notes
+
+- **The scope test was checked against the bug.** Disabled the fix, restarted
+  the server, and confirmed the test fails with "dealer: expected 1, got 8"
+  before restoring it. Worth doing because the first attempt at this proved
+  nothing: the suite runs against a long-lived server on :4100, and editing the
+  file without restarting means testing the old code.
+- **A test of mine would have thrown.** The merged-case check called `one(...)`
+  for a direct database read; `e2e.mjs` has no imports at all by design. It now
+  merges two cases through the API, which exercises the path that creates the
+  condition rather than depending on the seed.
+- **A loop that skips every role reports success.** The scope comparison now
+  counts the roles it actually compared and fails if that is not four — the
+  shape of two mistakes already made in this suite.
+- **A component defined in a render body remounts its subtree every render.**
+  The sortable header was declared inside the queue, so the whole header row was
+  torn down and rebuilt on every keystroke of the search box. Hoisted.
