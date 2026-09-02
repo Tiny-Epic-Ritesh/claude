@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,109** — 580 end-to-end and 529 unit. All green.
+**Tests: 1,112** — 583 end-to-end and 529 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -1091,3 +1091,45 @@ a repair: a `UNIQUE(code, sales_org)` key, a row per business, filtered
 reads, and a Setup screen that says which business is being edited. The comment
 on the migration says so, so the next person meets the decision rather than the
 column.
+
+
+---
+
+## The client detail page checked the same way — done 2 Sep 2026
+
+The first entity in this sweep to come out clean on the security side, which is
+worth recording as a result rather than an absence: the same probe found
+cross-book writes on leads, tasks and cases.
+
+### No findings on access
+
+Every route naming a client id — `GET`, `PATCH` and
+`POST /:id/reassign` — refuses the other book, and refuses a client the
+caller does not hold within their own book, while still letting them edit one
+they do. `clients.js` loads every one of them through a single scoped
+`load(req)` helper, which is why: there is no second path to keep in
+step. Verified by disabling that helper's scope and watching the tests fail.
+
+### One thing fixed
+
+- [x] **The timeline showed the newest hundred and said nothing about it.** An
+      account with four hundred interactions looked like an account with a
+      hundred. The route returns `timeline_total` now and the page reads
+      "latest 100 of 412" when it is a window, and the plain count when it is
+      the whole history.
+
+### One thing deliberately not changed
+
+`open_cases` on the client page counts every open case on the account,
+without applying the ticket scope. That is the same shape as the dashboard tile
+fixed earlier, and the opposite decision — correctly.
+
+The dashboard tile *linked* to a list, so the tile and the list had to agree, and
+a count that opened fewer rows than it promised was a bug. This is a badge on the
+client's own page, and it answers a question about the client rather than about
+the reader: an RM whose client has two open cases should be told so, even when
+support owns both. Scoping it would report zero open cases for an account with
+two, which is a worse answer than the one it gives.
+
+There is no leak in it either way — the count is over the client's own lead, and
+the client is already scoped, so it cannot reach the other book.

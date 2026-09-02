@@ -3976,6 +3976,57 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     assert(total >= data.length, 'X-Total-Count missing or smaller than the page');
   });
 
+  await check('every route naming a client refuses the other book', async () => {
+    /* The read side is covered by bookscope.test.mjs; these are the writes,
+       which that test does not reach. Clients came out of this clean — worth
+       recording as a result rather than an absence, because the same probe
+       found cross-book writes on leads, tasks and cases. */
+    const bigul = await login('rm@bigul.test');
+    const { data: theirs } = await req('/api/clients?limit=1', { token: bigul, expect: 200 });
+    const target = need(theirs[0], 'a BIGUL client');
+
+    await req(`/api/clients/${target.id}`, { token: T.admin, expect: 404 });
+    await req(`/api/clients/${target.id}`, {
+      method: 'PATCH', token: T.admin, expect: 404, body: { risk_profile: 'Moderate' },
+    });
+    await req(`/api/clients/${target.id}/reassign`, {
+      method: 'POST', token: T.admin, expect: 404, body: { owner_id: 1 },
+    });
+  });
+
+  await check('an account belongs to whoever holds it, not to whoever asks', async () => {
+    // Within one book, the owner rule stands on the writes as well as the read.
+    const { data: all } = await req('/api/clients?limit=500', { token: T.admin, expect: 200 });
+    const { data: mine } = await req('/api/clients?limit=500', { token: T.sales_rm, expect: 200 });
+    const notMine = need(all.find((c) => !mine.some((m) => m.id === c.id)), "a client the RM does not hold");
+
+    await req(`/api/clients/${notMine.id}`, { token: T.sales_rm, expect: 404 });
+    await req(`/api/clients/${notMine.id}`, {
+      method: 'PATCH', token: T.sales_rm, expect: 404, body: { risk_profile: 'Moderate' },
+    });
+
+    // And their own is still editable, or the rule has gone too far.
+    if (mine.length) {
+      await req(`/api/clients/${mine[0].id}`, {
+        method: 'PATCH', token: T.sales_rm, expect: 200,
+        body: { risk_profile: mine[0].risk_profile ?? 'Moderate' },
+      });
+    }
+  });
+
+  await check('the timeline says when it is a window rather than the whole history', async () => {
+    /* It returns the newest hundred, which is the right thing to show and the
+       wrong thing to show silently — an account with four hundred interactions
+       looked like an account with a hundred. */
+    const { data: list } = await req('/api/clients?limit=1', { token: T.admin, expect: 200 });
+    const { data: client } = await req(`/api/clients/${list[0].id}`, { token: T.admin, expect: 200 });
+
+    assert(typeof client.timeline_total === 'number', 'the timeline does not say how long it really is');
+    assert(client.timeline_total >= client.timeline.length,
+      `the total (${client.timeline_total}) is smaller than what was returned (${client.timeline.length})`);
+    assert(client.timeline.length <= 100, 'the timeline returned more than its own cap');
+  });
+
   await check('the account book can be ordered by what it is a book of', async () => {
     /* The columns here are Holdings and Brokerage YTD, so "who are my largest
        clients" is the question this tab exists to answer. It was hard-ordered

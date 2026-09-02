@@ -16,7 +16,7 @@ import {
 } from '../auth.js';
 import { maskRecord, maskRecords, validate } from '../security.js';
 import {
-  SEGMENTS, CLIENT_STATUSES, dormantSql, segmentsFor, setSegments, timelineFor,
+  SEGMENTS, CLIENT_STATUSES, dormantSql, segmentsFor, setSegments, timelineFor, timelineCount,
 } from '../engine/clients.js';
 
 const router = Router();
@@ -341,7 +341,12 @@ router.get('/:id', (req, res) => {
     // partner it arrived through. Long after the lead stops being worked, this
     // is what answers "where did this client come from?".
     origin_lead: lead,
+    /* The timeline is the newest hundred, which is the right thing to show and
+       the wrong thing to show silently: an account with four hundred
+       interactions looked like an account with a hundred. The total travels
+       with it so the page can say which it is. */
     timeline: timelineFor(client, 100),
+    timeline_total: timelineCount(client),
     open_cases: one(
       `SELECT COUNT(*) n FROM tickets
         WHERE lead_id = ? AND status NOT IN ('Resolved','Closed')`,

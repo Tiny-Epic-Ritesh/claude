@@ -132,6 +132,18 @@ export const segmentsFor = (clientId) =>
  * exists twice, the two diverge and nobody can say which is true. The lead
  * keeps its rows, the client keeps its own, and the read joins them.
  */
+/** How many interactions this account has in total, truncated or not. */
+export function timelineCount(client) {
+  if (!client) return 0;
+  const params = [client.id];
+  let where = 'a.client_id = ?';
+  if (client.converted_from_lead_id) {
+    where += ' OR a.lead_id = ?';
+    params.push(client.converted_from_lead_id);
+  }
+  return one(`SELECT COUNT(*) n FROM activities a WHERE ${where}`, params).n;
+}
+
 export function timelineFor(client, limit = 100) {
   if (!client) return [];
   const params = [client.id];

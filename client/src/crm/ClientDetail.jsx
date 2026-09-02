@@ -168,7 +168,14 @@ export default function ClientDetail() {
         <div className="card">
           <div className="card-head">
             <h2>Timeline</h2>
-            <span className="tiny muted">{(client.timeline ?? []).length} entries, newest first</span>
+            {/* Say when this is a window rather than the whole history. The
+                newest hundred is the right thing to show; showing it silently
+                made a four-hundred-interaction account look like a hundred. */}
+            <span className="tiny muted">
+              {client.timeline_total > (client.timeline ?? []).length
+                ? `latest ${(client.timeline ?? []).length} of ${client.timeline_total.toLocaleString('en-IN')}`
+                : `${(client.timeline ?? []).length} entries, newest first`}
+            </span>
           </div>
           <div className="card-body stack" style={{ gap: 0 }}>
             {(client.timeline ?? []).length === 0 && (
