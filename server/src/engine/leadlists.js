@@ -45,6 +45,20 @@ export const KIND_HELP = {
 export const SNAPSHOT_KINDS = new Set(['static']);
 export const isSnapshot = (kind) => SNAPSHOT_KINDS.has(normaliseKind(kind));
 
+/**
+ * What a list is when nobody says.
+ *
+ * It was `static`, which meant the path of least effort produced the thing the
+ * 4,810 were made of. A default is not a neutral choice — it is the choice most
+ * records end up with, so it should be the one that stays true.
+ *
+ * Refreshable rather than dynamic: both are live, but dynamic "is never safe to
+ * send a campaign to", and a default should not quietly remove a capability
+ * from anybody who did not state a preference. Refreshable re-evaluates from
+ * its filter and still holds still under a running campaign.
+ */
+export const DEFAULT_KIND = 'refreshable';
+
 /** How long a snapshot lives before it lapses, unless somebody chooses otherwise. */
 export const DEFAULT_SNAPSHOT_DAYS = 90;
 

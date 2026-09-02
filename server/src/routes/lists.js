@@ -23,7 +23,7 @@ import { validateTree, describe, conditionSchema, FIELDS } from '../engine/condi
 import {
   LIST_KINDS, KIND_LABEL, KIND_HELP, normaliseKind, membersSql, refreshList,
   mayReadList, mayWriteList, isSnapshot, validateGovernance, defaultExpiry,
-  DEFAULT_SNAPSHOT_DAYS,
+  DEFAULT_SNAPSHOT_DAYS, DEFAULT_KIND,
 } from '../engine/leadlists.js';
 import { checkConsent } from '../engine/consent.js';
 import { send, pushToAutodialler } from '../integrations.js';
@@ -118,7 +118,11 @@ function enrichedSchema() {
 router.get('/meta', (_req, res) => res.json({
   kinds: LIST_KINDS.map((k) => ({
     code: k, label: KIND_LABEL[k], help: KIND_HELP[k], snapshot: isSnapshot(k),
+    /* Stated rather than assumed, so the interface preselects what the API
+       would have chosen anyway and the two cannot drift apart. */
+    default: k === DEFAULT_KIND,
   })),
+  default_kind: DEFAULT_KIND,
   stages: LEAD_STAGES,
   bulk_cap: BULK_CAP,
   /* The 27 fields and their operators, so a builder can be driven by the same
@@ -165,9 +169,15 @@ router.get('/', (req, res) => {
 
 router.post('/', requirePermission('list.create'), (req, res) => {
   const {
-    name, kind = 'static', criteria = null, description = null, shared_with = [],
+    name, criteria = null, description = null, shared_with = [],
     snapshot_reason: reason = null, expires_at: expires = null, columns = null,
   } = req.body ?? {};
+
+  /* A destructuring default only fires on `undefined`, and "not stated" arrives
+     as `null` just as often — an interface that has not finished loading its
+     metadata sends the field empty rather than omitting it. Both mean the same
+     thing to a person, so they mean the same thing here. */
+  const kind = req.body?.kind ?? DEFAULT_KIND;
 
   const bad = validate(req.body, { name: ['required', 'max:120'] });
   if (bad) return res.status(400).json(bad);
@@ -181,15 +191,20 @@ router.post('/', requirePermission('list.create'), (req, res) => {
      waiting to confuse someone. And a snapshot has to say why it is frozen and
      when it lapses — the two questions nobody could answer about the legacy
      tenant's 4,810 lists. */
-  if (k !== 'static') {
-    const problems = validateTree(criteria ?? null);
-    if (!criteria || problems.length) {
-      return res.status(400).json(
-        problems.length
-          ? { error: problems[0].error, problems }
-          : { error: `A ${KIND_LABEL[k].toLowerCase()} list needs a filter to build from.` },
-      );
+  if (!isSnapshot(k)) {
+    /* Absent and malformed are different mistakes and get different answers.
+       Asking validateTree about `null` gets "Not a condition", which was then
+       reported as though somebody had written a bad filter rather than none —
+       masked until now because the default kind was static and an unstated kind
+       never reached this branch. */
+    if (!criteria) {
+      return res.status(400).json({
+        error: `A ${KIND_LABEL[k].toLowerCase()} list needs a filter to build from.`,
+        field: 'criteria',
+      });
     }
+    const problems = validateTree(criteria);
+    if (problems.length) return res.status(400).json({ error: problems[0].error, problems });
   }
 
   const governance = validateGovernance({ kind: k, criteria, snapshot_reason: reason, expires_at: expires });

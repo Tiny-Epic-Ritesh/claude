@@ -130,12 +130,22 @@ function NewList({ meta, onClose, onCreated }) {
      and snapshots an explicit, expiring, audited artefact". A snapshot is wrong
      the day after it is made, and 4,810 of them is what happens when it is as
      easy to freeze a list as to keep it live. */
-  const [kind, setKind] = useState('refreshable');
+  /* Preselected from the server rather than hardcoded here. The API applies the
+     same default to a request that omits the kind, and two copies of that
+     decision would eventually disagree about which one the product has. */
+  const [kind, setKind] = useState(null);
   const [criteria, setCriteria] = useState(null);
   const [reason, setReason] = useState('');
   const [expires, setExpires] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+
+  // Until meta arrives there is nothing to preselect; the radios render unset
+  // for that one frame rather than flashing a kind the server might not agree
+  // with.
+  useEffect(() => {
+    if (kind === null && meta?.default_kind) setKind(meta.default_kind);
+  }, [kind, meta?.default_kind]);
 
   const chosen = (meta?.kinds ?? []).find((k) => k.code === kind);
   const isSnapshot = Boolean(chosen?.snapshot);

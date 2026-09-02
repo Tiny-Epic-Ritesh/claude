@@ -21,6 +21,7 @@ import { readFileSync } from 'node:fs';
 import { all, one, run } from '../src/db.js';
 import {
   isSnapshot, validateGovernance, defaultExpiry, archiveExpired, DEFAULT_SNAPSHOT_DAYS,
+  DEFAULT_KIND, SNAPSHOT_KINDS,
 } from '../src/engine/leadlists.js';
 import { conditionSchema, NO_VALUE_OPERATORS, LIST_OPERATORS } from '../src/engine/conditions.js';
 
@@ -111,9 +112,17 @@ test('a snapshot inside its expiry is left alone', () => {
 });
 
 test('the interface defaults to a live list, not a snapshot', () => {
-  // The audit's first recommendation, in one line of state.
-  assert(/useState\('refreshable'\)/.test(listsUi),
-    'the new-list form defaults to a snapshot again');
+  /* The audit's first recommendation. This used to check the form for a
+     hardcoded 'refreshable'; the form now preselects whatever the API would
+     have chosen for a request that states no kind, so the guarantee is checked
+     where the decision actually lives — and checked as "not a snapshot" rather
+     than as one particular spelling of live. */
+  assert(!SNAPSHOT_KINDS.has(DEFAULT_KIND), 'the default list kind is a snapshot');
+  assert(/kind = DEFAULT_KIND/.test(routes) || /kind \?\? DEFAULT_KIND/.test(routes),
+    'the create route no longer applies the shared default');
+  assert(/meta\??\.default_kind/.test(listsUi),
+    'the new-list form no longer takes its default from the server');
+  assert(!/useState\('static'\)/.test(listsUi), 'the new-list form defaults to a snapshot again');
 });
 
 /* --------------------------------------- expressing the question (audit #2) */

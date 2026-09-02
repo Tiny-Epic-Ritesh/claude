@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,057** — 528 end-to-end and 529 unit. All green.
+**Tests: 1,060** — 531 end-to-end and 529 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -468,6 +468,13 @@ re-imports as a static list, uses it once, never deletes it. Daily habit.
 - [x] **Governance.** A live list is the default; a snapshot must state a
       reason and an expiry (90 days unless said otherwise). Lapsed snapshots
       archive rather than delete — a campaign may still reference one.
+- [x] **The API default is `refreshable`** (was `static`). A default is the
+      choice most records end up with, so the path of least effort was
+      producing the exact thing the 4,810 were made of. Refreshable rather than
+      dynamic because dynamic "is never safe to send a campaign to", and a
+      default should not remove a capability from someone who stated no
+      preference. Exposed as `default_kind` on `/lists/meta` and read by the
+      new-list form, so the two cannot drift.
 - [x] **The saved-search hole.** `POST /search-advanced/lead/to-list` inserted
       a static list directly and skipped every check. It is the easiest way in
       the product to make a snapshot, so it was the hole the rule would have

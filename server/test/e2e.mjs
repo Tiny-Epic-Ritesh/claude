@@ -3504,10 +3504,11 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     // assuming the superadmin happens to own one.
     const { data: made } = await req('/api/lists', {
       method: 'POST', token: T.superadmin, expect: 201,
+      /* No kind, so this also pins what an unstated kind produces: a live list,
+         which needs a filter and no longer needs a reason for being frozen. */
       body: {
         name: `Audience probe ${RUN}`,
-        snapshot_reason: 'Probe list for the audience refusal check',
-        expires_at: '2030-01-01',
+        criteria: { op: 'AND', children: [{ field: 'stage', operator: 'in', value: ['Qualified'] }] },
       },
     });
 
@@ -3650,6 +3651,54 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     });
     assert(data.id, 'no list created');
     assert(data.members > 0, 'the saved search captured nobody');
+  });
+
+  await check('a list nobody classified is live, not a snapshot', async () => {
+    /* The default is the choice most records end up with. It used to be
+       `static`, which meant the path of least effort produced exactly the thing
+       the legacy tenant accumulated 4,810 of. */
+    const { data: meta } = await req('/api/lists/meta', { token: T.admin, expect: 200 });
+    eq(meta.default_kind, 'refreshable', 'the stated default is not the live kind');
+    assert(!meta.kinds.find((k) => k.code === meta.default_kind).snapshot,
+      'the default kind is a snapshot');
+
+    const { data } = await req('/api/lists', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: {
+        name: `Unstated kind ${RUN}`,
+        criteria: { op: 'AND', children: [{ field: 'stage', operator: 'in', value: ['Qualified'] }] },
+      },
+    });
+    eq(data.kind, 'refreshable', 'an unstated kind did not come out live');
+    // Live, and still able to receive a campaign — which is why the default is
+    // refreshable rather than dynamic.
+    const { data: full } = await req(`/api/lists/${data.id}`, { token: T.admin, expect: 200 });
+    assert(full.campaign_safe, 'the default kind cannot be sent to');
+    eq(full.snapshot_reason ?? null, null, 'a live list was made to justify itself');
+  });
+
+  await check('an empty kind means the same as no kind at all', async () => {
+    // An interface that has not finished loading its metadata sends the field
+    // null rather than omitting it, and a destructuring default does not catch
+    // that.
+    const { data } = await req('/api/lists', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: {
+        name: `Null kind ${RUN}`, kind: null,
+        criteria: { op: 'AND', children: [{ field: 'stage', operator: 'in', value: ['Qualified'] }] },
+      },
+    });
+    eq(data.kind, 'refreshable', 'an explicit null was not read as unstated');
+  });
+
+  await check('an unclassified list with no filter is refused for the right reason', async () => {
+    // The refusal has to name the missing filter, not a missing reason — under
+    // the old default this same request asked why the list was frozen.
+    const { data } = await req('/api/lists', {
+      method: 'POST', token: T.admin, expect: 400,
+      body: { name: `Nothing stated ${RUN}` },
+    });
+    assert(/filter/i.test(data.error), `the refusal did not mention a filter: ${data.error}`);
   });
 
   await check('a filter-driven list refuses to be created without a filter', async () => {
