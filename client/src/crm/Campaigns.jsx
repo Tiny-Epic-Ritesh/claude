@@ -10,7 +10,7 @@
  * of it. The Setup screen keeps working; it is simply no longer the only door.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, shortDate } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty, Modal } from '../components/ui.jsx';
@@ -20,9 +20,39 @@ const STATUS_BADGE = {
   Sent: 'badge-green', Paused: 'badge-amber', Failed: 'badge-red',
 };
 
+/* Cards per page. The route had no LIMIT at all, so this grid used to render
+   every campaign that had ever existed. */
+const PAGE = 24;
+
+/* A grid has no column headers to click, so order is a control of its own.
+   Every option here is a column the route accepts. */
+const ORDERS = [
+  { key: '', label: 'Newest first' },
+  { key: 'name:asc', label: 'Name A–Z' },
+  { key: 'sent:desc', label: 'Most sent' },
+  { key: 'opened:desc', label: 'Most opened' },
+  { key: 'clicked:desc', label: 'Most clicked' },
+  { key: 'scheduled_at:asc', label: 'Scheduled soonest' },
+];
+
 export default function Campaigns({ session }) {
   const navigate = useNavigate();
-  const [rows, { loading, error, reload }] = useApi('/admin/campaigns');
+  const [order, setOrder] = useState('');
+  const [offset, setOffset] = useState(0);
+  const [typed, setTyped] = useState('');
+  const [q, setQ] = useState('');
+
+  useEffect(() => {
+    const t = setTimeout(() => { setQ(typed.trim()); setOffset(0); }, 300);
+    return () => clearTimeout(t);
+  }, [typed]);
+
+  const params = new URLSearchParams({ limit: String(PAGE), offset: String(offset) });
+  if (order) { const [col, d] = order.split(':'); params.set('sort', col); params.set('dir', d); }
+  if (q) params.set('q', q);
+  const query = `?${params}`;
+
+  const [rows, { loading, error, reload, total }] = useApi(`/admin/campaigns${query}`, [query]);
   const [lists] = useApi('/lists');
   const [templates] = useApi('/admin/templates');
   const [creating, setCreating] = useState(false);
@@ -46,6 +76,8 @@ export default function Campaigns({ session }) {
   if (error) return <ErrorBanner error={error} />;
 
   const live = rows ?? [];
+  // The unpaged total, which the route now sends and nothing used to read.
+  const count = total ?? live.length;
 
   return (
     <div>
@@ -71,8 +103,33 @@ export default function Campaigns({ session }) {
         </div>
       )}
 
+      <div className="card" style={{ marginBottom: 14 }}>
+        <div className="card-body row wrap" style={{ gap: 10, alignItems: 'center' }}>
+          {/* Finding one campaign used to mean reading the whole grid. */}
+          <input
+            type="search"
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            placeholder="Search name, list or template"
+            aria-label="Search campaigns"
+            style={{ flex: '1 1 240px' }}
+          />
+          <select value={order} onChange={(e) => { setOrder(e.target.value); setOffset(0); }}
+            aria-label="Order campaigns" style={{ maxWidth: 190 }}>
+            {ORDERS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+          </select>
+          <span className="tiny muted">
+            {q ? `${count} matching` : `${count} campaign${count === 1 ? '' : 's'}`}
+          </span>
+        </div>
+      </div>
+
       {live.length === 0 && (
-        <Empty>No campaigns yet. Build a list first, then send to it.</Empty>
+        <Empty>
+          {q
+            ? `No campaign matches "${q}".`
+            : 'No campaigns yet. Build a list first, then send to it.'}
+        </Empty>
       )}
 
       <div className="grid-auto">
@@ -137,6 +194,25 @@ export default function Campaigns({ session }) {
           );
         })}
       </div>
+
+      {/* Where you are in the list. */}
+      {count > 0 && (count > PAGE || offset > 0) && (
+        <div className="row wrap" style={{ gap: 10, justifyContent: 'space-between', marginTop: 14 }}>
+          <span className="tiny muted">
+            {offset + 1}–{offset + live.length} of {count.toLocaleString('en-IN')}
+          </span>
+          <div className="row" style={{ gap: 6 }}>
+            <button className="btn-ghost btn-sm" disabled={offset === 0}
+              onClick={() => { setOffset(Math.max(offset - PAGE, 0)); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
+              <Icon name="chevron_left" size={15} /> Previous
+            </button>
+            <button className="btn-ghost btn-sm" disabled={offset + live.length >= count}
+              onClick={() => { setOffset(offset + PAGE); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
+              Next <Icon name="chevron_right" size={15} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {creating && (
         <NewCampaign

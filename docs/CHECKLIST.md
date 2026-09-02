@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,090** — 561 end-to-end and 529 unit. All green.
+**Tests: 1,092** — 563 end-to-end and 529 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -741,3 +741,32 @@ The last two searchable objects, and the worst finding of the four passes.
   search path did not apply. The list route and its search are the same data
   with the same boundary, and fixing one of a pair is how the other stays
   broken — which is what the ticket list comment already said in August.
+
+
+---
+
+## Partner and campaign front ends wired up — done 2 Sep 2026
+
+The server work above was only half of it; both tabs were still reading the
+first page and calling it everything.
+
+- [x] **Partners**: search, count, sortable headers, paging, and the export
+      dialog. PAN and bank details are named in the dialog as never exported,
+      because a column somebody expects and cannot find reads as a bug.
+- [x] **The two partner tabs are a server-side group now.** They were made by
+      pulling every partner and splitting the array in the browser, and the four
+      tiles were sums over that same array. Honest while the list was unbounded;
+      the moment it started paging, both would have described a page. There is a
+       filter and a , and a test asserts the tile
+      and the tab agree and that neither follows the page size.
+- [x] **Campaigns, both surfaces.** There are two: the marketing tab at
+       that people use weekly, and the Setup screen. Both read the
+      same route, so both needed it. The Setup one is a table and got sortable
+      headers; the marketing one is a card grid, so it got an order dropdown
+      instead — a grid has no column headers to click.
+
+### Note
+
+- **A component declared in a render body remounts its subtree.** Same fix as
+  the case queue, in both new headers: declared at module scope so the header
+  row is not torn down and rebuilt on every keystroke of the search box.

@@ -692,6 +692,31 @@ async function run() {
     assert(hit.length >= 1 && hit.length <= total, 'search returned an impossible count');
   });
 
+  await check('the tiles count the book, not the page', async () => {
+    /* The Partners tab used to make its two groups by pulling every partner and
+       splitting the array in the browser, and its four tiles were sums over
+       that same array. Honest only while the list was unbounded; the moment it
+       started paging, both would have described a page. */
+    const { data: summary } = await req('/api/partners/summary', { token: T.admin, expect: 200 });
+    const { res: pipeline } = await req('/api/partners?group=pipeline&limit=1', { token: T.admin, expect: 200 });
+    eq(Number(pipeline.headers.get('x-total-count')), summary.pipeline,
+      'the pipeline tile and the pipeline tab disagree');
+
+    // A page of one must not change what the tile says.
+    const { data: summaryAgain } = await req('/api/partners/summary?limit=1', { token: T.admin, expect: 200 });
+    eq(summaryAgain.pipeline, summary.pipeline, 'the summary followed the page size');
+  });
+
+  await check('a partner group is a server-side set, not a browser filter', async () => {
+    const { data: pipeline } = await req('/api/partners?group=pipeline&limit=500', { token: T.admin, expect: 200 });
+    const { data: active } = await req('/api/partners?group=active&limit=500', { token: T.admin, expect: 200 });
+    const pipelineStates = new Set(pipeline.map((p) => p.state_code));
+    for (const st of pipelineStates) {
+      assert(['PROSPECT', 'QUALIFYING', 'ONBOARDING'].includes(st), );
+    }
+    eq(active.filter((p) => pipeline.some((q) => q.id === p.id)).length, 0, 'the two groups overlap');
+  });
+
   await check('an invented partner sort column is ignored, not run', async () => {
     const { data } = await req('/api/partners?sort=(SELECT 1)&limit=3', { token: T.admin, expect: 200 });
     assert(Array.isArray(data), 'a bad sort broke the list instead of being ignored');

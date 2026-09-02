@@ -1,23 +1,90 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, shortDate, appUrl } from '../api.js';
-import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Progress, Tabs } from '../components/ui.jsx';
+import {
+  useApi, Icon, Loading, ErrorBanner, Empty, Modal, Spinner, Progress, Tabs,
+} from '../components/ui.jsx';
 
 const MODELS = ['Remisier', 'Agent', 'Trainee Entrepreneur', 'Associate', 'Authorised Person'];
 const STATES = ['PROSPECT', 'QUALIFYING', 'ONBOARDING', 'ACTIVE', 'SUSPENDED', 'TERMINATED'];
 
+/* Rows per page. The list used to come back whole — no LIMIT on the route at
+   all — and the two tabs were made by splitting that array in the browser. */
+const PAGE = 50;
+
+/** Hand the browser a file without a round trip to the server for it. */
+function download(filename, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8;' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * A sortable column header.
+ *
+ * At module scope, not in the render body: a component declared inside one is a
+ * new type on every render, and React tears down and rebuilds the whole header
+ * row — on every keystroke of the search box, among other things.
+ */
+function Th({ label, col, className, sort, dir, onSort }) {
+  if (!col) return <th className={className}>{label}</th>;
+  return (
+    <th className={className} aria-sort={sort === col ? (dir === 'asc' ? 'ascending' : 'descending') : undefined}>
+      <button type="button" className="th-sort" aria-label={`Sort by ${label}`} onClick={() => onSort(col)}>
+        {label}
+        <Icon name={sort !== col ? 'unfold_more' : dir === 'asc' ? 'arrow_upward' : 'arrow_downward'} size={13} />
+      </button>
+    </th>
+  );
+}
+
 export default function Partners({ session }) {
   const [tab, setTab] = useState('pipeline');
-  const [partners, { loading, error, reload }] = useApi('/partners');
+  const [sort, setSort] = useState(null);
+  const [dir, setDir] = useState('desc');
+  const [offset, setOffset] = useState(0);
+  const [typed, setTyped] = useState('');
+  const [q, setQ] = useState('');
   const [creating, setCreating] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const navigate = useNavigate();
 
-  if (loading) return <Loading />;
+  // A request per keystroke, against a book that can run to thousands.
+  useEffect(() => {
+    const t = setTimeout(() => { setQ(typed.trim()); setOffset(0); }, 300);
+    return () => clearTimeout(t);
+  }, [typed]);
+
+  // A different tab is a different question; page 4 of the old one means nothing.
+  useEffect(() => { setOffset(0); }, [tab]);
+
+  const params = new URLSearchParams({ group: tab, limit: String(PAGE), offset: String(offset) });
+  if (sort) { params.set('sort', sort); params.set('dir', dir); }
+  if (q) params.set('q', q);
+  const query = `?${params}`;
+
+  const [partners, { loading, error, reload, total }] = useApi(`/partners${query}`, [query]);
+  /* The tiles and the tab counts come from the server over the whole book. They
+     used to be computed from the array the browser happened to be holding,
+     which was honest only while that array was everything. */
+  const [summary] = useApi('/partners/summary');
+  const [meta] = useApi('/partners/meta');
+
+  if (loading && !partners) return <Loading />;
   if (error) return <ErrorBanner error={error} />;
 
-  const pipeline = partners.filter((p) => ['PROSPECT', 'QUALIFYING', 'ONBOARDING'].includes(p.state_code));
-  const active = partners.filter((p) => ['ACTIVE', 'SUSPENDED', 'TERMINATED'].includes(p.state_code));
-  const rows = tab === 'pipeline' ? pipeline : active;
+  const rows = partners ?? [];
+  const count = total ?? rows.length;
+  const orderBy = (key) => {
+    setDir(sort === key && dir === 'asc' ? 'desc' : 'asc');
+    setSort(key);
+    setOffset(0);
+  };
 
   return (
     <>
@@ -35,26 +102,62 @@ export default function Partners({ session }) {
       </div>
 
       <div className="metrics">
-        <div className="card stat"><div className="stat-label">In pipeline</div><div className="stat-value">{pipeline.length}</div></div>
-        <div className="card stat tone-good"><div className="stat-label">Active</div><div className="stat-value">{partners.filter((p) => p.state_code === 'ACTIVE').length}</div></div>
-        <div className="card stat"><div className="stat-label">Leads sourced</div><div className="stat-value">{partners.reduce((s, p) => s + p.sourced_count, 0)}</div></div>
-        <div className="card stat"><div className="stat-label">This month</div><div className="stat-value">{partners.reduce((s, p) => s + p.sourced_this_month, 0)}</div></div>
+        <div className="card stat"><div className="stat-label">In pipeline</div><div className="stat-value">{summary?.pipeline ?? '—'}</div></div>
+        <div className="card stat tone-good"><div className="stat-label">Active</div><div className="stat-value">{summary?.active ?? '—'}</div></div>
+        <div className="card stat"><div className="stat-label">Leads sourced</div><div className="stat-value">{summary?.sourced ?? '—'}</div></div>
+        <div className="card stat"><div className="stat-label">This month</div><div className="stat-value">{summary?.this_month ?? '—'}</div></div>
       </div>
 
       <Tabs
-        tabs={[{ key: 'pipeline', label: 'Onboarding pipeline', count: pipeline.length }, { key: 'active', label: 'Partner entities', count: active.length }]}
+        tabs={[{ key: 'pipeline', label: 'Onboarding pipeline' }, { key: 'active', label: 'Partner entities' }]}
         active={tab}
         onChange={setTab}
       />
 
+      <div className="card" style={{ marginBottom: 14 }}>
+        <div className="card-body row wrap" style={{ gap: 10, alignItems: 'center' }}>
+          {/* There was no way to find one partner except reading the table. */}
+          <input
+            type="search"
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            placeholder="Search name, business, code or mobile"
+            aria-label="Search partners"
+            style={{ flex: '1 1 260px' }}
+          />
+          <span className="tiny muted">
+            {q ? `${count} matching` : `${count} partner${count === 1 ? '' : 's'}`}
+          </span>
+          <span style={{ flex: 1 }} />
+          {sort && (
+            <button className="btn-ghost btn-sm" onClick={() => { setSort(null); setOffset(0); }}>
+              <Icon name="close" size={14} /> Newest first
+            </button>
+          )}
+          {meta?.may_export && (
+            <button className="btn-ghost btn-sm" onClick={() => setExporting(true)}>
+              <Icon name="download" size={15} /> Export
+            </button>
+          )}
+        </div>
+      </div>
+
       <section className="card">
-        {!rows.length ? <Empty>Nothing here.</Empty> : (
+        {!rows.length ? (
+          <Empty>{q ? `No partner matches "${q}".` : 'Nothing here.'}</Empty>
+        ) : (
           <table>
             <thead>
               <tr>
-                <th>Partner</th><th>Model</th><th>State</th>
-                <th style={{ width: 150 }}>{tab === 'pipeline' ? 'Onboarding' : 'Sourced / converted'}</th>
-                <th className="num">Leads</th><th className="num">This month</th><th>Last activity</th>
+                <Th label="Partner" col="name" sort={sort} dir={dir} onSort={orderBy} />
+                <Th label="Model" col="partner_model" sort={sort} dir={dir} onSort={orderBy} />
+                <Th label="State" col="state_code" sort={sort} dir={dir} onSort={orderBy} />
+                {/* Progress and the sourced counts are computed per row after
+                    the query, so there is no column to order them by. */}
+                <Th label={tab === 'pipeline' ? 'Onboarding' : 'Sourced / converted'} />
+                <Th label="Leads" className="num" />
+                <Th label="This month" className="num" />
+                <Th label="Last activity" />
               </tr>
             </thead>
             <tbody>
@@ -83,10 +186,108 @@ export default function Partners({ session }) {
             </tbody>
           </table>
         )}
+
+        {/* Where you are in the book. Without this the tab showed a page and
+            called it everything. */}
+        {count > 0 && (count > PAGE || offset > 0) && (
+          <div className="card-foot row wrap" style={{ gap: 10, justifyContent: 'space-between' }}>
+            <span className="tiny muted">
+              {offset + 1}–{offset + rows.length} of {count.toLocaleString('en-IN')}
+            </span>
+            <div className="row" style={{ gap: 6 }}>
+              <button className="btn-ghost btn-sm" disabled={offset === 0}
+                onClick={() => { setOffset(Math.max(offset - PAGE, 0)); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
+                <Icon name="chevron_left" size={15} /> Previous
+              </button>
+              <button className="btn-ghost btn-sm" disabled={offset + rows.length >= count}
+                onClick={() => { setOffset(offset + PAGE); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
+                Next <Icon name="chevron_right" size={15} />
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       {creating && <NewPartner onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); navigate(`/partners/${id}`); }} />}
+      {exporting && <ExportPartners meta={meta} count={count} query={query} onClose={() => setExporting(false)} />}
     </>
+  );
+}
+
+/**
+ * Export the partner list, as filtered.
+ *
+ * The tab's own query string goes with it, so what leaves is what was on
+ * screen — the same group, the same search, the same book. PAN and bank account
+ * are not in the column list at all: both are encrypted at rest, so an export
+ * of them would carry ciphertext.
+ */
+function ExportPartners({ meta, count, query, onClose }) {
+  const columns = meta?.columns ?? [];
+  const [picked, setPicked] = useState(
+    ['partner_code', 'name', 'business_name', 'partner_model', 'state_code', 'city', 'created_at'],
+  );
+  const [unmask, setUnmask] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState(null);
+
+  const toggle = (key) => setPicked((p) => (p.includes(key) ? p.filter((k) => k !== key) : [...p, key]));
+  const hasPii = picked.some((k) => columns.find((c) => c.key === k)?.pii);
+
+  const run = async () => {
+    setBusy(true); setProblem(null);
+    try {
+      const r = await api.post(`/partners/export${query}`, { columns: picked, unmask });
+      download(r.filename, r.csv);
+      onClose();
+    } catch (e) { setProblem(e.message); setBusy(false); }
+  };
+
+  return (
+    <Modal title="Export partners"
+      subtitle={`${count.toLocaleString('en-IN')} partner${count === 1 ? '' : 's'}, as currently filtered`}
+      onClose={onClose}>
+      <div className="stack" style={{ gap: 14 }}>
+        <ErrorBanner error={problem} onDismiss={() => setProblem(null)} />
+
+        <div className="stack" style={{ gap: 2, maxHeight: '40vh', overflowY: 'auto' }}>
+          {columns.map((c) => (
+            <label key={c.key} className="row" style={{ gap: 8, padding: '6px 2px', cursor: 'pointer' }}>
+              <input type="checkbox" checked={picked.includes(c.key)} onChange={() => toggle(c.key)} />
+              <span style={{ flex: 1 }}>{c.label}</span>
+              {c.pii && <span className="chip chip-muted tiny">Identifier</span>}
+            </label>
+          ))}
+        </div>
+
+        {hasPii && (
+          meta?.may_unmask ? (
+            <label className="row" style={{ gap: 8, cursor: 'pointer' }}>
+              <input type="checkbox" checked={unmask} onChange={(e) => setUnmask(e.target.checked)} />
+              <span className="small">
+                Include mobile and email in full.
+                <span className="muted"> Recorded against your name in the audit log.</span>
+              </span>
+            </label>
+          ) : (
+            <div className="tiny muted">
+              <Icon name="lock" size={13} /> Mobile and email leave masked — unmasking is a separate permission.
+            </div>
+          )
+        )}
+
+        <div className="tiny muted">
+          <Icon name="lock" size={13} /> PAN and bank details are never exported — they are encrypted at rest.
+        </div>
+
+        <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+          <button className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" disabled={busy || !picked.length} onClick={run}>
+            {busy ? 'Building…' : 'Download CSV'}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

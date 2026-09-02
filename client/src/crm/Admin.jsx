@@ -446,15 +446,60 @@ export function Content() {
  * them opted out" before the send makes the rule visible at the moment it
  * matters, and stops a marketer wondering why the reach was short afterwards.
  */
+/* Rows per page. The campaign list had no LIMIT on the route at all. */
+const CAMPAIGN_PAGE = 50;
+
+/**
+ * A sortable column header for the campaign table.
+ *
+ * At module scope: a component declared inside a render body is a new type on
+ * every render, which tears down and rebuilds the header row each time.
+ */
+function CampaignTh({ label, col, className, sort, dir, onSort }) {
+  if (!col) return <th className={className}>{label}</th>;
+  return (
+    <th className={className} aria-sort={sort === col ? (dir === 'asc' ? 'ascending' : 'descending') : undefined}>
+      <button type="button" className="th-sort" aria-label={`Sort by ${label}`} onClick={() => onSort(col)}>
+        {label}
+        <Icon name={sort !== col ? 'unfold_more' : dir === 'asc' ? 'arrow_upward' : 'arrow_downward'} size={13} />
+      </button>
+    </th>
+  );
+}
+
 export function Campaigns() {
-  const [rows, { loading, reload }] = useApi('/admin/campaigns');
+  const [sort, setSort] = useState(null);
+  const [dir, setDir] = useState('desc');
+  const [offset, setOffset] = useState(0);
+  const [typed, setTyped] = useState('');
+  const [q, setQ] = useState('');
   const [editing, setEditing] = useState(null);   // campaign | 'new'
   const [audience, setAudience] = useState(null);
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
 
-  if (loading) return <Loading />;
+  useEffect(() => {
+    const t = setTimeout(() => { setQ(typed.trim()); setOffset(0); }, 300);
+    return () => clearTimeout(t);
+  }, [typed]);
+
+  const params = new URLSearchParams({ limit: String(CAMPAIGN_PAGE), offset: String(offset) });
+  if (sort) { params.set('sort', sort); params.set('dir', dir); }
+  if (q) params.set('q', q);
+  const query = `?${params}`;
+
+  const [rows, { loading, reload, total }] = useApi(`/admin/campaigns${query}`, [query]);
+
+  if (loading && !rows) return <Loading />;
+
+  const list = rows ?? [];
+  const count = total ?? list.length;
+  const orderBy = (key) => {
+    setDir(sort === key && dir === 'asc' ? 'desc' : 'asc');
+    setSort(key);
+    setOffset(0);
+  };
 
   const act = async (id, verb, fn) => {
     setBusy(`${id}:${verb}`);
@@ -483,23 +528,46 @@ export function Campaigns() {
           <div>
             <h2>Campaigns</h2>
             <p className="tiny muted" style={{ margin: '2px 0 0' }}>
-              {rows.length} active · every send respects marketing opt-outs
+              {q ? `${count} matching` : `${count} active`} · every send respects marketing opt-outs
             </p>
           </div>
-          <button className="btn btn-primary btn-sm" onClick={() => setEditing('new')}>
-            <Icon name="add" /> New campaign
-          </button>
+          <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
+            {/* The list had no search: finding one campaign meant reading them. */}
+            <input
+              type="search"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              placeholder="Search name, list or template"
+              aria-label="Search campaigns"
+              style={{ maxWidth: 220 }}
+            />
+            {sort && (
+              <button className="btn-ghost btn-sm" onClick={() => { setSort(null); setOffset(0); }}>
+                <Icon name="close" size={14} /> Newest first
+              </button>
+            )}
+            <button className="btn btn-primary btn-sm" onClick={() => setEditing('new')}>
+              <Icon name="add" /> New campaign
+            </button>
+          </div>
         </div>
 
-        {rows.length === 0 ? (
-          <Empty>No campaigns yet. Create one to reach a lead list.</Empty>
+        {list.length === 0 ? (
+          <Empty>
+            {q ? `No campaign matches "${q}".` : 'No campaigns yet. Create one to reach a lead list.'}
+          </Empty>
         ) : (
           <div className="table-scroll">
             <table>
               <thead>
                 <tr>
-                  <th>Campaign</th><th>Channel</th><th>List</th><th>Status</th>
-                  <th className="num">Sent</th><th className="num">Opened</th><th className="num">Clicked</th>
+                  <CampaignTh label="Campaign" col="name" sort={sort} dir={dir} onSort={orderBy} />
+                  <CampaignTh label="Channel" col="channel" sort={sort} dir={dir} onSort={orderBy} />
+                  <CampaignTh label="List" col="list_name" sort={sort} dir={dir} onSort={orderBy} />
+                  <CampaignTh label="Status" col="status" sort={sort} dir={dir} onSort={orderBy} />
+                  <CampaignTh label="Sent" col="sent" className="num" sort={sort} dir={dir} onSort={orderBy} />
+                  <CampaignTh label="Opened" col="opened" className="num" sort={sort} dir={dir} onSort={orderBy} />
+                  <CampaignTh label="Clicked" col="clicked" className="num" sort={sort} dir={dir} onSort={orderBy} />
                   <th className="col-actions" />
                 </tr>
               </thead>
@@ -539,6 +607,25 @@ export function Campaigns() {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* Where you are in the list. */}
+        {count > 0 && (count > CAMPAIGN_PAGE || offset > 0) && (
+          <div className="card-foot row wrap" style={{ gap: 10, justifyContent: 'space-between' }}>
+            <span className="tiny muted">
+              {offset + 1}–{offset + list.length} of {count.toLocaleString('en-IN')}
+            </span>
+            <div className="row" style={{ gap: 6 }}>
+              <button className="btn-ghost btn-sm" disabled={offset === 0}
+                onClick={() => setOffset(Math.max(offset - CAMPAIGN_PAGE, 0))}>
+                <Icon name="chevron_left" size={15} /> Previous
+              </button>
+              <button className="btn-ghost btn-sm" disabled={offset + list.length >= count}
+                onClick={() => setOffset(offset + CAMPAIGN_PAGE)}>
+                Next <Icon name="chevron_right" size={15} />
+              </button>
+            </div>
           </div>
         )}
       </section>

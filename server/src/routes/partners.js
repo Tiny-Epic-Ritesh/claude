@@ -85,6 +85,12 @@ export const PARTNER_COLUMNS = [
   { key: 'sales_org', label: 'Business unit', sql: 'sales_org' },
 ];
 
+/** The two groups the Partners tab is divided into, by lifecycle state. */
+const PARTNER_GROUPS = {
+  pipeline: ['PROSPECT', 'QUALIFYING', 'ONBOARDING'],
+  active: ['ACTIVE', 'SUSPENDED', 'TERMINATED'],
+};
+
 const partnerColumn = (key) => PARTNER_COLUMNS.find((c) => c.key === key);
 const PARTNER_EXPORT_CAP = 5000;
 const csvCell = (v) => (v === null || v === undefined ? '""' : `"${String(v).replace(/"/g, '""')}"`);
@@ -102,6 +108,17 @@ function partnerFilter(req) {
   const params = [...orgs];
 
   if (req.query.state) { where.push('state_code = ?'); params.push(req.query.state); }
+
+  /* The Partners tab shows two groups, and it used to make them by pulling
+     every partner and splitting the array in the browser. That was fine while
+     the list was unbounded and silently wrong the moment it started paging —
+     the tabs would have described a page rather than the book. */
+  const group = PARTNER_GROUPS[req.query.group];
+  if (group) {
+    where.push(`state_code IN (${group.map(() => '?').join(',')})`);
+    params.push(...group);
+  }
+
   if (req.query.mine === 'true' || req.user.role === 'partner_rm') {
     where.push('owner_id = ?');
     params.push(req.user.id);
@@ -141,9 +158,41 @@ router.get('/', requirePermission('partner.view'), (req, res) => {
   res.json(maskRecords(rows, maskFor(req, 'partner_list')));
 });
 
+/**
+ * The counts behind the tiles.
+ *
+ * Computed under the same scope as the list and over the whole book, because a
+ * tile that counts a page is a tile that disagrees with itself as soon as
+ * somebody turns one.
+ */
+router.get('/summary', requirePermission('partner.view'), (req, res) => {
+  const base = { query: { ...req.query, group: undefined, state: undefined, q: undefined }, user: req.user };
+  const { clause, params } = partnerFilter(base);
+  const count = (extra, extraParams = []) => one(
+    `SELECT COUNT(*) n FROM partners WHERE ${clause}${extra ? ` AND ${extra}` : ''}`,
+    [...params, ...extraParams],
+  ).n;
+
+  const sums = one(
+    `SELECT COALESCE(SUM((SELECT COUNT(*) FROM leads l WHERE l.partner_id = partners.id AND l.deleted_at IS NULL)), 0) AS sourced,
+            COALESCE(SUM((SELECT COUNT(*) FROM leads l WHERE l.partner_id = partners.id AND l.deleted_at IS NULL
+                          AND strftime('%Y-%m', l.created_at) = strftime('%Y-%m','now'))), 0) AS this_month
+       FROM partners WHERE ${clause}`,
+    params,
+  );
+
+  res.json({
+    pipeline: count(`state_code IN (${PARTNER_GROUPS.pipeline.map(() => '?').join(',')})`, PARTNER_GROUPS.pipeline),
+    active: count('state_code = ?', ['ACTIVE']),
+    sourced: sums.sourced,
+    this_month: sums.this_month,
+  });
+});
+
 /* Declared before `/:id`, or Express reads "meta" as a partner id. */
 router.get('/meta', requirePermission('partner.view'), (req, res) => res.json({
   states: PARTNER_STATES,
+  groups: PARTNER_GROUPS,
   columns: PARTNER_COLUMNS.map(({ key, label, pii }) => ({ key, label, pii: Boolean(pii) })),
   export_cap: PARTNER_EXPORT_CAP,
   may_export: can(req.user.role, 'data.export'),
