@@ -434,6 +434,92 @@ async function run() {
   /* ----------------------------------------------------------- 9. tickets */
   suite('09 ticketing & SLA');
 
+  await check('editing a record checks which record, not only which fields', async () => {
+    /* PATCH /leads/:id gated carefully what a caller may change — stage and
+       owner both need a capability — and never checked which lead they may
+       touch. It loaded by id alone, so a Bonanza dealer could edit a Bigul
+       lead's name, mobile, city and consent flags. The read side of this record
+       was scoped in August; the write side was not.
+
+       Proved from the other book rather than by role, because the book is the
+       boundary that must never bend. */
+    const bigul = await login('rm@bigul.test');
+    const { data: theirs } = await req('/api/leads?limit=1', { token: bigul, expect: 200 });
+    const target = need(theirs[0], 'a BIGUL lead');
+
+    const { data } = await req(`/api/leads/${target.id}`, {
+      method: 'PATCH', token: T.dealer, expect: 403,
+      body: { city: 'Nowhere' },
+    });
+    assert(/another book/i.test(data.error), `the refusal did not name the book: ${data.error}`);
+
+    // And the lead is untouched.
+    const { data: after } = await req(`/api/leads/${target.id}`, { token: bigul, expect: 200 });
+    assert(after.city !== 'Nowhere', 'the refused edit was applied anyway');
+  });
+
+  await check('a task can only be changed by somebody it belongs to', async () => {
+    /* This route had no check at all: it updated by id and returned the whole
+       row, which made it a write primitive over every task in the system —
+       reassign, reschedule, close — and a read primitive besides. */
+    const bigul = await login('rm@bigul.test');
+    const { data: theirTasks } = await req('/api/tasks?limit=1', { token: bigul, expect: 200 });
+
+    if (theirTasks.length) {
+      await req(`/api/tasks/${theirTasks[0].id}`, {
+        method: 'PATCH', token: T.dealer, expect: 404, body: { priority: 'Low' },
+      });
+    }
+
+    /* Within one book it is ownership, which is the rule the Tasks list
+       applies: your own unless you hold report.team.
+
+       Built rather than found. The lead scope runs first, so for most pairs of
+       users the refusal is already a 404 and the ownership branch never
+       executes — an earlier version of this test passed with that branch
+       disabled. This puts a task on a lead the caller owns and assigns it to
+       somebody else, which is the one shape that reaches it. */
+    const { data: theirLeads } = await req('/api/leads?limit=1', { token: T.caller, expect: 200 });
+    const lead = need(theirLeads[0], 'a lead the caller can see');
+
+    const { data: me } = await req('/api/auth/me', { token: T.sales_rm, expect: 200 });
+
+    const { data: made } = await req('/api/tasks', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: {
+        title: `Someone else's task ${RUN}`,
+        lead_id: lead.id,
+        assignee_id: me.user.id,
+        due_at: '2030-01-01 09:00',
+        priority: 'Normal',
+      },
+    });
+
+    // The caller can see the lead, so they reach the ownership check itself.
+    const { data: refused } = await req(`/api/tasks/${made.id}`, {
+      method: 'PATCH', token: T.caller, expect: 403, body: { priority: 'Low' },
+    });
+    assert(/somebody else/i.test(refused.error), `unexpected refusal: ${refused.error}`);
+
+    /* The other half of the rule. Not the assignee here on purpose: this task
+       sits on a lead its assignee cannot see, so the lead scope refuses them
+       too — and the Tasks list would hide it from them for the same reason.
+       report.team is what reaches across that. */
+    await req(`/api/tasks/${made.id}`, {
+      method: 'PATCH', token: T.admin, expect: 200, body: { priority: 'Low' },
+    });
+  });
+
+  await check('a supervisor may still act on a task in their team', async () => {
+    // The rule is ownership OR report.team, not ownership alone — closing the
+    // hole must not take the queue away from the people who manage it.
+    const { data: any } = await req('/api/tasks?all=true&limit=1', { token: T.sales_supervisor, expect: 200 });
+    if (!any.length) return;
+    await req(`/api/tasks/${any[0].id}`, {
+      method: 'PATCH', token: T.sales_supervisor, expect: 200, body: { priority: any[0].priority },
+    });
+  });
+
   await check('searching cases never shows more of them than the queue does', async () => {
     /* This one was not hypothetical. `tickets` carries a sales_org column, so
        the generic scope in advanced search found one and applied the book

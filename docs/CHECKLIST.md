@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,100** — 571 end-to-end and 529 unit. All green.
+**Tests: 1,103** — 574 end-to-end and 529 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -858,3 +858,51 @@ The thing that made two of the last three leaks silent, fixed at the cause.
 - One of the two tests checks every searchable object returns rows to a
   superadmin. That is the outside-in way to assert nothing has fallen through
   the refusal, since `scopeFor` is not exported.
+
+
+---
+
+## Record detail pages checked the same way — done 2 Sep 2026
+
+The reads were in good shape; `bookscope.test.mjs` already asserts fourteen
+record routes refuse the other book, and probing six detail routes for
+within-book role rules found five correctly refused. The sixth was a false
+alarm of my own: a list that looked reachable turned out to be explicitly
+shared with that role.
+
+The writes were another matter. That conformance test covers reads only, and a
+route that will not show you a record but will let you change it is worse than
+one that shows it.
+
+- [x] **`PATCH /leads/:id` never checked which lead.** It gated carefully
+      what a caller may change — stage and owner each need a capability — and
+      loaded the record by id alone. A Bonanza dealer could edit a Bigul lead's
+      name, mobile, city and consent flags. It goes through `loadInBook`
+      now, the accessor the conformance test blesses.
+- [x] **`PATCH /tasks/:id` had no check of any kind.** It updated by id and
+      returned the whole row, so it was a write primitive over every task in the
+      system — reassign, reschedule, close — and a read primitive besides. A
+      Bonanza dealer changed a Bigul task and read its description back. It now
+      applies the rule the Tasks list applies: the lead's book, and your own
+      unless you hold `report.team`.
+- [x] **Both verified by weakening them** and watching the tests fail, then
+      restored.
+
+### Notes
+
+- **`loadInBook` is not the tool for tasks.** A task with no lead has no
+      book, and that accessor refuses a record whose org is null — which would
+      take standalone reminders away from the people they belong to. The route
+      carries the list's own rule instead.
+- **A heuristic scan flagged 44 write routes with no scope helper in view.**
+  That was a finder, not a verdict: most scope inside a helper or beyond the
+  window it read. Only the two above accepted a cross-book write when actually
+  tried, and product cards and notes correctly refused.
+- **Tickets could not be tested across the book** — every seeded ticket is
+  Bonanza's — so `PATCH /tickets/:id` and its CSAT route are untested
+  rather than clean. Worth a Bigul ticket in the seed.
+- **My first ownership test passed against the bug.** The lead scope runs first,
+  so for most pairs of users the refusal is already a 404 and the ownership
+  branch never executes. The test now builds the one shape that reaches it — a
+  task on a lead the caller owns, assigned to somebody else — and fails when
+  that branch is disabled.

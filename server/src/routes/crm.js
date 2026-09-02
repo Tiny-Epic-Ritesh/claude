@@ -15,6 +15,7 @@ import { assignLead } from '../engine/assignment.js';
 import { metricsFor } from '../engine/metrics.js';
 import { kycStatusSql, kycStatusFor } from '../engine/kycstatus.js';
 import { nextAction, nextStepForLead } from '../engine/nextaction.js';
+import { loadInBook } from '../engine/bookscope.js';
 import {
   listQueues, membersOf, mayTakeFrom, workIn, claimFromQueue, assignToQueue,
   setMembers, ownerOf,
@@ -471,8 +472,18 @@ router.get('/meta/fields/:entity', (req, res) => {
 });
 
 router.patch('/leads/:id', (req, res) => {
-  const lead = one('SELECT * FROM leads WHERE id = ?', [req.params.id]);
-  if (!lead) return res.status(404).json({ error: 'Lead not found' });
+  /* Loaded through the book accessor, not by id alone.
+   *
+   * This route checked carefully what a caller may change — stage and owner are
+   * both capability-gated below — and never checked which lead they may touch.
+   * A Bonanza dealer could edit a Bigul lead: name, mobile, city, consent
+   * flags. The read side of this record was scoped in August and the write side
+   * was not, which is the same pairing that left the list routes behind their
+   * record routes. */
+  const found = loadInBook(req, 'lead', req.params.id);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const lead = found.row;
+
   if (isReadOnlyOnLeads(req.user.role)) return res.status(403).json({ error: 'Your role has read-only access to leads' });
 
   const body = { ...req.body };
@@ -1068,6 +1079,31 @@ router.post('/tasks', (req, res) => {
 });
 
 router.patch('/tasks/:id', (req, res) => {
+  /* This route had no check of any kind: it updated by id and returned the
+     whole row, so it was a write primitive over every task in the system and a
+     read primitive besides. A Bonanza dealer could reassign, reschedule or
+     close a Bigul task and read its description back.
+
+     `loadInBook` is not the tool here — a task with no lead has no book, and
+     refusing those would take away standalone reminders from the people they
+     belong to. So it is the rule the Tasks list already applies: the lead's
+     book if there is a lead, and your own tasks unless you hold report.team. */
+  const scope = reqScope(req, 'l');
+  const task = one(
+    `SELECT t.* FROM tasks t
+      WHERE t.id = ?
+        AND (t.lead_id IS NULL OR EXISTS (
+          SELECT 1 FROM leads l WHERE l.id = t.lead_id AND l.deleted_at IS NULL AND ${scope.sql}))`,
+    [req.params.id, ...scope.params],
+  );
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  if (task.assignee_id !== req.user.id && !can(req.user.role, 'report.team')) {
+    return res.status(403).json({
+      error: 'That task belongs to somebody else',
+      required: 'report.team',
+    });
+  }
+
   const { status, assignee_id, due_at, priority } = req.body;
   const sets = [];
   const params = [];
