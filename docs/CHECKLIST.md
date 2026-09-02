@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,105** — 576 end-to-end and 529 unit. All green.
+**Tests: 1,107** — 578 end-to-end and 529 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -955,3 +955,53 @@ The seed gap turned out to be a symptom rather than an oversight.
 
 A seed where every row of a kind sits in one book cannot test a boundary. Three
 live defects and one false test were hiding behind two rows of missing data.
+
+
+---
+
+## Which entities sit in only one book — audited 2 Sep 2026
+
+A boundary cannot be tested against data that only exists on one side of it, so
+this asked the question of every table that has a book: its own
+`sales_org` column, or one inherited from a parent. Fifteen were
+uniform. Two of those mattered.
+
+- [x] **Campaigns had the ticket defect exactly.**
+      `campaigns.sales_org` defaults to 'BONANZA' and the create route
+      never set it, which is why every seeded campaign was Bonanza's. It matters
+      more since the campaign list gained a book filter last week: a Bigul
+      marketer would have created a campaign into Bonanza's book, hidden from
+      themselves and visible to the other business. The audience decides now —
+      the list being sent to, not the author.
+- [x] **A Bigul list and a Bigul campaign are in the seed**, so
+      `mayReadList`'s book check and the campaign list's filter are
+      carried by something. Neither was broken; both were simply unverified,
+      and now a Bonanza admin gets a 404 on the Bigul list and sees two
+      campaigns of three.
+- [x] **Lead lists were not a code defect** — that route sets the book properly.
+      They were uniform because the seed only ever made Bonanza lists.
+
+### The thirteen still uniform, and why they are left
+
+Configuration rather than client records, with a null book throughout:
+`entity_def`, `permission_sets`, `validation_rule`,
+`content_library`, `integration_log`. The first four are already
+listed as NOT_A_RECORD in the book conformance test, with reasons.
+
+Carrying a `sales_org` but seeded only for Bonanza: `dispositions`,
+`kra_metrics`, `incentive_plans`, `content_items`,
+`saved_searches`. Inheriting one: `call_intent`,
+`kyc_journeys`, `sessions`.
+
+These are worth revisiting, but the risk they carry is one-directional and
+smaller than it looks: the conformance test probes a *Bonanza* record as a
+*Bigul* user, and Bonanza rows exist for all of them, so that test is not
+vacuous. What cannot currently be shown is the reverse — that a Bonanza user is
+excluded from a Bigul row of these kinds. None of them had a create-route defect
+of the kind campaigns and tickets had, which is what would have made the gap
+urgent.
+
+### The method, since it keeps paying
+
+Fifteen uniform entities, two live defects. Both were found by asking what a
+missing row was hiding rather than by adding the row that was asked for.

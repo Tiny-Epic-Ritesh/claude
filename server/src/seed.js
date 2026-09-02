@@ -1324,6 +1324,34 @@ run('INSERT INTO campaigns (name, channel, template_id, list_id, status, created
   'Quarterly research digest', 'email', templateIds['Brokerage plan comparison'], newsletterId, 'Draft', U.marketing,
 ]);
 
+/* A list and a campaign in the other book.
+ *
+ * Everything above is Bonanza's, which is the shape that hid three defects in
+ * the ticket routes: a boundary cannot be tested against data that only exists
+ * on one side of it. `mayReadList` carries a book check whose comment describes
+ * a Bigul user reading a Bonanza list, and the campaign list gained a book
+ * filter it had never had — neither was exercised by anything here.
+ *
+ * Owned by a Bigul user, so the ownership and the book agree. */
+const bigulOwner = one("SELECT id FROM users WHERE sales_org = 'BIGUL' AND role = 'sales_supervisor' AND active = 1")
+  ?? one("SELECT id FROM users WHERE sales_org = 'BIGUL' AND active = 1");
+
+if (bigulOwner) {
+  const bigulListId = Number(run(
+    'INSERT INTO lead_lists (name, kind, owner_id, created_by, shared_with, sales_org) VALUES (?,?,?,?,?,?)',
+    ['Bigul app signups', 'static', bigulOwner.id, bigulOwner.id, JSON.stringify(['sales_rm']), 'BIGUL'],
+  ).lastInsertRowid);
+
+  for (const l of all("SELECT id FROM leads WHERE sales_org = 'BIGUL' AND deleted_at IS NULL LIMIT 6")) {
+    run('INSERT OR IGNORE INTO lead_list_members (list_id, lead_id) VALUES (?,?)', [bigulListId, l.id]);
+  }
+
+  run(
+    'INSERT INTO campaigns (name, channel, template_id, list_id, status, created_by, sales_org) VALUES (?,?,?,?,?,?,?)',
+    ['Bigul onboarding nudge', 'whatsapp', templateIds['MF SIP intro'], bigulListId, 'Draft', bigulOwner.id, 'BIGUL'],
+  );
+}
+
 /* -------------------------------------------------------- notifications */
 
 run('INSERT INTO notifications (user_id, title, body, link) VALUES (?,?,?,?)', [

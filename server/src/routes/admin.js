@@ -5,7 +5,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit, ROLES, ROLE_LABELS } from '../db.js';
-import { requireUser, requirePermission, permissionsFor, orgsFor, PERMISSIONS } from '../auth.js';
+import { requireUser, requirePermission, permissionsFor, orgsFor, activeOrg, PERMISSIONS } from '../auth.js';
 import { CONDITION_FIELDS, ACTION_TYPES, runRule } from '../engine/rules.js';
 import { MASTER_STEPS } from '../engine/kyc.js';
 import { integrationRegistry, getOutbox, syncTradingDb, vendorStatus } from '../integrations.js';
@@ -607,11 +607,28 @@ router.post('/campaigns', requirePermission('campaign.manage'), (req, res) => {
   if (!channel) return res.status(400).json({ error: 'Choose a channel' });
   if (!list_id) return res.status(400).json({ error: 'Choose a list to send to' });
 
+  /* A campaign belongs to the book of the audience it sends to.
+   *
+   * `campaigns.sales_org` defaults to 'BONANZA' at the column and this route
+   * never set it — the same defect the ticket route had, and the reason every
+   * seeded campaign is Bonanza's. It matters more now that the campaign list
+   * filters by book: a Bigul marketer's campaign would have been created into
+   * Bonanza's book, hidden from the person who made it and visible to the other
+   * business.
+   *
+   * The list decides, because that is who receives the send. */
+  const audience = one('SELECT sales_org FROM lead_lists WHERE id = ?', [list_id]);
+  if (!audience) return res.status(400).json({ error: 'That list does not exist' });
+  const org = audience.sales_org ?? activeOrg(req) ?? req.user.sales_org;
+  if (!orgsFor(req.user).includes(org)) {
+    return res.status(403).json({ error: 'That list belongs to another book' });
+  }
+
   const result = run(
-    `INSERT INTO campaigns (name, channel, template_id, list_id, scheduled_at, status, created_by)
-     VALUES (?,?,?,?,?,?,?)`,
+    `INSERT INTO campaigns (name, channel, template_id, list_id, scheduled_at, status, created_by, sales_org)
+     VALUES (?,?,?,?,?,?,?,?)`,
     [name.trim(), channel, template_id || null, list_id, scheduled_at || null,
-      scheduled_at ? 'Scheduled' : 'Draft', req.user.id],
+      scheduled_at ? 'Scheduled' : 'Draft', req.user.id, org],
   );
   audit(req.user.id, 'campaign_created', 'campaign', Number(result.lastInsertRowid), { name, channel });
   res.status(201).json(one('SELECT * FROM campaigns WHERE id = ?', [result.lastInsertRowid]));

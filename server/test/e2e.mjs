@@ -483,6 +483,48 @@ async function run() {
     eq(after.csat, target.csat ?? null, 'the refused CSAT was recorded anyway');
   });
 
+  await check('a list and a campaign stay in their own book', async () => {
+    /* Both were uniform in the seed until now — every list and every campaign
+       was Bonanza's — so mayReadList's book check and the book filter on the
+       campaign list were carried by nothing. Neither turned out to be broken,
+       which is worth knowing rather than assuming. */
+    const bigul = await login('supervisor@bigul.test');
+
+    const { data: theirLists } = await req('/api/lists', { token: bigul, expect: 200 });
+    const theirs = need(theirLists.find((l) => l.name.startsWith('Bigul')), 'a BIGUL list');
+    await req(`/api/lists/${theirs.id}`, { token: T.admin, expect: 404 });
+    await req(`/api/lists/${theirs.id}`, { token: bigul, expect: 200 });
+
+    const { data: ours } = await req('/api/admin/campaigns?limit=500', { token: T.admin, expect: 200 });
+    assert(ours.length > 0, 'the campaign list came back empty, so this proves nothing');
+    assert(!ours.some((c) => c.sales_org === 'BIGUL'), 'a Bonanza admin was shown a Bigul campaign');
+  });
+
+  await check('a campaign is created into the book of the list it sends to', async () => {
+    /* campaigns.sales_org defaults to BONANZA at the column and the create
+       route never set it — the same defect the ticket route had. It matters
+       more now the campaign list filters by book: a Bigul marketer would have
+       created a campaign into Bonanza's book, hidden from themselves and
+       visible to the other business. */
+    /* Created by a superadmin, who reaches both books — which makes this the
+       sharper version of the question. If the author decided the book, a
+       superadmin's campaign would land in whichever book they happen to sit in;
+       the audience decides, so it lands in the list's. Bigul has no marketing
+       manager of its own to create it, which is the other reason. */
+    const bigul = await login('supervisor@bigul.test');
+    const { data: lists } = await req('/api/lists', { token: bigul, expect: 200 });
+    const audience = need(lists.find((l) => l.kind !== 'dynamic'), 'a BIGUL list to send to');
+
+    const { data: made } = await req('/api/admin/campaigns', {
+      method: 'POST', token: T.superadmin, expect: 201,
+      body: { name: `Book check ${RUN}`, channel: 'whatsapp', list_id: audience.id },
+    });
+    eq(made.sales_org, 'BIGUL', 'a campaign on a Bigul list was created into the other book');
+
+    const { data: bonanzaSees } = await req('/api/admin/campaigns?limit=500', { token: T.admin, expect: 200 });
+    assert(!bonanzaSees.some((c) => c.id === made.id), 'a Bonanza admin was shown a Bigul campaign');
+  });
+
   await check('a case is raised into the book of whatever it is about', async () => {
     /* tickets.sales_org defaults to BONANZA at the column and the create route
        never set it, so every case ever raised landed in Bonanza's book — a
