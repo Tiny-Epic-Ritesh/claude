@@ -60,7 +60,11 @@ export function useApi(path, deps = []) {
   }, [path, nonce, ...deps]);
 
   const reload = useCallback(() => setNonce((n) => n + 1), []);
-  return [data, { loading, error, reload, setData }];
+  /* The unpaged total for a paged list route, when the response carried one.
+     Undefined for everything else, so `total ?? data.length` is the honest
+     fallback for a route that does not page. */
+  const total = Array.isArray(data) ? data.total : undefined;
+  return [data, { loading, error, reload, setData, total }];
 }
 
 export const Spinner = () => <span className="spinner" aria-label="Loading" />;

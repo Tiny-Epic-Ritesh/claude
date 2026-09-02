@@ -32,6 +32,22 @@ async function request(path, { method = 'GET', body, kind = 'crm', raw = false }
   if (res.status === 204) return null;
 
   const data = await res.json().catch(() => ({}));
+
+  /* Paged list routes answer with a bare array and put the unpaged total in a
+     header, deliberately — the count was added to those routes without
+     wrapping them in an envelope that every existing caller would have had to
+     learn. The consequence was that nothing could read it: three routes have
+     been sending X-Total-Count to a client that threw it away, which is why a
+     table could show two hundred rows of a thousand and say nothing.
+
+     Attached rather than wrapped, and non-enumerable so it survives being the
+     same array everyone already destructures, maps and measures. `useApi`
+     surfaces it as `total` so components never touch this property. */
+  const counted = res.headers.get('X-Total-Count');
+  if (Array.isArray(data) && counted !== null) {
+    Object.defineProperty(data, 'total', { value: Number(counted), enumerable: false });
+  }
+
   if (!res.ok) {
     const err = new Error(data.error || `Request failed (${res.status})`);
     err.status = res.status;

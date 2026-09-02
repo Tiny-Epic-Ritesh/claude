@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,060** — 531 end-to-end and 529 unit. All green.
+**Tests: 1,067** — 538 end-to-end and 529 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -516,3 +516,64 @@ re-imports as a static list, uses it once, never deletes it. Daily habit.
   argument was a third, and is stripped now rather than adding a dead glyph.
   `view_column`, `upload`, `unfold_more` and `chevron_left` were real and were
   added to the subset.
+
+
+---
+
+## The account book checked the same way — done 2 Sep 2026
+
+Same method as the lead list: read `Clients.jsx` and `routes/clients.js` against
+the Salesforce List View anatomy. The filters, chips and drill-through tiles
+were already good; three things were missing and one was an outright absence.
+
+- [x] **Sort on every column.** `ORDER BY c.activated_at DESC`, hardcoded. The
+      columns here are Holdings and Brokerage YTD, so "who are my largest
+      clients" is the question this tab exists to answer, and the only way to
+      ask it was to copy the table out. Whitelisted, because it lands in an
+      ORDER BY.
+- [x] **Pagination and a row count.** The tab asked for `limit=200` and rendered
+      whatever came back. Worse than the lead list's version of this: the
+      Accounts tile above stated the true total, so a book of 900 showed two
+      hundred rows under a tile reading 900, with nothing to explain the
+      difference.
+- [x] **`X-Total-Count` is now readable.** Three routes have been sending it to
+      a client that discarded it — `api.js` never surfaced headers, so no table
+      in the product could show a total it did not compute itself. Attached to
+      the returned array as a non-enumerable `total` and surfaced by `useApi`,
+      which keeps the bare-array contract those routes deliberately chose.
+- [x] **Export.** Clients were the only object in the system with none — leads,
+      interactions, cases, tasks, partners, campaigns and product interest all
+      have one through `/search-advanced`. For a broking CRM the account book is
+      the revenue, so the most valuable table was the one nobody could take out.
+      Audited with row count, columns and the filter used; masked unless the
+      exporter holds `pii.unmask`; capped at 5,000.
+
+### Notes
+
+- **The export shares the list's filter builder.** Extracted to `clientFilter()`
+  and used by both, so what leaves is what was on screen. An export that
+  rebuilt those conditions would eventually disagree with the table it came
+  from, and "which accounts were in that file" is the question asked afterwards.
+- **A test of mine was passing for the wrong reason.** "Unmasking an export is a
+  permission" used Customer Care, who is refused for lacking `data.export`
+  entirely — the assertion never reached the unmask branch. Rewritten.
+- **Every role holding `data.export` also holds `pii.unmask`** (superadmin,
+  admin, sales_supervisor). The 403 on the unmask branch is therefore defensive
+  rather than reachable, and the masked default is the only thing between an
+  exporter and identifiers in the clear. Worth knowing before the role matrix
+  changes.
+
+### Still open on the account book
+
+- [ ] **Clients are not in `SEARCHABLE`** — no advanced search, no saved
+      segments, no nested query builder, where leads have all three. Adding them
+      means wiring a registry, scope and metadata for the entity; it is a real
+      piece of work rather than an oversight to patch, and it is the next thing
+      worth doing here.
+- [ ] **No bulk actions.** Leads have eight. Clients have reassign on the record
+      only. A bulk action over a *filter* rather than an explicit list is a
+      different safety proposition to the lead-list ones and wants deciding
+      before building.
+- [ ] **No column chooser.** A lead list is an object that can own a column
+      choice; the account book is a tab, so the choice would have to belong to
+      the person. That is a preference store this system does not yet have.

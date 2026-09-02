@@ -3552,6 +3552,87 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     assert(total >= data.length, 'X-Total-Count missing or smaller than the page');
   });
 
+  await check('the account book can be ordered by what it is a book of', async () => {
+    /* The columns here are Holdings and Brokerage YTD, so "who are my largest
+       clients" is the question this tab exists to answer. It was hard-ordered
+       by activated_at, which meant the only way to ask was to export and sort
+       somewhere else. */
+    const money = (d) => d.map((c) => c.holding_value ?? 0);
+    const { data: desc } = await req('/api/clients?sort=holding_value&dir=desc', { token: T.superadmin, expect: 200 });
+    const { data: asc } = await req('/api/clients?sort=holding_value&dir=asc', { token: T.superadmin, expect: 200 });
+    const down = money(desc);
+    eq(JSON.stringify(down), JSON.stringify([...down].sort((a, b) => b - a)), 'descending is not descending');
+    eq(JSON.stringify(money(asc)), JSON.stringify([...money(asc)].sort((a, b) => a - b)), 'ascending is not ascending');
+  });
+
+  await check('an invented sort column is ignored, not run', async () => {
+    // This lands in an ORDER BY, so it comes from a whitelist or not at all.
+    const { data } = await req('/api/clients?sort=(SELECT 1)&dir=asc', { token: T.superadmin, expect: 200 });
+    assert(Array.isArray(data), 'a bad sort broke the list instead of being ignored');
+  });
+
+  await check('the book pages, and the pages do not overlap', async () => {
+    const { data: first } = await req('/api/clients?limit=2&offset=0&sort=name&dir=asc', { token: T.superadmin, expect: 200 });
+    const { data: second } = await req('/api/clients?limit=2&offset=2&sort=name&dir=asc', { token: T.superadmin, expect: 200 });
+    const repeated = second.filter((c) => first.some((f) => f.id === c.id));
+    eq(repeated.length, 0, 'the second page repeats rows from the first');
+  });
+
+  await check('accounts can be exported, masked, and the export is recorded', async () => {
+    /* Clients were the one object with no export at all — leads, cases, tasks
+       and partners all had one, and the account book is the revenue. */
+    const { data } = await req('/api/clients/export', {
+      method: 'POST', token: T.superadmin, expect: 200,
+      body: { columns: ['name', 'client_code', 'mobile'] },
+    });
+    assert(data.csv.startsWith('"Client","UCC","Mobile"'), `unexpected header: ${data.csv.slice(0, 60)}`);
+    assert(/"\*{6}\d{4}"/.test(data.csv), 'mobile left in the clear on a masked export');
+    eq(data.unmasked, false, 'an export unmasked without being asked to');
+  });
+
+  await check('an export takes the filter it was launched from', async () => {
+    // What leaves has to be what was on screen. The filters reach the export as
+    // the same query string the table was drawn with.
+    const { data: all } = await req('/api/clients/export', {
+      method: 'POST', token: T.superadmin, expect: 200, body: { columns: ['name'] },
+    });
+    const { data: narrowed } = await req('/api/clients/export?status=Active', {
+      method: 'POST', token: T.superadmin, expect: 200, body: { columns: ['name'] },
+    });
+    assert(narrowed.rows <= all.rows, 'a filtered export returned more rows than an unfiltered one');
+  });
+
+  await check('exporting the book is a permission', async () => {
+    /* Customer Care can open every account and can unmask a field on screen,
+       and still cannot take the book out as a file. Reading one record and
+       extracting the set are different acts. */
+    await req('/api/clients/export', {
+      method: 'POST', token: T.customer_care, expect: 403,
+      body: { columns: ['name', 'mobile'] },
+    });
+  });
+
+  await check('unmasking is a second decision, recorded separately', async () => {
+    /* Note for whoever changes the role matrix: every role holding data.export
+       currently also holds pii.unmask, so the 403 on the unmask branch is
+       defensive rather than reachable. What is reachable, and what this pins,
+       is that identifiers stay masked unless the export explicitly asks —
+       being *able* to unmask is not the same as doing it by default. */
+    const masked = await req('/api/clients/export', {
+      method: 'POST', token: T.sales_supervisor, expect: 200,
+      body: { columns: ['name', 'mobile'] },
+    });
+    eq(masked.data.unmasked, false, 'a supervisor who can unmask got clear identifiers without asking');
+    assert(/"\*{6}\d{4}"/.test(masked.data.csv), 'mobile was not masked by default');
+
+    const clear = await req('/api/clients/export', {
+      method: 'POST', token: T.sales_supervisor, expect: 200,
+      body: { columns: ['name', 'mobile'], unmask: true },
+    });
+    eq(clear.data.unmasked, true, 'an explicit unmask was ignored');
+    assert(!/"\*{6}\d{4}"/.test(clear.data.csv), 'an unmasked export still masked');
+  });
+
   await check('Customer Care sees accounts; Caller, Marketing and Partner RM do not', async () => {
     await req('/api/clients', { token: T.customer_care, expect: 200 });
     // The confirmed Q-26 matrix. A caller works a dial list of prospects, and

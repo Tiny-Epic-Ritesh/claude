@@ -12,8 +12,36 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { rupeesCompact, shortDate } from '../api.js';
-import { useApi, Icon, Loading, ErrorBanner, Empty, Stat } from '../components/ui.jsx';
+import { api, rupeesCompact, shortDate } from '../api.js';
+import { useApi, Icon, Loading, ErrorBanner, Empty, Stat, Modal } from '../components/ui.jsx';
+
+/* Rows per page. The tab used to ask for two hundred and render whatever came
+   back, so an account book larger than that showed a fraction of itself while
+   the Accounts tile overhead stated the true total — two numbers on one screen
+   that disagreed, with nothing to explain the difference. */
+const PAGE = 50;
+
+/** Which of the seven columns can be ordered by, and how each one is read. */
+const COLUMNS = [
+  { key: 'name', label: 'Client' },
+  { key: 'client_code', label: 'UCC' },
+  { key: 'holding_value', label: 'Holdings', num: true },
+  { key: 'brokerage_ytd', label: 'Brokerage YTD', num: true },
+  { key: 'last_traded_at', label: 'Last trade' },
+  { key: 'owner_name', label: 'Owner' },
+];
+
+/** Hand the browser a file without a round trip to the server for it. */
+function download(filename, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8;' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 /** Stable colours so the eye learns a segment across rows. */
 const SEGMENT_BADGE = {
@@ -38,6 +66,14 @@ export default function Clients() {
     dormant: search.get('dormant') ?? '',
   }), [search]);
 
+  /* Order and position join the filters in the URL rather than in local state,
+     for the reason the filters are already there: a colleague sent "the ten
+     largest dormant accounts" should open on the ten largest dormant accounts,
+     and a refresh should not lose the reader's place. */
+  const sort = search.get('sort') ?? '';
+  const dir = search.get('dir') === 'asc' ? 'asc' : 'desc';
+  const offset = Math.max(Number(search.get('offset')) || 0, 0);
+
   // The search box needs to keep up with typing without refetching per key.
   const [typed, setTyped] = useState(filters.q);
   useEffect(() => { setTyped(filters.q); }, [filters.q]);
@@ -55,18 +91,42 @@ export default function Clients() {
   const query = useMemo(() => {
     const p = new URLSearchParams();
     for (const [k, v] of Object.entries(filters)) if (v) p.set(k, v);
-    p.set('limit', '200');
+    if (sort) { p.set('sort', sort); p.set('dir', dir); }
+    p.set('limit', String(PAGE));
+    p.set('offset', String(offset));
     return p.toString();
-  }, [filters]);
+  }, [filters, sort, dir, offset]);
 
-  const [rows, { loading, error }] = useApi(`/clients?${query}`, [query]);
+  const [rows, { loading, error, total }] = useApi(`/clients?${query}`, [query]);
+  const [exporting, setExporting] = useState(false);
+
+  // The unpaged count, which the route has always sent and nothing has read.
+  const count = total ?? rows?.length ?? 0;
   const [summary] = useApi('/clients/summary');
   const [meta] = useApi('/clients/meta');
 
   const setFilter = (key, value) => {
     const next = new URLSearchParams(search);
     if (value) next.set(key, value); else next.delete(key);
+    // Narrowing the list invalidates the page number: page 4 of a filter that
+    // now matches nine accounts is an empty screen that reads as a bug.
+    next.delete('offset');
     setSearch(next, { replace: true });
+  };
+
+  const setSort = (key) => {
+    const next = new URLSearchParams(search);
+    next.set('sort', key);
+    next.set('dir', sort === key && dir === 'asc' ? 'desc' : 'asc');
+    next.delete('offset');
+    setSearch(next, { replace: true });
+  };
+
+  const setPage = (nextOffset) => {
+    const next = new URLSearchParams(search);
+    if (nextOffset > 0) next.set('offset', String(nextOffset)); else next.delete('offset');
+    setSearch(next, { replace: true });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const applied = Object.entries(filters).filter(([, v]) => v);
@@ -151,17 +211,43 @@ export default function Clients() {
 
       {!loading && rows && rows.length > 0 && (
         <div className="card">
+          <div className="card-head">
+            <h2>
+              {count.toLocaleString('en-IN')} account{count === 1 ? '' : 's'}
+              {applied.length > 0 && <span className="muted"> matching</span>}
+            </h2>
+            {/* Clients were the one object with no export at all — leads,
+                cases, tasks and partners all had one. The account book is the
+                revenue, so the absence meant the most valuable table here was
+                the one people copied out by hand. */}
+            {meta?.may_export && (
+              <button className="btn-ghost btn-sm" onClick={() => setExporting(true)}>
+                <Icon name="download" size={15} /> Export
+              </button>
+            )}
+          </div>
           <div className="table-scroll">
             <table className="table">
               <thead>
                 <tr>
-                  <th>Client</th>
-                  <th>UCC</th>
+                  {COLUMNS.map((col) => (
+                    <th key={col.key} className={col.num ? 'num' : undefined}
+                      aria-sort={sort === col.key ? (dir === 'asc' ? 'ascending' : 'descending') : undefined}>
+                      {/* "Who are my largest clients" is the question this book
+                          exists to answer, and the only way to ask it used to be
+                          to export the table and sort it somewhere else. */}
+                      <button type="button" className="th-sort"
+                        aria-label={`Sort by ${col.label}`} onClick={() => setSort(col.key)}>
+                        {col.label}
+                        <Icon
+                          name={sort !== col.key ? 'unfold_more' : dir === 'asc' ? 'arrow_upward' : 'arrow_downward'}
+                          size={13} />
+                      </button>
+                    </th>
+                  ))}
+                  {/* Segments come from a side table per row, so there is no
+                      single column to order by. */}
                   <th>Segments</th>
-                  <th className="num">Holdings</th>
-                  <th className="num">Brokerage YTD</th>
-                  <th>Last trade</th>
-                  <th>Owner</th>
                 </tr>
               </thead>
               <tbody>
@@ -172,13 +258,6 @@ export default function Clients() {
                       <div className="small muted">{c.mobile}</div>
                     </td>
                     <td className="mono">{c.client_code}</td>
-                    <td>
-                      <div className="row wrap" style={{ gap: 4 }}>
-                        {(c.segments ?? []).map((s) => (
-                          <span key={s} className={`badge ${SEGMENT_BADGE[s] || ''}`}>{s}</span>
-                        ))}
-                      </div>
-                    </td>
                     <td className="num">{rupeesCompact(c.holding_value)}</td>
                     <td className="num">{rupeesCompact(c.brokerage_ytd)}</td>
                     <td>
@@ -191,13 +270,132 @@ export default function Clients() {
                       )}
                     </td>
                     <td className="muted">{c.owner_name || '—'}</td>
+                    <td>
+                      <div className="row wrap" style={{ gap: 4 }}>
+                        {(c.segments ?? []).map((s) => (
+                          <span key={s} className={`badge ${SEGMENT_BADGE[s] || ''}`}>{s}</span>
+                        ))}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+
+          {/* Where you are in the book, and how to leave. Without this the tab
+              showed a page and called it the whole thing. */}
+          {(count > PAGE || offset > 0) && (
+            <div className="card-foot row wrap" style={{ gap: 10, justifyContent: 'space-between' }}>
+              <span className="tiny muted">
+                {offset + 1}–{offset + rows.length} of {count.toLocaleString('en-IN')}
+              </span>
+              <div className="row" style={{ gap: 6 }}>
+                <button className="btn-ghost btn-sm" disabled={offset === 0}
+                  onClick={() => setPage(Math.max(offset - PAGE, 0))}>
+                  <Icon name="chevron_left" size={15} /> Previous
+                </button>
+                <button className="btn-ghost btn-sm" disabled={offset + rows.length >= count}
+                  onClick={() => setPage(offset + PAGE)}>
+                  Next <Icon name="chevron_right" size={15} />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
+
+      {exporting && (
+        <ExportDialog meta={meta} count={count} query={query}
+          onClose={() => setExporting(false)} />
+      )}
     </div>
+  );
+}
+
+/**
+ * Export the book, as filtered.
+ *
+ * The filters go to the server as the same query string the table was drawn
+ * with, so what leaves is what was on screen. Rebuilding the conditions here
+ * would have let the two drift, and "which accounts were actually in that
+ * file" is precisely the question asked afterwards.
+ */
+function ExportDialog({ meta, count, query, onClose }) {
+  const columns = meta?.columns ?? [];
+  const [picked, setPicked] = useState(
+    ['name', 'client_code', 'status', 'holding_value', 'brokerage_ytd', 'last_traded_at', 'owner_name'],
+  );
+  const [unmask, setUnmask] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState(null);
+
+  const toggle = (key) => setPicked((p) => (p.includes(key) ? p.filter((k) => k !== key) : [...p, key]));
+  const hasPii = picked.some((k) => columns.find((c) => c.key === k)?.pii);
+  const capped = count > (meta?.export_cap ?? 5000);
+
+  const run = async () => {
+    setBusy(true); setProblem(null);
+    try {
+      // The table's own query string, so the export cannot describe a
+      // different set of accounts than the one it was taken from.
+      const r = await api.post(`/clients/export?${query}`, { columns: picked, unmask });
+      download(r.filename, r.csv);
+      onClose();
+    } catch (e) { setProblem(e.message); setBusy(false); }
+  };
+
+  return (
+    <Modal title="Export accounts"
+      subtitle={`${count.toLocaleString('en-IN')} account${count === 1 ? '' : 's'}, as currently filtered`}
+      onClose={onClose}>
+      <div className="stack" style={{ gap: 14 }}>
+        <ErrorBanner error={problem} onDismiss={() => setProblem(null)} />
+
+        <div className="stack" style={{ gap: 2, maxHeight: '40vh', overflowY: 'auto' }}>
+          {columns.map((c) => (
+            <label key={c.key} className="row" style={{ gap: 8, padding: '6px 2px', cursor: 'pointer' }}>
+              <input type="checkbox" checked={picked.includes(c.key)} onChange={() => toggle(c.key)} />
+              <span style={{ flex: 1 }}>{c.label}</span>
+              {c.pii && <span className="chip chip-muted tiny">Identifier</span>}
+            </label>
+          ))}
+        </div>
+
+        {hasPii && (
+          meta?.may_unmask ? (
+            <label className="row" style={{ gap: 8, cursor: 'pointer' }}>
+              <input type="checkbox" checked={unmask} onChange={(e) => setUnmask(e.target.checked)} />
+              <span className="small">
+                Include mobile and email in full.
+                <span className="muted"> Recorded against your name in the audit log.</span>
+              </span>
+            </label>
+          ) : (
+            <div className="tiny muted">
+              <Icon name="lock" size={13} /> Mobile and email leave masked — unmasking is a separate permission.
+            </div>
+          )
+        )}
+
+        {capped && (
+          <div className="notice notice-warn">
+            <Icon name="info" size={17} />
+            <span>
+              This filter matches more than one export can carry. The first{' '}
+              {(meta?.export_cap ?? 5000).toLocaleString('en-IN')} will be included —
+              narrow the filters if you need a particular set.
+            </span>
+          </div>
+        )}
+
+        <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+          <button className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" disabled={busy || !picked.length} onClick={run}>
+            {busy ? 'Building…' : 'Download CSV'}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }

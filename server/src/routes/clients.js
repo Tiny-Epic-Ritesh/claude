@@ -22,6 +22,43 @@ import {
 const router = Router();
 router.use(requireUser);
 
+/**
+ * The columns a client row can be ordered by or exported as.
+ *
+ * One table rather than two lists, because a column somebody can sort by and a
+ * column somebody can export are the same question asked twice. `sql` is what
+ * ORDER BY needs — several of these are joined or derived, so the column name
+ * alone would not resolve.
+ *
+ * This is also the whitelist that keeps the sort parameter out of the query. It
+ * lands in an ORDER BY, so it is never taken from the request directly.
+ */
+export const CLIENT_COLUMNS = [
+  { key: 'name', label: 'Client', sql: 'c.name' },
+  { key: 'client_code', label: 'UCC', sql: 'c.client_code' },
+  { key: 'mobile', label: 'Mobile', sql: 'c.mobile', pii: true },
+  { key: 'email', label: 'Email', sql: 'c.email', pii: true },
+  { key: 'status', label: 'Status', sql: 'c.status' },
+  { key: 'risk_profile', label: 'Risk profile', sql: 'c.risk_profile' },
+  { key: 'holding_value', label: 'Holdings', sql: 'c.holding_value' },
+  { key: 'brokerage_ytd', label: 'Brokerage YTD', sql: 'c.brokerage_ytd' },
+  { key: 'ledger_balance', label: 'Ledger balance', sql: 'c.ledger_balance' },
+  { key: 'margin_available', label: 'Margin available', sql: 'c.margin_available' },
+  { key: 'trades_last_year', label: 'Trades (1y)', sql: 'c.trades_last_year' },
+  { key: 'last_traded_at', label: 'Last trade', sql: 'c.last_traded_at' },
+  { key: 'activated_at', label: 'Opened', sql: 'c.activated_at' },
+  { key: 'days_since_trade', label: 'Days since trade', sql: 'days_since_trade' },
+  { key: 'owner_name', label: 'Owner', sql: 'u.name' },
+  { key: 'partner_name', label: 'Partner', sql: 'p.name' },
+  { key: 'sales_org', label: 'Business', sql: 'c.sales_org' },
+];
+
+const columnBy = (key) => CLIENT_COLUMNS.find((col) => col.key === key);
+
+/* The most one export may carry. Matches the lead-list cap — an export larger
+   than this is a report, and a report is a different conversation. */
+const EXPORT_CAP = 5000;
+
 /** A role with no client grant at all should not see an empty tab and wonder. */
 const mayViewClients = (user) =>
   can(user.role, 'client.view.all') || can(user.role, 'client.view.own');
@@ -38,7 +75,16 @@ router.use((req, res, next) => {
 
 /* --------------------------------------------------------------- list */
 
-router.get('/', (req, res) => {
+/**
+ * The filters behind the account book, as one clause.
+ *
+ * Shared by the list and the export deliberately. An export that rebuilt these
+ * conditions separately would eventually disagree with the screen it was taken
+ * from, and somebody would leave with a different set of accounts than the one
+ * they were looking at — the kind of divergence nobody notices until an
+ * auditor asks which rows were sent.
+ */
+function clientFilter(req) {
   const scope = reqClientScope(req, 'c');
   const where = ['c.deleted_at IS NULL', scope.sql];
   const params = [...scope.params];
@@ -67,9 +113,29 @@ router.get('/', (req, res) => {
   if (req.query.opened_from) { where.push('date(c.activated_at) >= date(?)'); params.push(req.query.opened_from); }
   if (req.query.opened_to) { where.push('date(c.activated_at) <= date(?)'); params.push(req.query.opened_to); }
 
-  const clause = where.join(' AND ');
+  return { clause: where.join(' AND '), params };
+}
+
+/** Which of the filters above are actually in play, for an audit row. */
+const appliedFilters = (req) => Object.fromEntries(
+  ['q', 'status', 'segment', 'owner_id', 'partner_id', 'dormant', 'opened_from', 'opened_to']
+    .filter((k) => req.query[k])
+    .map((k) => [k, req.query[k]]),
+);
+
+router.get('/', (req, res) => {
+  const { clause, params } = clientFilter(req);
   const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
   const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+  /* Order, from the whitelist above. This is an account book whose columns are
+     Holdings and Brokerage YTD, so "who are my largest clients" is the question
+     it exists to answer — and until now the only way to ask it was to export
+     the table and sort it somewhere else. `c.id` breaks ties so a row cannot
+     appear on two consecutive pages when the sorted values are equal. */
+  const sortCol = columnBy(req.query.sort);
+  const dir = String(req.query.dir).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+  const orderBy = sortCol ? `${sortCol.sql} ${dir}, c.id ASC` : 'c.activated_at DESC';
 
   const total = one(`SELECT COUNT(*) n FROM clients c WHERE ${clause}`, params).n;
 
@@ -86,7 +152,7 @@ router.get('/', (req, res) => {
        LEFT JOIN users u ON u.id = c.owner_id
        LEFT JOIN partners p ON p.id = c.partner_id
       WHERE ${clause}
-      ORDER BY c.activated_at DESC
+      ORDER BY ${orderBy}
       LIMIT ? OFFSET ?`,
     [...params, limit, offset],
   );
@@ -120,6 +186,87 @@ router.get('/', (req, res) => {
  * The counts behind the tab's summary cards. Computed under the same scope as
  * the list, so a figure can never describe accounts the person cannot open.
  */
+/* --------------------------------------------------------------- export */
+
+/** One CSV cell. Quotes everything, so a comma in a name cannot shift a column. */
+const csvCell = (v) => (v === null || v === undefined ? '""' : `"${String(v).replace(/"/g, '""')}"`);
+
+/**
+ * Export the account book, as filtered.
+ *
+ * Clients are the one object in this system with no advanced search and no
+ * export — leads, cases, tasks, partners and campaigns all have both. For a
+ * broking CRM the account book is the revenue, so the absence meant the most
+ * valuable table in the product was the one people had to copy out of the
+ * screen by hand.
+ *
+ * Masked by default and gated the same way the rest of the system's exports
+ * are: unmasking is a separate capability and is named in the audit row, so
+ * taking identifiers out in the clear is a decision somebody made rather than
+ * a default nobody noticed.
+ */
+router.post('/export', requirePermission('data.export'), (req, res) => {
+  const chosen = (Array.isArray(req.body?.columns) && req.body.columns.length
+    ? req.body.columns.filter((k) => columnBy(k))
+    : ['name', 'client_code', 'status', 'holding_value', 'brokerage_ytd', 'last_traded_at', 'owner_name']);
+  if (!chosen.length) return res.status(400).json({ error: 'Choose at least one column' });
+
+  const wantsClear = Boolean(req.body?.unmask);
+  const mayUnmask = can(req.user.role, 'pii.unmask');
+  if (wantsClear && !mayUnmask) {
+    return res.status(403).json({
+      error: 'Exporting identifiers in the clear needs the unmask permission',
+      required: 'pii.unmask',
+    });
+  }
+  const unmasked = wantsClear && mayUnmask;
+
+  const { clause, params } = clientFilter(req);
+  const rows = all(
+    `SELECT c.*, ${dormantSql('c')} AS activity_status,
+            CAST(julianday('now') - julianday(COALESCE(c.last_traded_at, c.activated_at)) AS INTEGER) AS days_since_trade,
+            u.name AS owner_name, p.name AS partner_name
+       FROM clients c
+       LEFT JOIN users u ON u.id = c.owner_id
+       LEFT JOIN partners p ON p.id = c.partner_id
+      WHERE ${clause}
+      ORDER BY c.id
+      LIMIT ?`,
+    [...params, EXPORT_CAP],
+  );
+
+  /* Field-level masking still applies. An export is not a way around it — the
+     screen this was taken from masked these same columns. */
+  const visible = maskRecords(rows, maskFor(req, 'client.list'));
+
+  const mask = (key, value) => {
+    if (!columnBy(key)?.pii || unmasked || !value) return value;
+    const str = String(value);
+    return key === 'email'
+      ? str.replace(/^(.).*(@.*)$/, '$1***$2')
+      : `******${str.slice(-4)}`;
+  };
+
+  const header = chosen.map((k) => csvCell(columnBy(k).label)).join(',');
+  const body = visible.map((r) => chosen.map((k) => csvCell(mask(k, r[k]))).join(',')).join('\n');
+
+  /* One row naming what left, not one per client: this is a single act by one
+     person, and five thousand rows would bury the fact of it. The filter is
+     recorded because "who was in that export" is the question asked afterwards,
+     and the filter is the only thing that answers it. */
+  audit(req.user.id, 'client.export', 'client', null, {
+    rows: visible.length, columns: chosen, unmasked, filters: appliedFilters(req),
+  });
+
+  res.json({
+    filename: `clients-${new Date().toISOString().slice(0, 10)}.csv`,
+    rows: visible.length,
+    unmasked,
+    truncated: visible.length >= EXPORT_CAP,
+    csv: `${header}\n${body}`,
+  });
+});
+
 router.get('/summary', (req, res) => {
   const scope = reqClientScope(req, 'c');
   const base = `FROM clients c WHERE c.deleted_at IS NULL AND ${scope.sql}`;
@@ -147,8 +294,21 @@ router.get('/summary', (req, res) => {
   res.json({ ...row, opened_this_month: openedThisMonth, by_segment: bySegment });
 });
 
-router.get('/meta', (_req, res) =>
-  res.json({ segments: SEGMENTS, statuses: CLIENT_STATUSES }));
+router.get('/meta', (req, res) =>
+  res.json({
+    segments: SEGMENTS,
+    statuses: CLIENT_STATUSES,
+    /* The columns the book can be ordered by and exported as, so the interface
+       cannot offer one the route would refuse. `sql` stays server-side — it is
+       the ORDER BY fragment and no business of the browser's. */
+    columns: CLIENT_COLUMNS.map(({ key, label, pii }) => ({ key, label, pii: Boolean(pii) })),
+    export_cap: EXPORT_CAP,
+    /* Whether this person may take identifiers out in the clear, so the export
+       dialog offers the choice only to somebody who has it rather than showing
+       a control that answers 403. */
+    may_export: can(req.user.role, 'data.export'),
+    may_unmask: can(req.user.role, 'pii.unmask'),
+  }));
 
 /* ------------------------------------------------------------- detail */
 
