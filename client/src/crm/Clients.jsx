@@ -14,6 +14,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, rupeesCompact, shortDate } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty, Stat, Modal } from '../components/ui.jsx';
+import AdvancedSearch from '../components/AdvancedSearch.jsx';
 
 /* Rows per page. The tab used to ask for two hundred and render whatever came
    back, so an account book larger than that showed a fraction of itself while
@@ -53,7 +54,7 @@ const SEGMENT_BADGE = {
   Global: 'badge-accent',
 };
 
-export default function Clients() {
+export default function Clients({ session }) {
   const navigate = useNavigate();
   const [search, setSearch] = useSearchParams();
 
@@ -99,9 +100,24 @@ export default function Clients() {
 
   const [rows, { loading, error, total }] = useApi(`/clients?${query}`, [query]);
   const [exporting, setExporting] = useState(false);
+  /* The three boxes above answer "which segment, which status, is it dormant".
+     Anything with an or in it — "Derivatives or Commodity, opened this year,
+     no trade in sixty days" — needs the builder, which the account book had no
+     way to reach because clients were not a searchable object at all. */
+  const [advanced, setAdvanced] = useState(false);
+  const [found, setFound] = useState(null);
 
   // The unpaged count, which the route has always sent and nothing has read.
   const count = total ?? rows?.length ?? 0;
+
+  /* A search answers with the columns the search engine selects, which is not
+     quite the list's shape: segments come from a side table the list queries
+     separately, and Dormant is derived. Rather than render those blank, the two
+     columns step out while a search is showing — a result table and a list
+     table answering different questions is normal, a column of em-dashes is
+     not. */
+  const shown = found ? found.rows : rows;
+  const searching = Boolean(found);
   const [summary] = useApi('/clients/summary');
   const [meta] = useApi('/clients/meta');
 
@@ -180,6 +196,14 @@ export default function Clients() {
           </div>
         </div>
 
+        <div className="card-body row wrap" style={{ gap: 8, paddingTop: 0 }}>
+          <button type="button"
+            className={advanced ? 'btn btn-primary btn-sm' : 'btn btn-sm'}
+            onClick={() => { setAdvanced((v) => !v); if (advanced) setFound(null); }}>
+            <Icon name="filter_alt" size={16} /> {advanced ? 'Hide advanced search' : 'Advanced search'}
+          </button>
+        </div>
+
         {/* The applied filter is always visible and always removable. A list
             that is silently filtered reads as a bug — "where did my other
             accounts go?" (Q-05). */}
@@ -198,10 +222,30 @@ export default function Clients() {
         )}
       </div>
 
+      {advanced && (
+        <AdvancedSearch
+          entity="client"
+          session={session}
+          onResults={setFound}
+          onClose={() => { setAdvanced(false); setFound(null); }}
+        />
+      )}
+
+      {found && (
+        <div className="result-bar">
+          <span className="described">
+            <strong>{found.total.toLocaleString('en-IN')}</strong> matched — {found.described}
+          </span>
+          <button type="button" className="btn btn-sm" onClick={() => setFound(null)}>
+            <Icon name="close" size={15} /> Clear
+          </button>
+        </div>
+      )}
+
       <ErrorBanner error={error} />
       {loading && <Loading label="Loading accounts…" />}
 
-      {!loading && rows && rows.length === 0 && (
+      {!loading && shown && shown.length === 0 && (
         <Empty>
           {applied.length
             ? 'No accounts match these filters. Try removing one above.'
@@ -209,12 +253,14 @@ export default function Clients() {
         </Empty>
       )}
 
-      {!loading && rows && rows.length > 0 && (
+      {!loading && shown && shown.length > 0 && (
         <div className="card">
           <div className="card-head">
             <h2>
-              {count.toLocaleString('en-IN')} account{count === 1 ? '' : 's'}
-              {applied.length > 0 && <span className="muted"> matching</span>}
+              {searching
+                ? `${found.rows.length} of ${found.total.toLocaleString('en-IN')} matched`
+                : `${count.toLocaleString('en-IN')} account${count === 1 ? '' : 's'}`}
+              {!searching && applied.length > 0 && <span className="muted"> matching</span>}
             </h2>
             {/* Clients were the one object with no export at all — leads,
                 cases, tasks and partners all had one. The account book is the
@@ -246,12 +292,13 @@ export default function Clients() {
                     </th>
                   ))}
                   {/* Segments come from a side table per row, so there is no
-                      single column to order by. */}
-                  <th>Segments</th>
+                      single column to order by — and a search does not fetch
+                      them at all. */}
+                  {!searching && <th>Segments</th>}
                 </tr>
               </thead>
               <tbody>
-                {rows.map((c) => (
+                {shown.map((c) => (
                   <tr key={c.id} className="row-link" onClick={() => navigate(`/clients/${c.id}`)}>
                     <td>
                       <div>{c.name}</div>
@@ -261,7 +308,9 @@ export default function Clients() {
                     <td className="num">{rupeesCompact(c.holding_value)}</td>
                     <td className="num">{rupeesCompact(c.brokerage_ytd)}</td>
                     <td>
-                      {c.activity_status === 'Dormant' ? (
+                      {/* Dormant is derived by the list query; a search row
+                          carries the date and nothing to colour it with. */}
+                      {!searching && c.activity_status === 'Dormant' ? (
                         <span className="badge badge-amber" title={`${c.days_since_trade} days since last trade`}>
                           Dormant · {c.days_since_trade}d
                         </span>
@@ -270,13 +319,15 @@ export default function Clients() {
                       )}
                     </td>
                     <td className="muted">{c.owner_name || '—'}</td>
-                    <td>
-                      <div className="row wrap" style={{ gap: 4 }}>
-                        {(c.segments ?? []).map((s) => (
-                          <span key={s} className={`badge ${SEGMENT_BADGE[s] || ''}`}>{s}</span>
-                        ))}
-                      </div>
-                    </td>
+                    {!searching && (
+                      <td>
+                        <div className="row wrap" style={{ gap: 4 }}>
+                          {(c.segments ?? []).map((s) => (
+                            <span key={s} className={`badge ${SEGMENT_BADGE[s] || ''}`}>{s}</span>
+                          ))}
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -285,7 +336,7 @@ export default function Clients() {
 
           {/* Where you are in the book, and how to leave. Without this the tab
               showed a page and called it the whole thing. */}
-          {(count > PAGE || offset > 0) && (
+          {!searching && (count > PAGE || offset > 0) && (
             <div className="card-foot row wrap" style={{ gap: 10, justifyContent: 'space-between' }}>
               <span className="tiny muted">
                 {offset + 1}–{offset + rows.length} of {count.toLocaleString('en-IN')}

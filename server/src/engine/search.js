@@ -54,6 +54,25 @@ export const SEARCHABLE = {
     soft_delete: 'l.deleted_at IS NULL',
     scope: 'lead',
   },
+  client: {
+    label: 'Clients',
+    /* Joined so a result carries the owner's name rather than an id nobody can
+       read. The join is 1:1 on a primary key, so the COUNT this table also
+       feeds is unaffected. */
+    table: 'clients l LEFT JOIN users u ON u.id = l.owner_id',
+    id: 'l.id',
+    select: `l.id, l.client_code, l.name, l.mobile, l.email, l.status, l.risk_profile,
+             l.sales_org, l.owner_id, l.partner_id, l.holding_value, l.brokerage_ytd,
+             l.ledger_balance, l.trades_last_year, l.activated_at, l.last_traded_at,
+             u.name AS owner_name`,
+    soft_delete: 'l.deleted_at IS NULL',
+    /* Not the generic org filter. Client visibility is a role question as well
+       as a book question — an org-scoped role without client.view.all sees
+       nothing, and a Product RM sees only accounts holding their product — and
+       the generic fallback applies neither. Search is a different way to ask,
+       never a different answer. */
+    scope: 'client',
+  },
   interaction: {
     label: 'Interactions',
     table: 'activities l',
@@ -256,6 +275,20 @@ export function registryFor(entity, user, caps = new Set()) {
     const type = TYPE_MAP[f.type];
     if (!type) continue;
     if (FIELD_TYPES[f.type]?.derived) continue;   // computed on read, not in SQL
+
+    /* An encrypted column cannot be filtered, and offering it is worse than
+       omitting it. Encryption here is randomised — the same PAN stores
+       differently every time — so `l.pan = ?` and `l.pan LIKE ?` both compare
+       against ciphertext and match nothing, while the builder describes the
+       filter back as "PAN is equal to ABCDE1000F" and reports zero results.
+       For a broker, "no lead has this PAN" when one does is how a duplicate
+       account gets opened.
+
+       Exact lookup does exist, through the blind index `pan_bidx` — see
+       routes/ccm.js and the duplicate check on lead create. Wiring that into
+       the builder means an eq-only operator set over a hashed value, which is a
+       feature rather than this fix; until then the field is not offered. */
+    if (f.type === 'encrypted_text') continue;
 
     // The exfiltration gate. A field the caller cannot read is not offered,
     // and therefore cannot be probed a character at a time.

@@ -14,6 +14,7 @@
  */
 
 import { strict as assert } from 'node:assert';
+import { readFileSync } from 'node:fs';
 import { all, one, run, db } from '../src/db.js';
 import { seedMetadata, seedPicklists } from '../src/engine/metadata.js';
 import {
@@ -160,12 +161,34 @@ test('three levels of nesting agree', () => {
 
 console.log('\nA filter is an exfiltration channel');
 
-test('a capability-scoped field is filterable only by a holder', () => {
+test('an encrypted field is filterable by nobody, holder or not', () => {
+  /* This used to assert that a pii.unmask holder could filter on PAN. They
+     could — the field was offered — but the filter never matched anything:
+     encryption here is randomised, so `l.pan = ?` compares a plaintext PAN
+     against ciphertext that differs every time it is written. An exact, correct
+     PAN returned zero rows while the builder described the filter back as "PAN
+     is equal to ABCDE1000F". For a broker that is how a duplicate account gets
+     opened.
+
+     Both halves now answer the same way, which is also the stronger position
+     for the exfiltration channel this section is about: a field nobody can
+     filter on cannot be probed a character at a time by anybody. Exact lookup
+     still exists through the blind index — see routes/ccm.js. */
   const withCap = registryFor('lead', holder, caps);
   const without = registryFor('lead', holder, noCaps);
 
-  assert(withCap.pan, 'a pii.unmask holder should be able to filter on PAN');
+  assert(!withCap.pan, 'PAN is offered as a filter that can only ever match nothing');
   assert(!without.pan, 'PAN is filterable without pii.unmask — it can be probed a character at a time');
+});
+
+test('the capability gate is still what hides a non-encrypted restricted field', () => {
+  /* Every capability-scoped field in the schema today is encrypted, so the
+     exclusion above reaches them first and this gate has nothing left to act
+     on. It is still the thing standing between a restricted field and a filter,
+     so it is checked directly rather than left to rot unnoticed. */
+  const src = readFileSync(new URL('../src/engine/search.js', import.meta.url), 'utf8');
+  assert(/read_scope === 'capability'/.test(src) && /caps\.has\(f\.read_capability\)/.test(src),
+    'the capability gate has gone from registryFor');
 });
 
 test('naming a hidden field directly is rejected like an unknown one', () => {

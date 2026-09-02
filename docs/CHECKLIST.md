@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,067** — 538 end-to-end and 529 unit. All green.
+**Tests: 1,073** — 544 end-to-end and 529 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -565,11 +565,12 @@ were already good; three things were missing and one was an outright absence.
 
 ### Still open on the account book
 
-- [ ] **Clients are not in `SEARCHABLE`** — no advanced search, no saved
-      segments, no nested query builder, where leads have all three. Adding them
-      means wiring a registry, scope and metadata for the entity; it is a real
-      piece of work rather than an oversight to patch, and it is the next thing
-      worth doing here.
+- [x] **Clients are in `SEARCHABLE`** — done 2 Sep 2026. The metadata was
+      already there (`entity_def` had `client`, with 14 `field_def` rows); the
+      entity had simply never been registered. 13 fields are offered, including
+      the custom `service_tier` from the value store, and the builder is mounted
+      on the Clients tab. Two security defects were found on the way and are
+      recorded below.
 - [ ] **No bulk actions.** Leads have eight. Clients have reassign on the record
       only. A bulk action over a *filter* rather than an explicit list is a
       different safety proposition to the lead-list ones and wants deciding
@@ -577,3 +578,61 @@ were already good; three things were missing and one was an outright absence.
 - [ ] **No column chooser.** A lead list is an object that can own a column
       choice; the account book is a tab, so the choice would have to belong to
       the person. That is a preference store this system does not yet have.
+
+
+---
+
+## Clients added to advanced search — done 2 Sep 2026
+
+The metadata already existed. What was missing was the registration, the scope,
+and — as it turned out — two things that would have been unsafe to ship the
+account book onto.
+
+- [x] **`SEARCHABLE.client`**, joined to `users` so a result carries the owner's
+      name rather than an id. The join is 1:1 on a primary key, so the COUNT
+      that shares the table is unaffected.
+- [x] **Its own scope entry.** The generic branch in `scopeFor` applies only the
+      `sales_org` boundary. Client visibility is also a role question: an
+      org-scoped role without `client.view.all` sees nothing, and a Product RM
+      sees only accounts holding their product. Falling through would have let a
+      Relationship Manager who owns one account read all four in their business
+      through the search box while the Clients tab showed them one. Tested by
+      asserting search and list return the same count for the same person.
+- [x] **The builder mounted on the Clients tab.** The component already took an
+      `entity` prop and was only ever mounted for leads.
+
+### Two defects found on the way, both pre-existing
+
+- [x] **An encrypted field was offered as a filter that could never match.**
+      PAN is stored with randomised encryption, so `pan = 'ABCDE1000F'` compares
+      plaintext against ciphertext that differs on every write. An exact,
+      correct PAN returned zero rows while the builder described the filter back
+      as "PAN is equal to ABCDE1000F". For a broker, "no lead has this PAN" when
+      one does is how a duplicate account gets opened. Verified against live
+      data before fixing. Encrypted fields are no longer offered on lead, client
+      or partner. Exact lookup still exists through the blind index
+      (`pan_bidx`, `routes/ccm.js`); wiring that into the builder — an eq-only
+      operator over a hashed value — is a feature, not this fix.
+- [x] **The CSV export never masked anything.** The docstring directly above it
+      promised "masked fields stay masked — an export is not a way around
+      field-level security" for as long as the route existed, and the code sent
+      query rows straight to the file. Every mobile and email left in the clear,
+      on every object, for anyone holding `data.export`. Now masked through the
+      same `maskFor`/`maskRecords` the list screens use, with `?unmask=true`
+      honoured for `pii.unmask` holders and recorded in the audit row.
+
+### Notes
+
+- **`registryFor`'s capability gate now has nothing to act on.** Every
+  capability-scoped field in the schema is `encrypted_text`, so the exclusion
+  above reaches them first. The gate is still what stands between a restricted
+  non-encrypted field and a filter, so it is asserted directly rather than left
+  to rot unnoticed.
+- **A test asserted the bug.** "A capability-scoped field is filterable only by
+  a holder" checked that a `pii.unmask` holder *could* filter on PAN. They
+  could — it just never matched. Rewritten to assert the stronger property:
+  nobody can filter it, so nobody can probe it a character at a time either.
+- **Two of my own new tests passed for the wrong reason before being fixed**:
+  one matched on `entity` (the display name) instead of `key`, and one asserted
+  against a parsed object for a `text/csv` response, so the masked half passed
+  without reading a row. Both now assert the row count first.

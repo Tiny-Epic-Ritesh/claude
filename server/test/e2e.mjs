@@ -4818,6 +4818,91 @@ await check('a per-channel withdrawal closes only that channel', async () => {
   /* ============================================================ 42 */
   suite('42 Advanced Search usability (ENH-15)');
 
+  await check('the account book is searchable like every other object', async () => {
+    const { data: objects } = await req('/api/search-advanced/objects', { token: T.admin, expect: 200 });
+    const list = Array.isArray(objects) ? objects : objects.objects;
+    // `key` is the identifier; `entity` on this payload is the display name.
+    assert(list.some((o) => o.key === 'client'), 'clients are still not searchable');
+
+    const { data } = await req('/api/search-advanced/fields/client', { token: T.admin, expect: 200 });
+    const names = data.fields.map((f) => f.api_name);
+    for (const f of ['name', 'client_code', 'status', 'brokerage_ytd', 'last_traded_at']) {
+      assert(names.includes(f), `${f} is not offered as a client filter`);
+    }
+    // A custom field lives in the value store, not a column, and reaches the
+    // registry as a correlated subquery. If that wiring is wrong it is wrong
+    // silently, so it is named here.
+    assert(names.includes('service_tier'), 'the custom client field is not searchable');
+  });
+
+  await check('a client search runs, and describes what it did', async () => {
+    const { data } = await req('/api/search-advanced/client', {
+      method: 'POST', token: T.admin, expect: 200,
+      body: { where: { op: 'AND', children: [{ field: 'status', operator: 'eq', value: 'Active' }] } },
+    });
+    assert(data.total >= 1, 'no active clients matched');
+    assert(/status/i.test(data.described), `the filter was not described: ${data.described}`);
+  });
+
+  await check('searching the book never shows more of it than the book does', async () => {
+    /* The property this whole entry hangs on. Clients carry a role scope as
+       well as an org one — an org-scoped role without client.view.all sees
+       nothing, a Product RM sees only accounts holding their product — and the
+       generic scope in search applies neither. Falling through to it would have
+       let a Relationship Manager read every account in their business through
+       the search box while the Clients tab showed them one. */
+    const { data: listed } = await req('/api/clients?limit=500', { token: T.sales_rm, expect: 200 });
+    const { data: found } = await req('/api/search-advanced/client', {
+      method: 'POST', token: T.sales_rm, expect: 200, body: { where: null },
+    });
+    eq(found.total, listed.length, 'search and the list disagree about how many accounts exist');
+  });
+
+  await check('a role with no sight of accounts finds none by searching', async () => {
+    // Marketing is refused the tab outright; search has to fail closed the same
+    // way rather than merely returning fewer rows.
+    await req('/api/clients', { token: T.marketing_manager, expect: 403 });
+    const { data } = await req('/api/search-advanced/client', {
+      method: 'POST', token: T.marketing_manager, expect: 200, body: { where: null },
+    });
+    eq(data.total, 0, 'a role refused the Clients tab found accounts through search');
+  });
+
+  await check('an encrypted field is not offered as a filter that cannot work', async () => {
+    /* PAN is stored with randomised encryption, so `pan = 'ABCDE1000F'`
+       compares plaintext against ciphertext and matches nothing — while the
+       builder described it back confidently and reported zero results. "No lead
+       has this PAN" when one does is how a duplicate account gets opened. */
+    for (const entity of ['lead', 'client', 'partner']) {
+      // eslint-disable-next-line no-await-in-loop
+      const { data } = await req(`/api/search-advanced/fields/${entity}`, { token: T.admin, expect: 200 });
+      assert(!data.fields.some((f) => f.api_name === 'pan'),
+        `${entity} still offers PAN as a filter that can only ever match nothing`);
+    }
+  });
+
+  await check('an export masks what the screen masks', async () => {
+    /* The route's own comment promised this for as long as it existed, and the
+       code never did it: rows went from the query straight into the CSV, so
+       every mobile and email left in the clear on every object for anybody
+       holding data.export. A supervisor is the case that matters — the role has
+       both data.export and masked fields. */
+    /* This route answers text/csv, which the helper hands back as `raw`. Worth
+       being explicit about: asserting against the parsed object instead would
+       have made the masked half pass without reading a single row. */
+    const masked = await req('/api/search-advanced/client/export', {
+      method: 'POST', token: T.sales_supervisor, expect: 200, body: { where: null },
+    });
+    const maskedCsv = masked.data.raw;
+    assert(maskedCsv.split('\n').length > 2, 'the export carried no rows, so it proves nothing');
+    assert(!/,9\d{9},/.test(maskedCsv), 'a mobile left an export in the clear for a role that masks it');
+
+    const clear = await req('/api/search-advanced/client/export?unmask=true', {
+      method: 'POST', token: T.sales_supervisor, expect: 200, body: { where: null },
+    });
+    assert(/,9\d{9},/.test(clear.data.raw), 'an explicit, permitted unmask was ignored');
+  });
+
   await check('ready-made filters are offered, and every one of them works', async () => {
     const { data } = await req('/api/search-advanced/fields/lead', { token: T.admin, expect: 200 });
     assert(Array.isArray(data.starters) && data.starters.length >= 3,

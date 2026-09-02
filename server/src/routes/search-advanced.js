@@ -15,7 +15,10 @@
 
 import { Router } from 'express';
 import { all, one, run, audit } from '../db.js';
-import { requireUser, requirePermission, reqScope, orgsFor } from '../auth.js';
+import {
+  requireUser, requirePermission, reqScope, reqClientScope, orgsFor, maskFor,
+} from '../auth.js';
+import { maskRecords } from '../security.js';
 import {
   SEARCHABLE, registryFor, validateTree, compile, runSearch, searchIds,
   operatorsFor, describe, searchableObjects, OPERATORS,
@@ -36,6 +39,16 @@ router.use(requireUser);
 function scopeFor(entity, req) {
   if (entity === 'lead') {
     const s = reqScope(req);
+    return { sql: s.sql, params: s.params };
+  }
+
+  /* Clients carry their own scope for the same reason leads do: the generic
+     branch below only applies the sales_org boundary, and client visibility is
+     also a role question. Falling through would have let a role holding
+     client.view.own read the whole book through the search box — the search
+     path quietly granting what the list path refuses. */
+  if (entity === 'client') {
+    const s = reqClientScope(req, 'l');
     return { sql: s.sql, params: s.params };
   }
 
@@ -328,6 +341,12 @@ router.post('/lead/to-list', requirePermission('list.create'), (req, res) => {
  * filter used, because this is the one action that takes client data out of the
  * system and onto somebody's laptop. Masked fields stay masked — an export is
  * not a way around field-level security.
+ *
+ * That last sentence described an intention rather than the code for as long as
+ * this route existed: rows went from the query straight into the CSV, so every
+ * mobile and email left in the clear for anybody holding data.export, on every
+ * object. Unmasking is a second permission and a deliberate act — `?unmask=true`
+ * with pii.unmask — and it writes its own audit row when used.
  */
 router.post('/:entity/export', requirePermission('data.export'), (req, res) => {
   const { entity } = req.params;
@@ -349,9 +368,17 @@ router.post('/:entity/export', requirePermission('data.export'), (req, res) => {
     rows: rows.length,
     of_total: total,
     filter: tree ? describe(tree, registry) : 'no filter',
+    // Whether identifiers left in the clear is the first thing asked about an
+    // export after the fact, so it is recorded rather than inferred.
+    unmasked: req.query?.unmask === 'true',
   });
 
-  const headers = rows.length ? Object.keys(rows[0]) : [];
+  /* The same masking the list screens apply. An export that skipped it would be
+     the one path in the product where field-level security did not hold, and it
+     is the path that puts the data on a laptop. */
+  const visible = maskRecords(rows, maskFor(req, entity));
+
+  const headers = visible.length ? Object.keys(visible[0]) : [];
   const escape = (v) => {
     if (v == null) return '';
     const s = String(v);
@@ -360,7 +387,7 @@ router.post('/:entity/export', requirePermission('data.export'), (req, res) => {
 
   const csv = [
     headers.join(','),
-    ...rows.map((r) => headers.map((h) => escape(r[h])).join(',')),
+    ...visible.map((r) => headers.map((h) => escape(r[h])).join(',')),
   ].join('\n');
 
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
