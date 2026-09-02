@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,115** — 586 end-to-end and 529 unit. All green.
+**Tests: 1,118** — 589 end-to-end and 529 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -1184,3 +1184,43 @@ limit is ten a minute. The suite reported seven failures whose cause was the
 limiter working. The Bigul accounts are signed in once now and shared as
 `T.bigul_rm`, `T.bigul_care` and `T.bigul_supervisor`,
 which removed sixteen redundant logins across the file.
+
+
+---
+
+## The partner detail page checked the same way — done 2 Sep 2026
+
+Nine routes name a partner and two of them checked the book.
+
+- [x] **Four wrote across it.** A Bonanza admin could log an activity against a
+      Bigul partner, complete their onboarding steps, mark their training
+      modules — that one loaded no partner at all and answered with the whole
+      module list — and attach a lead to them.
+- [x] **Two refused by accident, and described the record while doing it.** The
+      edit hit an approval lock ("this record is waiting on an approval") and
+      the elevation found the partner already active. Both are true statements
+      about the other book's partner, made while declining to change it, and
+      neither would have refused a partner in a different state. The book is
+      checked before either now.
+- [x] **One put the two books together in the data.**
+      `POST /:id/sourced-leads` attributed a Bonanza lead to a Bigul
+      partner. Both ends are checked now, and the lead is looked up *inside* the
+      partner's book rather than found and then rejected — "that lead is in
+      another business" confirms the lead exists, and "not found" says nothing.
+
+### One loader, not seven checks
+
+All nine go through a `loadPartner(req)` that answers with the partner or
+a refusal. That is the shape `clients.js` already had, and clients is the
+one detail page in this sweep that came through clean — there is no second path
+to keep in step. Verified by removing the check inside that loader and watching
+all three new tests fail.
+
+### On probing
+
+Run as an **admin**: every capability, one book, so a refusal can only be the
+boundary. Superadmin would have been the wrong choice — that role reaches both
+books by design — and an under-privileged token is worse still, because the
+refusals it produces look exactly like the boundary holding. That mistake is
+what recorded the card and note routes as safe earlier in this sweep when they
+were not.

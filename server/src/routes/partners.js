@@ -91,6 +91,32 @@ const PARTNER_GROUPS = {
   active: ['ACTIVE', 'SUSPENDED', 'TERMINATED'],
 };
 
+/**
+ * A partner, in the reader's book, or a refusal saying which.
+ *
+ * Nine routes name a partner id and two of them checked the book. The rest
+ * loaded by id and went to work, so a Bonanza admin could log an activity
+ * against a Bigul partner, complete their onboarding steps, mark their training
+ * modules and attach a Bonanza lead to them — that last one crossing the books
+ * in the data itself.
+ *
+ * Two more refused, but by accident rather than by rule: the edit route hit an
+ * approval lock and the elevation route found the partner already active, both
+ * of which are facts about the other book's record disclosed while declining to
+ * change it. Neither would have refused a partner in a different state.
+ *
+ * One loader, used by all of them, is what makes this hold — `clients.js` has
+ * the same shape and came through this sweep clean.
+ */
+function loadPartner(req) {
+  const partner = one('SELECT * FROM partners WHERE id = ?', [Number(req.params.id) || -1]);
+  if (!partner) return { error: 'Partner not found', status: 404 };
+  if (!mayUseOrg(req.user, partner.sales_org)) {
+    return { error: 'This partner belongs to another book', status: 403 };
+  }
+  return { partner };
+}
+
 const partnerColumn = (key) => PARTNER_COLUMNS.find((c) => c.key === key);
 const PARTNER_EXPORT_CAP = 5000;
 const csvCell = (v) => (v === null || v === undefined ? '""' : `"${String(v).replace(/"/g, '""')}"`);
@@ -321,7 +347,14 @@ router.patch('/:id', requirePermission('partner.create'), (req, res) => {
    * still be changed while a change to it awaits sign-off, the approver puts
    * their name to a number that is no longer there.
    */
-  const locked = lockRefusal('partner', Number(req.params.id));
+  /* The book first. This route refused across it only because the record it was
+     handed happened to be waiting on an approval — a 409 that tells the other
+     business something true about its own partner while declining to change it.
+     A partner in any other state would have been edited. */
+  const found = loadPartner(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+
+  const locked = lockRefusal('partner', found.partner.id);
   if (locked) return res.status(409).json(locked);
 
   const invalid = validate(req.body, { mobile: ['mobile'], email: ['email'], pan: ['pan'], bank_ifsc: ['ifsc'] });
@@ -354,10 +387,11 @@ router.patch('/:id', requirePermission('partner.create'), (req, res) => {
 /* ---------------------------------------------------------- onboarding */
 
 router.post('/:id/steps/:code', requirePermission('partner.create'), (req, res) => {
-  const partner = one('SELECT * FROM partners WHERE id = ?', [req.params.id]);
-  if (!partner) return res.status(404).json({ error: 'Partner not found' });
+  const found = loadPartner(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const { partner } = found;
 
-  run("UPDATE partner_steps SET status = 'done', completed_at = datetime('now') WHERE partner_id = ? AND code = ?", [req.params.id, req.params.code]);
+  run("UPDATE partner_steps SET status = 'done', completed_at = datetime('now') WHERE partner_id = ? AND code = ?", [partner.id, req.params.code]);
 
   const next = one("SELECT * FROM partner_steps WHERE partner_id = ? AND status = 'pending' ORDER BY sort_order LIMIT 1", [req.params.id]);
   if (next) run("UPDATE partner_steps SET status = 'active' WHERE id = ?", [next.id]);
@@ -374,10 +408,14 @@ router.post('/:id/steps/:code', requirePermission('partner.create'), (req, res) 
 });
 
 router.post('/:id/lms/:module', requirePermission('partner.create'), (req, res) => {
+  // Loaded nothing at all, and answered with the partner's whole module list.
+  const found = loadPartner(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+
   run("UPDATE partner_lms SET status = 'Completed', score = ?, completed_at = datetime('now') WHERE partner_id = ? AND module = ?", [
-    req.body.score ?? 80, req.params.id, decodeURIComponent(req.params.module),
+    req.body.score ?? 80, found.partner.id, decodeURIComponent(req.params.module),
   ]);
-  res.json({ ok: true, modules: lmsSync(Number(req.params.id)) });
+  res.json({ ok: true, modules: lmsSync(found.partner.id) });
 });
 
 /**
@@ -385,8 +423,9 @@ router.post('/:id/lms/:module', requirePermission('partner.create'), (req, res) 
  * Partner RM requests → Admin approves → system creates the entity + portal login.
  */
 router.post('/:id/request-elevation', requirePermission('partner.elevate.request'), (req, res) => {
-  const partner = one('SELECT * FROM partners WHERE id = ?', [req.params.id]);
-  if (!partner) return res.status(404).json({ error: 'Partner not found' });
+  const found = loadPartner(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const { partner } = found;
 
   const pending = one("SELECT COUNT(*) n FROM partner_steps WHERE partner_id = ? AND status != 'done'", [req.params.id]);
   if (pending.n > 0) return res.status(400).json({ error: `${pending.n} onboarding step(s) still incomplete`, pending: pending.n });
@@ -399,8 +438,11 @@ router.post('/:id/request-elevation', requirePermission('partner.elevate.request
 });
 
 router.post('/:id/elevate', requirePermission('partner.elevate'), (req, res) => {
-  const partner = one('SELECT * FROM partners WHERE id = ?', [req.params.id]);
-  if (!partner) return res.status(404).json({ error: 'Partner not found' });
+  /* The book before the state, or the refusal tells the other book what state
+     its partner is in while declining to change it. */
+  const found = loadPartner(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const { partner } = found;
   if (partner.state_code === 'ACTIVE') return res.status(400).json({ error: 'Partner is already active' });
 
   const code = `BNZ-P${String(partner.id).padStart(4, '0')}`;
@@ -428,17 +470,36 @@ router.post('/:id/elevate', requirePermission('partner.elevate'), (req, res) => 
 /* ------------------------------------------------------------ activity */
 
 router.post('/:id/activities', requirePermission('partner.view'), (req, res) => {
+  const found = loadPartner(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+
   const { type = 'Partner Activity', subject, body, lead_id } = req.body;
   run('INSERT INTO activities (partner_id, lead_id, type, direction, subject, body, user_id) VALUES (?,?,?,?,?,?,?)', [
-    req.params.id, lead_id || null, type, 'outbound', subject || 'Partner activity', body || null, req.user.id,
+    found.partner.id, lead_id || null, type, 'outbound', subject || 'Partner activity', body || null, req.user.id,
   ]);
   res.status(201).json({ ok: true });
 });
 
 /** Attribute an existing lead to this partner. */
 router.post('/:id/sourced-leads', requirePermission('partner.view'), (req, res) => {
+  /* Both ends, because this one associates two records: a Bonanza lead was
+     attributable to a Bigul partner, which puts the books together in the data
+     rather than merely reading across them. */
+  const found = loadPartner(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+
+  /* The lead is looked up inside the partner's book rather than found and then
+     rejected. "That lead is in another business" is a true statement that
+     confirms the lead exists; "not found" says nothing, and a lead in the other
+     book is not a lead this caller can attribute to anybody. */
   const { lead_id } = req.body;
-  run('UPDATE leads SET partner_id = ? WHERE id = ?', [req.params.id, lead_id]);
+  const lead = one(
+    'SELECT id FROM leads WHERE id = ? AND deleted_at IS NULL AND sales_org = ?',
+    [Number(lead_id) || -1, found.partner.sales_org],
+  );
+  if (!lead) return res.status(404).json({ error: 'Lead not found' });
+
+  run('UPDATE leads SET partner_id = ? WHERE id = ?', [found.partner.id, lead.id]);
   run('INSERT INTO activities (partner_id, lead_id, type, direction, subject, user_id) VALUES (?,?,?,?,?,?)', [
     req.params.id, lead_id, 'Partner Activity', 'inbound', 'Lead attributed to partner', req.user.id,
   ]);

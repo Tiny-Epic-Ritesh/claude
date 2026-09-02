@@ -971,6 +971,79 @@ async function run() {
   /* ---------------------------------------------------------- 10. partners */
   suite('10 partner lifecycle');
 
+  await check('nothing on a partner detail page reaches the other book', async () => {
+    /* Nine routes name a partner and two checked the book. A Bonanza admin
+       could log an activity against a Bigul partner, complete their onboarding
+       steps, mark their training modules and attach a lead to them.
+
+       Probed as an admin on purpose — every capability, one book — so a refusal
+       can only be the boundary. An under-privileged token produces refusals
+       that look like the boundary and are not, which is how the card and note
+       routes were recorded as safe earlier in this sweep. */
+    const { data: theirs } = await req('/api/partners?limit=1', { token: T.bigul_supervisor, expect: 200 });
+    const target = need(theirs[0], 'a BIGUL partner');
+
+    const probes = [
+      ['GET', `/api/partners/${target.id}`, undefined],
+      ['GET', `/api/partners/${target.id}/insight`, undefined],
+      ['PATCH', `/api/partners/${target.id}`, { partner_model: target.partner_model }],
+      ['POST', `/api/partners/${target.id}/activities`, { type: 'Note', subject: 'probe' }],
+      ['POST', `/api/partners/${target.id}/elevate`, { to_model: 'Associate' }],
+      ['POST', `/api/partners/${target.id}/request-elevation`, { to_model: 'Associate' }],
+      ['POST', `/api/partners/${target.id}/steps/PROFILE`, { done: true }],
+    ];
+    for (const [method, path, body] of probes) {
+      // eslint-disable-next-line no-await-in-loop
+      const { status } = await req(path, { method, token: T.admin, body });
+      assert([403, 404].includes(status), `${method} ${path} answered ${status}`);
+    }
+  });
+
+  await check('a refusal on a partner does not describe the partner', async () => {
+    /* Two routes refused across the book by accident rather than by rule. The
+       edit hit an approval lock — "this record is waiting on an approval" — and
+       the elevation found the partner already active. Both are true statements
+       about the other book's record, made while declining to change it, and
+       neither would have refused a partner in a different state. */
+    const { data: theirs } = await req('/api/partners?limit=1', { token: T.bigul_supervisor, expect: 200 });
+    const target = need(theirs[0], 'a BIGUL partner');
+
+    const { data: edit } = await req(`/api/partners/${target.id}`, {
+      method: 'PATCH', token: T.admin, expect: 403, body: { partner_model: 'Remisier' },
+    });
+    assert(/another book/i.test(edit.error), `the edit refusal said something else: ${edit.error}`);
+
+    const { data: up } = await req(`/api/partners/${target.id}/elevate`, {
+      method: 'POST', token: T.admin, expect: 403, body: { to_model: 'Associate' },
+    });
+    assert(!/already active/i.test(up.error), `the refusal described the partner: ${up.error}`);
+  });
+
+  await check('a lead is only attributed to a partner in its own business', async () => {
+    /* This one associates two records rather than reading one, so it puts the
+       books together in the data instead of merely across it: a Bonanza lead
+       was attributable to a Bigul partner. */
+    const { data: theirs } = await req('/api/partners?limit=1', { token: T.bigul_supervisor, expect: 200 });
+    const partner = need(theirs[0], 'a BIGUL partner');
+    const { data: ourLeads } = await req('/api/leads?limit=1', { token: T.admin, expect: 200 });
+    const lead = need(ourLeads[0], 'a BONANZA lead');
+
+    // Refused at the partner, since that is the record being reached for.
+    await req(`/api/partners/${partner.id}/sourced-leads`, {
+      method: 'POST', token: T.admin, expect: 403, body: { lead_id: lead.id },
+    });
+
+    // And refused the other way round: our own partner, their lead.
+    const { data: ourPartners } = await req('/api/partners?limit=1', { token: T.admin, expect: 200 });
+    const { data: theirLeads } = await req('/api/leads?limit=1', { token: T.bigul_rm, expect: 200 });
+    if (ourPartners[0] && theirLeads[0]) {
+      const { data } = await req(`/api/partners/${ourPartners[0].id}/sourced-leads`, {
+        method: 'POST', token: T.admin, expect: 404, body: { lead_id: theirLeads[0].id },
+      });
+      assert(/not found/i.test(data.error), `unexpected refusal: ${data.error}`);
+    }
+  });
+
   await check('the partner list is bounded, counted, sorted and searchable', async () => {
     /* It had no LIMIT at all: the whole book came back on every call, with no
        count and nothing to order it by but the day each partner was added. */
