@@ -757,10 +757,10 @@ first page and calling it everything.
       pulling every partner and splitting the array in the browser, and the four
       tiles were sums over that same array. Honest while the list was unbounded;
       the moment it started paging, both would have described a page. There is a
-       filter and a , and a test asserts the tile
-      and the tab agree and that neither follows the page size.
+      `?group=` filter and a `/partners/summary`, and a test asserts the
+      tile and the tab agree and that neither follows the page size.
 - [x] **Campaigns, both surfaces.** There are two: the marketing tab at
-       that people use weekly, and the Setup screen. Both read the
+      `/campaigns` that people use weekly, and the Setup screen. Both read the
       same route, so both needed it. The Setup one is a table and got sortable
       headers; the marketing one is a card grid, so it got an order dropdown
       instead — a grid has no column headers to click.
