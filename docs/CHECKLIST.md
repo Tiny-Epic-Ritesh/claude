@@ -1044,10 +1044,7 @@ row leaves it uniform whichever book it lands in.
 
 ### Deliberately left uniform
 
-- `dispositions` — the column exists and nothing reads it. Every query is
-  `WHERE active = 1 AND activity_type = ?`, with no book in it, so all 23
-  are visible to both businesses today. Either the reads should filter or the
-  column should go; adding a Bigul row would only make the table look scoped.
+- `dispositions` — resolved 2 Sep 2026 by dropping the column. See below.
 - `entity_def` — object definitions, identical in both. Correctly null.
 - `integration_log` — vendor events, not a client record.
 - `sessions` — a login session belongs to a user, not a business.
@@ -1060,3 +1057,37 @@ likeliest cause is contention on the shared SQLite file — the dev server was
 running while `seed.js` was invoked by hand and then again by the suite.
 Recorded rather than ignored: it is not reproducible, and it is not being
 claimed as fixed.
+
+
+---
+
+## dispositions.sales_org dropped — done 2 Sep 2026
+
+The column promised something the table cannot do, so it went rather than being
+enforced.
+
+**Why not filter the reads.** Two things ruled it out. All 23 shipped outcomes
+carried the column default, so filtering would have left a Bigul caller with no
+dispositions at all — the same failure the KRA bootstrap had just produced. And
+`code TEXT NOT NULL UNIQUE` is a firm-wide constraint: the table cannot
+hold a Bonanza and a Bigul row for the same code, so the per-book reading the
+column implies is impossible without a different unique key.
+
+**What the code actually does.** Every read is
+`WHERE active = 1 AND activity_type = ?`. The Setup list route takes no
+request and returns every row. The create route refuses a duplicate code
+firm-wide and never writes a book. Call outcomes are firm-wide configuration in
+every path that touches them — the column was the only thing saying otherwise,
+and it said so on all 23 rows by labelling them 'BONANZA'.
+
+**Dropped, with the precedent already in the file**: the same guarded
+`ALTER TABLE ... DROP COLUMN` pattern used for the `leads.kyc_status`
+mirror, so an existing database loses the column on next boot and a fresh one
+never has it. Verified against the live database — column gone, all 23 rows
+intact, and a Bigul caller still gets outcomes for all three activity types.
+
+**If per-business call outcomes are ever wanted**, this is a feature rather than
+a repair: a `UNIQUE(code, sales_org)` key, a row per business, filtered
+reads, and a Setup screen that says which business is being edited. The comment
+on the migration says so, so the next person meets the decision rather than the
+column.

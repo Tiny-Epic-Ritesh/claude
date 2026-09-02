@@ -1435,8 +1435,7 @@ CREATE TABLE IF NOT EXISTS dispositions (
 
   hint          TEXT,                    -- shown under the picker in the UI
   sort_order    INTEGER NOT NULL DEFAULT 0,
-  active        INTEGER NOT NULL DEFAULT 1,
-  sales_org     TEXT NOT NULL DEFAULT 'BONANZA'
+  active        INTEGER NOT NULL DEFAULT 1
 );
 
 /**
@@ -1907,6 +1906,32 @@ if (db.prepare("SELECT name FROM pragma_table_info('leads')").all().some((c) => 
     console.log('[db] dropped the leads.kyc_status mirror — it is derived now');
   } catch (err) {
     console.warn('[db] could not drop leads.kyc_status:', err.message);
+  }
+}
+
+/**
+ * Drop `dispositions.sales_org`, which promised something the table cannot do.
+ *
+ * The column said each business had its own call outcomes. Nothing read it —
+ * every query is `WHERE active = 1 AND activity_type = ?` — nothing wrote
+ * anything but the default, and `code TEXT NOT NULL UNIQUE` makes the per-book
+ * version impossible anyway: there cannot be a Bonanza and a Bigul row for the
+ * same code. So all 23 shipped outcomes were labelled 'BONANZA' and shown to
+ * both businesses, and a custom outcome added by either was shown to both.
+ *
+ * Dropped rather than filtered. Filtering the reads would have left a Bigul
+ * caller with no dispositions at all, and making it real means a different
+ * unique key, a row per business, and a Setup screen that says which one — a
+ * feature nobody has asked for. If per-business call outcomes are ever wanted,
+ * this comment is the place to start; until then a column that misdescribes the
+ * data is worse than no column, because it is what the next person reads.
+ */
+if (db.prepare("SELECT name FROM pragma_table_info('dispositions')").all().some((c) => c.name === 'sales_org')) {
+  try {
+    db.exec('ALTER TABLE dispositions DROP COLUMN sales_org');
+    console.log('[db] dropped dispositions.sales_org — call outcomes are firm-wide');
+  } catch (err) {
+    console.warn('[db] could not drop dispositions.sales_org:', err.message);
   }
 }
 
