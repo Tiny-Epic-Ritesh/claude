@@ -173,12 +173,24 @@ router.get('/incentives', (req, res) => {
 
 /* --------------------------------------------------------------- config */
 
-router.get('/config', requirePermission('admin.rules'), (_req, res) => {
+router.get('/config', requirePermission('admin.rules'), (req, res) => {
+  /* One business at a time, like the scorecard this configures.
+   *
+   * Targets and plans are per-business — the metric table is keyed on
+   * (role_code, code, sales_org) — but this route took no request at all and
+   * returned every row. While only one business had any it looked right; the
+   * moment both did, a role's weights summed to 200 and the screen offered two
+   * unlabelled copies of every metric to edit.
+   *
+   * The org switcher decides, falling back to the administrator's own book —
+   * the same rule the rest of the product follows. */
+  const org = activeOrg(req) ?? req.user.sales_org;
   const roles = all('SELECT code, name FROM roles ORDER BY sort_order, code');
   res.json({
+    sales_org: org,
     roles,
-    metrics: all('SELECT * FROM kra_metrics ORDER BY role_code, sort_order'),
-    plans: all('SELECT * FROM incentive_plans ORDER BY role_code, name').map((p) => ({
+    metrics: all('SELECT * FROM kra_metrics WHERE sales_org = ? ORDER BY role_code, sort_order', [org]),
+    plans: all('SELECT * FROM incentive_plans WHERE sales_org = ? ORDER BY role_code, name', [org]).map((p) => ({
       ...p,
       slabs: all('SELECT * FROM incentive_slabs WHERE plan_id = ? ORDER BY basis, from_value', [p.id]),
     })),

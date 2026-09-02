@@ -483,6 +483,39 @@ async function run() {
     eq(after.csat, target.csat ?? null, 'the refused CSAT was recorded anyway');
   });
 
+  await check('a second business gets the shipped targets too', async () => {
+    /* seedKra inserted without naming a book, so every shipped metric landed on
+       the column default and Bigul had none — while routes/kra.js reads
+       `WHERE role_code = ? AND sales_org = ?`. A Bigul RM opened their
+       scorecard and saw an empty one. Nothing looked wrong from Bonanza, which
+       is why it lasted. */
+    const bigul = await login('rm@bigul.test');
+    const { data: theirs } = await req('/api/kra', { token: bigul, expect: 200 });
+    const { data: ours } = await req('/api/kra', { token: T.sales_rm, expect: 200 });
+
+    assert(theirs.metrics.length > 0, 'a Bigul RM has no KRA metrics at all');
+    eq(theirs.metrics.length, ours.metrics.length,
+      'the two businesses ship a different number of metrics for the same role');
+  });
+
+  await check('the targets screen configures one business at a time', async () => {
+    /* This route took no request and returned every row. While only one
+       business had metrics it looked right; with both, a role weighted to 200
+       and the screen offered two unlabelled copies of each metric to edit. */
+    const { data } = await req('/api/kra/config', { token: T.admin, expect: 200 });
+    assert(data.sales_org, 'the config does not say which business it is for');
+
+    const byRole = new Map();
+    for (const m of data.metrics.filter((x) => x.active)) {
+      byRole.set(m.role_code, (byRole.get(m.role_code) ?? 0) + m.weight);
+    }
+    for (const [role, total] of byRole) {
+      eq(total, 100, `${role} weights to ${total}, not 100 — the config is mixing books`);
+    }
+    assert(data.metrics.every((m) => m.sales_org === data.sales_org),
+      'the config returned a metric from another business');
+  });
+
   await check('a list and a campaign stay in their own book', async () => {
     /* Both were uniform in the seed until now — every list and every campaign
        was Bonanza's — so mayReadList's book check and the book filter on the

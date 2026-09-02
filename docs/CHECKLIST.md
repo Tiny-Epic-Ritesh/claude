@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,107** — 578 end-to-end and 529 unit. All green.
+**Tests: 1,109** — 580 end-to-end and 529 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -1005,3 +1005,58 @@ urgent.
 
 Fifteen uniform entities, two live defects. Both were found by asking what a
 missing row was hiding rather than by adding the row that was asked for.
+
+
+---
+
+## Seeding the remaining uniform entities — done 2 Sep 2026
+
+Thirteen entities sat in one book. Seeding them was the task; the first question
+was which of them have a book the code actually reads, because seeding a
+distinction the product does not make is worse than leaving it uniform — the
+data then looks meaningful and is not.
+
+### The defect it found
+
+- [x] **A Bigul user's scorecard was empty.** `seedKra()` inserts against a
+      table keyed on (role_code, code, sales_org) — built for a metric per
+      business — but never named a book, so every shipped metric landed on the
+      column default. `routes/kra.js` reads
+      `WHERE role_code = ? AND sales_org = ?`, so a Bigul RM saw nothing at
+      all: 0 metrics against Bonanza's 4. `seedIncentives()` was worse — it
+      looked up 'BONANZA' by name. Both bootstrap per business now, and an
+      edited metric still stays the business's own.
+- [x] **The targets screen in Setup mixed the two books.** It took no request
+      and returned every row, so with both businesses seeded a role weighted to
+      200 and the screen offered two unlabelled copies of every metric to edit.
+      It follows the org switcher now, like the scorecard it configures.
+
+### Seeded, because the code reads their book
+
+`kra_metrics` and `incentive_plans` (per business, via the fixed
+bootstrap), `content_library` and `content_items` (
+`mayRead` refuses a library outside the reader's books),
+`validation_rule` (read as `sales_org IS NULL OR sales_org = ?`, so a
+scoped rule is the case that line exists for), `permission_sets`,
+`saved_searches`, `kyc_journeys` (reached through the lead by
+`loadInBook`) and `call_intent` — one on each side, since a single
+row leaves it uniform whichever book it lands in.
+
+### Deliberately left uniform
+
+- `dispositions` — the column exists and nothing reads it. Every query is
+  `WHERE active = 1 AND activity_type = ?`, with no book in it, so all 23
+  are visible to both businesses today. Either the reads should filter or the
+  column should go; adding a Bigul row would only make the table look scoped.
+- `entity_def` — object definitions, identical in both. Correctly null.
+- `integration_log` — vendor events, not a client record.
+- `sessions` — a login session belongs to a user, not a business.
+
+### Note on the run
+
+One `npm test` invocation reported six failures in the metadata and picklist
+unit tests, and three consecutive runs since have been clean at 580/580. The
+likeliest cause is contention on the shared SQLite file — the dev server was
+running while `seed.js` was invoked by hand and then again by the suite.
+Recorded rather than ignored: it is not reproducible, and it is not being
+claimed as fixed.

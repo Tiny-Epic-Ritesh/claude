@@ -1399,6 +1399,116 @@ for (const [entity, name, message, condition] of [
     [entity, name, JSON.stringify(condition), message, U.admin ?? null]);
 }
 
+/* ------------------------------------------- a second book, where it means
+   something
+
+   Everything above this line is Bonanza's, and a boundary cannot be tested
+   against data that only exists on one side of it — two rows of missing data
+   hid three defects in the ticket routes, and a missing book on the KRA
+   bootstrap left Bigul users with an empty scorecard.
+
+   These are the tables whose book the code actually reads. Tables where the
+   column exists but nothing filters on it are deliberately left alone: seeding
+   a distinction the product does not make is worse than leaving it uniform,
+   because the data then looks meaningful and is not. `dispositions` is the
+   clearest of those — every read is `WHERE active = 1 AND activity_type = ?`,
+   with no book in it. */
+
+const bigulAdmin = one("SELECT id FROM users WHERE sales_org = 'BIGUL' AND role = 'sales_supervisor' AND active = 1")
+  ?? one("SELECT id FROM users WHERE sales_org = 'BIGUL' AND active = 1");
+
+if (bigulAdmin) {
+  /* A library and an item in it. `mayRead` refuses a library whose sales_org is
+     outside the reader's books, and that line was carried by nothing. */
+  const bigulLib = Number(run(
+    `INSERT INTO content_library (name, description, owner_role, shared_with, requires_approval,
+       default_expiry_days, created_by, sales_org)
+     VALUES (?,?,?,?,?,?,?,?)`,
+    ['Bigul app collateral', 'Screens and explainers for the self-serve journey.',
+      'marketing_manager', JSON.stringify(['sales_rm', 'caller']), 0, 180, bigulAdmin.id, 'BIGUL'],
+  ).lastInsertRowid);
+
+  run(
+    `INSERT INTO content_items (name, type, url, owner_role, library_id, status, created_by, sales_org)
+     VALUES (?,?,?,?,?,?,?,?)`,
+    ['Bigul onboarding walkthrough', 'link', 'https://bigul.co/help/onboarding',
+      'marketing_manager', bigulLib, 'Published', bigulAdmin.id, 'BIGUL'],
+  );
+
+  /* A rule scoped to one business. `validation_rule` is read with
+     `sales_org IS NULL OR sales_org = ?` — null means both books — so a scoped
+     rule is the case that line exists for and nothing exercised it. */
+  run(
+    'INSERT INTO validation_rule (entity, name, condition, message, created_by, sales_org) VALUES (?,?,?,?,?,?)',
+    ['lead', 'Bigul leads need an email',
+      JSON.stringify({ all: [{ field: 'email', op: 'is_empty', value: '' }] }),
+      'A Bigul lead is onboarded by email, so the address is required.',
+      bigulAdmin.id, 'BIGUL'],
+  );
+
+  /* A permission set belonging to one business. */
+  run(
+    'INSERT INTO permission_sets (name, description, sales_org, created_by) VALUES (?,?,?,?)',
+    ['Bigul digital desk', 'Extra grants for the self-serve onboarding team.', 'BIGUL', bigulAdmin.id],
+  );
+
+  /* A saved search in the other book. */
+  const bigulLead = one("SELECT id FROM leads WHERE sales_org = 'BIGUL' AND deleted_at IS NULL LIMIT 1");
+  run(
+    'INSERT INTO saved_searches (name, entity, tree, described, created_by, sales_org) VALUES (?,?,?,?,?,?)',
+    ['Bigul app signups this week', 'lead',
+      JSON.stringify({ op: 'AND', children: [{ field: 'source', operator: 'eq', value: 'Website' }] }),
+      'Source is equal to Website', bigulAdmin.id, 'BIGUL'],
+  );
+
+  /* An inbound call matched in each book. call_intent carries no book of its
+     own and inherits one through the lead it names — so one row on each side,
+     or the table is uniform whichever way it lands. */
+  const intents = [
+    [bigulLead, bigulAdmin.id],
+    [one("SELECT id FROM leads WHERE sales_org = 'BONANZA' AND deleted_at IS NULL LIMIT 1"), U.caller],
+  ];
+  for (const [lead, userId] of intents) {
+    if (!lead) continue;
+    const row = one('SELECT mobile FROM leads WHERE id = ?', [lead.id]);
+    const msisdn = String(row?.mobile ?? '').replace(/\D/g, '').slice(-10);
+    if (!msisdn) continue;
+    run(
+      'INSERT INTO call_intent (msisdn10, lead_id, user_id, created_at) VALUES (?,?,?,?)',
+      [msisdn, lead.id, userId, ago(0, 1)],
+    );
+  }
+
+  /* A KYC journey in the other book.
+   *
+   * `loadInBook` reaches journeys through their lead and the conformance test
+   * probes /api/kyc/journeys/:id, but every seeded journey was Bonanza's — so
+   * the refusal could only ever be shown in one direction. The comment on that
+   * record kind says a journey with no lead fails closed, which is a second
+   * thing nothing was exercising. */
+  const bigulKycLead = one(
+    "SELECT * FROM leads WHERE sales_org = 'BIGUL' AND deleted_at IS NULL AND mobile IS NOT NULL LIMIT 1",
+  );
+  const bigulProduct = one("SELECT id FROM product_types WHERE sales_org = 'BIGUL' LIMIT 1")
+    ?? one('SELECT id FROM product_types LIMIT 1');
+
+  if (bigulKycLead && bigulProduct) {
+    run(
+      `INSERT INTO kyc_journeys (lead_id, product_type_id, applicant_mobile, applicant_email,
+         resume_token, status, current_step, segments, form_data, started_at, elapsed_s, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [bigulKycLead.id, bigulProduct.id, bigulKycLead.mobile, bigulKycLead.email,
+        'seed-bigul-app', 'In Progress', 'PAN',
+        JSON.stringify(['Equity Cash']),
+        encryptField(JSON.stringify({
+          mobile: bigulKycLead.mobile, email: bigulKycLead.email, city: bigulKycLead.city,
+          segments: ['Equity Cash'], depository: 'CDSL', plan: 'Bigul Flat ₹0 Delivery',
+        })),
+        ago(0, 2), 600, ago(0, 2)],
+    );
+  }
+}
+
 console.log(`
 Seeded Bonanza CRM
   users            ${count('users')}   (password for all: bonanza)

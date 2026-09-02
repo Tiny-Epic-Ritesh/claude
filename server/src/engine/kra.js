@@ -10,7 +10,7 @@
  * measure against it is a spreadsheet, and the business already has those.
  */
 
-import { all, one, run } from '../db.js';
+import { all, one, run, SALES_ORGS } from '../db.js';
 import { leadScope, clientScope, can } from '../auth.js';
 import { resolveRange, inRange } from './daterange.js';
 
@@ -71,22 +71,35 @@ export const SHIPPED_KRA = {
 
 export function seedKra() {
   let n = 0;
+  /* Once per business, not once overall.
+   *
+   * The unique key is (role_code, code, sales_org), so this table was built to
+   * hold a metric per business — but the insert never named a book, so every
+   * shipped metric landed on the column default and Bigul had none at all.
+   * `routes/kra.js` reads `WHERE role_code = ? AND sales_org = ?`, so a Bigul
+   * RM opened their scorecard and saw an empty one. Nothing was broken in a way
+   * anybody could see from Bonanza, which is why it lasted.
+   *
+   * A business that later edits a metric keeps its edit: the WHERE on the
+   * upsert is unchanged, and the two books' rows are separate. */
+  for (const org of SALES_ORGS) {
   for (const [role, metrics] of Object.entries(SHIPPED_KRA)) {
     metrics.forEach(([code, label, source, unit, target, weight, direction, description], i) => {
       run(
         `INSERT INTO kra_metrics
-           (role_code, code, label, description, source, unit, target, weight, direction, sort_order)
-         VALUES (?,?,?,?,?,?,?,?,?,?)
+           (role_code, code, label, description, source, unit, target, weight, direction, sort_order, sales_org)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(role_code, code, sales_org) DO UPDATE SET
            label = excluded.label, description = excluded.description,
            source = excluded.source, unit = excluded.unit,
            target = excluded.target, weight = excluded.weight,
            direction = excluded.direction, sort_order = excluded.sort_order
          WHERE kra_metrics.edited_at IS NULL`,
-        [role, code, label, description, source, unit, target, weight, direction, i],
+        [role, code, label, description, source, unit, target, weight, direction, i, org],
       );
       n += 1;
     });
+  }
   }
   return n;
 }
@@ -146,18 +159,22 @@ export const SHIPPED_PLANS = [
 ];
 
 export function seedIncentives() {
+  /* Once per business, for the same reason as the metrics above: this looked up
+     'BONANZA' by name and inserted without a book, so a second business had no
+     plans and its desk had nothing to be paid against. */
+  for (const org of SALES_ORGS) {
   for (const plan of SHIPPED_PLANS) {
     const existing = one('SELECT id, edited_at FROM incentive_plans WHERE name = ? AND sales_org = ?',
-      [plan.name, 'BONANZA']);
+      [plan.name, org]);
     // An edited plan is the business's, not ours. Leave it entirely alone.
     if (existing?.edited_at) continue;
 
     const id = existing
       ? existing.id
       : Number(run(
-        `INSERT INTO incentive_plans (name, role_code, description, clawback_months)
-         VALUES (?,?,?,?)`,
-        [plan.name, plan.role, plan.description, plan.clawback_months],
+        `INSERT INTO incentive_plans (name, role_code, description, clawback_months, sales_org)
+         VALUES (?,?,?,?,?)`,
+        [plan.name, plan.role, plan.description, plan.clawback_months, org],
       ).lastInsertRowid);
 
     run('DELETE FROM incentive_slabs WHERE plan_id = ?', [id]);
@@ -169,7 +186,8 @@ export function seedIncentives() {
       );
     });
   }
-  return SHIPPED_PLANS.length;
+  }
+  return SHIPPED_PLANS.length * SALES_ORGS.length;
 }
 
 /* ---------------------------------------------------------------- actuals */
