@@ -454,6 +454,57 @@ async function run() {
   /* ----------------------------------------------------------- 9. tickets */
   suite('09 ticketing & SLA');
 
+  await check('an id in the body is checked like an id in the path', async () => {
+    /* The pattern behind several of these findings. A record id in the URL gets
+       loaded and checked; the same id arriving in the body did not, and five
+       routes acted on whatever they were handed.
+
+       A task and a note went onto another business's lead. The AI disposition
+       route answered with a summary of their call. The autodialler queued their
+       lead and replied with the name and mobile — a dial and a disclosure from
+       one unchecked array. And a new lead could be created owned by somebody in
+       the other business, which leaves a record nobody who holds it can see. */
+    const { data: theirLeads } = await req('/api/leads?limit=1', { token: T.bigul_rm, expect: 200 });
+    const lead = need(theirLeads[0], 'a BIGUL lead');
+
+    const probes = [
+      ['/api/tasks', { lead_id: lead.id, title: 'probe', due_at: '2030-01-01 09:00' }],
+      ['/api/notes', { lead_id: lead.id, body: 'probe' }],
+      ['/api/ai/disposition', { lead_id: lead.id, transcript: 'probe' }],
+      ['/api/autodialler', { lead_ids: [lead.id] }],
+    ];
+    for (const [path, body] of probes) {
+      // eslint-disable-next-line no-await-in-loop
+      const { status, data } = await req(path, { method: 'POST', token: T.admin, body });
+      assert([403, 404].includes(status), `POST ${path} answered ${status}`);
+      assert(!JSON.stringify(data).includes(lead.name),
+        `the refusal from ${path} named the lead`);
+    }
+  });
+
+  await check('a record cannot be owned by somebody who cannot see it', async () => {
+    /* The same shape as attributing a lead to a partner across the book: the
+       record is ours and the person holding it is in the other business, so it
+       sits in a queue nobody can work. */
+    const { data: me } = await req('/api/auth/me', { token: T.bigul_rm, expect: 200 });
+
+    const { data } = await req('/api/leads', {
+      method: 'POST', token: T.admin, expect: 400,
+      /* Neither from the mob() pool — all ten slots are spoken for, and taking
+         one made the import test's dry run find nothing valid — nor from the
+         91/96/97/98 prefixes other tests build mobiles from. */
+      body: { name: `Owner check ${RUN}`, mobile: `92${RUN}`.slice(0, 10), owner_id: me.user.id },
+    });
+    assert(/same business/i.test(data.error), `unexpected refusal: ${data.error}`);
+
+    // Our own people are still fine.
+    const { data: mine } = await req('/api/auth/me', { token: T.sales_rm, expect: 200 });
+    await req('/api/leads', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: { name: `Owner ok ${RUN}`, mobile: `93${RUN}`.slice(0, 10), owner_id: mine.user.id },
+    });
+  });
+
   await check('nothing a lead detail page can do reaches the other book', async () => {
     /* PATCH was fixed earlier in this sweep; these are the actions beside it,
        and six of them went through. The two that matter most left the system:

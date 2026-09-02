@@ -352,6 +352,17 @@ router.get('/leads/:id', (req, res) => {
 });
 
 router.post('/leads', requirePermission('lead.create'), (req, res) => {
+  /* An owner in the other business would put the two books together in the
+     data, the same shape as attributing a lead to a partner across them: the
+     record is ours and the person holding it cannot see it. */
+  if (req.body?.owner_id) {
+    const org = activeOrg(req) || req.user.sales_org;
+    const owner = one('SELECT id, sales_org FROM users WHERE id = ? AND active = 1', [Number(req.body.owner_id) || -1]);
+    if (!owner) return res.status(400).json({ error: 'Choose an active user' });
+    if (owner.sales_org !== org) {
+      return res.status(400).json({ error: 'A lead can only be owned by somebody in the same business' });
+    }
+  }
   const { name, mobile, email, source, pan, city, state, risk_profile, language, owner_id, partner_id } = req.body;
 
   const invalid = validate(req.body, {
@@ -977,7 +988,16 @@ router.post('/leads/:id/message', requirePermission('lead.contact'), (req, res) 
 
 router.post('/autodialler', requirePermission('lead.contact'), async (req, res, next) => {
   try {
-    return res.json(await pushToAutodialler(req.body.lead_ids || [], req.user.id));
+    /* Every id, not the list as a whole. This queued a lead from either
+       business and answered with their name and mobile — a dial and a
+       disclosure from one unchecked array. */
+    const asked = (req.body.lead_ids || []).map(Number).filter(Number.isInteger);
+    for (const id of asked) {
+      const inBook = loadInBook(req, 'lead', id);
+      if (inBook.error) return res.status(inBook.status).json({ error: inBook.error });
+    }
+
+    return res.json(await pushToAutodialler(asked, req.user.id));
   } catch (err) {
     if (err.name === 'VendorError') return res.status(502).json({ error: err.message, vendor: err.vendor });
     return next(err);
@@ -1102,6 +1122,16 @@ router.post('/tasks', (req, res) => {
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' });
   if (!due_at) return res.status(400).json({ error: 'A due date is required — tasks without one cannot be created' });
 
+  /* The lead named in the body, checked like one named in the path.
+   *
+   * An id in the path gets checked; an id in the body did not, and this route
+   * put a task on any lead in either business. A task carries its lead's name,
+   * so it carries its lead's book. */
+  if (lead_id) {
+    const inBook = loadInBook(req, 'lead', lead_id);
+    if (inBook.error) return res.status(inBook.status).json({ error: inBook.error });
+  }
+
   const result = run(
     'INSERT INTO tasks (title, description, lead_id, card_id, ticket_id, partner_id, assignee_id, created_by, due_at, priority) VALUES (?,?,?,?,?,?,?,?,?,?)',
     [title, description || null, lead_id || null, card_id || null, ticket_id || null, partner_id || null,
@@ -1154,6 +1184,18 @@ router.patch('/tasks/:id', (req, res) => {
 router.post('/notes', (req, res) => {
   const { lead_id, partner_id, parent_id, body, mentions = [] } = req.body;
   if (!body?.trim()) return res.status(400).json({ error: 'Note body is required' });
+
+  // Whatever the note is written on decides whose note it is.
+  if (lead_id) {
+    const inBook = loadInBook(req, 'lead', lead_id);
+    if (inBook.error) return res.status(inBook.status).json({ error: inBook.error });
+  }
+  if (partner_id) {
+    const owner = one('SELECT sales_org FROM partners WHERE id = ?', [Number(partner_id) || -1]);
+    if (!owner || !mayUseOrg(req.user, owner.sales_org)) {
+      return res.status(404).json({ error: 'Partner not found' });
+    }
+  }
 
   const result = run('INSERT INTO notes (lead_id, partner_id, parent_id, body, mentions, user_id) VALUES (?,?,?,?,?,?)', [
     lead_id || null, partner_id || null, parent_id || null, body, JSON.stringify(mentions), req.user.id,

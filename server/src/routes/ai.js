@@ -5,6 +5,7 @@
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
 import { requireUser, can, leadScope, activeOrg } from '../auth.js';
+import { loadInBook } from '../engine/bookscope.js';
 import { applyScore } from '../engine/rules.js';
 import * as ai from '../ai/index.js';
 
@@ -62,6 +63,11 @@ router.post('/disposition', async (req, res, next) => {
     const { lead_id, transcript, duration_s } = req.body;
     if (!lead_id) return res.status(400).json({ error: 'lead_id is required' });
     if (!transcript?.trim()) return res.status(400).json({ error: 'A transcript or call note is required' });
+
+    /* The AI reads the lead and answers about it, so this handed back a summary
+       of the other book's call. */
+    const inBook = loadInBook(req, 'lead', lead_id);
+    if (inBook.error) return res.status(inBook.status).json({ error: inBook.error });
 
     const ctx = ai.dispositionContext(Number(lead_id), transcript, duration_s);
     if (!ctx) return res.status(404).json({ error: 'Lead not found' });

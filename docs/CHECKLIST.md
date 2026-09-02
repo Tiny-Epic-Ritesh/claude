@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,120** — 591 end-to-end and 529 unit. All green.
+**Tests: 1,122** — 593 end-to-end and 529 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -1259,3 +1259,50 @@ a second id in this system —
 `/partners/:id/sourced-leads` and `/tickets/:id/merge` — turned out
 to join records across the boundary. Worth remembering the shape: an id in the
 path is checked far more often than an id in the body.
+
+
+---
+
+## Every route that takes an id in the body — done 2 Sep 2026
+
+The pattern behind several findings, chased deliberately. Thirty-eight routes
+take a record id in the body; the ones naming a book-scoped record were probed
+as a Bonanza admin handing over Bigul ids.
+
+Five acted on whatever they were given.
+
+- [x] **`POST /tasks` and `POST /notes`** put a task and a note on
+      another business's lead.
+- [x] **`POST /ai/disposition`** answered with an AI summary of their
+      call.
+- [x] **`POST /autodialler`** queued their lead and replied with the name
+      and the mobile — a dial and a disclosure out of one unchecked array. It
+      took `lead_ids` and validated none of them.
+- [x] **`POST /leads` with an `owner_id`** created a lead in one
+      business owned by somebody in the other, which leaves a record sitting in
+      a queue nobody who holds it can see. The same shape as attributing a lead
+      to a partner across the book.
+
+`POST /activities` and `POST /email/send` already refused, so the
+absence was not universal — which is what made it easy to miss.
+
+### Why this class existed
+
+An id in the path is what a route is *about*, and gets loaded. An id in the body
+is an argument, and was trusted. Nothing in the shape of the code distinguishes
+them, so the habit of checking one and not the other survived every review that
+looked at routes one at a time.
+
+The scanner that found them is a finder rather than a verdict — it reads for a
+helper name and cannot tell a real check from a coincidence, which is why every
+candidate was then asked of the server.
+
+### Three mistakes of mine, worth the record
+
+The first version of the test took two mobile numbers from the suite's
+`mob()` pool, all ten slots of which are already spoken for; the lead
+import test's dry run then found nothing valid. The second version used the
+`97` prefix, which is exactly what the click-to-call test builds its
+mobile from. The third uses `92` and `93`, which nothing else does.
+A shared fixture pool with no free slots is worth knowing about before adding to
+it.
