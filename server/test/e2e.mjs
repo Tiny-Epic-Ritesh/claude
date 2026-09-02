@@ -545,6 +545,55 @@ async function run() {
     assert(after.city !== 'Nowhere', 'the refused edit was applied anyway');
   });
 
+  await check('nothing on a case detail page reaches the other book', async () => {
+    /* PATCH and CSAT were fixed when the seed grew a Bigul case. Replying and
+       escalating were not: a Bonanza admin could post correspondence onto a
+       Bigul client's case, and escalating answered with the name of the Bigul
+       staffer it went to. */
+    const { data: theirs } = await req('/api/tickets?limit=1', { token: T.bigul_care, expect: 200 });
+    const target = need(theirs[0], 'a BIGUL case');
+
+    for (const [path, body] of [
+      [`/api/tickets/${target.id}/replies`, { body: 'probe' }],
+      [`/api/tickets/${target.id}/escalate`, { reason: 'probe' }],
+    ]) {
+      // eslint-disable-next-line no-await-in-loop
+      const { status, data } = await req(path, { method: 'POST', token: T.admin, body });
+      assert([403, 404].includes(status), `POST ${path} answered ${status}`);
+      assert(!JSON.stringify(data).includes('escalated_to'),
+        'the refusal named the person it would have escalated to');
+    }
+  });
+
+  await check('a merge cannot move one book\'s correspondence into the other', async () => {
+    /* The worst of everything found in this sweep, because a merge does not
+       write across the book — it relocates. `UPDATE ticket_replies SET
+       ticket_id = ?` carried a Bigul client's entire correspondence onto a
+       Bonanza case and closed the original, in either direction, permanently.
+       Both ends are checked now. */
+    const { data: theirs } = await req('/api/tickets?limit=1', { token: T.bigul_care, expect: 200 });
+    const { data: ours } = await req('/api/tickets?limit=2', { token: T.admin, expect: 200 });
+    const target = need(theirs[0], 'a BIGUL case');
+    const mine = need(ours[0], 'a BONANZA case');
+
+    // Theirs into ours, and ours into theirs.
+    const a = await req(`/api/tickets/${target.id}/merge`, {
+      method: 'POST', token: T.admin, body: { into_id: mine.id },
+    });
+    assert([403, 404].includes(a.status), `merging theirs into ours answered ${a.status}`);
+
+    const b = await req(`/api/tickets/${mine.id}/merge`, {
+      method: 'POST', token: T.admin, body: { into_id: target.id },
+    });
+    assert([403, 404].includes(b.status), `merging ours into theirs answered ${b.status}`);
+
+    // Both cases are still open and still their own.
+    const { data: stillTheirs } = await req(`/api/tickets/${target.id}`, { token: T.bigul_care, expect: 200 });
+    eq(stillTheirs.merged_into ?? null, null, 'a refused merge closed the case anyway');
+    const { data: stillMine } = await req(`/api/tickets/${mine.id}`, { token: T.admin, expect: 200 });
+    eq(stillMine.merged_into ?? null, null, 'a refused merge closed our case anyway');
+  });
+
   await check('a case cannot be changed from the other book', async () => {
     /* Untestable until the seed grew a Bigul case. Every seeded ticket was
        Bonanza's, so there was nothing in the other book to try these against —

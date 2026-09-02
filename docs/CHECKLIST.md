@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,118** — 589 end-to-end and 529 unit. All green.
+**Tests: 1,120** — 591 end-to-end and 529 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -1224,3 +1224,38 @@ books by design — and an under-privileged token is worse still, because the
 refusals it produces look exactly like the boundary holding. That mistake is
 what recorded the card and note routes as safe earlier in this sweep when they
 were not.
+
+
+---
+
+## The case detail page checked the same way — done 2 Sep 2026
+
+`PATCH` and `/csat` were fixed when the seed grew a Bigul case.
+Four more routes had not been.
+
+- [x] **`POST /:id/replies`** posted correspondence onto another
+      business's client case.
+- [x] **`POST /:id/escalate`** escalated it, and answered with the name
+      of the Bigul staffer it went to — a write and a disclosure in one reply.
+- [x] **`POST /:id/merge`, in both directions.** The worst thing found in
+      this sweep, because a merge does not write across the book — it
+      *relocates*. `UPDATE ticket_replies SET ticket_id = ?` carried a Bigul
+      client's entire correspondence onto a Bonanza case and closed the
+      original. Probing it left both cases closed and each marked merged into
+      the other, with all seven replies sitting on the Bigul ticket; the seed
+      put it back.
+
+Both ends of the merge are checked now, and the target is looked up *inside* the
+source's book, so a case in the other one is "not found" rather than "belongs to
+another book" — the second phrasing confirms it exists. Verified by unscoping
+that lookup and watching the merge test fail.
+
+### What this page has that the others did not
+
+A route that moves records between parents. Leads, clients and partners each had
+routes that read or amended across the book; this one relocated the other book's
+data permanently, and neither end was checked. Two of the three routes that take
+a second id in this system —
+`/partners/:id/sourced-leads` and `/tickets/:id/merge` — turned out
+to join records across the boundary. Worth remembering the shape: an id in the
+path is checked far more often than an id in the body.

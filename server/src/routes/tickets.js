@@ -312,7 +312,10 @@ router.post('/', requirePermission('ticket.create'), async (req, res) => {
 /* --------------------------------------------------------- interaction */
 
 router.post('/:id/replies', requirePermission('ticket.reply'), async (req, res) => {
-  const ticket = one('SELECT * FROM tickets WHERE id = ?', [req.params.id]);
+  /* A reply is correspondence with somebody else's client. */
+  const found = loadInBook(req, 'ticket', req.params.id);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const ticket = found.row;
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
 
   const { body, internal = false, author_type = 'agent' } = req.body;
@@ -400,7 +403,11 @@ router.patch('/:id', async (req, res) => {
 });
 
 router.post('/:id/escalate', requirePermission('ticket.escalate'), (req, res) => {
-  const ticket = one('SELECT * FROM tickets WHERE id = ?', [req.params.id]);
+  /* Escalating answered with the name of the person it went to, so this both
+     wrote to the other book and named one of its staff. */
+  const found = loadInBook(req, 'ticket', req.params.id);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const ticket = found.row;
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
 
   const assignee = ticket.assignee_id ? one('SELECT * FROM users WHERE id = ?', [ticket.assignee_id]) : null;
@@ -421,10 +428,29 @@ router.post('/:id/escalate', requirePermission('ticket.escalate'), (req, res) =>
 });
 
 router.post('/:id/merge', requirePermission('ticket.merge'), (req, res) => {
+  /* Both ends, because a merge moves the replies.
+   *
+   * This checked neither, and a merge does not just write across the book — it
+   * relocates. `UPDATE ticket_replies SET ticket_id = ?` carried a Bigul
+   * client's entire correspondence onto a Bonanza case and closed the original,
+   * in either direction, permanently. Of everything found in this sweep it is
+   * the one that moved the other book's data rather than reading or amending
+   * it.
+   *
+   * The target is looked up inside the source's book, so a case in the other
+   * one is "not found" rather than "belongs to another book" — the second
+   * phrasing confirms it exists. */
   const { into_id } = req.body;
-  const source = one('SELECT * FROM tickets WHERE id = ?', [req.params.id]);
-  const target = one('SELECT * FROM tickets WHERE id = ?', [into_id]);
-  if (!source || !target) return res.status(404).json({ error: 'Both tickets must exist' });
+
+  const from = loadInBook(req, 'ticket', req.params.id);
+  if (from.error) return res.status(from.status).json({ error: from.error });
+  const source = from.row;
+
+  const target = one(
+    'SELECT * FROM tickets WHERE id = ? AND sales_org = ?',
+    [Number(into_id) || -1, source.sales_org],
+  );
+  if (!target) return res.status(404).json({ error: 'Both tickets must exist' });
   if (source.id === target.id) return res.status(400).json({ error: 'Cannot merge a ticket into itself' });
 
   run('UPDATE ticket_replies SET ticket_id = ? WHERE ticket_id = ?', [into_id, req.params.id]);
