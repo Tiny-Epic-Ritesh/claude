@@ -21,7 +21,7 @@ import {
 import { maskRecords } from '../security.js';
 import {
   SEARCHABLE, registryFor, validateTree, compile, runSearch, searchIds,
-  operatorsFor, describe, searchableObjects, OPERATORS,
+  operatorsFor, describe, searchableObjects, capabilityFor, OPERATORS,
 } from '../engine/search.js';
 import { picklistValues, fieldDef } from '../engine/metadata.js';
 import { defaultExpiry } from '../engine/leadlists.js';
@@ -64,6 +64,21 @@ function scopeFor(entity, req) {
     return { sql: s.sql, params: s.params };
   }
 
+  /* Partners narrow twice: by book, and — for a Partner RM — to the partners
+     they own, which is what the Partners tab does. The generic branch below
+     applies only the first, so an RM would have read the whole book's partners
+     here while their own tab showed them theirs. */
+  if (entity === 'partner') {
+    const orgs = orgsFor(req.user);
+    const where = orgs.length ? [`l.sales_org IN (${orgs.map(() => '?').join(',')})`] : ['1=0'];
+    const params = orgs.length ? [...orgs] : [];
+    if (req.user.role === 'partner_rm') {
+      where.push('l.owner_id = ?');
+      params.push(req.user.id);
+    }
+    return { sql: where.join(' AND '), params };
+  }
+
   const orgs = orgsFor(req.user);
   const spec = SEARCHABLE[entity];
   if (!spec) return { sql: null, params: [] };
@@ -76,10 +91,32 @@ function scopeFor(entity, req) {
   return { sql: `l.sales_org IN (${orgs.map(() => '?').join(',')})`, params: orgs };
 }
 
+/**
+ * The capability an object requires before it may be searched at all.
+ *
+ * Search-advanced had no per-object gate: it required a session and nothing
+ * else, so any signed-in user could read every partner and every campaign
+ * through it while the tabs those objects live on answered 403. Applied as
+ * middleware on every route that names an entity, because the hole was not one
+ * route being wrong — it was the check never existing, and adding it to the
+ * search route alone would leave count, ids, save and export open.
+ */
+function requireSearchable(req, res, next) {
+  const { entity } = req.params;
+  const needed = capabilityFor(entity);
+  if (needed && !req.caps?.has(needed)) {
+    return res.status(403).json({
+      error: `Your role (${req.user.role}) cannot search ${SEARCHABLE[entity]?.label ?? entity}`,
+      required: needed,
+    });
+  }
+  return next();
+}
+
 /* ---------------------------------------------------------- the fields */
 
 /** What can be searched, and with which operators. */
-router.get('/objects', (_req, res) => res.json(searchableObjects()));
+router.get('/objects', (req, res) => res.json(searchableObjects(req.caps)));
 
 
 /**
@@ -152,7 +189,7 @@ function startersFor(entity, registry) {
   });
 }
 
-router.get('/fields/:entity', (req, res) => {
+router.get('/fields/:entity', requireSearchable, (req, res) => {
   const registry = registryFor(req.params.entity, req.user, req.caps);
   if (!registry) return res.status(404).json({ error: `${req.params.entity} cannot be searched` });
 
@@ -182,7 +219,7 @@ router.get('/fields/:entity', (req, res) => {
 
 /* --------------------------------------------------------------- run */
 
-router.post('/:entity', (req, res) => {
+router.post('/:entity', requireSearchable, (req, res) => {
   const { entity } = req.params;
   const registry = registryFor(entity, req.user, req.caps);
   if (!registry) return res.status(404).json({ error: `${entity} cannot be searched` });
@@ -211,7 +248,7 @@ router.post('/:entity', (req, res) => {
 });
 
 /** Just the count — for the builder's live "matches N records" line. */
-router.post('/:entity/count', (req, res) => {
+router.post('/:entity/count', requireSearchable, (req, res) => {
   const registry = registryFor(req.params.entity, req.user, req.caps);
   if (!registry) return res.status(404).json({ error: 'Not searchable' });
 
@@ -243,7 +280,7 @@ router.post('/:entity/count', (req, res) => {
  * saved today and opened in March returns March's answer, which is the only
  * behaviour anyone actually wants from something called "at-risk leads".
  */
-router.post('/:entity/save', requirePermission('list.create'), (req, res) => {
+router.post('/:entity/save', requireSearchable, requirePermission('list.create'), (req, res) => {
   const { entity } = req.params;
   const registry = registryFor(entity, req.user, req.caps);
   if (!registry) return res.status(404).json({ error: 'Not searchable' });
@@ -265,7 +302,7 @@ router.post('/:entity/save', requirePermission('list.create'), (req, res) => {
   return res.status(201).json(one('SELECT * FROM saved_searches WHERE id = ?', [result.lastInsertRowid]));
 });
 
-router.get('/saved/:entity', (req, res) => {
+router.get('/saved/:entity', requireSearchable, (req, res) => {
   const orgs = orgsFor(req.user);
   res.json(all(
     `SELECT s.*, u.name AS created_by_name FROM saved_searches s
@@ -291,7 +328,7 @@ router.delete('/saved/:id', (req, res) => {
 /* ------------------------------------------------------- result actions */
 
 /** Every matching id, so the client can run a bulk action over the result. */
-router.post('/:entity/ids', (req, res) => {
+router.post('/:entity/ids', requireSearchable, (req, res) => {
   const registry = registryFor(req.params.entity, req.user, req.caps);
   if (!registry) return res.status(404).json({ error: 'Not searchable' });
 
@@ -360,7 +397,7 @@ router.post('/lead/to-list', requirePermission('list.create'), (req, res) => {
  * object. Unmasking is a second permission and a deliberate act — `?unmask=true`
  * with pii.unmask — and it writes its own audit row when used.
  */
-router.post('/:entity/export', requirePermission('data.export'), (req, res) => {
+router.post('/:entity/export', requireSearchable, requirePermission('data.export'), (req, res) => {
   const { entity } = req.params;
   const registry = registryFor(entity, req.user, req.caps);
   if (!registry) return res.status(404).json({ error: 'Not searchable' });

@@ -109,14 +109,26 @@ export const SEARCHABLE = {
     label: 'Partners',
     table: 'partners l',
     id: 'l.id',
-    select: 'l.id, l.name, l.business_name, l.partner_code, l.partner_model, l.state_code, l.owner_id',
-    scope: 'none',
+    select: `l.id, l.name, l.business_name, l.partner_code, l.partner_model, l.state_code,
+             l.sales_org, l.owner_id, l.created_at`,
+    /* The Partners tab is gated, and search was not: a Caller was refused the
+       tab with a 403 and read all seven partners — codes and commercial state
+       included — through the search box. */
+    capability: 'partner.view',
+    scope: 'partner',
   },
   campaign: {
     label: 'Campaigns',
     table: 'campaigns l',
     id: 'l.id',
-    select: 'l.id, l.name, l.channel, l.status, l.sent, l.opened, l.clicked, l.scheduled_at, l.created_at',
+    select: `l.id, l.name, l.channel, l.status, l.sent, l.opened, l.clicked,
+             l.sales_org, l.scheduled_at, l.created_at`,
+    /* Same shape as partners: the list is admin-and-marketing only, and search
+       let anybody signed in read every campaign. */
+    capability: 'campaign.manage',
+    /* An archived campaign is out of the list it belongs to, so it is out of
+       the search too — the same reasoning as a merged case. */
+    soft_delete: "l.status != 'Archived'",
     scope: 'none',
   },
   product_interest: {
@@ -492,7 +504,19 @@ export function searchIds(entity, tree, { registry, scopeSql = null, scopeParams
     .map((r) => r.id);
 }
 
-export const searchableObjects = () =>
-  Object.entries(SEARCHABLE).map(([key, s]) => ({
-    key, label: s.label, entity: entityDef(key)?.label ?? s.label,
-  }));
+/**
+ * The objects this caller may search.
+ *
+ * Filtered by capability, so the picker does not offer an object whose first
+ * query answers 403 — and, more to the point, so the list of what exists is not
+ * itself a disclosure.
+ */
+export const searchableObjects = (caps = null) =>
+  Object.entries(SEARCHABLE)
+    .filter(([, s]) => !s.capability || !caps || caps.has(s.capability))
+    .map(([key, s]) => ({
+      key, label: s.label, entity: entityDef(key)?.label ?? s.label,
+    }));
+
+/** What a caller must hold to search this object at all, or null. */
+export const capabilityFor = (entity) => SEARCHABLE[entity]?.capability ?? null;

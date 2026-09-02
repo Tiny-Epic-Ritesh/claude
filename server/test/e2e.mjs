@@ -674,6 +674,66 @@ async function run() {
   /* ---------------------------------------------------------- 10. partners */
   suite('10 partner lifecycle');
 
+  await check('the partner list is bounded, counted, sorted and searchable', async () => {
+    /* It had no LIMIT at all: the whole book came back on every call, with no
+       count and nothing to order it by but the day each partner was added. */
+    const { res, data } = await req('/api/partners?limit=2&sort=name&dir=asc', { token: T.admin, expect: 200 });
+    assert(data.length <= 2, `limit ignored: got ${data.length}`);
+    const total = Number(res.headers.get('x-total-count'));
+    assert(total >= data.length, 'X-Total-Count missing or smaller than the page');
+
+    const { data: page2 } = await req('/api/partners?limit=2&offset=2&sort=name&dir=asc', { token: T.admin, expect: 200 });
+    eq(page2.filter((p) => data.some((f) => f.id === p.id)).length, 0, 'the second page repeats the first');
+
+    const { data: desc } = await req('/api/partners?limit=2&sort=name&dir=desc', { token: T.admin, expect: 200 });
+    assert(data[0].name !== desc[0].name, 'both sort directions returned the same order');
+
+    const { data: hit } = await req(`/api/partners?q=${encodeURIComponent(data[0].name.split(' ')[0])}`, { token: T.admin, expect: 200 });
+    assert(hit.length >= 1 && hit.length <= total, 'search returned an impossible count');
+  });
+
+  await check('an invented partner sort column is ignored, not run', async () => {
+    const { data } = await req('/api/partners?sort=(SELECT 1)&limit=3', { token: T.admin, expect: 200 });
+    assert(Array.isArray(data), 'a bad sort broke the list instead of being ignored');
+  });
+
+  await check('partners export masked, scoped, and never the encrypted fields', async () => {
+    const { data } = await req('/api/partners/export', {
+      method: 'POST', token: T.admin, expect: 200,
+      body: { columns: ['partner_code', 'name', 'mobile'] },
+    });
+    assert(data.csv.startsWith('"Code","Name","Mobile"'), `unexpected header: ${data.csv.slice(0, 60)}`);
+    assert(/"\*{6}\d{4}"/.test(data.csv), 'a mobile left the export in the clear');
+    eq(data.unmasked, false, 'an export unmasked without being asked to');
+
+    /* PAN and bank account are encrypted at rest, so an export of them would
+       ship ciphertext. They are not offered, and naming them leaves nothing to
+       export rather than quietly exporting something useless. */
+    const { data: refused } = await req('/api/partners/export', {
+      method: 'POST', token: T.admin, expect: 400,
+      body: { columns: ['pan', 'bank_account'] },
+    });
+    assert(/at least one column/i.test(refused.error), `unexpected refusal: ${refused.error}`);
+
+    // Seeing partners and extracting them are different acts.
+    await req('/api/partners/export', {
+      method: 'POST', token: T.caller, expect: 403, body: { columns: ['name'] },
+    });
+  });
+
+  await check('the campaign list is bounded, counted, sorted and searchable', async () => {
+    const { res, data } = await req('/api/admin/campaigns?limit=2&sort=name&dir=asc', { token: T.admin, expect: 200 });
+    assert(data.length <= 2, `limit ignored: got ${data.length}`);
+    const total = Number(res.headers.get('x-total-count'));
+    assert(total >= data.length, 'X-Total-Count missing or smaller than the page');
+
+    const { data: desc } = await req('/api/admin/campaigns?limit=2&sort=name&dir=desc', { token: T.admin, expect: 200 });
+    assert(data[0].name !== desc[0].name, 'both sort directions returned the same order');
+
+    const { data: hit } = await req(`/api/admin/campaigns?q=${encodeURIComponent(data[0].name.slice(0, 6))}`, { token: T.admin, expect: 200 });
+    assert(hit.length >= 1, 'a campaign could not be found by its own name');
+  });
+
   await check('a partner prospect is created with onboarding steps and LMS modules', async () => {
     const { data } = await req('/api/partners', {
       method: 'POST', token: T.partner_rm, expect: 201,
@@ -4946,6 +5006,66 @@ await check('a per-channel withdrawal closes only that channel', async () => {
 
   /* ============================================================ 42 */
   suite('42 Advanced Search usability (ENH-15)');
+
+  await check('an object you cannot open is an object you cannot search', async () => {
+    /* Advanced search had no per-object gate at all: it required a session and
+       nothing else. A Caller was refused the Partners tab and the Campaigns
+       list with a 403 and read all seven of each through the search box —
+       partner codes, commercial state, campaign audiences and results. */
+    await req('/api/partners', { token: T.caller, expect: 403 });
+    await req('/api/admin/campaigns', { token: T.caller, expect: 403 });
+
+    for (const entity of ['partner', 'campaign']) {
+      // eslint-disable-next-line no-await-in-loop
+      const { data } = await req(`/api/search-advanced/${entity}`, {
+        method: 'POST', token: T.caller, expect: 403, body: { where: null },
+      });
+      assert(data.required, `the refusal for ${entity} does not name what is missing`);
+    }
+  });
+
+  await check('the gate covers every door into an object, not just the search', async () => {
+    // Gating the search alone would leave count, ids, fields, save and export
+    // open, and each of those answers the same question in a different shape.
+    await req('/api/search-advanced/fields/partner', { token: T.caller, expect: 403 });
+    await req('/api/search-advanced/partner/count', {
+      method: 'POST', token: T.caller, expect: 403, body: { where: null },
+    });
+    await req('/api/search-advanced/partner/ids', {
+      method: 'POST', token: T.caller, expect: 403, body: { where: null },
+    });
+    await req('/api/search-advanced/partner/export', {
+      method: 'POST', token: T.caller, expect: 403, body: { where: null },
+    });
+  });
+
+  await check('the object picker does not name what it will refuse', async () => {
+    // The list of what exists is itself a disclosure.
+    const { data } = await req('/api/search-advanced/objects', { token: T.caller, expect: 200 });
+    const keys = data.map((o) => o.key);
+    assert(!keys.includes('partner'), 'the picker offers Partners to a role refused them');
+    assert(!keys.includes('campaign'), 'the picker offers Campaigns to a role refused them');
+    assert(keys.includes('lead'), 'the picker hid an object the caller may search');
+
+    const { data: forAdmin } = await req('/api/search-advanced/objects', { token: T.admin, expect: 200 });
+    assert(forAdmin.map((o) => o.key).includes('partner'), 'an admin lost sight of Partners');
+  });
+
+  await check('an archived campaign is out of the search, as it is out of the list', async () => {
+    const { data: listed } = await req('/api/admin/campaigns?limit=500', { token: T.admin, expect: 200 });
+    const { data: found } = await req('/api/search-advanced/campaign', {
+      method: 'POST', token: T.admin, expect: 200, body: { where: null },
+    });
+    eq(found.total, listed.length, 'search and the campaign list disagree about how many exist');
+  });
+
+  await check('searching partners never shows more than the tab does', async () => {
+    const { data: listed } = await req('/api/partners?limit=500', { token: T.partner_rm, expect: 200 });
+    const { data: found } = await req('/api/search-advanced/partner', {
+      method: 'POST', token: T.partner_rm, expect: 200, body: { where: null },
+    });
+    eq(found.total, listed.length, 'search and the Partners tab disagree for a Partner RM');
+  });
 
   await check('the account book is searchable like every other object', async () => {
     const { data: objects } = await req('/api/search-advanced/objects', { token: T.admin, expect: 200 });

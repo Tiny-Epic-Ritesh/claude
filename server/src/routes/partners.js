@@ -60,23 +60,150 @@ const decorate = (p) => {
 
 /* ------------------------------------------------------------ pipeline */
 
-router.get('/', requirePermission('partner.view'), (req, res) => {
-  /* Scoped to the reader's book.
-   *
-   * partner.view is held by Admin, Partner RM and Sales Supervisor -- roles
-   * that exist in both books -- so holding the capability was enough to list
-   * the other book's partners, their codes and their commercial state. */
+/**
+ * The columns a partner list can be ordered by or exported as.
+ *
+ * PAN and bank account are absent on purpose. Both are encrypted at rest, so
+ * ordering by them would order ciphertext and exporting them would ship it --
+ * and they are the two fields on this record nobody should be taking out in
+ * bulk regardless.
+ */
+export const PARTNER_COLUMNS = [
+  { key: 'partner_code', label: 'Code', sql: 'partner_code' },
+  { key: 'name', label: 'Name', sql: 'name' },
+  { key: 'business_name', label: 'Business', sql: 'business_name' },
+  { key: 'partner_model', label: 'Model', sql: 'partner_model' },
+  { key: 'state_code', label: 'State', sql: 'state_code' },
+  { key: 'mobile', label: 'Mobile', sql: 'mobile', pii: true },
+  { key: 'email', label: 'Email', sql: 'email', pii: true },
+  { key: 'city', label: 'City', sql: 'city' },
+  { key: 'language', label: 'Language', sql: 'language' },
+  { key: 'sebi_reg_no', label: 'SEBI reg. no', sql: 'sebi_reg_no' },
+  { key: 'commission_pct', label: 'Commission %', sql: 'commission_pct' },
+  { key: 'onboarded_at', label: 'Onboarded', sql: 'onboarded_at' },
+  { key: 'created_at', label: 'Added', sql: 'created_at' },
+  { key: 'sales_org', label: 'Business unit', sql: 'sales_org' },
+];
+
+const partnerColumn = (key) => PARTNER_COLUMNS.find((c) => c.key === key);
+const PARTNER_EXPORT_CAP = 5000;
+const csvCell = (v) => (v === null || v === undefined ? '""' : `"${String(v).replace(/"/g, '""')}"`);
+
+/**
+ * The filters behind the partner list, as one clause.
+ *
+ * Shared by the list and the export, so what leaves is what was on screen --
+ * and so the book rule and the Partner RM ownership rule cannot be applied by
+ * one and missed by the other.
+ */
+function partnerFilter(req) {
   const orgs = orgsFor(req.user);
   const where = [`sales_org IN (${orgs.map(() => '?').join(',') || "''"})`];
   const params = [...orgs];
-  /* P2-13. `state` here is the lifecycle state_code, not the geographic
-     state on the partner record -- a distinction that has caught somebody on
-     this codebase before. The dashboard tiles pass ACTIVE and ONBOARDING. */
-  if (req.query.state) { where.push('state_code = ?'); params.push(req.query.state); }
-  if (req.query.mine === 'true' || req.user.role === 'partner_rm') { where.push('owner_id = ?'); params.push(req.user.id); }
 
-  const rows = all(`SELECT * FROM partners ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC`, params).map(decorate);
+  if (req.query.state) { where.push('state_code = ?'); params.push(req.query.state); }
+  if (req.query.mine === 'true' || req.user.role === 'partner_rm') {
+    where.push('owner_id = ?');
+    params.push(req.user.id);
+  }
+
+  const q = String(req.query.q ?? '').trim();
+  if (q) {
+    where.push('(name LIKE ? OR business_name LIKE ? OR partner_code LIKE ? OR mobile LIKE ?)');
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+  }
+
+  return { clause: where.join(' AND '), params };
+}
+
+router.get('/', requirePermission('partner.view'), (req, res) => {
+  /* `state` is the lifecycle state_code, not the geographic state on the
+     partner record -- a distinction that has caught somebody on this codebase
+     before. The dashboard tiles pass ACTIVE and ONBOARDING. */
+  const { clause, params } = partnerFilter(req);
+
+  const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+  const sortCol = partnerColumn(req.query.sort);
+  const dir = String(req.query.dir).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+  const orderBy = sortCol ? `${sortCol.sql} ${dir}, id ASC` : 'created_at DESC';
+
+  /* The list was unbounded: no LIMIT at all, and no count, so it returned the
+     whole book and said nothing about how much that was. */
+  const total = one(`SELECT COUNT(*) n FROM partners WHERE ${clause}`, params).n;
+  res.set('X-Total-Count', String(total));
+
+  const rows = all(
+    `SELECT * FROM partners WHERE ${clause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`,
+    [...params, limit, offset],
+  ).map(decorate);
   res.json(maskRecords(rows, maskFor(req, 'partner_list')));
+});
+
+/* Declared before `/:id`, or Express reads "meta" as a partner id. */
+router.get('/meta', requirePermission('partner.view'), (req, res) => res.json({
+  states: PARTNER_STATES,
+  columns: PARTNER_COLUMNS.map(({ key, label, pii }) => ({ key, label, pii: Boolean(pii) })),
+  export_cap: PARTNER_EXPORT_CAP,
+  may_export: can(req.user.role, 'data.export'),
+  may_unmask: can(req.user.role, 'pii.unmask'),
+}));
+
+/**
+ * Export the partner list, as filtered.
+ *
+ * Two capabilities, not one: seeing partners and extracting them are different
+ * acts, and the export inherits the same book and ownership rules the list
+ * applies because both read the one filter above.
+ */
+router.post('/export', requirePermission('partner.view'), requirePermission('data.export'), (req, res) => {
+  const chosen = (Array.isArray(req.body?.columns) && req.body.columns.length
+    ? req.body.columns.filter((k) => partnerColumn(k))
+    : ['partner_code', 'name', 'business_name', 'partner_model', 'state_code', 'city', 'created_at']);
+  if (!chosen.length) return res.status(400).json({ error: 'Choose at least one column' });
+
+  const wantsClear = Boolean(req.body?.unmask);
+  const mayUnmask = can(req.user.role, 'pii.unmask');
+  if (wantsClear && !mayUnmask) {
+    return res.status(403).json({
+      error: 'Exporting identifiers in the clear needs the unmask permission',
+      required: 'pii.unmask',
+    });
+  }
+  const unmasked = wantsClear && mayUnmask;
+
+  const { clause, params } = partnerFilter(req);
+  const rows = all(
+    `SELECT * FROM partners WHERE ${clause} ORDER BY id LIMIT ?`,
+    [...params, PARTNER_EXPORT_CAP],
+  ).map(decorate);
+
+  const visible = maskRecords(rows, maskFor(req, 'partner_list'));
+
+  const mask = (key, value) => {
+    if (!partnerColumn(key)?.pii || unmasked || !value) return value;
+    const str = String(value);
+    return key === 'email'
+      ? str.replace(/^(.).*(@.*)$/, '$1***$2')
+      : `******${str.slice(-4)}`;
+  };
+
+  const header = chosen.map((k) => csvCell(partnerColumn(k).label)).join(',');
+  const body = visible.map((r) => chosen.map((k) => csvCell(mask(k, r[k]))).join(',')).join('\n');
+
+  audit(req.user.id, 'partner.export', 'partner', null, {
+    rows: visible.length, columns: chosen, unmasked,
+    filters: Object.fromEntries(['q', 'state', 'mine'].filter((k) => req.query[k]).map((k) => [k, req.query[k]])),
+  });
+
+  res.json({
+    filename: `partners-${new Date().toISOString().slice(0, 10)}.csv`,
+    rows: visible.length,
+    unmasked,
+    truncated: visible.length >= PARTNER_EXPORT_CAP,
+    csv: `${header}\n${body}`,
+  });
 });
 
 router.get('/:id', requirePermission('partner.view'), (req, res) => {

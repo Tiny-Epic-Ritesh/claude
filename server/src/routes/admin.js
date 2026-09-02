@@ -5,7 +5,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit, ROLES, ROLE_LABELS } from '../db.js';
-import { requireUser, requirePermission, permissionsFor, PERMISSIONS } from '../auth.js';
+import { requireUser, requirePermission, permissionsFor, orgsFor, PERMISSIONS } from '../auth.js';
 import { CONDITION_FIELDS, ACTION_TYPES, runRule } from '../engine/rules.js';
 import { MASTER_STEPS } from '../engine/kyc.js';
 import { integrationRegistry, getOutbox, syncTradingDb, vendorStatus } from '../integrations.js';
@@ -520,18 +520,76 @@ function campaignAudience(campaign) {
 /** A campaign that has gone out is reporting history, not a draft. */
 const isSent = (c) => ['Sent', 'Sending'].includes(c.status);
 
-router.get('/campaigns', requirePermission('campaign.manage'), (_req, res) => {
-  res.json(all(`
-    SELECT c.*, t.name AS template_name, ll.name AS list_name, u.name AS created_by_name,
-           (SELECT COUNT(*) FROM lead_list_members m WHERE m.list_id = c.list_id) AS list_size
-    FROM campaigns c
+/**
+ * The columns a campaign list can be ordered by.
+ *
+ * A campaign carries no personal data of its own — it names a list and a
+ * template and counts what happened — so there is nothing here to mask.
+ */
+export const CAMPAIGN_COLUMNS = [
+  { key: 'name', label: 'Name', sql: 'c.name' },
+  { key: 'channel', label: 'Channel', sql: 'c.channel' },
+  { key: 'status', label: 'Status', sql: 'c.status' },
+  { key: 'list_name', label: 'List', sql: 'll.name' },
+  { key: 'template_name', label: 'Template', sql: 't.name' },
+  { key: 'sent', label: 'Sent', sql: 'c.sent' },
+  { key: 'opened', label: 'Opened', sql: 'c.opened' },
+  { key: 'clicked', label: 'Clicked', sql: 'c.clicked' },
+  { key: 'scheduled_at', label: 'Scheduled', sql: 'c.scheduled_at' },
+  { key: 'created_by_name', label: 'Created by', sql: 'u.name' },
+  { key: 'created_at', label: 'Created', sql: 'c.created_at' },
+];
+
+const campaignColumn = (key) => CAMPAIGN_COLUMNS.find((col) => col.key === key);
+
+const CAMPAIGN_FROM = `FROM campaigns c
     LEFT JOIN templates t ON t.id = c.template_id
     LEFT JOIN lead_lists ll ON ll.id = c.list_id
-    LEFT JOIN users u ON u.id = c.created_by
-    WHERE c.status != 'Archived'
-    ORDER BY c.created_at DESC
-  `));
+    LEFT JOIN users u ON u.id = c.created_by`;
+
+router.get('/campaigns', requirePermission('campaign.manage'), (req, res) => {
+  /* Scoped to the reader's book. This list never checked it: campaigns carry a
+     sales_org and the query ignored it, so a Bigul marketer's campaign list
+     included Bonanza's — names, audiences and results. The same shape as the
+     ticket list before it was fixed. */
+  const orgs = orgsFor(req.user);
+  const where = ["c.status != 'Archived'", `c.sales_org IN (${orgs.map(() => '?').join(',') || "''"})`];
+  const params = [...orgs];
+
+  const q = String(req.query.q ?? '').trim();
+  if (q) {
+    where.push('(c.name LIKE ? OR ll.name LIKE ? OR t.name LIKE ?)');
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+  }
+  if (req.query.channel) { where.push('c.channel = ?'); params.push(req.query.channel); }
+  if (req.query.status) { where.push('c.status = ?'); params.push(req.query.status); }
+
+  const clause = where.join(' AND ');
+  const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+  const sortCol = campaignColumn(req.query.sort);
+  const dir = String(req.query.dir).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+  const orderBy = sortCol ? `${sortCol.sql} ${dir}, c.id ASC` : 'c.created_at DESC';
+
+  const total = one(`SELECT COUNT(*) n ${CAMPAIGN_FROM} WHERE ${clause}`, params).n;
+  res.set('X-Total-Count', String(total));
+
+  res.json(all(
+    `SELECT c.*, t.name AS template_name, ll.name AS list_name, u.name AS created_by_name,
+           (SELECT COUNT(*) FROM lead_list_members m WHERE m.list_id = c.list_id) AS list_size
+    ${CAMPAIGN_FROM}
+    WHERE ${clause}
+    ORDER BY ${orderBy}
+    LIMIT ? OFFSET ?`,
+    [...params, limit, offset],
+  ));
 });
+
+/** What the campaign list can be ordered by. */
+router.get('/campaigns/meta', requirePermission('campaign.manage'), (_req, res) => res.json({
+  columns: CAMPAIGN_COLUMNS.map(({ key, label }) => ({ key, label })),
+}));
 
 router.get('/campaigns/archived', requirePermission('campaign.manage'), (_req, res) => {
   res.json(all(`

@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,081** — 552 end-to-end and 529 unit. All green.
+**Tests: 1,090** — 561 end-to-end and 529 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -691,3 +691,53 @@ Same method again, and this one had a live privilege escalation in it.
 - **A component defined in a render body remounts its subtree every render.**
   The sortable header was declared inside the queue, so the whole header row was
   torn down and rebuilt on every keystroke of the search box. Hoisted.
+
+
+---
+
+## Partners and campaigns checked the same way — done 2 Sep 2026
+
+The last two searchable objects, and the worst finding of the four passes.
+
+- [x] **Advanced search had no per-object capability gate at all.** It required
+      a session and nothing else. A Caller is refused the Partners tab and the
+      Campaigns list with a 403, and read **all seven of each** through the
+      search box — partner codes, commercial state, campaign audiences and
+      results. Fixed structurally rather than per route: the object declares
+      what it requires, and one piece of middleware enforces it on search,
+      count, ids, fields, save and export. Gating the search alone would have
+      left five other doors into the same rows.
+- [x] **The object picker no longer names what it will refuse.** The list of
+      what exists is itself a disclosure, and it is a second, independent layer
+      — verified by disabling the middleware and watching the picker test keep
+      passing while the two gate tests failed.
+- [x] **Partners narrow twice in search, as they do in the tab** — by book, and
+      for a Partner RM to the partners they own. The seed happens to give that
+      RM every partner in their book, so this one was latent rather than
+      demonstrable; it is the same rule either way.
+- [x] **Archived campaigns are out of the search**, as they are out of the list.
+- [x] **The campaign list never applied the book boundary.** It selected every
+      campaign regardless of `sales_org` — the same shape as the ticket list
+      before August. Not demonstrable on this seed, where every campaign is
+      Bonanza's, which is exactly why it survived.
+- [x] **Neither list was bounded.** No `LIMIT` at all on either: the whole book
+      came back on every call, with no count. Both now page, count, sort and
+      search, and partners export — audited, masked, and inheriting the book
+      and ownership rules because the list and the export read one filter.
+- [x] **PAN and bank account are not exportable.** Both are encrypted at rest,
+      so an export would ship ciphertext; naming them leaves nothing to export
+      rather than quietly producing something useless.
+
+### Notes
+
+- **The gate was tested against the bug.** Disabled it, restarted the server,
+  confirmed both gate tests fail, restored. Same discipline as the ticket scope
+  — and the reason it matters is that the first attempt at that check on
+  tickets proved nothing, because the suite runs against a long-lived server
+  and editing a file without restarting tests the old code.
+- **Four objects, four passes, one shape.** Leads, clients, tickets, partners
+  and campaigns each had the same three list gaps (no sort, no paging, no
+  count) and each of the last three had a scope or capability rule that the
+  search path did not apply. The list route and its search are the same data
+  with the same boundary, and fixing one of a pair is how the other stays
+  broken — which is what the ticket list comment already said in August.
