@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,122** — 593 end-to-end and 529 unit. All green.
+**Tests: 1,124** — 595 end-to-end and 529 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -1306,3 +1306,41 @@ import test's dry run then found nothing valid. The second version used the
 mobile from. The third uses `92` and `93`, which nothing else does.
 A shared fixture pool with no free slots is worth knowing about before adding to
 it.
+
+
+---
+
+## Ids in query strings — done 2 Sep 2026
+
+The expectation going in was that these would be safe: a filter intersects with
+a scoped list, so an out-of-book id should narrow it to nothing rather than leak.
+That held for three of the five routes. It failed for two, because they had no
+scoped list to intersect with.
+
+- [x] **`GET /activities` had no scope of any kind.** Asked for a lead in
+      the other business it returned that lead's interactions — subject, body,
+      disposition and captured location. Asked for nothing in particular it
+      returned the most recent two hundred across both books at once: 205 rows
+      spanning 12 Bigul leads and 42 Bonanza ones.
+- [x] **`GET /cards` likewise**, at 500 rows across both. Its
+      `product_id` filter reached the other business's products, and
+      without one it fell back to the reader's own product type — null for an
+      admin, so no filter at all.
+
+Both go through the lead now, with the partner fallback for interactions that
+have no lead. Measured after: Bonanza sees 166 activities and 464 cards, all
+Bonanza; a Bigul supervisor sees their own 29.
+
+### The oracle question
+
+Where a filter correctly returns nothing, the answer must not distinguish
+"exists, elsewhere" from "does not exist" — a reply that differs confirms the
+record by its shape even while returning no rows. All five now answer a
+foreign id exactly as they answer id 99999999, and there is a test for it.
+
+### What the exercise was actually worth
+
+The question was about query-string ids and found two entirely unscoped list
+routes. The id was the smaller half: filtering on it merely made the leak
+easier to aim. Worth remembering that a narrow question can be the thing that
+gets you to look at a route at all.

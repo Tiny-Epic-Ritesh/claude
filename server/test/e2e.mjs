@@ -454,6 +454,50 @@ async function run() {
   /* ----------------------------------------------------------- 9. tickets */
   suite('09 ticketing & SLA');
 
+  await check('an id in the query string is checked too, and neither list is unscoped', async () => {
+    /* Asking the query-string question found something larger than the question.
+       `/activities` and `/cards` had no scope of any kind: asked for a lead or
+       a product in the other business they answered with its rows — an
+       interaction carries subject, body, disposition and captured location —
+       and asked for nothing in particular they answered with the most recent
+       two hundred activities and five hundred cards across both books at once.
+
+       So this asserts both: the filter cannot reach across, and the unfiltered
+       call does not either. */
+    const { data: theirLeads } = await req('/api/leads?limit=1', { token: T.bigul_rm, expect: 200 });
+    const lead = need(theirLeads[0], 'a BIGUL lead');
+
+    const { data: filtered } = await req(`/api/activities?lead_id=${lead.id}`, { token: T.admin, expect: 200 });
+    eq(filtered.length, 0, "a lead's interactions were readable from the other book");
+
+    const { data: everything } = await req('/api/activities?limit=500', { token: T.admin, expect: 200 });
+    assert(everything.length > 0, 'the control returned nothing, so this proves nothing');
+    assert(!everything.some((a) => a.lead_id === lead.id),
+      'the unfiltered list carried an interaction from the other book');
+
+    const { data: cards } = await req('/api/cards', { token: T.admin, expect: 200 });
+    const rows = Array.isArray(cards) ? cards : cards.rows ?? [];
+    assert(!rows.some((c) => c.lead_id === lead.id),
+      'the card list carried a card from the other book');
+
+    // Their own side still works, or the scope has gone too far.
+    const { data: theirs } = await req('/api/activities?limit=500', { token: T.bigul_supervisor, expect: 200 });
+    assert(theirs.length > 0, 'a Bigul supervisor now sees no interactions at all');
+  });
+
+  await check('a filter for another book is answered like a filter for nothing', async () => {
+    /* Where these correctly return no rows, the answer must not distinguish
+       "exists, elsewhere" from "does not exist" — a refusal that differs is an
+       oracle, and confirms the record by the shape of the reply. */
+    const { data: theirLeads } = await req('/api/leads?limit=1', { token: T.bigul_rm, expect: 200 });
+    const lead = need(theirLeads[0], 'a BIGUL lead');
+
+    const { status: a, data: theirs } = await req(`/api/activities?lead_id=${lead.id}`, { token: T.admin });
+    const { status: b, data: missing } = await req('/api/activities?lead_id=99999999', { token: T.admin });
+    eq(a, b, 'a lead in the other book answers differently from one that does not exist');
+    eq(theirs.length, missing.length, 'the two answers differ in length');
+  });
+
   await check('an id in the body is checked like an id in the path', async () => {
     /* The pattern behind several of these findings. A record id in the URL gets
        loaded and checked; the same id arriving in the body did not, and five

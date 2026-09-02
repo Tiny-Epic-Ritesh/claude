@@ -664,7 +664,11 @@ router.post('/leads/import', requirePermission('lead.create'), (req, res) => {
 /* --------------------------------------------------------- product cards */
 
 router.get('/cards', (req, res) => {
-  // Product RM view: every lead carrying their product, in any state.
+  /* Product RM view: every lead carrying their product, in any state — every
+     lead *this reader may see*, which it did not say before. Unfiltered it
+     answered with five hundred cards across both businesses; asked for a
+     product belonging to the other one it answered with that product's cards. */
+  const scope = reqScope(req, 'l');
   const productId = req.query.product_id || req.user.product_type_id;
   const rows = all(
     `SELECT pc.*, pt.name AS product_name, pt.code AS product_code,
@@ -677,9 +681,9 @@ router.get('/cards', (req, res) => {
      JOIN product_types pt ON pt.id = pc.product_type_id
      JOIN leads l ON l.id = pc.lead_id AND l.deleted_at IS NULL
      LEFT JOIN users u ON u.id = l.owner_id
-     ${productId ? 'WHERE pc.product_type_id = ?' : ''}
+     WHERE (${scope.sql})${productId ? ' AND pc.product_type_id = ?' : ''}
      ORDER BY pc.last_state_at DESC LIMIT 500`,
-    productId ? [productId] : [],
+    productId ? [...scope.params, productId] : [...scope.params],
   );
 
   res.json(rows.map((r) => ({
@@ -887,15 +891,39 @@ router.get('/cards/:id/audit', (req, res) => {
 
 router.get('/activities', (req, res) => {
   const { lead_id, type, limit = 200 } = req.query;
-  const where = [];
-  const params = [];
+
+  /* Scoped through the lead, which is where an interaction's book lives.
+   *
+   * This route had no scope of any kind. Asked for a lead in the other business
+   * it answered with that lead's interactions — subject, body, disposition and
+   * captured location — and asked for nothing in particular it answered with
+   * the most recent two hundred across both books at once. The query-string id
+   * was the smaller half of the problem.
+   *
+   * An interaction with no lead is a partner interaction, so it goes through
+   * the partner's book rather than being left visible for want of a lead —
+   * the same rule advanced search applies to the same rows. */
+  const scope = reqScope(req, 'sl');
+  const orgs = orgsFor(req.user);
+  const partnerSql = orgs.length
+    ? `EXISTS (SELECT 1 FROM partners sp WHERE sp.id = a.partner_id
+                AND sp.sales_org IN (${orgs.map(() => '?').join(',')}))`
+    : '1=0';
+
+  const where = [
+    `(EXISTS (SELECT 1 FROM leads sl WHERE sl.id = a.lead_id
+               AND sl.deleted_at IS NULL AND ${scope.sql})
+      OR (a.lead_id IS NULL AND ${partnerSql}))`,
+  ];
+  const params = [...scope.params, ...(orgs.length ? orgs : [])];
+
   if (lead_id) { where.push('a.lead_id = ?'); params.push(lead_id); }
   if (type) { where.push('a.type = ?'); params.push(type); }
 
   res.json(applyFieldSecurity('interaction', all(
     `SELECT a.*, u.name AS user_name, l.name AS lead_name
      FROM activities a LEFT JOIN users u ON u.id = a.user_id LEFT JOIN leads l ON l.id = a.lead_id
-     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+     WHERE ${where.join(' AND ')}
      ORDER BY a.created_at DESC LIMIT ?`,
     [...params, Number(limit)],
   ), req.user, { caps: req.caps }));
