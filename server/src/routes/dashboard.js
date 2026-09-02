@@ -19,7 +19,7 @@
 
 import { Router } from 'express';
 import { all, one } from '../db.js';
-import { requireUser, leadScope, clientScope, activeOrg, can, orgsFor } from '../auth.js';
+import { requireUser, leadScope, clientScope, activeOrg, can, orgsFor, reqTicketScope } from '../auth.js';
 import {
   RANGES, DEFAULT_RANGE, resolveRange, inRange, inPrevRange, delta,
 } from '../engine/daterange.js';
@@ -207,9 +207,20 @@ function activityTiles(req, range) {
 }
 
 function caseTiles(req, range) {
-  const orgs = activeOrg(req) ? [activeOrg(req)] : null;
-  const orgSql = orgs ? 'AND t.sales_org = ?' : '';
-  const orgParams = orgs || [];
+  /* The same scope the Cases list applies, not an org filter of its own.
+   *
+   * This read `activeOrg(req) ? [activeOrg(req)] : null` — the org *switcher* —
+   * so unless somebody had explicitly switched business there was no book
+   * filter at all, and the tile counted both books while its own drill-through
+   * showed one. It also ignored the role rules the list applies, so a tile
+   * could count cases the person opening it cannot read.
+   *
+   * That went unseen because every seeded case was Bonanza's and the two
+   * numbers agreed by accident. Sharing the scope makes them agree by
+   * construction, which is what the drill-through test asks for. */
+  const scope = reqTicketScope(req, 't');
+  const orgSql = `AND (${scope.sql})`;
+  const orgParams = scope.params;
 
   const open = one(`SELECT COUNT(*) n FROM tickets t WHERE t.status NOT IN ('Resolved','Closed') ${orgSql}`, orgParams).n;
   // `breached` is maintained by the SLA sweep; the due-date test catches

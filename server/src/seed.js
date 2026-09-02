@@ -1132,18 +1132,41 @@ TICKETS.forEach(([subject, description, priority, category, leadIdx, productCode
     ? one('SELECT id FROM product_cards WHERE lead_id = ? AND product_type_id = ?', [leadId, productIds[productCode]])
     : null;
 
+  /* A case belongs to the book of whatever it is about.
+   *
+   * `tickets.sales_org` defaults to 'BONANZA' at the column and this seed never
+   * set it, so two of these — both on Bigul leads — described a Bigul client
+   * while sitting in Bonanza's book, readable by Bonanza staff and missing from
+   * the queue of the people they belonged to. It also left the suite with no
+   * Bigul case at all, so the cross-book checks on the ticket write routes had
+   * nothing to run against. */
+  const org = leadId
+    ? one('SELECT sales_org FROM leads WHERE id = ?', [leadId])?.sales_org ?? 'BONANZA'
+    : 'BONANZA';
+  const ref = `${org === 'BIGUL' ? 'BGL' : 'BNZ'}-${String(i + 1).padStart(5, '0')}`;
+
+  /* Assigned — and raised — within the case's own book. An agent cannot work a
+     queue they cannot read, and a case whose raiser is in the other book is a
+     case its raiser cannot see: the scope grants sight to whoever is assigned
+     OR raised it, and both halves have to be somebody real in that book. */
+  const bigulAgent = org === 'BIGUL'
+    ? one("SELECT id FROM users WHERE role = 'customer_care' AND sales_org = 'BIGUL' AND active = 1")?.id
+    : null;
+  const owner = bigulAgent ?? assignee;
+  const raiser = bigulAgent ?? U.care;
+
   const result = run(
     `INSERT INTO tickets (ref, subject, description, priority, category_id, status, channel, lead_id, card_id, partner_id, assignee_id, created_by,
-       ai_summary, response_due, resolution_due, first_response_at, resolved_at, breached, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [`BNZ-${String(i + 1).padStart(5, '0')}`, subject, description, priority, catIds[category], status,
+       ai_summary, response_due, resolution_due, first_response_at, resolved_at, breached, created_at, updated_at, sales_org)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [ref, subject, description, priority, catIds[category], status,
       pick(['CRM', 'WhatsApp', 'Email', 'Phone', 'Chat'], i),
-      leadId, card?.id ?? null, leadIdx === null ? partnerIds[0] : null, assignee, U.care,
+      leadId, card?.id ?? null, leadIdx === null ? partnerIds[0] : null, owner, raiser,
       null,
       ahead(0, priority === 'Critical' ? -2 : 4), ahead(0, priority === 'Critical' ? -1 : 20),
       status !== 'Open' ? ago(ageDays, -2) : null,
       status === 'Resolved' ? ago(1) : null,
-      breached ? 1 : 0, ago(ageDays), ago(Math.max(0, ageDays - 1))],
+      breached ? 1 : 0, ago(ageDays), ago(Math.max(0, ageDays - 1)), org],
   );
   const tid = Number(result.lastInsertRowid);
 
@@ -1152,12 +1175,12 @@ TICKETS.forEach(([subject, description, priority, category, leadIdx, productCode
   ]);
   if (status !== 'Open') {
     run("INSERT INTO ticket_replies (ticket_id, body, author_type, user_id, created_at) VALUES (?,?,?,?,?)", [
-      tid, 'Thank you for reporting this. We have raised it with the operations team and will revert shortly.', 'agent', assignee, ago(ageDays, -2),
+      tid, 'Thank you for reporting this. We have raised it with the operations team and will revert shortly.', 'agent', owner, ago(ageDays, -2),
     ]);
   }
   if (status === 'Resolved') {
     run("INSERT INTO ticket_replies (ticket_id, body, author_type, user_id, created_at) VALUES (?,?,?,?,?)", [
-      tid, 'Corrected contract note has been emailed. Apologies for the error.', 'agent', assignee, ago(1),
+      tid, 'Corrected contract note has been emailed. Apologies for the error.', 'agent', owner, ago(1),
     ]);
     run('UPDATE tickets SET csat = ? WHERE id = ?', [4, tid]);
   }

@@ -458,6 +458,55 @@ async function run() {
     assert(after.city !== 'Nowhere', 'the refused edit was applied anyway');
   });
 
+  await check('a case cannot be changed from the other book', async () => {
+    /* Untestable until the seed grew a Bigul case. Every seeded ticket was
+       Bonanza's, so there was nothing in the other book to try these against —
+       and both routes turned out to accept the write the moment there was.
+
+       PATCH gated reassignment on a capability and never checked which case;
+       CSAT checked nothing at all. */
+    const bigul = await login('care@bigul.test');
+    const { data: theirs } = await req('/api/tickets?limit=1', { token: bigul, expect: 200 });
+    const target = need(theirs[0], 'a BIGUL case');
+    assert(target.ref.startsWith('BGL-'), `a Bigul case should carry a BGL ref, got ${target.ref}`);
+
+    await req(`/api/tickets/${target.id}`, {
+      method: 'PATCH', token: T.dealer, expect: 403, body: { priority: 'Low' },
+    });
+    await req(`/api/tickets/${target.id}/csat`, {
+      method: 'POST', token: T.dealer, expect: 403, body: { score: 1 },
+    });
+
+    // Untouched, and still reachable by the people it belongs to.
+    const { data: after } = await req(`/api/tickets/${target.id}`, { token: bigul, expect: 200 });
+    eq(after.priority, target.priority, 'the refused edit was applied anyway');
+    eq(after.csat, target.csat ?? null, 'the refused CSAT was recorded anyway');
+  });
+
+  await check('a case is raised into the book of whatever it is about', async () => {
+    /* tickets.sales_org defaults to BONANZA at the column and the create route
+       never set it, so every case ever raised landed in Bonanza's book — a
+       Bigul case readable by Bonanza staff and missing from the queue of the
+       people it belonged to. The subject decides, not the author. */
+    const bigul = await login('rm@bigul.test');
+    const { data: leads } = await req('/api/leads?limit=1', { token: bigul, expect: 200 });
+    const lead = need(leads[0], 'a BIGUL lead');
+    const { data: meta } = await req('/api/meta', { token: bigul, expect: 200 });
+
+    const { data: made } = await req('/api/tickets', {
+      method: 'POST', token: bigul, expect: 201,
+      body: {
+        subject: `Book check ${RUN}`, description: 'Raised on a Bigul lead.',
+        priority: 'Low', category_id: meta.ticket_categories[0].id, lead_id: lead.id,
+      },
+    });
+    assert(made.ref.startsWith('BGL-'), `a Bigul case should carry a BGL ref, got ${made.ref}`);
+
+    // Its own book can open it; the other cannot.
+    await req(`/api/tickets/${made.id}`, { token: bigul, expect: 200 });
+    await req(`/api/tickets/${made.id}`, { token: T.admin, expect: 403 });
+  });
+
   await check('a task can only be changed by somebody it belongs to', async () => {
     /* This route had no check at all: it updated by id and returned the whole
        row, which made it a write primitive over every task in the system —

@@ -96,9 +96,15 @@ test('a case against a lead you own is visible however it is assigned', () => {
 /* ------------------------------------------------------------ still scoped */
 
 test('the book boundary survives the new rule', () => {
-  // The scope carries the org check itself now, so this is the one that would
-  // break if the two rules were ever separated again.
-  for (const role of ['superadmin', 'admin', 'customer_care', 'sales_rm']) {
+  /* The scope carries the org check itself now, so this is the one that would
+     break if the two rules were ever separated again.
+
+     Superadmin is not in this list, and the omission is the point: that role
+     reaches both books by design — bookscope.test.mjs asserts it directly. This
+     test passed with superadmin in it only while every seeded case happened to
+     be Bonanza's, so it was asserting the shape of the fixture rather than the
+     rule. The moment the seed grew a Bigul case it said so. */
+  for (const role of ['admin', 'customer_care', 'sales_rm']) {
     const u = userBy(role);
     if (!u || !u.sales_org) continue;
     const s = ticketScope(u, 't');

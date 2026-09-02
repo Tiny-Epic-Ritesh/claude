@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,103** — 574 end-to-end and 529 unit. All green.
+**Tests: 1,105** — 576 end-to-end and 529 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -906,3 +906,52 @@ one that shows it.
   branch never executes. The test now builds the one shape that reaches it — a
   task on a lead the caller owns, assigned to somebody else — and fails when
   that branch is disabled.
+
+
+---
+
+## A Bigul case in the seed, and the four things it found — done 2 Sep 2026
+
+Asked for a Bigul ticket so the untested ticket write routes could be tested.
+The seed gap turned out to be a symptom rather than an oversight.
+
+- [x] **The create route never set `sales_org`.** The column defaults to
+      'BONANZA', so every case ever raised landed in Bonanza's book whoever
+      raised it and whoever it was about — a Bigul case readable by Bonanza
+      staff and missing from the queue of the people it belonged to. It derives
+      the book from the subject now: the lead, else the card's lead, else the
+      partner, else the raiser's active org. The subject decides, not the author.
+- [x] **Two seeded cases already sat on Bigul leads** and were marked Bonanza
+      for that reason. The seed sets the book from the lead now, gives Bigul
+      cases a `BGL-` reference like every other Bigul record, and both
+      assigns and raises them within their own book — the scope grants sight to
+      whoever is assigned or raised a case, so both halves have to be somebody
+      real in that book.
+- [x] **The reference prefix was hardcoded `BNZ-`** for every case, in a
+      two-brand firm that uses BGL everywhere else.
+- [x] **Auto-assignment ignored the book**, so a Bigul case could be assigned to
+      a Bonanza agent — who cannot read the queue it is in. It picks within the
+      case's book now, and leaves it unassigned rather than assigning across:
+      unassigned in the right book beats assigned in the wrong one.
+
+### And then the seed change found three more
+
+- [x] **`PATCH /tickets/:id` and `POST /tickets/:id/csat` both accepted
+      cross-book writes.** The first gated reassignment on a capability and
+      never checked which case; the second checked nothing at all. Both go
+      through `loadInBook` now. These are the routes recorded as *untested
+      rather than clean* in the previous entry — they were not clean.
+- [x] **The case tiles counted a different set than their own drill-through.**
+      They filtered on the org *switcher*, which is null unless somebody has
+      explicitly switched business, so by default they counted both books while
+      the list showed one — and ignored the role rules besides. They share the
+      list's scope now, so the tile and the list agree by construction.
+- [x] **A unit test was asserting the fixture, not the rule.** "The book
+      boundary survives the new rule" included superadmin, a role that reaches
+      both books by design and is asserted to do so elsewhere. It only passed
+      while every seeded case was Bonanza's.
+
+### The point
+
+A seed where every row of a kind sits in one book cannot test a boundary. Three
+live defects and one false test were hiding behind two rows of missing data.

@@ -4,7 +4,8 @@
 
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
-import { can, requireUser, requirePermission, mayUseOrg, reqTicketScope } from '../auth.js';
+import { can, requireUser, requirePermission, mayUseOrg, activeOrg, reqTicketScope } from '../auth.js';
+import { loadInBook } from '../engine/bookscope.js';
 import { assertValid } from '../engine/validation.js';
 import { applySla, sweepSla, handleStatusChange, slaRemaining, DEFAULT_SLA } from '../engine/sla.js';
 import { send } from '../integrations.js';
@@ -241,24 +242,58 @@ router.post('/', requirePermission('ticket.create'), async (req, res) => {
   if (!subject?.trim()) return res.status(400).json({ error: 'Subject is required' });
   if (!PRIORITIES.includes(priority)) return res.status(400).json({ error: `Priority must be one of ${PRIORITIES.join(', ')}` });
 
-  // Auto-assignment by category, round-robin by current open load (BRD §7.10).
+  /* A case belongs to the book of whatever it is about.
+   *
+   * `tickets.sales_org` defaults to 'BONANZA' at the column, and this route
+   * never set it — so every case ever raised landed in Bonanza's book whoever
+   * raised it and whoever it was about. Both halves of that are wrong: a Bigul
+   * case was readable by Bonanza staff, and invisible to the Bigul colleagues
+   * whose queue it belonged in. Two of the seeded cases sit on Bigul leads and
+   * are marked BONANZA for exactly this reason.
+   *
+   * The subject decides, not the author: an agent who works both books raising
+   * a case about a Bigul lead is raising a Bigul case. */
+  const cardLead = card_id
+    ? one('SELECT lead_id FROM product_cards WHERE id = ?', [card_id])
+    : null;
+  const subjectLead = lead_id ?? cardLead?.lead_id ?? null;
+
   const category = category_id ? one('SELECT * FROM ticket_categories WHERE id = ?', [category_id]) : null;
-  const assignee = category?.auto_assign_role
-    ? one(
-      `SELECT id FROM users WHERE role = ? AND active = 1
-       ORDER BY (SELECT COUNT(*) FROM tickets WHERE assignee_id = users.id AND status NOT IN ('Resolved','Closed')) LIMIT 1`,
-      [category.auto_assign_role],
-    )
-    : one("SELECT id FROM users WHERE role = 'customer_care' AND active = 1 ORDER BY (SELECT COUNT(*) FROM tickets WHERE assignee_id = users.id AND status NOT IN ('Resolved','Closed')) LIMIT 1");
+
+  const org =
+    (subjectLead ? one('SELECT sales_org FROM leads WHERE id = ?', [subjectLead])?.sales_org : null)
+    ?? (partner_id ? one('SELECT sales_org FROM partners WHERE id = ?', [partner_id])?.sales_org : null)
+    ?? activeOrg(req)
+    ?? req.user.sales_org;
+
+  if (!mayUseOrg(req.user, org)) {
+    return res.status(403).json({ error: 'That record belongs to another book' });
+  }
+
+  /* Auto-assignment by category, round-robin by current open load (BRD §7.10),
+     and within the case's own book — an agent cannot work a queue they cannot
+     read, so assigning across the book leaves the case stranded. Unassigned in
+     the right book beats assigned in the wrong one, so there is no fallback to
+     just anybody. */
+  const assignee = one(
+    `SELECT id FROM users
+      WHERE role = ? AND active = 1
+        AND (sales_org = ? OR org_access LIKE ?)
+      ORDER BY (SELECT COUNT(*) FROM tickets WHERE assignee_id = users.id AND status NOT IN ('Resolved','Closed'))
+      LIMIT 1`,
+    [category?.auto_assign_role ?? 'customer_care', org, `%${org}%`],
+  );
 
   const result = run(
-    `INSERT INTO tickets (subject, description, priority, category_id, lead_id, card_id, partner_id, channel, assignee_id, created_by, status)
-     VALUES (?,?,?,?,?,?,?,?,?,?,'Open')`,
+    `INSERT INTO tickets (subject, description, priority, category_id, lead_id, card_id, partner_id, channel, assignee_id, created_by, status, sales_org)
+     VALUES (?,?,?,?,?,?,?,?,?,?,'Open',?)`,
     [subject, description || null, priority, category_id || null, lead_id || null, card_id || null, partner_id || null,
-      channel, assignee?.id || null, req.user.id],
+      channel, assignee?.id || null, req.user.id, org],
   );
   const id = Number(result.lastInsertRowid);
-  run('UPDATE tickets SET ref = ? WHERE id = ?', [`BNZ-${String(id).padStart(5, '0')}`, id]);
+  run('UPDATE tickets SET ref = ? WHERE id = ?', [
+    `${org === 'BIGUL' ? 'BGL' : 'BNZ'}-${String(id).padStart(5, '0')}`, id,
+  ]);
 
   applySla(id);
 
@@ -302,8 +337,14 @@ router.post('/:id/replies', requirePermission('ticket.reply'), async (req, res) 
 });
 
 router.patch('/:id', async (req, res) => {
-  const ticket = one('SELECT * FROM tickets WHERE id = ?', [req.params.id]);
-  if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+  /* Loaded within the reader's book. This route gated reassignment on a
+     capability and never checked which case was being changed, so a Bonanza
+     agent could reopen, reprioritise or reassign a Bigul case. It went
+     unnoticed because every seeded case was Bonanza's — there was nothing in
+     the other book to try it against. */
+  const found = loadInBook(req, 'ticket', req.params.id);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const ticket = found.row;
 
   const { status, priority, assignee_id, category_id } = req.body;
 
@@ -396,9 +437,15 @@ router.post('/:id/merge', requirePermission('ticket.merge'), (req, res) => {
 });
 
 router.post('/:id/csat', (req, res) => {
+  /* Same book check as the rest. A satisfaction score is small, but it is the
+     desk's own performance record and it was writable across the book by
+     anybody signed in. */
+  const found = loadInBook(req, 'ticket', req.params.id);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+
   const score = Number(req.body.score);
   if (!(score >= 1 && score <= 5)) return res.status(400).json({ error: 'CSAT must be 1–5' });
-  run('UPDATE tickets SET csat = ? WHERE id = ?', [score, req.params.id]);
+  run('UPDATE tickets SET csat = ? WHERE id = ?', [score, found.row.id]);
   res.json({ ok: true });
 });
 
