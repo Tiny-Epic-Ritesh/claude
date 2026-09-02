@@ -5032,6 +5032,46 @@ await check('a per-channel withdrawal closes only that channel', async () => {
   /* ============================================================ 42 */
   suite('42 Advanced Search usability (ENH-15)');
 
+  await check('product interests are scoped through the lead they hang off', async () => {
+    /* The seventh object with this exact problem: product_cards carries no
+       sales_org, so the generic branch found no column and returned no scope. A
+       Caller read all 570 cards, 118 of them on Bigul leads. */
+    const { data: all } = await req('/api/search-advanced/product_interest', {
+      method: 'POST', token: T.superadmin, expect: 200, body: { where: null },
+    });
+    const { data: caller } = await req('/api/search-advanced/product_interest', {
+      method: 'POST', token: T.caller, expect: 200, body: { where: null },
+    });
+    assert(caller.total < all.total,
+      `a caller saw every product card in the system (${caller.total} of ${all.total})`);
+    assert(caller.total > 0, 'the scope refused a caller everything, which is not the rule either');
+  });
+
+  await check('an object with no scope of its own returns nothing, not everything', async () => {
+    /* The generic branch used to answer "I cannot work out what you may see"
+       with "then see everything" — three separate ways: an unrecognised entity,
+       a table with no sales_org, and a user with no orgs. Two of those went
+       unnoticed for as long as the objects had been searchable, because a
+       missing scope looks exactly like a working one until somebody counts.
+
+       Checked from the outside, since scopeFor is not exported: every
+       searchable object either has a branch of its own or a sales_org column,
+       and a superadmin — who is refused nothing anywhere else — must be able to
+       see rows in each. An object that fell through to the refusal would come
+       back empty for them and fail here. */
+    const { data: objects } = await req('/api/search-advanced/objects', { token: T.superadmin, expect: 200 });
+    assert(objects.length >= 7, `only ${objects.length} searchable objects offered`);
+
+    for (const o of objects) {
+      // eslint-disable-next-line no-await-in-loop
+      const { data } = await req(`/api/search-advanced/${o.key}`, {
+        method: 'POST', token: T.superadmin, expect: 200, body: { where: null },
+      });
+      assert(data.total > 0,
+        `${o.key} returned nothing to a superadmin — it has no scope of its own and fell through to the refusal`);
+    }
+  });
+
   await check('tasks and interactions are scoped at all', async () => {
     /* Neither table carries a sales_org column, and the generic branch in
        scopeFor gives up when it cannot find one — returning no scope rather

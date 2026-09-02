@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,098** — 569 end-to-end and 529 unit. All green.
+**Tests: 1,100** — 571 end-to-end and 529 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -821,3 +821,40 @@ the same list gaps, and five of the seven had a scope or capability rule the
 search path did not apply. The list route and its search are the same data with
 the same boundary — the comment on the tasks list said so in August, about the
 last time this exact thing happened.
+
+
+---
+
+## The generic search scope fails closed — done 2 Sep 2026
+
+The thing that made two of the last three leaks silent, fixed at the cause.
+
+- [x] **" I cannot work out what you may see" no longer means "then see
+      everything".** The generic branch in `scopeFor` returned
+      `{ sql: null }` — no filter — in three separate situations: an entity
+      it did not recognise, a table with no `sales_org` column, and a user
+      with no orgs. It refuses now. A searchable object with no scope of its own
+      returns nothing until somebody gives it one, which is a visible, reportable
+      emptiness rather than a silent disclosure.
+- [x] **A seventh leak, found by looking for what the change would break.**
+      `product_cards` carries no `sales_org`, so
+      `product_interest` was in exactly the position tasks and interactions
+      were: a Caller read all 570 cards, 118 of them on Bigul leads. Scoped
+      through the lead now — a caller sees 70, an admin the 452 that are
+      Bonanza's.
+- [x] **The refusal says so.** A table with neither a `sales_org` column
+      nor a branch is a coding mistake rather than a state of the world, so it
+      warns by name to the server log rather than only returning nothing.
+
+### Verified
+
+- Registered a temporary searchable object over a table with no
+  `sales_org` and no branch: it returned 0 of 6 rows and logged
+  `[search] probe_unscoped has no sales_org and no scope of its own`.
+  Removed afterwards.
+- Disabled the new `product_interest` branch and both new tests failed —
+  the object fell through to the refusal and came back empty, which is the
+  guard working and the tests noticing.
+- One of the two tests checks every searchable object returns rows to a
+  superadmin. That is the outside-in way to assert nothing has fallen through
+  the refusal, since `scopeFor` is not exported.

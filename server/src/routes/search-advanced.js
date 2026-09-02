@@ -108,6 +108,19 @@ function scopeFor(entity, req) {
     return { sql: where.join(' AND '), params };
   }
 
+  /* Product cards hang off a lead and carry no book of their own, so they were
+     in exactly the position tasks and interactions were: the generic branch
+     could find no sales_org column and returned no scope at all. A Caller read
+     all 570 of them, 118 on Bigul leads. */
+  if (entity === 'product_interest') {
+    const lead = reqScope(req, 'sl');
+    return {
+      sql: `EXISTS (SELECT 1 FROM leads sl WHERE sl.id = l.lead_id
+                     AND sl.deleted_at IS NULL AND ${lead.sql})`,
+      params: [...lead.params],
+    };
+  }
+
   /* Partners narrow twice: by book, and — for a Partner RM — to the partners
      they own, which is what the Partners tab does. The generic branch below
      applies only the first, so an RM would have read the whole book's partners
@@ -123,14 +136,35 @@ function scopeFor(entity, req) {
     return { sql: where.join(' AND '), params };
   }
 
+  /* Everything past here has no scope of its own, and this branch used to hand
+     back `{ sql: null }` — no filter — in three separate situations: an entity
+     it did not recognise, a table with no sales_org column, and a user with no
+     orgs. "I cannot work out what you may see" was answered with "then see
+     everything", and that is how tasks, interactions and product cards were
+     each readable in full by anybody signed in. Two of those went unnoticed for
+     as long as the objects have been searchable, because a missing scope looks
+     exactly like a working one until somebody counts the rows.
+
+     It refuses instead now. A new searchable object with no branch above
+     returns nothing until somebody gives it one, which is a visible, reportable
+     emptiness rather than a silent disclosure. */
+  const NOTHING = { sql: '1=0', params: [] };
+
   const orgs = orgsFor(req.user);
   const spec = SEARCHABLE[entity];
-  if (!spec) return { sql: null, params: [] };
+  if (!spec) return NOTHING;
 
-  // Only if the table actually carries a sales_org; not all of them do.
   const table = spec.table.split(' ')[0];
   const hasOrg = all('SELECT name FROM pragma_table_info(?)', [table]).some((c) => c.name === 'sales_org');
-  if (!hasOrg || !orgs.length) return { sql: null, params: [] };
+  if (!hasOrg) {
+    /* Loud, because this one is a coding mistake rather than a state of the
+       world: an object was added to SEARCHABLE with neither a sales_org column
+       nor a branch above, and the only reason it returns nothing is that this
+       line caught it. */
+    console.warn(`[search] ${entity} has no sales_org and no scope of its own — refusing rather than returning everything`);
+    return NOTHING;
+  }
+  if (!orgs.length) return NOTHING;
 
   return { sql: `l.sales_org IN (${orgs.map(() => '?').join(',')})`, params: orgs };
 }
