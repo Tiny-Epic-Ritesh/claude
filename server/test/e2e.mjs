@@ -160,6 +160,26 @@ async function run() {
       const { data } = await req('/api/auth/me', { token: T[role], expect: 200 });
       eq(data.user.role, role, `me.role for ${email}`);
     }
+
+    /* The other book, signed in once and shared.
+     *
+     * Every test that needs to prove a boundary needs somebody on the far side
+     * of it, and there are a dozen of those now. Each calling `login()` for
+     * itself tripped the per-account limit of ten a minute, and the suite then
+     * reported a wall of failures whose cause was the limiter doing its job —
+     * which is a slow and confusing way to learn that the tests are fine.
+     *
+     * Keyed by book and role, so `T.bigul_rm` reads like `T.sales_rm`. */
+    const bigul = {
+      bigul_rm: 'rm@bigul.test',
+      bigul_care: 'care@bigul.test',
+      bigul_supervisor: 'supervisor@bigul.test',
+    };
+    for (const [key, email] of Object.entries(bigul)) {
+      T[key] = await login(email);
+      const { data } = await req('/api/auth/me', { token: T[key], expect: 200 });
+      eq(data.user.sales_org, 'BIGUL', `${email} should be in the other book`);
+    }
   });
 
   /* --------------------------------------------------------- 2. cockpits */
@@ -434,6 +454,73 @@ async function run() {
   /* ----------------------------------------------------------- 9. tickets */
   suite('09 ticketing & SLA');
 
+  await check('nothing a lead detail page can do reaches the other book', async () => {
+    /* PATCH was fixed earlier in this sweep; these are the actions beside it,
+       and six of them went through. The two that matter most left the system:
+       /call dialled a Bigul client and loaded them into the Bigul dialler
+       campaign, and /message sent them an SMS. /log-call wrote onto their
+       timeline, DELETE removed the lead, and the card and note routes changed
+       records hanging off it.
+
+       The card and note routes were probed once before with a dealer token and
+       looked refused. They were not — the dealer failed a role check, and an
+       admin went straight through. A refusal for the wrong reason reads exactly
+       like the boundary holding. */
+    const bigul = T.bigul_rm;
+    const { data: theirs } = await req('/api/leads?limit=1', { token: bigul, expect: 200 });
+    const target = need(theirs[0], 'a BIGUL lead');
+
+    const refusals = [
+      ['POST', `/api/leads/${target.id}/call`, {}],
+      ['POST', `/api/leads/${target.id}/log-call`, { outcome: 'Connected' }],
+      ['POST', `/api/leads/${target.id}/message`, { channel: 'sms', body: 'x', intent: 'service' }],
+      ['POST', `/api/leads/${target.id}/restore`, {}],
+      ['DELETE', `/api/leads/${target.id}`, undefined],
+    ];
+    for (const [method, path, body] of refusals) {
+      // eslint-disable-next-line no-await-in-loop
+      const { status } = await req(path, { method, token: T.admin, body });
+      assert([403, 404].includes(status), `${method} ${path} answered ${status}`);
+    }
+
+    // And the lead is still there, undeleted.
+    const { data: after } = await req(`/api/leads/${target.id}`, { token: bigul, expect: 200 });
+    eq(after.id, target.id, 'the lead did not survive the refused writes');
+  });
+
+  await check('a refusal does not answer the question it refuses', async () => {
+    /* Claiming a lead from a queue refused across the book, and said
+       "Rohan Gupta already belongs to Ananya Rao" while doing it — a refusal
+       that hands over the name and the owner. The write was never reachable,
+       which is why a check that only asked whether the claim went through would
+       have called this safe. */
+    const bigul = T.bigul_rm;
+    const { data: theirs } = await req('/api/leads?limit=1', { token: bigul, expect: 200 });
+    const target = need(theirs[0], 'a BIGUL lead');
+
+    const { data } = await req(`/api/queues/claim/${target.id}`, {
+      method: 'POST', token: T.admin, body: {},
+    });
+    const said = JSON.stringify(data);
+    assert(!said.includes(target.name),
+      `the refusal named the lead: ${said.slice(0, 90)}`);
+    assert(/not found/i.test(said), `unexpected refusal: ${said.slice(0, 90)}`);
+  });
+
+  await check('a card and a note carry the book of the lead they hang off', async () => {
+    const bigul = T.bigul_rm;
+    const { data: theirs } = await req('/api/leads?limit=1', { token: bigul, expect: 200 });
+    const target = need(theirs[0], 'a BIGUL lead');
+    const { data: lead } = await req(`/api/leads/${target.id}`, { token: bigul, expect: 200 });
+
+    const card = (lead.cards ?? [])[0];
+    if (card) {
+      await req(`/api/cards/${card.id}/state`, {
+        method: 'POST', token: T.admin, expect: 403, body: { state: 'WARM' },
+      });
+    }
+  });
+
   await check('editing a record checks which record, not only which fields', async () => {
     /* PATCH /leads/:id gated carefully what a caller may change — stage and
        owner both need a capability — and never checked which lead they may
@@ -443,7 +530,7 @@ async function run() {
 
        Proved from the other book rather than by role, because the book is the
        boundary that must never bend. */
-    const bigul = await login('rm@bigul.test');
+    const bigul = T.bigul_rm;
     const { data: theirs } = await req('/api/leads?limit=1', { token: bigul, expect: 200 });
     const target = need(theirs[0], 'a BIGUL lead');
 
@@ -465,7 +552,7 @@ async function run() {
 
        PATCH gated reassignment on a capability and never checked which case;
        CSAT checked nothing at all. */
-    const bigul = await login('care@bigul.test');
+    const bigul = T.bigul_care;
     const { data: theirs } = await req('/api/tickets?limit=1', { token: bigul, expect: 200 });
     const target = need(theirs[0], 'a BIGUL case');
     assert(target.ref.startsWith('BGL-'), `a Bigul case should carry a BGL ref, got ${target.ref}`);
@@ -489,7 +576,7 @@ async function run() {
        `WHERE role_code = ? AND sales_org = ?`. A Bigul RM opened their
        scorecard and saw an empty one. Nothing looked wrong from Bonanza, which
        is why it lasted. */
-    const bigul = await login('rm@bigul.test');
+    const bigul = T.bigul_rm;
     const { data: theirs } = await req('/api/kra', { token: bigul, expect: 200 });
     const { data: ours } = await req('/api/kra', { token: T.sales_rm, expect: 200 });
 
@@ -521,7 +608,7 @@ async function run() {
        was Bonanza's — so mayReadList's book check and the book filter on the
        campaign list were carried by nothing. Neither turned out to be broken,
        which is worth knowing rather than assuming. */
-    const bigul = await login('supervisor@bigul.test');
+    const bigul = T.bigul_supervisor;
 
     const { data: theirLists } = await req('/api/lists', { token: bigul, expect: 200 });
     const theirs = need(theirLists.find((l) => l.name.startsWith('Bigul')), 'a BIGUL list');
@@ -544,7 +631,7 @@ async function run() {
        superadmin's campaign would land in whichever book they happen to sit in;
        the audience decides, so it lands in the list's. Bigul has no marketing
        manager of its own to create it, which is the other reason. */
-    const bigul = await login('supervisor@bigul.test');
+    const bigul = T.bigul_supervisor;
     const { data: lists } = await req('/api/lists', { token: bigul, expect: 200 });
     const audience = need(lists.find((l) => l.kind !== 'dynamic'), 'a BIGUL list to send to');
 
@@ -563,7 +650,7 @@ async function run() {
        never set it, so every case ever raised landed in Bonanza's book — a
        Bigul case readable by Bonanza staff and missing from the queue of the
        people it belonged to. The subject decides, not the author. */
-    const bigul = await login('rm@bigul.test');
+    const bigul = T.bigul_rm;
     const { data: leads } = await req('/api/leads?limit=1', { token: bigul, expect: 200 });
     const lead = need(leads[0], 'a BIGUL lead');
     const { data: meta } = await req('/api/meta', { token: bigul, expect: 200 });
@@ -586,7 +673,7 @@ async function run() {
     /* This route had no check at all: it updated by id and returned the whole
        row, which made it a write primitive over every task in the system —
        reassign, reschedule, close — and a read primitive besides. */
-    const bigul = await login('rm@bigul.test');
+    const bigul = T.bigul_rm;
     const { data: theirTasks } = await req('/api/tasks?limit=1', { token: bigul, expect: 200 });
 
     if (theirTasks.length) {
@@ -2108,7 +2195,7 @@ async function run() {
   /* ------------------------------------------------ 24. sales orgs */
   suite('24 sales orgs (Bonanza / Bigul)');
 
-  const bigulRm = await login('rm@bigul.test');
+  const bigulRm = T.bigul_rm;
   const crossRm = await login('salesrm3@bonanza.test');
 
   // mob() only has room for one digit after the run id, and suites 01-23 have
@@ -3981,7 +4068,7 @@ await check('a per-channel withdrawal closes only that channel', async () => {
        which that test does not reach. Clients came out of this clean — worth
        recording as a result rather than an absence, because the same probe
        found cross-book writes on leads, tasks and cases. */
-    const bigul = await login('rm@bigul.test');
+    const bigul = T.bigul_rm;
     const { data: theirs } = await req('/api/clients?limit=1', { token: bigul, expect: 200 });
     const target = need(theirs[0], 'a BIGUL client');
 
@@ -5377,7 +5464,7 @@ await check('a per-channel withdrawal closes only that channel', async () => {
        Signed in as a real Bigul user rather than reusing a Bonanza token —
        asserting "sees fewer than a superadmin" would have passed without ever
        testing a book boundary. */
-    const bigul = await login('rm@bigul.test');
+    const bigul = T.bigul_rm;
     const { data: theirs } = await req('/api/search-advanced/interaction', {
       method: 'POST', token: bigul, expect: 200, body: { where: null, limit: 500 },
     });
@@ -6271,7 +6358,7 @@ await check('a per-channel withdrawal closes only that channel', async () => {
    * pass at this test reported a leak that was correct behaviour.
    */
 
-  const bigulOnly = await login('rm@bigul.test');
+  const bigulOnly = T.bigul_rm;
 
   /** One Bonanza id from a list route, or null when the fixture is exhausted. */
   const bonanzaIdFrom = async (path, pick = (r) => r.id) => {
@@ -6433,7 +6520,7 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     /* partner.view is held by Admin, Partner RM and Sales Supervisor, and those
      * roles exist in both businesses -- so holding it was enough to list and
      * open the other book's partners, codes and commercial state included. */
-    const bigulSup = await login('supervisor@bigul.test');
+    const bigulSup = T.bigul_supervisor;
 
     const { data: theirs } = await req('/api/partners', { token: bigulSup, expect: 200 });
     const rows = Array.isArray(theirs) ? theirs : (theirs.rows ?? []);
@@ -7130,7 +7217,7 @@ await check('a per-channel withdrawal closes only that channel', async () => {
      * forty of them on Bonanza leads, each labelled with that client's name.
      * The record routes were scoped in August; the list routes were assumed
      * already filtered, and this one was not. */
-    const bigul = await login('supervisor@bigul.test');
+    const bigul = T.bigul_supervisor;
     const { data } = await req('/api/tasks?all=true', { token: bigul, expect: 200 });
     const rows = Array.isArray(data) ? data : (data.rows ?? []);
 

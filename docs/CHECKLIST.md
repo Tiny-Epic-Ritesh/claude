@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,112** — 583 end-to-end and 529 unit. All green.
+**Tests: 1,115** — 586 end-to-end and 529 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -1133,3 +1133,54 @@ two, which is a worse answer than the one it gives.
 
 There is no leak in it either way — the count is over the client's own lead, and
 the client is already scoped, so it cannot reach the other book.
+
+
+---
+
+## The lead detail page checked the same way — done 2 Sep 2026
+
+The worst of the detail pages, and the one with the most routes hanging off it.
+`PATCH /leads/:id` was fixed earlier in this sweep; six of the actions
+beside it went through as well.
+
+- [x] **`POST /leads/:id/call` dialled.** A Bonanza account could ring a
+      Bigul client's number and load them into the Bigul dialler campaign.
+- [x] **`POST /leads/:id/message` sent.** The same shape and the more
+      serious of the two, because the message carries text somebody wrote.
+- [x] **`POST /leads/:id/log-call`** wrote an interaction onto the other
+      book's timeline without reading the lead at all.
+- [x] **`DELETE /leads/:id` and `/restore`** updated by id with nothing
+      loaded: the capability was checked and the record never was.
+- [x] **`POST /cards/:id/state` and `POST /notes/:id/pin`** changed
+      records hanging off the lead.
+- [x] **`POST /queues/claim/:leadId` refused, and answered the question
+      while refusing.** It replied "Rohan Gupta already belongs to Ananya Rao" —
+      the name and the owner, handed to the other book. The write was never
+      reachable, so a check that only asked whether the claim went through would
+      have called it safe. It says "Lead not found" now, which is what a lead
+      that does not exist says.
+
+### The mistake in my own earlier check
+
+The card and note routes were probed once before, with a **dealer** token, and
+recorded in this file as "correctly refuse". They did not. The dealer failed a
+*role* check — "only the author, a Supervisor or an Admin can pin a note" — and
+an admin went straight through the book. A refusal for the wrong reason reads
+exactly like the boundary holding, and under-privileged probing is how you
+manufacture one.
+
+### And in the fix
+
+The restore route was first written to load through `loadInBook`, with a
+comment claiming that accessor reads through the soft delete. It does not — its
+lead query ends `AND deleted_at IS NULL` — so restore would have 404'd on
+every deleted lead, which is the only kind it is ever given. Caught by checking
+the claim rather than the comment.
+
+### And in the tests
+
+Three new tests each signed in as the same Bigul account, and the per-account
+limit is ten a minute. The suite reported seven failures whose cause was the
+limiter working. The Bigul accounts are signed in once now and shared as
+`T.bigul_rm`, `T.bigul_care` and `T.bigul_supervisor`,
+which removed sixteen redundant logins across the file.

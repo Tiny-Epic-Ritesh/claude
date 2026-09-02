@@ -577,8 +577,13 @@ router.patch('/leads/:id', (req, res) => {
 });
 
 router.delete('/leads/:id', requirePermission('lead.delete'), (req, res) => {
-  run("UPDATE leads SET deleted_at = datetime('now') WHERE id = ?", [req.params.id]);
-  audit(req.user.id, 'lead_deleted', 'lead', Number(req.params.id), {});
+  /* Updated by id with nothing loaded, so a Bonanza admin could delete a Bigul
+     lead — the capability was checked and the record never was. */
+  const found = loadInBook(req, 'lead', req.params.id);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+
+  run("UPDATE leads SET deleted_at = datetime('now') WHERE id = ?", [found.row.id]);
+  audit(req.user.id, 'lead_deleted', 'lead', found.row.id, {});
   res.status(204).end();
 });
 
@@ -596,8 +601,17 @@ router.get('/recycle-bin', requirePermission('lead.delete'), (req, res) => {
 });
 
 router.post('/leads/:id/restore', requirePermission('lead.delete'), (req, res) => {
-  run('UPDATE leads SET deleted_at = NULL WHERE id = ?', [req.params.id]);
-  audit(req.user.id, 'lead_restored', 'lead', Number(req.params.id), {});
+  /* Not `loadInBook` here: its lead query ends `AND deleted_at IS NULL`, so it
+     cannot see the one record this route exists to bring back. The book check
+     is the same, made directly against a row that is allowed to be deleted. */
+  const gone = one('SELECT id, sales_org FROM leads WHERE id = ?', [Number(req.params.id) || -1]);
+  if (!gone) return res.status(404).json({ error: 'Lead not found' });
+  if (!mayUseOrg(req.user, gone.sales_org)) {
+    return res.status(403).json({ error: 'This lead belongs to another book' });
+  }
+
+  run('UPDATE leads SET deleted_at = NULL WHERE id = ?', [gone.id]);
+  audit(req.user.id, 'lead_restored', 'lead', gone.id, {});
   res.json({ restored: true });
 });
 
@@ -667,9 +681,15 @@ router.get('/cards', (req, res) => {
 
 /** The state machine — every transition is role-gated here, at the API. */
 router.post('/cards/:id/state', (req, res) => {
+  /* A card belongs to its lead's book. Probed with an under-privileged role
+     this looked refused, which is how it was missed the first time: the refusal
+     was the role's, not the book's, and an admin went straight through. */
+  const inBook = loadInBook(req, 'card', req.params.id);
+  if (inBook.error) return res.status(inBook.status).json({ error: inBook.error });
+
   const card = one(
     'SELECT pc.*, pt.name AS product_name, pt.code AS product_code FROM product_cards pc JOIN product_types pt ON pt.id = pc.product_type_id WHERE pc.id = ?',
-    [req.params.id],
+    [inBook.row.id],
   );
   if (!card) return res.status(404).json({ error: 'Card not found' });
 
@@ -883,8 +903,12 @@ router.post('/activities', (req, res) => {
 /* ---------------------------------------------- telephony & messaging */
 
 router.post('/leads/:id/call', requirePermission('lead.contact'), async (req, res, next) => {
-  const lead = one('SELECT * FROM leads WHERE id = ?', [req.params.id]);
-  if (!lead) return res.status(404).json({ error: 'Lead not found' });
+  /* This dialled. A Bonanza account could ring a Bigul client's number and load
+     it into the Bigul dialler campaign, which is the other book's data reaching
+     the outside world through this one. */
+  const found = loadInBook(req, 'lead', req.params.id);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const lead = found.row;
 
   // A call is service by nature — an RM ringing a client back is not a
   // campaign. What it still respects is a dead number: dialling one wastes the
@@ -916,14 +940,22 @@ router.post('/leads/:id/call', requirePermission('lead.contact'), async (req, re
 });
 
 router.post('/leads/:id/log-call', requirePermission('lead.contact'), (req, res) => {
-  const id = logCall({ leadId: Number(req.params.id), userId: req.user.id, durationS: req.body.duration_s, outcome: req.body.outcome });
-  applyScore(Number(req.params.id), 'Call');
+  // Wrote an interaction onto a timeline in either book without reading the
+  // lead at all.
+  const found = loadInBook(req, 'lead', req.params.id);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+
+  const id = logCall({ leadId: found.row.id, userId: req.user.id, durationS: req.body.duration_s, outcome: req.body.outcome });
+  applyScore(found.row.id, 'Call');
   res.status(201).json({ activity_id: id });
 });
 
 router.post('/leads/:id/message', requirePermission('lead.contact'), (req, res) => {
-  const lead = one('SELECT * FROM leads WHERE id = ?', [req.params.id]);
-  if (!lead) return res.status(404).json({ error: 'Lead not found' });
+  /* This sent. The same shape as the call above and the more serious of the
+     two, because the message carries text somebody wrote. */
+  const found = loadInBook(req, 'lead', req.params.id);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const lead = found.row;
 
   const { channel = 'whatsapp', body, subject, template_id, intent = 'marketing' } = req.body;
 
@@ -1136,6 +1168,14 @@ router.post('/notes', (req, res) => {
 router.post('/notes/:id/pin', (req, res) => {
   const note = one('SELECT * FROM notes WHERE id = ?', [req.params.id]);
   if (!note) return res.status(404).json({ error: 'Note not found' });
+
+  /* A note inherits the book of whatever it is written on. Same false negative
+     as the card above: a dealer was refused for not being the author, which
+     read as the boundary holding when it was not. */
+  if (note.lead_id) {
+    const inBook = loadInBook(req, 'lead', note.lead_id);
+    if (inBook.error) return res.status(inBook.status).json({ error: inBook.error });
+  }
   const allowed = note.user_id === req.user.id || ['sales_supervisor', 'product_supervisor', 'admin', 'superadmin'].includes(req.user.role);
   if (!allowed) return res.status(403).json({ error: 'Only the author, a Supervisor or an Admin can pin a note' });
 

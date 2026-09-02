@@ -30,6 +30,7 @@
  */
 
 import { all, one, run, transact } from '../db.js';
+import { orgsFor } from '../auth.js';
 
 /* ------------------------------------------------------------- queues */
 
@@ -177,6 +178,18 @@ export function assignToQueue(leadId, queueId, { actorId = null } = {}) {
 export function claimFromQueue(leadId, user) {
   const lead = one('SELECT * FROM leads WHERE id = ? AND deleted_at IS NULL', [leadId]);
   if (!lead) return { ok: false, error: 'Lead not found' };
+
+  /* The book, before anything that quotes the record.
+   *
+   * Every refusal below names the lead and often its owner, so probing ids from
+   * the other book returned "Rohan Gupta already belongs to Ananya Rao" — a
+   * refusal that answers the question it is refusing. The write was never
+   * reachable, which is why this survived a check that only asked whether the
+   * claim went through.
+   *
+   * Answered as "not found", so a lead in the other book and a lead that does
+   * not exist are the same reply. */
+  if (!orgsFor(user).includes(lead.sales_org)) return { ok: false, error: 'Lead not found' };
   if (!lead.owner_queue_id) {
     const owner = ownerOf(lead);
     return {
