@@ -5032,6 +5032,112 @@ await check('a per-channel withdrawal closes only that channel', async () => {
   /* ============================================================ 42 */
   suite('42 Advanced Search usability (ENH-15)');
 
+  await check('tasks and interactions are scoped at all', async () => {
+    /* Neither table carries a sales_org column, and the generic branch in
+       scopeFor gives up when it cannot find one — returning no scope rather
+       than failing closed. So advanced search over these two returned every
+       task and every interaction in the system, both books, to anybody signed
+       in: 194 interactions with their subjects, bodies, dispositions, recording
+       URLs and captured locations, and 46 tasks each labelled with its lead's
+       name. Both hang off a lead, and a lead carries the book. */
+    const { data: allTasks } = await req('/api/search-advanced/task', {
+      method: 'POST', token: T.superadmin, expect: 200, body: { where: null },
+    });
+    const { data: callerTasks } = await req('/api/search-advanced/task', {
+      method: 'POST', token: T.caller, expect: 200, body: { where: null },
+    });
+    assert(callerTasks.total < allTasks.total,
+      `a caller saw every task in the system (${callerTasks.total} of ${allTasks.total})`);
+
+    const { data: allInts } = await req('/api/search-advanced/interaction', {
+      method: 'POST', token: T.superadmin, expect: 200, body: { where: null },
+    });
+    const { data: callerInts } = await req('/api/search-advanced/interaction', {
+      method: 'POST', token: T.caller, expect: 200, body: { where: null },
+    });
+    assert(callerInts.total < allInts.total,
+      `a caller saw every interaction in the system (${callerInts.total} of ${allInts.total})`);
+  });
+
+  await check('searching tasks agrees with the Tasks tab', async () => {
+    // A caller has no report.team, so both surfaces show their own tasks.
+    const { data: listed } = await req('/api/tasks?limit=500', { token: T.caller, expect: 200 });
+    const { data: found } = await req('/api/search-advanced/task', {
+      method: 'POST', token: T.caller, expect: 200, body: { where: null },
+    });
+    eq(found.total, listed.length, 'search and the Tasks tab disagree');
+  });
+
+  await check('an interaction search never crosses the book', async () => {
+    /* The standing rule: Bigul users do not see Bonanza records, and back.
+       Interactions carry call bodies, dispositions and recording URLs, so this
+       is the one where crossing it matters most.
+
+       Signed in as a real Bigul user rather than reusing a Bonanza token —
+       asserting "sees fewer than a superadmin" would have passed without ever
+       testing a book boundary. */
+    const bigul = await login('rm@bigul.test');
+    const { data: theirs } = await req('/api/search-advanced/interaction', {
+      method: 'POST', token: bigul, expect: 200, body: { where: null, limit: 500 },
+    });
+    const { data: everything } = await req('/api/search-advanced/interaction', {
+      method: 'POST', token: T.superadmin, expect: 200, body: { where: null },
+    });
+    assert(theirs.total > 0, 'a Bigul user sees no interactions at all — the scope failed closed on everything');
+    assert(theirs.total < everything.total,
+      `a Bigul user saw every interaction there is (${theirs.total} of ${everything.total})`);
+
+    /* Every interaction that names a lead must name a Bigul lead. The ids come
+       back on the row, so this reads the leads through the API as that same
+       user: a Bonanza lead is a 404 to them, which is the boundary stated from
+       the other direction. */
+    const leadIds = [...new Set(theirs.rows.map((r) => r.lead_id).filter(Boolean))].slice(0, 8);
+    assert(leadIds.length > 0, 'no interaction carried a lead to check the book against');
+    for (const id of leadIds) {
+      // eslint-disable-next-line no-await-in-loop
+      await req(`/api/leads/${id}`, { token: bigul, expect: 200 });
+    }
+  });
+
+  await check('the task tiles count the list, not the page', async () => {
+    /* The Tasks tab computed Open, Overdue and Completed from whatever the
+       fetch returned — honest only while the route was unbounded. */
+    const { data: summary } = await req('/api/tasks/summary?all=true', { token: T.admin, expect: 200 });
+    const { res } = await req('/api/tasks?all=true&limit=1', { token: T.admin, expect: 200 });
+    eq(summary.open + summary.done, Number(res.headers.get('x-total-count')),
+      'the tiles and the list disagree about how many tasks there are');
+
+    const { data: samePage } = await req('/api/tasks/summary?all=true&limit=1', { token: T.admin, expect: 200 });
+    eq(samePage.open, summary.open, 'the summary followed the page size');
+  });
+
+  await check('the task list is bounded, counted, sorted and searchable', async () => {
+    const { res, data } = await req('/api/tasks?all=true&limit=2&sort=title&dir=asc', { token: T.admin, expect: 200 });
+    assert(data.length <= 2, `limit ignored: got ${data.length}`);
+    const total = Number(res.headers.get('x-total-count'));
+    assert(total >= data.length, 'X-Total-Count missing or smaller than the page');
+
+    const { data: page2 } = await req('/api/tasks?all=true&limit=2&offset=2&sort=title&dir=asc', { token: T.admin, expect: 200 });
+    eq(page2.filter((t) => data.some((f) => f.id === t.id)).length, 0, 'the second page repeats the first');
+
+    /* Priority orders by meaning, not alphabetically. Tasks default to
+       'Normal', which the ticket vocabulary this CASE was copied from does not
+       have — so Normal and Low shared a bucket until all five were named. */
+    const { data: byPriority } = await req('/api/tasks?all=true&sort=priority&dir=asc&limit=500', { token: T.admin, expect: 200 });
+    const rank = { Critical: 0, High: 1, Medium: 2, Normal: 3, Low: 4 };
+    const ranks = byPriority.map((t) => rank[t.priority] ?? 4);
+    eq(JSON.stringify(ranks), JSON.stringify([...ranks].sort((a, b) => a - b)),
+      'priority did not sort by what it means');
+
+    const { data: hit } = await req('/api/tasks?all=true&q=Retry', { token: T.admin, expect: 200 });
+    assert(hit.length >= 1 && hit.length < total, 'search matched everything or nothing');
+  });
+
+  await check('an invented task sort column is ignored, not run', async () => {
+    const { data } = await req('/api/tasks?all=true&sort=(SELECT 1)&limit=3', { token: T.admin, expect: 200 });
+    assert(Array.isArray(data), 'a bad sort broke the list instead of being ignored');
+  });
+
   await check('an object you cannot open is an object you cannot search', async () => {
     /* Advanced search had no per-object gate at all: it required a session and
        nothing else. A Caller was refused the Partners tab and the Campaigns

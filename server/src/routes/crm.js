@@ -943,21 +943,43 @@ router.post('/autodialler', requirePermission('lead.contact'), async (req, res, 
 
 /* --------------------------------------------------------------- tasks */
 
-router.get('/tasks', (req, res) => {
+/**
+ * The columns a task list can be ordered by.
+ *
+ * Priority sorts by meaning rather than alphabetically — Critical, High,
+ * Medium, Low is the order that matters, and "Critical, High, Low, Medium" is
+ * what sorting the word gives you.
+ */
+const TASK_COLUMNS = {
+  title: 't.title',
+  kind: 't.kind',
+  status: 't.status',
+  /* Tasks default to 'Normal', which the ticket vocabulary does not have —
+     copying that CASE across put Normal and Low in the same bucket. All five
+     values the column actually holds are named, so the order is the one a
+     person means by it. */
+  priority: "CASE t.priority WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 WHEN 'Normal' THEN 3 ELSE 4 END",
+  due_at: 't.due_at',
+  created_at: 't.created_at',
+  lead_name: 'l.name',
+  assignee_name: 'u.name',
+};
+
+/**
+ * The scope and ownership rules behind the task list, as one clause.
+ *
+ * Shared by the list and the summary so the tiles count the same set the table
+ * pages through. They used to be computed in the browser from whatever the
+ * fetch happened to return, which was honest only while the route was
+ * unbounded.
+ */
+function taskBase(req) {
   const where = [];
   const params = [];
 
-  /* A task carries its lead's name, so it carries its lead's book.
-   *
-   * This route had no lead scope at all. With `all=true` a Bigul supervisor
-   * was returned every task in the system -- forty of them on Bonanza leads,
-   * each labelled with that client's name. The record routes were scoped in
-   * August and the list routes were assumed already filtered; this one was
-   * not, and nothing looked at it until a dashboard tile disagreed with its
-   * own drill-through.
-   *
-   * Tasks with no lead are kept: a standalone reminder belongs to whoever it
-   * is assigned to and has no book to be outside of. */
+  /* A task carries its lead's name, so it carries its lead's book. Tasks with
+     no lead are kept: a standalone reminder belongs to whoever it is assigned
+     to and has no book to be outside of. */
   const scope = reqScope(req, 'l');
   where.push(`(t.lead_id IS NULL OR EXISTS (
     SELECT 1 FROM leads l WHERE l.id = t.lead_id AND l.deleted_at IS NULL AND ${scope.sql}))`);
@@ -968,6 +990,29 @@ router.get('/tasks', (req, res) => {
     params.push(req.user.id);
   }
 
+  return { where, params };
+}
+
+/** The counts behind the three tiles, over the whole list rather than a page. */
+router.get('/tasks/summary', (req, res) => {
+  const { where, params } = taskBase(req);
+  const from = 'FROM tasks t LEFT JOIN leads l ON l.id = t.lead_id';
+  const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const count = (extra) => one(
+    `SELECT COUNT(*) n ${from} ${clause}${clause ? ' AND ' : 'WHERE '}${extra}`,
+    params,
+  ).n;
+
+  res.json({
+    open: count("t.status = 'Open'"),
+    overdue: count("t.status = 'Open' AND t.due_at < datetime('now')"),
+    done: count("t.status != 'Open'"),
+  });
+});
+
+router.get('/tasks', (req, res) => {
+  const { where, params } = taskBase(req);
+
   /* P2-13. Past its due date and still open -- the same predicate the
      "Overdue follow-ups" tile counts, so the number and the list are one set
      rather than two definitions that happen to agree. */
@@ -976,11 +1021,36 @@ router.get('/tasks', (req, res) => {
   }
   if (req.query.status) { where.push('t.status = ?'); params.push(req.query.status); }
 
+  /* Finding one task among hundreds without reading the list. Bound to what
+     somebody would search a task by: its own title, or the lead it is for. */
+  const q = String(req.query.q ?? '').trim();
+  if (q) {
+    where.push('(t.title LIKE ? OR l.name LIKE ?)');
+    params.push(`%${q}%`, `%${q}%`);
+  }
+
+  const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const from = `FROM tasks t LEFT JOIN leads l ON l.id = t.lead_id LEFT JOIN users u ON u.id = t.assignee_id`;
+
+  const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+  /* Open first and soonest-due first is the order a task list should be worked
+     in, so it stays the default; a chosen sort replaces it for as long as the
+     question is being asked. */
+  const sortCol = TASK_COLUMNS[req.query.sort];
+  const dir = String(req.query.dir).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+  const orderBy = sortCol ? `${sortCol} ${dir}, t.id ASC` : 't.status, t.due_at';
+
+  /* The list was unbounded and uncounted: every task the caller could see came
+     back on every call, with nothing saying how many that was. */
+  const total = one(`SELECT COUNT(*) n ${from} ${clause}`, params).n;
+  res.set('X-Total-Count', String(total));
+
   res.json(all(
     `SELECT t.*, l.name AS lead_name, u.name AS assignee_name
-     FROM tasks t LEFT JOIN leads l ON l.id = t.lead_id LEFT JOIN users u ON u.id = t.assignee_id
-     ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY t.status, t.due_at`,
-    params,
+     ${from} ${clause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`,
+    [...params, limit, offset],
   ));
 });
 

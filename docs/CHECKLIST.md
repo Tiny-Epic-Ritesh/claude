@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,092** — 563 end-to-end and 529 unit. All green.
+**Tests: 1,098** — 569 end-to-end and 529 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -770,3 +770,54 @@ first page and calling it everything.
 - **A component declared in a render body remounts its subtree.** Same fix as
   the case queue, in both new headers: declared at module scope so the header
   row is not torn down and rebuilt on every keystroke of the search box.
+
+
+---
+
+## Tasks and interactions — done 2 Sep 2026
+
+The last two searchable objects, and the largest exposure of the five passes.
+
+- [x] **Neither was scoped at all.** Tasks and activities carry no
+      `sales_org` column, and the generic branch in `scopeFor` gives up
+      when it cannot find one — it returns no scope rather than failing closed.
+      So advanced search over these two returned **every task and every
+      interaction in the system, across both books, to anybody signed in**: 194
+      interactions with their subjects, bodies, dispositions, recording URLs and
+      captured locations, and 46 tasks each labelled with its lead's name. That
+      includes 36 Bigul interactions and 7 Bigul tasks visible to Bonanza staff,
+      which is the standing data-residency rule broken in both directions.
+- [x] **Both are scoped through the lead now**, which is where the book lives.
+      An interaction with no lead is a partner interaction — 18 of them and no
+      other kind — so those are scoped through the partner's book instead of
+      being left visible for want of a lead. Tasks additionally keep the list's
+      own ownership rule: your own unless you hold `report.team`.
+- [x] **The task list is bounded, counted, sorted and searchable.** It had no
+      `LIMIT` at all.
+- [x] **The task tiles count the list rather than the page**, via a
+      `/tasks/summary` that shares the list's scope clause. Open, Overdue and
+      Completed were computed in the browser from whatever the fetch returned.
+- [x] **Priority sorts by meaning.** The CASE was copied from tickets, whose
+      vocabulary has no `Normal` — and tasks default to it. Normal and Low
+      shared a bucket until all five values were named.
+- [x] **Interactions have no general list surface** — they appear as per-lead
+      timelines, which are bounded and were already scoped. Advanced search is
+      their only general surface, so the scope fix is the whole of the work
+      there. Nothing was invented to give them a list they do not have.
+
+### Notes
+
+- **Verified against the bug.** Both scopes disabled, server restarted, three
+  tests fail, restored. Same discipline as the ticket and capability fixes.
+- **One of my own tests overpromised.** "An interaction search never crosses the
+  book" fell back to a Bonanza token when no Bigul one was in scope, so it would
+  have passed without testing a book boundary at all. It signs in as a real
+  Bigul user now and reads back every lead the returned interactions name.
+
+### The shape, across all seven objects
+
+Leads, clients, tickets, partners, campaigns, tasks and interactions each had
+the same list gaps, and five of the seven had a scope or capability rule the
+search path did not apply. The list route and its search are the same data with
+the same boundary — the comment on the tasks list said so in August, about the
+last time this exact thing happened.

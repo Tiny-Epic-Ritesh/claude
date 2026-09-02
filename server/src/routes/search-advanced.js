@@ -16,7 +16,7 @@
 import { Router } from 'express';
 import { all, one, run, audit } from '../db.js';
 import {
-  requireUser, requirePermission, reqScope, reqClientScope, reqTicketScope, orgsFor, maskFor,
+  requireUser, requirePermission, reqScope, reqClientScope, reqTicketScope, orgsFor, maskFor, can,
 } from '../auth.js';
 import { maskRecords } from '../security.js';
 import {
@@ -62,6 +62,50 @@ function scopeFor(entity, req) {
   if (entity === 'case') {
     const s = reqTicketScope(req, 'l');
     return { sql: s.sql, params: s.params };
+  }
+
+  /* Tasks and interactions carry no sales_org of their own, and the generic
+     branch below gives up when it cannot find that column — it returns no
+     scope at all rather than failing closed. So advanced search over these two
+     returned every task and every interaction in the system, both books, to
+     anybody signed in: 194 interactions with their subjects, bodies,
+     dispositions, recording URLs and captured locations, and 46 tasks each
+     labelled with its lead's name.
+
+     Both hang off a lead, and a lead carries the book. This is the same rule
+     the /tasks list already applies — and the comment there describes exactly
+     this shape of bug, from the last time a list route was assumed filtered. */
+  if (entity === 'interaction') {
+    const lead = reqScope(req, 'sl');
+    const orgs = orgsFor(req.user);
+    /* An interaction with no lead is a partner interaction — 18 of them here
+       and no other kind. A partner carries a book, so it is scoped through
+       that rather than left visible for want of a lead. */
+    const partner = orgs.length
+      ? `EXISTS (SELECT 1 FROM partners sp WHERE sp.id = l.partner_id
+                  AND sp.sales_org IN (${orgs.map(() => '?').join(',')}))`
+      : '1=0';
+    return {
+      sql: `(EXISTS (SELECT 1 FROM leads sl WHERE sl.id = l.lead_id
+                      AND sl.deleted_at IS NULL AND ${lead.sql})
+             OR (l.lead_id IS NULL AND ${partner}))`,
+      params: [...lead.params, ...(orgs.length ? orgs : [])],
+    };
+  }
+
+  if (entity === 'task') {
+    const lead = reqScope(req, 'sl');
+    const where = [`(l.lead_id IS NULL OR EXISTS (
+      SELECT 1 FROM leads sl WHERE sl.id = l.lead_id AND sl.deleted_at IS NULL AND ${lead.sql}))`];
+    const params = [...lead.params];
+    /* The Tasks list shows your own unless you hold report.team and ask for
+       everyone's. Search has no "ask for everyone's", so it grants the wider
+       view to exactly the people the list would. */
+    if (!can(req.user.role, 'report.team')) {
+      where.push('l.assignee_id = ?');
+      params.push(req.user.id);
+    }
+    return { sql: where.join(' AND '), params };
   }
 
   /* Partners narrow twice: by book, and — for a Partner RM — to the partners
