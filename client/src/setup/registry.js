@@ -52,6 +52,7 @@ const Integrations = lazy(() => import('../crm/admin/Integrations.jsx').then((m)
 const MetaConnector = lazy(() => import('../crm/admin/MetaConnector.jsx').then((m) => ({ default: m.MetaConnector })));
 const Audit = lazy(() => import('../crm/admin/Audit.jsx').then((m) => ({ default: m.Audit })));
 const Residency = lazy(() => import('../crm/admin/Residency.jsx').then((m) => ({ default: m.Residency })));
+const Promotion = lazy(() => import('../crm/admin/Promotion.jsx').then((m) => ({ default: m.Promotion })));
 
 /*
  * Six groups, and the labels are as short as they can be and stay honest.
@@ -290,6 +291,17 @@ export const SECTIONS = [
     blurb: 'What the database holds and how fast it is growing',
     keywords: ['database', 'size', 'storage', 'growth', 'disk', 'table', 'rows', 'capacity'],
     Component: Database,
+  },
+  {
+    key: 'promotion',
+    label: 'Promote configuration',
+    group: 'monitoring',
+    icon: 'swap_horiz',
+    needs: ['admin.system'],
+    blurb: 'Carry rules, templates and journeys from UAT to Production',
+    keywords: ['promote', 'promotion', 'deploy', 'release', 'uat', 'production',
+      'environment', 'migrate', 'bundle', 'export', 'import', 'ship', 'move'],
+    Component: Promotion,
   },
   {
     key: 'residency',

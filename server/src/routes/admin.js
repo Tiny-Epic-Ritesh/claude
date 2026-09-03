@@ -21,7 +21,8 @@ import {
 } from '../engine/versioning.js';
 import {
   packageBundle, inspect as inspectBundle, apply as applyBundle,
-  recent as recentPromotions, environment as currentEnvironment, PROMOTABLE, KEEP as PROMOTIONS_KEPT,
+  recent as recentPromotions, environment as currentEnvironment, PROMOTABLE,
+  KEEP as PROMOTIONS_KEPT, candidates as promotionCandidates,
 } from '../engine/promotion.js';
 import {
   accessLogSummary, crossBookReads, activityOf, readersOf, RETENTION_DAYS,
@@ -449,6 +450,7 @@ router.get('/promotions', requirePermission('admin.system'), (_req, res) => {
     environment: currentEnvironment(),
     promotable: PROMOTABLE,
     kept: PROMOTIONS_KEPT,
+    candidates: promotionCandidates(),
     recent: recentPromotions(),
   });
 });

@@ -189,6 +189,58 @@ export const PROMOTABLE = Object.keys(PORTABLE).map((kind) => ({
   kind, label: ARTEFACTS[kind]?.label ?? kind,
 }));
 
+/* -------------------------------------------------------------- candidates */
+
+/**
+ * Everything in this environment that could be put in a bundle.
+ *
+ * One endpoint rather than four, because the alternative is a Setup screen that
+ * fires a request per artefact kind and has to reconcile four loading states to
+ * draw one list of tick boxes.
+ *
+ * `logical_id` is what `packageBundle` wants back. It is local to here and
+ * meaningless anywhere else, which is exactly why the bundle does not carry it.
+ */
+export function candidates() {
+  const journeys = all(
+    `SELECT DISTINCT s.product_type_id AS id, p.name, p.code
+       FROM kyc_journey_steps s JOIN product_types p ON p.id = s.product_type_id
+      ORDER BY p.name`,
+  );
+
+  const policies = all(
+    `SELECT s.product_type_id, s.priority, p.name AS product_name
+       FROM sla_policies s LEFT JOIN product_types p ON p.id = s.product_type_id
+      ORDER BY p.name, s.priority`,
+  );
+
+  return {
+    rule: all('SELECT id, name, enabled FROM rules ORDER BY name').map((r) => ({
+      logical_id: r.id,
+      label: r.name,
+      hint: r.enabled ? 'enabled' : 'disabled',
+    })),
+
+    template: all('SELECT id, name, channel FROM templates ORDER BY name').map((t) => ({
+      logical_id: t.id,
+      label: t.name,
+      hint: t.channel,
+    })),
+
+    kyc_journey: journeys.map((j) => ({
+      logical_id: j.id,
+      label: j.name,
+      hint: j.code,
+    })),
+
+    sla_policy: policies.map((s) => ({
+      logical_id: `${s.product_type_id ?? 'null'}:${s.priority}`,
+      label: s.product_name ?? 'Any product',
+      hint: s.priority,
+    })),
+  };
+}
+
 /* ---------------------------------------------------------------- checksum */
 
 /** Key order must not change the checksum, so sort on the way in. */

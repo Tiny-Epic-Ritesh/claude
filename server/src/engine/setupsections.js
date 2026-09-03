@@ -36,6 +36,7 @@ export const SETUP_SECTIONS = [
   { key: 'audit', label: 'Audit log', needs: ['report.system'] },
   { key: 'logs', label: 'API & logs', needs: ['report.system'] },
   { key: 'database', label: 'Database', needs: ['report.system'] },
+  { key: 'promotion', label: 'Promote configuration', needs: ['admin.system'] },
   { key: 'residency', label: 'Data residency', needs: null },
 ];
 
