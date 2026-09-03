@@ -2084,3 +2084,60 @@ tab bar - the path that would break first if the `Suspense` boundary were
 missing or misplaced - plus `LeadDetail` cold on a deep link, which is the
 largest chunk. Console held nothing but the usual pre-sign-in 401. Server suite
 600/600.
+
+---
+
+## The three surfaces are split - 3 Sep 2026
+
+Asked to check the two portals for eager imports. The portals themselves were
+clean - neither `dkyc/` nor `portal/` imports anything from `crm/` or `setup/`,
+so the three surfaces were already separable. The problem was one level up, in
+`main.jsx`, which imported all three statically:
+
+```js
+import Crm from './crm/Crm.jsx';
+import DkycPortal from './dkyc/DkycPortal.jsx';
+import PartnerPortal from './portal/PartnerPortal.jsx';
+```
+
+So every visitor downloaded all three. An RM carried the account-opening portal
+they will never see. A partner carried the internal CRM. And an applicant
+opening an account - a member of the public, quite possibly on mobile data -
+carried every cockpit, every list screen and the whole of Setup in order to
+answer sixteen questions about their PAN.
+
+### After
+
+Shared by everyone: `index` 14.10 kB and `vendor` 212.45 kB, so a base of
+**226.55 kB**. On top of that each visitor takes only their own surface:
+
+| surface | its chunk | roughly, before first paint |
+|---|---|---|
+| CRM | 52.08 kB | ~279 kB, then the screens warm on idle |
+| Partner portal | 27.31 kB | ~257 kB |
+| Account opening | 18.27 kB | ~259 kB |
+
+Against 653.90 kB for all three this morning, that is around 60% less, and the
+public portal no longer ships the internal CRM at all.
+
+Rollup made small shared chunks rather than duplicating: `charts` 11.23 kB,
+`ProductCard` 2.81 kB, `PendingBar` 1.87 kB, fetched only by the surfaces that
+use them.
+
+### Deliberately not prefetched
+
+The screens inside the CRM are warmed on idle, because the same person will open
+them. These are not, because nobody uses two of them: an applicant will never
+open the CRM, and warming it for them would hand straight back what the split
+saves.
+
+### Verified
+
+The network log is the proof rather than the sizes. Loading `/ai-crm/dkyc`
+fetches `index`, `vendor`, the stylesheet, `DkycPortal`, `charts`, `ProductCard`
+and the assets - and no `Crm`, no `Leads`, no `Admin`, no `SetupShell`. All
+three surfaces were then opened and render: the account-opening page, the
+partner sign-in, and the CRM cockpit. Console carried nothing new; the 401s in
+it are one per unauthenticated page load, from `/api/auth/me` checking for a
+session, and the current load's returned 200. Server suite 600/600, build
+silent.

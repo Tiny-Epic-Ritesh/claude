@@ -1,10 +1,24 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
-import Crm from './crm/Crm.jsx';
-import DkycPortal from './dkyc/DkycPortal.jsx';
-import PartnerPortal from './portal/PartnerPortal.jsx';
+import { Loading } from './components/ui.jsx';
 import './styles.css';
+
+/**
+ * One surface per visitor.
+ *
+ * These were static imports, so every visitor downloaded all three: an RM
+ * carried the account-opening portal, and an applicant opening an account -- a
+ * member of the public, quite possibly on mobile data -- carried the entire
+ * internal CRM, every cockpit and the whole of Setup with it.
+ *
+ * Deliberately not prefetched, unlike the screens inside the CRM. Nobody uses
+ * two of these: an applicant will never open the CRM, and warming it for them
+ * would hand back exactly what this split saves.
+ */
+const Crm = lazy(() => import('./crm/Crm.jsx'));
+const DkycPortal = lazy(() => import('./dkyc/DkycPortal.jsx'));
+const PartnerPortal = lazy(() => import('./portal/PartnerPortal.jsx'));
 
 /**
  * Three surfaces, one build — all mounted under the /ai-crm base path:
@@ -20,11 +34,13 @@ import './styles.css';
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter basename="/ai-crm">
-      <Routes>
-        <Route path="/dkyc/*" element={<DkycPortal />} />
-        <Route path="/portal/*" element={<PartnerPortal />} />
-        <Route path="/*" element={<Crm />} />
-      </Routes>
+      <Suspense fallback={<Loading />}>
+        <Routes>
+          <Route path="/dkyc/*" element={<DkycPortal />} />
+          <Route path="/portal/*" element={<PartnerPortal />} />
+          <Route path="/*" element={<Crm />} />
+        </Routes>
+      </Suspense>
     </BrowserRouter>
   </React.StrictMode>,
 );
