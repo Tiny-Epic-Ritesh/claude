@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator,
 } from 'react-native';
-import { api } from '../api.js';
+import * as queue from '../queue.js';
 import { capture, describe } from '../location.js';
 import { s, t } from '../theme.js';
 
@@ -38,31 +38,49 @@ export default function LogMeeting({ lead, onDone, onCancel }) {
     setLocating(false);
   };
 
+  /**
+   * Queue first, then send.
+   *
+   * Writing to the queue before attempting the network means the meeting
+   * survives the app being killed mid-send, a phone running out of battery in a
+   * car park, and a tunnel. The flush that follows is what gets it there now if
+   * there is signal -- and its result is what decides the wording, because a rep
+   * needs to know whether this is done or merely safe.
+   */
   const submit = async () => {
     setBusy(true);
     setError(null);
-    try {
-      await api.post('/activities', {
-        lead_id: lead.id,
-        type: 'Meeting',
-        direction: 'outbound',
-        /* The API names this `disposition` and aliases it to `code` internally.
-           Sending `code` is silently ignored and comes back as "a Meeting
-           activity needs an outcome", which reads like the form is broken. */
-        disposition: code,
-        body: notes || null,
-        meeting_mode: mode,
-        meeting_at: new Date().toISOString(),
-        /* Sent only when the server asked for it. A refusal travels as a value
-           of its own rather than as an absent field, which is what lets the
-           server tell "would not" from "could not". */
-        ...(wantsLocation ? { geo: geo ?? { status: 'unavailable' } } : {}),
-      });
-      onDone();
-    } catch (err) {
-      setError(err.message);
+
+    await queue.enqueue({
+      __label: `${lead.name} — ${mode}`,
+      lead_id: lead.id,
+      type: 'Meeting',
+      direction: 'outbound',
+      /* The API names this `disposition` and aliases it to `code` internally.
+         Sending `code` is silently ignored and comes back as "a Meeting
+         activity needs an outcome", which reads like the form is broken. */
+      disposition: code,
+      body: notes || null,
+      meeting_mode: mode,
+      meeting_at: new Date().toISOString(),
+      /* Sent only when the server asked for it. A refusal travels as a value
+         of its own rather than as an absent field, which is what lets the
+         server tell "would not" from "could not". */
+      ...(wantsLocation ? { geo: geo ?? { status: 'unavailable' } } : {}),
+    });
+
+    const result = await queue.flush();
+
+    if (result.rejected > 0) {
+      /* The server refused it. It stays on the queue as rejected so it is not
+         lost, but the person has to see why rather than wonder where it went. */
+      const [bad] = await queue.rejected();
+      setError(bad?.last_error || 'The server refused this meeting.');
       setBusy(false);
+      return;
     }
+
+    onDone(result.sent > 0 ? 'saved' : 'queued');
   };
 
   if (!meta) {
@@ -141,7 +159,16 @@ export default function LogMeeting({ lead, onDone, onCancel }) {
           {/* The server's wording, not ours. Notice is a DPDP requirement and
               one wording everywhere is the point of serving it from the API. */}
           <View style={s.notice}>
-            <Text style={s.muted}>{meta.geolocation.notice?.summary || meta.geolocation.notice}</Text>
+            {/* All four, not a summary. The server returns purpose, retention,
+                visibility and optional because those are the four things a
+                person is owed before a position is taken, and its own test
+                asserts all four are present. Showing one would defeat that. */}
+            {['purpose', 'optional', 'retention', 'visibility']
+              .map((k) => meta.geolocation.notice?.[k])
+              .filter(Boolean)
+              .map((line) => (
+                <Text key={line} style={[s.muted, { marginBottom: 6 }]}>{line}</Text>
+              ))}
           </View>
           <TouchableOpacity style={s.ghost} onPress={getLocation} disabled={locating}>
             {locating

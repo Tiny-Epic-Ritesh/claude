@@ -1081,6 +1081,9 @@ const COLUMNS = [
   ['lead_lists', 'archived_at', 'TEXT'],
   ['lead_lists', 'columns', 'TEXT'],
 
+  // Client-generated, so an offline queue can retry a send whose response was
+  // lost without logging the same meeting twice. Unique where present.
+  ['activities', 'client_ref', 'TEXT'],
   ['activities', 'geo_status', 'TEXT'],            // captured / declined / unavailable / expired
   ['activities', 'geo_lat', 'REAL'],
   ['activities', 'geo_lng', 'REAL'],
@@ -1150,6 +1153,15 @@ for (const [table, column, type] of COLUMNS) {
 
 db.exec(`
 CREATE INDEX IF NOT EXISTS idx_activities_external ON activities(external_id);
+/* Unique per person, not globally, because that is what the replay lookup in
+   routes/activities.js does: it matches on (client_ref, user_id) so one
+   handset's key can never hand back a colleague's activity. A global index
+   disagreed with that -- two people sending the same ref hit a UNIQUE violation
+   and got a 500 where the second should simply have written a new row. Partial,
+   so the many rows with no ref do not collide with each other. */
+DROP INDEX IF EXISTS idx_activities_client_ref;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_activities_user_client_ref
+  ON activities(user_id, client_ref) WHERE client_ref IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_leads_client_code ON leads(client_code);
 CREATE INDEX IF NOT EXISTS idx_leads_kyc_ref ON leads(kyc_external_ref);
 CREATE INDEX IF NOT EXISTS idx_leads_org ON leads(sales_org);

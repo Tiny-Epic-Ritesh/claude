@@ -74,10 +74,17 @@ two-year project.
 Not the CRM. These five:
 
 1. **The app shell** — navigation, the screens above, offline-aware forms.
-2. **Offline queue and sync.** The hardest part by a distance. An activity
-   logged with no signal must be held, retried and reconciled, and the rules for
-   "the lead changed while you were offline" have to be decided rather than
-   discovered.
+2. ~~**Offline queue and sync.**~~ **Built 3 Sep 2026.** Activities are written
+   to a persistent queue before the network is attempted, flushed when signal
+   returns, and made safe to send twice by a `client_ref` the server recognises.
+   The three failure outcomes are decided rather than discovered: no reply stays
+   queued, a 4xx is rejected and shown, a 5xx is retried five times. Order is
+   preserved by stopping at the first item that cannot be sent.
+
+   **What is not built is reconciliation.** The queue only sends activities,
+   which are append-only, so nothing can conflict. The moment the app edits a
+   lead, "the lead changed while you were offline" becomes a real question and a
+   product decision — see the risk below, which still stands.
 3. **Auth on the device.** The web keeps a session token in `localStorage`. A
    phone needs Keychain on iOS and Keystore on Android, plus biometric unlock
    and a sensible re-auth window.
@@ -147,6 +154,20 @@ after. This argues for a small first version and a slow widening.
 5. Store submission, with the privacy forms filled from what the app does rather
    than from what we intended it to do.
 
-**Nothing is built yet.** P2-01 is recorded as not started rather than done: the
-web geolocation was built against the other reading of A-1 and does not satisfy
-a native-app requirement, though the server behind it does.
+## What exists, as of 3 Sep 2026
+
+Steps 2 and 3 above are done. `mobile/` holds the throwaway shell — sign in, my
+leads, log a meeting with a location — and the offline queue behind it. Server
+side, `POST /api/activities` now takes a `client_ref` and returns the original
+row for one it has seen, with two e2e tests holding it.
+
+**Not verified on a handset.** The shell was built and checked against the
+running API from a browser: the bundle builds clean, and captured, refused and
+virtual meetings were each confirmed to store what the server's geolocation
+tests require. What that does not prove is the app on a phone — permission
+dialogues, a real GPS fix, a real tunnel. That is the next step and it needs
+Expo Go on two devices.
+
+P2-01 stays recorded as **not started**. A shell is not the app, the web
+geolocation was built against the other reading of A-1, and the six decisions
+under A-1 are still open.

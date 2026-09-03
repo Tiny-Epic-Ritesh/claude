@@ -40,12 +40,42 @@ Three behaviours are worth watching, because they are the ones the server's
 | Permission refused | Stored as `declined`. **The meeting still saves** — an unlogged meeting is worse than an unlocated one |
 | Meeting was Virtual | Never asked. Capture is for in-person meetings only |
 
+## The offline queue
+
+A meeting is written to a persistent queue **before** the network is attempted,
+so it survives the app being killed mid-send, a flat battery in a car park, and
+a tunnel. The flush that follows is what gets it there now if there is signal,
+and its result decides the wording: a rep needs to know whether this is *done*
+or merely *safe*.
+
+The hard part is not sending. It is deciding what a failure means:
+
+| Outcome | What happens |
+|---|---|
+| No reply at all | Stays queued. Retried on the next flush, and when signal returns |
+| **4xx** | Rejected and shown. The server has an opinion and will have it again |
+| **5xx** | Retried up to five times, then rejected |
+
+Two more rules worth knowing:
+
+- **Order is preserved.** A flush stops at the first item it cannot send rather
+  than skipping past it, because two activities on one lead must land in the
+  order they happened.
+- **Sending twice is safe.** Every item carries a `client_ref`, and
+  `POST /api/activities` returns the original row for a ref it has already seen.
+  Without that, this queue would be a machine for logging the same meeting
+  twice — a reply lost in transit is indistinguishable from a request that never
+  arrived. Two e2e tests hold it, including one that a ref from one person can
+  never hand back another person's activity.
+
+The queue survives sign-out on purpose. It holds work, not session state.
+
 ## Deliberately absent
 
-Offline queueing, secure token storage, biometric unlock, navigation. Each is a
-decision in the scope document rather than something to add by default. The
-token lives in memory, so closing the app signs you out — an honest placeholder
-for Keychain and Keystore rather than a stand-in that looks finished.
+Secure token storage, biometric unlock, navigation. Each is a decision in the
+scope document rather than something to add by default. The token lives in
+memory, so closing the app signs you out — an honest placeholder for Keychain
+and Keystore rather than a stand-in that looks finished.
 
 ## Notes for whoever picks this up
 

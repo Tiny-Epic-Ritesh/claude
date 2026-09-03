@@ -113,10 +113,39 @@ router.post('/', requirePermission('lead.contact'), (req, res) => {
     follow_up_at, meeting_at, meeting_mode, meeting_location, reason,
     geo = null,
     respect_business_hours = true,
+    client_ref = null,
   } = req.body;
 
   const invalid = validate(req.body, { type: ['required'], subject: ['max:200'] });
   if (invalid) return res.status(400).json(invalid);
+
+  /* Already logged?
+   *
+   * The field app queues activities when there is no signal and retries them
+   * later, which means a send whose response was lost gets sent again. Without
+   * this, the second attempt logs the meeting twice -- and a duplicate is not
+   * cosmetic: it moves the lead score again, re-fires the disposition's effects
+   * and creates a second follow-up task.
+   *
+   * Scoped to the caller, so a key generated on one device can never hand back
+   * somebody else's activity. 200 rather than 201 says "this already existed",
+   * which the client needs in order to tell a replay from a fresh write. */
+  if (client_ref) {
+    const seen = one(
+      'SELECT * FROM activities WHERE client_ref = ? AND user_id = ?',
+      [String(client_ref), req.user.id],
+    );
+    if (seen) {
+      return res.json({
+        activity: seen,
+        replayed: true,
+        follow_up: null,
+        effects: [],
+        score_delta: 0,
+        confirmation: 'Already logged — this was sent more than once.',
+      });
+    }
+  }
 
   if (!MANUAL_TYPES.includes(type)) {
     return res.status(400).json({ error: `"${type}" is not an activity a user can log` });
@@ -154,9 +183,9 @@ router.post('/', requirePermission('lead.contact'), (req, res) => {
     `INSERT INTO activities
        (lead_id, card_id, type, direction, subject, body, outcome, duration_s, user_id,
         disposition, sub_disposition, follow_up_at, meeting_at, meeting_mode,
-        meeting_location, reason, sentiment,
+        meeting_location, reason, sentiment, client_ref,
         geo_status, geo_lat, geo_lng, geo_accuracy_m, geo_address, geo_captured_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       lead.id, card_id ?? null, type, direction,
       subject || disposition?.label || type,
@@ -172,6 +201,7 @@ router.post('/', requirePermission('lead.contact'), (req, res) => {
       meeting_location ?? null,
       reason ?? null,
       sentiment ?? null,
+      client_ref ? String(client_ref) : null,
       /* P2-01. Only for a meeting held in person, and only when Compliance has
          turned the capture on. `wants()` answers both questions, so a refusal
          on a phone call is not even asked for -- and every outcome, including

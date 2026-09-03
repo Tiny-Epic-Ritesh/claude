@@ -2894,6 +2894,52 @@ async function run() {
     assert(connected.some((o) => o.code === 'CALL_MEETING_FIXED'), 'Meeting Fixed missing');
   });
 
+  await check('the same activity sent twice is logged once', async () => {
+    /* The field app queues activities when there is no signal and retries them
+       later, so a send whose reply was lost in transit gets sent again. Without
+       a key to recognise the retry by, the second attempt logs the meeting a
+       second time -- and that is not cosmetic: it moves the lead score again,
+       re-fires the disposition's effects and creates a second follow-up task. */
+    const ref = `e2e-${RUN}-once`;
+    const body = {
+      lead_id: REF.leadId, type: 'Call', disposition: 'CALL_CALLBACK',
+      body: 'Sent twice', client_ref: ref,
+      // "Callback Requested" requires a time; the outcome, not this test.
+      follow_up_at: new Date(Date.now() + 3600e3).toISOString(),
+    };
+
+    const first = await req('/api/activities', { method: 'POST', token: T.sales_rm, expect: 201, body });
+    const again = await req('/api/activities', { method: 'POST', token: T.sales_rm, expect: 200, body });
+
+    eq(again.data.activity.id, first.data.activity.id, 'the retry created a second activity');
+    eq(again.data.replayed, true, 'the retry was not reported as a replay');
+
+    const timeline = await req(`/api/leads/${REF.leadId}`, { token: T.sales_rm, expect: 200 });
+    const acts = timeline.data.activities || timeline.data.timeline || [];
+    eq(acts.filter((a) => a.client_ref === ref).length, 1, 'the lead carries two copies of one activity');
+  });
+
+  await check('a key from one person cannot replay an activity of another', async () => {
+    /* The key is generated on a handset and is not a secret. If a ref could
+       fetch whoever's activity happened to carry it, the queue would be a way to
+       read across the book -- so the lookup is scoped to the caller, and a
+       colleague using the same ref simply writes a new row. */
+    const ref = `e2e-${RUN}-mine`;
+    const body = {
+      lead_id: REF.leadId, type: 'Call', disposition: 'CALL_CALLBACK',
+      body: 'Mine', client_ref: ref,
+      follow_up_at: new Date(Date.now() + 3600e3).toISOString(),
+    };
+    const mine = await req('/api/activities', { method: 'POST', token: T.sales_rm, expect: 201, body });
+    const theirs = await req('/api/activities', {
+      method: 'POST', token: T.admin, expect: 201, body: { ...body, body: 'Theirs' },
+    });
+
+    assert(theirs.data.activity.id !== mine.data.activity.id,
+      'another user was handed back an activity that was not theirs');
+    assert(!theirs.data.replayed, 'another user got a replay of an activity that was not theirs');
+  });
+
   await check('a contact activity without an outcome is refused', async () => {
     // An untagged call is a call nobody can report on.
     const { data } = await req('/api/activities', {
