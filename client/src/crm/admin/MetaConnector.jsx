@@ -7,6 +7,16 @@ import { useApi, Loading, Empty, Icon } from '../../components/ui.jsx';
  * unchanged by the move; only the imports are new.
  */
 
+/* --------------------------------------------------------- connectors */
+
+/**
+ * Meta — Facebook and Instagram.
+ *
+ * The screen exists to answer two questions honestly: what is actually wired,
+ * and which capability is switched off on purpose rather than by omission.
+ * A connector page that shows four green ticks when nothing is configured is
+ * how integrations get signed off before they work.
+ */
 export function MetaConnector() {
   const [data, { loading, reload }] = useApi('/admin/connectors/meta');
   const [leads] = useApi('/admin/connectors/meta/leads');
@@ -124,18 +134,3 @@ export function MetaConnector() {
     </>
   );
 }
-
-/* ----------------------------------------------------------- calendars */
-
-/**
- * Working calendars.
- *
- * Two of them, because a broking firm runs on two weeks that do not coincide —
- * the office is open Saturdays, the exchange is not; Maharashtra Day closes one
- * and not the other. The SLA clock and every follow-up reschedule read these.
- *
- * The list is editable rather than shipped because the dates that matter most
- * move: Holi, Diwali, Eid and Dussehra follow the lunar calendar and come out
- * in an NSE circular each year. Guessing them in code would be worse than
- * leaving them out.
- */

@@ -19,6 +19,11 @@ import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { all, one } from '../src/db.js';
 
+/* Source read from disk, so line endings are whatever git checked out --
+   CRLF on Windows. Every pattern below is written with \n, so normalise once
+   here rather than in each assertion. */
+const CRLF = /\r\n/g;
+
 let passed = 0;
 let failed = 0;
 const test = (name, fn) => {
@@ -28,7 +33,7 @@ const test = (name, fn) => {
 
 console.log('\nDashboard robustness');
 
-const SRC = readFileSync(new URL('../src/routes/dashboard.js', import.meta.url), 'utf8');
+const SRC = readFileSync(new URL('../src/routes/dashboard.js', import.meta.url), 'utf8').replace(CRLF, '\n');
 
 test('a builder that fails is reported, not swallowed', () => {
   /* The regression that matters. If this catch ever goes back to swallowing,

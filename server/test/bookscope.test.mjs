@@ -26,6 +26,11 @@ import { fileURLToPath } from 'node:url';
 import { one, all } from '../src/db.js';
 import { RECORD_KINDS, loadInBook, reachable } from '../src/engine/bookscope.js';
 
+/* Source read from disk, so line endings are whatever git checked out --
+   CRLF on Windows. Every pattern below is written with \n, so normalise once
+   here rather than in each assertion. */
+const CRLF = /\r\n/g;
+
 const here = dirname(fileURLToPath(import.meta.url));
 const ROUTES = join(here, '..', 'src', 'routes');
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
@@ -78,7 +83,7 @@ function paramRoutes() {
   for (const file of readdirSync(ROUTES)) {
     const map = MOUNTS[file];
     if (!map) continue;
-    const src = readFileSync(join(ROUTES, file), 'utf8');
+    const src = readFileSync(join(ROUTES, file), 'utf8').replace(CRLF, '\n');
     for (const m of src.matchAll(/(\w+)\.get\(\s*'([^']*)'/g)) {
       const [, variable, path] = m;
       if (!(variable in map) || !path.includes(':')) continue;
@@ -332,7 +337,7 @@ await test('every list route is classified', () => {
   for (const file of readdirSync(ROUTES)) {
     const map = MOUNTS[file];
     if (!map) continue;
-    const src = readFileSync(join(ROUTES, file), 'utf8');
+    const src = readFileSync(join(ROUTES, file), 'utf8').replace(CRLF, '\n');
     for (const m of src.matchAll(/(\w+)\.get\(\s*'\/'/g)) {
       const mount = map[m[1]];
       if (mount) live.add(mount);

@@ -19,6 +19,11 @@ import {
   mayRead, mayManage, mayTransition, expiryFor, isSendable, STATUSES,
 } from '../src/engine/library.js';
 
+/* Source read from disk, so line endings are whatever git checked out --
+   CRLF on Windows. Every pattern below is written with \n, so normalise once
+   here rather than in each assertion. */
+const CRLF = /\r\n/g;
+
 let passed = 0;
 let failed = 0;
 const test = (name, fn) => {
@@ -46,7 +51,7 @@ test('nothing is sendable until it is approved', () => {
 test('the email composer only offers approved, in-date collateral', () => {
   // Asserted on the query, because this is the one place the gate is enforced
   // for real and a change here would be silent.
-  const src = readFileSync(new URL('../src/routes/email.js', import.meta.url), 'utf8');
+  const src = readFileSync(new URL('../src/routes/email.js', import.meta.url), 'utf8').replace(CRLF, '\n');
   const offers = src.slice(src.indexOf('FROM content_items'));
   assert(/status = 'approved'/.test(offers), 'the composer no longer requires approval');
   assert(/expiry_date IS NULL OR expiry_date >= date\('now'\)/.test(offers),

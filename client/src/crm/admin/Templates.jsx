@@ -7,6 +7,8 @@ import { useApi, Loading } from '../../components/ui.jsx';
  * unchanged by the move; only the imports are new.
  */
 
+/* ------------------------------------------------------------ templates */
+
 export function Templates() {
   const [rows, { loading, reload }] = useApi('/admin/templates');
   if (loading) return <Loading />;
@@ -33,5 +35,3 @@ export function Templates() {
     </section>
   );
 }
-
-/* -------------------------------------------------------------- content */

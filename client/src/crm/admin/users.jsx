@@ -136,16 +136,3 @@ export function NewUser({ onClose, onCreated }) {
     </Modal>
   );
 }
-
-/* ---------------------------------------------------------------- roles */
-
-/**
- * The read-only matrix. Superseded as the roles screen by RolesSetup (P2-05),
- * kept because it answers a question the editor does not: "who can do X"
- * across every role at once, which is the question an auditor asks.
- *
- * Exported so RolesSetup can render it beneath the editable list.
- */
-/* ------------------------------------------------------------- products */
-
-/* ------------------------------------------------------- KYC composer */

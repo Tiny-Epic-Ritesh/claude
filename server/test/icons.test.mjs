@@ -25,6 +25,11 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 
+/* Source read from disk, so line endings are whatever git checked out --
+   CRLF on Windows. Every pattern below is written with \n, so normalise once
+   here rather than in each assertion. */
+const CRLF = /\r\n/g;
+
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, '..', '..');
 const CLIENT = join(repo, 'client', 'src');
@@ -43,7 +48,7 @@ const test = (name, fn) => {
   catch (err) { failed += 1; console.log(`  FAIL ${name}\n       ${err.message}`); }
 };
 
-const lines = (file) => readFileSync(file, 'utf8')
+const lines = (file) => readFileSync(file, 'utf8').replace(CRLF, '\n')
   .split(/\r?\n/)
   .map((l) => l.trim())
   .filter((l) => l && !l.startsWith('#'));
@@ -116,7 +121,7 @@ function usedIcons(vocabulary) {
     .replace(/typeof\s+[^=!]+[=!]==?\s*(['"`])(?:function|string|number|object|boolean|undefined|symbol|bigint)\1/g, ' ');
 
   for (const file of walk(CLIENT)) {
-    const src = strip(readFileSync(file, 'utf8'));
+    const src = strip(readFileSync(file, 'utf8').replace(CRLF, '\n'));
     const add = (name) => {
       if (vocabulary.has(name) && !found.has(name)) found.set(name, rel(file));
     };
@@ -130,7 +135,7 @@ function usedIcons(vocabulary) {
   // instead sweeps up ordinary domain words — "sip", "queue", "score" and
   // "south" are all real icon names, and none of them are icons here.
   for (const file of walk(SERVER)) {
-    const src = readFileSync(file, 'utf8');
+    const src = readFileSync(file, 'utf8').replace(CRLF, '\n');
     for (const m of src.matchAll(/\bicon:\s*(['"`])([a-z][a-z0-9_]{2,30})\1/g)) {
       const name = m[2];
       if (vocabulary.has(name) && !found.has(name)) found.set(name, rel(file));
@@ -156,7 +161,7 @@ test('the font, its list and the vocabulary are all present', () => {
 
 test('the font is served from our own box, not a CDN', () => {
   for (const [what, file] of [['index.html', INDEX], ['styles.css', CSS]]) {
-    const src = readFileSync(file, 'utf8');
+    const src = readFileSync(file, 'utf8').replace(CRLF, '\n');
     // Matches a live reference, not a comment explaining why there is none.
     assert(!/(?:href|src)=['"][^'"]*fonts\.(?:googleapis|gstatic)\.com/.test(src),
       `${what} still links a stylesheet or font from Google`);
@@ -179,8 +184,8 @@ test('the font is declared in CSS, so the build fingerprints it', () => {
    * Declared in styles.css the url() goes through the build, which emits
    * material-symbols-rounded-<hash>.woff2. New font, new URL, no stale cache.
    */
-  const css = readFileSync(CSS, 'utf8');
-  const html = readFileSync(INDEX, 'utf8');
+  const css = readFileSync(CSS, 'utf8').replace(CRLF, '\n');
+  const html = readFileSync(INDEX, 'utf8').replace(CRLF, '\n');
 
   assert(/@font-face/.test(css), 'styles.css does not declare the icon font');
   assert(/url\(['"]?\.\/assets\/fonts\/material-symbols-rounded\.woff2/.test(css),
@@ -225,7 +230,7 @@ test('the font was generated from the list that is checked in', () => {
    * timestamp: mtime is whatever the last checkout or file move happened to
    * set, so a timestamp check fails for reasons that have nothing to do with
    * the font and teaches people to ignore it. */
-  const declared = readFileSync(LOCK, 'utf8').match(/# font-sha256 ([0-9a-f]{64})/)?.[1];
+  const declared = readFileSync(LOCK, 'utf8').replace(CRLF, '\n').match(/# font-sha256 ([0-9a-f]{64})/)?.[1];
   assert(declared, 'the lock does not record the font hash');
   const actual = createHash('sha256').update(readFileSync(FONT)).digest('hex');
   assert.equal(actual, declared,

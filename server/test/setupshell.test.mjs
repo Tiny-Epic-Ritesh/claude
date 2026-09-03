@@ -21,6 +21,11 @@ import { readFileSync } from 'node:fs';
 import { CAPABILITY_CATALOGUE } from '../src/engine/access.js';
 import { SETUP_SECTIONS, setupTabId, isSetupTabId, sectionKeyOf } from '../src/engine/setupsections.js';
 
+/* Source read from disk, so line endings are whatever git checked out --
+   CRLF on Windows. Every pattern below is written with \n, so normalise once
+   here rather than in each assertion. */
+const CRLF = /\r\n/g;
+
 let passed = 0;
 let failed = 0;
 const test = (name, fn) => {
@@ -30,7 +35,7 @@ const test = (name, fn) => {
 
 console.log('\nSetup shell');
 
-const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8').replace(CRLF, '\n');
 const registry = read('../../client/src/setup/registry.js');
 const shell = read('../../client/src/setup/SetupShell.jsx');
 const home = read('../../client/src/setup/SetupHome.jsx');
@@ -235,7 +240,7 @@ test('hiding a screen is tidying, never security', () => {
   /* Capability AND visibility, in that order — a screen the role cannot open is
      never listed whatever the visibility says, and a merely hidden screen is
      still refused by the API if somebody types the URL. */
-  const routes = readFileSync(new URL('../src/routes/setup.js', import.meta.url), 'utf8');
+  const routes = readFileSync(new URL('../src/routes/setup.js', import.meta.url), 'utf8').replace(CRLF, '\n');
   const handler = routes.slice(routes.indexOf("router.get('/preferences'"), routes.indexOf("router.put('/preferences"));
   assert(/sec\.needs\.some\(\(c\) => can\(req\.user\.role, c\)\)/.test(handler),
     'the preferences endpoint no longer checks capability');
@@ -251,13 +256,13 @@ test('a broken screen does not take Setup with it', () => {
      unmounted everything — sidebar, header, the lot. An administrator could not
      navigate away from the screen that was broken. */
   assert(/SetupBoundary/.test(shell), 'the error boundary is gone from the shell');
-  const boundary = readFileSync(new URL('../../client/src/setup/SetupBoundary.jsx', import.meta.url), 'utf8');
+  const boundary = readFileSync(new URL('../../client/src/setup/SetupBoundary.jsx', import.meta.url), 'utf8').replace(CRLF, '\n');
   assert(/getDerivedStateFromError/.test(boundary), 'the boundary no longer catches');
   assert(/resetKey/.test(boundary), 'a crash is sticky — it never clears when you navigate away');
 });
 
 test('the screen that crashed has its save bar back in scope', () => {
-  const src = readFileSync(new URL('../../client/src/crm/TabVisibility.jsx', import.meta.url), 'utf8');
+  const src = readFileSync(new URL('../../client/src/crm/TabVisibility.jsx', import.meta.url), 'utf8').replace(CRLF, '\n');
   const person = src.slice(src.indexOf('function PersonOverrides'));
   assert(!/PendingBar/.test(person),
     'the save bar is inside PersonOverrides again, where `draft` does not exist');
@@ -292,7 +297,7 @@ test('group headings line up with the items beneath them', () => {
   /* The heading used to start at 10px and the item labels at 37px, so nothing
      in the column shared a left edge. The indent is the row padding plus the
      icon plus the gap, which is what puts the two on one line. */
-  const css = readFileSync(new URL('../../client/src/styles.css', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../../client/src/styles.css', import.meta.url), 'utf8').replace(CRLF, '\n');
   const head = css.slice(css.indexOf('.setup-group-head {'), css.indexOf('.setup-group-head::before'));
   assert(/padding: 3px 10px 3px 37px/.test(head), 'the heading indent no longer matches the item text');
   assert(/white-space: nowrap/.test(head), 'headings can wrap again');
@@ -303,7 +308,7 @@ test('a group heading is bigger than the items it heads', () => {
      uppercase above 13px semibold items, so the heading was the smallest thing
      in its own group. A heading smaller than its content is not subtle, it is
      backwards. */
-  const css = readFileSync(new URL('../../client/src/styles.css', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../../client/src/styles.css', import.meta.url), 'utf8').replace(CRLF, '\n');
   const head = css.slice(css.indexOf('.setup-group-head {'), css.indexOf('.setup-group-head::before'));
   assert(/font-size: var\(--s-head\)/.test(head), 'the heading is back to a hand-rolled size');
   assert(/text-transform: none/.test(head),
@@ -318,7 +323,7 @@ test('a group heading is bigger than the items it heads', () => {
 
 test('the heading reacts, and the marker is in the icon column', () => {
   // Asked for: a little bigger, highlighted, with a transition, on one line.
-  const css = readFileSync(new URL('../../client/src/styles.css', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../../client/src/styles.css', import.meta.url), 'utf8').replace(CRLF, '\n');
   const before = css.slice(css.indexOf('.setup-group-head::before'), css.indexOf('.setup-group:hover .setup-group-head {'));
   assert(/left: 14px/.test(before), 'the accent marker has left the icon column');
   assert(/transition:/.test(before), 'the marker no longer animates');
@@ -330,7 +335,7 @@ test('an icon inside an uppercase heading keeps its ligature', () => {
      `letter-spacing` break one. The heading sets both, so the chevron rendered
      as the literal word EXPAND_LESS and ate 96px — which is what squeezed the
      heading text into an ellipsis. */
-  const css = readFileSync(new URL('../../client/src/styles.css', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../../client/src/styles.css', import.meta.url), 'utf8').replace(CRLF, '\n');
   const at = css.indexOf('.setup-group-toggle .material-symbols-rounded {');
   assert(at > -1, 'the chevron reset rule is gone');
   const body = css.slice(at, css.indexOf('}', at));
@@ -346,7 +351,7 @@ test('a coloured button keeps its own background on hover', () => {
      `background: var(--glass-solid)`, which is white in light mode. A hover
      with no background of its own turned the green button white underneath
      white text, and "+ New field" vanished under the cursor. */
-  const css = readFileSync(new URL('../../client/src/styles.css', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../../client/src/styles.css', import.meta.url), 'utf8').replace(CRLF, '\n');
   for (const kind of ['primary', 'danger']) {
     const at = css.indexOf(`.btn-${kind}:hover {`);
     assert(at > -1, `.btn-${kind}:hover does not exist, so .btn:hover decides its background`);

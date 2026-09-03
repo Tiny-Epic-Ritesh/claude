@@ -7,6 +7,8 @@ import { useApi, Loading } from '../../components/ui.jsx';
  * unchanged by the move; only the imports are new.
  */
 
+/* ------------------------------------------------------------------ SLA */
+
 export function Sla() {
   const [sla, { loading }] = useApi('/admin/sla');
   const [cats] = useApi('/admin/categories');
@@ -50,5 +52,3 @@ export function Sla() {
     </div>
   );
 }
-
-/* ------------------------------------------------------------ templates */

@@ -15,6 +15,11 @@ import { all, one, run, audit } from '../src/db.js';
 import { mayGhost, start, stop, GHOST_MINUTES } from '../src/engine/ghost.js';
 import { withContext } from '../src/engine/reqcontext.js';
 
+/* Source read from disk, so line endings are whatever git checked out --
+   CRLF on Windows. Every pattern below is written with \n, so normalise once
+   here rather than in each assertion. */
+const CRLF = /\r\n/g;
+
 let passed = 0;
 let failed = 0;
 const test = (name, fn) => {
@@ -141,7 +146,7 @@ test('an ordinary write records no actor, so the column means something', () => 
 
 /* ------------------------------------------- getting back out again */
 
-const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8').replace(CRLF, '\n');
 
 test('no API response may be cached by anything', () => {
   /* This is what hid the banner. Express puts an ETag on every JSON response

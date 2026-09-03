@@ -18,6 +18,11 @@ import {
   issue, rotate, revoke, list, authenticate, scopedCapabilities,
 } from '../src/engine/apikeys.js';
 
+/* Source read from disk, so line endings are whatever git checked out --
+   CRLF on Windows. Every pattern below is written with \n, so normalise once
+   here rather than in each assertion. */
+const CRLF = /\r\n/g;
+
 let passed = 0;
 let failed = 0;
 const test = (name, fn) => {
@@ -116,7 +121,7 @@ test('scopes narrow and can never widen', () => {
 test('the comparison is constant-time, not a string equality', () => {
   /* Asserted on the source, because a timing difference is not observable from
      a unit test on a laptop and would be a real leak in production. */
-  const src = readFileSync(new URL('../src/engine/apikeys.js', import.meta.url), 'utf8');
+  const src = readFileSync(new URL('../src/engine/apikeys.js', import.meta.url), 'utf8').replace(CRLF, '\n');
   assert(/timingSafeEqual/.test(src), 'secret comparison does not use timingSafeEqual');
   const fn = src.slice(src.indexOf('function secretMatches'), src.indexOf('/* ------', src.indexOf('function secretMatches')));
   assert(!/===\s*storedHex|storedHex\s*===/.test(fn), 'the secret is compared with ===');

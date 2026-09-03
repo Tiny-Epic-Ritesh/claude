@@ -16,6 +16,11 @@ import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { all, one } from '../src/db.js';
 
+/* Source read from disk, so line endings are whatever git checked out --
+   CRLF on Windows. Every pattern below is written with \n, so normalise once
+   here rather than in each assertion. */
+const CRLF = /\r\n/g;
+
 let passed = 0;
 let failed = 0;
 const test = (name, fn) => {
@@ -151,7 +156,7 @@ test("layout order is the administrator's, and boot does not take it back", () =
 
      Asserted structurally rather than by restarting a server: the UPDATE that
      refreshes an existing field must not mention sort_order at all. */
-  const src = readFileSync(new URL('../src/engine/metadata.js', import.meta.url), 'utf8');
+  const src = readFileSync(new URL('../src/engine/metadata.js', import.meta.url), 'utf8').replace(CRLF, '\n');
   const from = src.indexOf('UPDATE field_def SET type');
   const update = src.slice(from, src.indexOf('WHERE id = ?', from));
   assert(!/sort_order/.test(update),
@@ -163,7 +168,7 @@ test('fields come back in layout order, not core-then-custom', () => {
      below every core one however they were arranged — so "Preferred Call
      Window" could never sit beside the phone number, which is the entire point
      of being able to order a layout. */
-  const src = readFileSync(new URL('../src/engine/metadata.js', import.meta.url), 'utf8');
+  const src = readFileSync(new URL('../src/engine/metadata.js', import.meta.url), 'utf8').replace(CRLF, '\n');
   const fn = src.slice(src.indexOf('export function fieldsOf'));
   const clause = fn.slice(fn.indexOf('ORDER BY'), fn.indexOf('`,'));
   assert(!/is_custom/.test(clause), `fieldsOf still sorts custom fields apart: ${clause.trim()}`);
@@ -189,7 +194,7 @@ test('every object can be renamed without anything downstream moving', () => {
      what makes freezing the API name safe — a screen that freezes both gives up
      the benefit of having two identifiers. Cases is the live example: `case` in
      the API, "Cases" here, "Tickets" in the system this replaces. */
-  const src = readFileSync(new URL('../src/routes/setup.js', import.meta.url), 'utf8');
+  const src = readFileSync(new URL('../src/routes/setup.js', import.meta.url), 'utf8').replace(CRLF, '\n');
   const from = src.indexOf("router.patch('/objects/:entity'");
   const handler = src.slice(from, src.indexOf('router.', from + 10));
 
@@ -202,7 +207,7 @@ test('an object cannot be left with no name', () => {
   /* COALESCE keeps a field that is not sent, which is what makes the update
      partial — but an empty string IS sent, and would blank the name of an
      object on every screen at once. */
-  const src = readFileSync(new URL('../src/routes/setup.js', import.meta.url), 'utf8');
+  const src = readFileSync(new URL('../src/routes/setup.js', import.meta.url), 'utf8').replace(CRLF, '\n');
   assert(/An object needs a name/.test(src), 'an object can be saved with a blank label');
 });
 
@@ -224,7 +229,7 @@ test('the object flags that are stored are actually read by something', () => {
 
      This does not require them to be wired. It requires that whoever puts them
      on a screen has to wire them first. */
-  const client = readFileSync(new URL('../../client/src/crm/ObjectSettings.jsx', import.meta.url), 'utf8');
+  const client = readFileSync(new URL('../../client/src/crm/ObjectSettings.jsx', import.meta.url), 'utf8').replace(CRLF, '\n');
   for (const flag of ['has_history', 'has_activities', 'has_record_types', 'has_approvals']) {
     assert(!client.includes(flag),
       `ObjectSettings offers ${flag}, which nothing in the server reads — the toggle would do nothing`);
@@ -240,8 +245,8 @@ test('the settings an object links to actually exist', () => {
 
      A link is only worth having while it goes somewhere. Renaming a tab key
      would leave these pointing at a screen that silently falls back to Users. */
-  const manager = readFileSync(new URL('../../client/src/crm/ObjectManager.jsx', import.meta.url), 'utf8');
-  const registry = readFileSync(new URL('../../client/src/setup/registry.js', import.meta.url), 'utf8');
+  const manager = readFileSync(new URL('../../client/src/crm/ObjectManager.jsx', import.meta.url), 'utf8').replace(CRLF, '\n');
+  const registry = readFileSync(new URL('../../client/src/setup/registry.js', import.meta.url), 'utf8').replace(CRLF, '\n');
 
   const related = manager.slice(manager.indexOf('const RELATED = {'), manager.indexOf('function ObjectDetail'));
   const targets = [...related.matchAll(/\['([a-z_]+)',/g)].map((m) => m[1]);
@@ -266,8 +271,8 @@ test('every settings screen has an address of its own', () => {
   /* Setup used to be one route with a tab in internal state, so no screen could
      be linked to, bookmarked or sent to somebody. Each section is a real path
      now, and the registry is what the router is built from. */
-  const registry = readFileSync(new URL('../../client/src/setup/registry.js', import.meta.url), 'utf8');
-  const shell = readFileSync(new URL('../../client/src/setup/SetupShell.jsx', import.meta.url), 'utf8');
+  const registry = readFileSync(new URL('../../client/src/setup/registry.js', import.meta.url), 'utf8').replace(CRLF, '\n');
+  const shell = readFileSync(new URL('../../client/src/setup/SetupShell.jsx', import.meta.url), 'utf8').replace(CRLF, '\n');
 
   assert(/path=\{key\}/.test(shell), 'sections are no longer routed by their own key');
   assert(/sectionsFor/.test(shell), 'the shell no longer builds its routes from the registry');

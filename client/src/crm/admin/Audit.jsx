@@ -7,6 +7,8 @@ import { useApi, Loading } from '../../components/ui.jsx';
  * unchanged by the move; only the imports are new.
  */
 
+/* ---------------------------------------------------------------- audit */
+
 export function Audit() {
   const [rows, { loading }] = useApi('/admin/audit');
   if (loading) return <Loading />;
@@ -30,14 +32,3 @@ export function Audit() {
     </section>
   );
 }
-
-/* --------------------------------------------------------- connectors */
-
-/**
- * Meta — Facebook and Instagram.
- *
- * The screen exists to answer two questions honestly: what is actually wired,
- * and which capability is switched off on purpose rather than by omission.
- * A connector page that shows four green ticks when nothing is configured is
- * how integrations get signed off before they work.
- */

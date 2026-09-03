@@ -25,6 +25,11 @@ import {
 } from '../src/engine/leadlists.js';
 import { conditionSchema, NO_VALUE_OPERATORS, LIST_OPERATORS } from '../src/engine/conditions.js';
 
+/* Source read from disk, so line endings are whatever git checked out --
+   CRLF on Windows. Every pattern below is written with \n, so normalise once
+   here rather than in each assertion. */
+const CRLF = /\r\n/g;
+
 let passed = 0;
 let failed = 0;
 const test = (name, fn) => {
@@ -34,9 +39,9 @@ const test = (name, fn) => {
 
 console.log('\nLead list features');
 
-const routes = readFileSync(new URL('../src/routes/lists.js', import.meta.url), 'utf8');
-const builder = readFileSync(new URL('../../client/src/components/ConditionBuilder.jsx', import.meta.url), 'utf8');
-const listsUi = readFileSync(new URL('../../client/src/crm/LeadLists.jsx', import.meta.url), 'utf8');
+const routes = readFileSync(new URL('../src/routes/lists.js', import.meta.url), 'utf8').replace(CRLF, '\n');
+const builder = readFileSync(new URL('../../client/src/components/ConditionBuilder.jsx', import.meta.url), 'utf8').replace(CRLF, '\n');
+const listsUi = readFileSync(new URL('../../client/src/crm/LeadLists.jsx', import.meta.url), 'utf8').replace(CRLF, '\n');
 
 /* ------------------------------------------------- governance (audit #1) */
 

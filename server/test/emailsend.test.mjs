@@ -20,6 +20,11 @@ import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
 import * as smtp from '../src/vendors/smtp.js';
 
+/* Source read from disk, so line endings are whatever git checked out --
+   CRLF on Windows. Every pattern below is written with \n, so normalise once
+   here rather than in each assertion. */
+const CRLF = /\r\n/g;
+
 let passed = 0;
 let failed = 0;
 const test = (name, fn) => {
@@ -33,8 +38,8 @@ const test = (name, fn) => {
 
 console.log('\nEmail send');
 
-const src = readFileSync(new URL('../src/routes/email.js', import.meta.url), 'utf8');
-const integrations = readFileSync(new URL('../src/integrations.js', import.meta.url), 'utf8');
+const src = readFileSync(new URL('../src/routes/email.js', import.meta.url), 'utf8').replace(CRLF, '\n');
+const integrations = readFileSync(new URL('../src/integrations.js', import.meta.url), 'utf8').replace(CRLF, '\n');
 
 /* ------------------------------------------------------------ the envelope */
 

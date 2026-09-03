@@ -6,6 +6,8 @@ import { useApi, Loading } from '../../components/ui.jsx';
  * unchanged by the move; only the imports are new.
  */
 
+/* ------------------------------------------------------- KYC composer */
+
 export function Journeys() {
   const [data, { loading }] = useApi('/admin/kyc/journeys');
   if (loading || !data) return <Loading />;
@@ -39,5 +41,3 @@ export function Journeys() {
     </div>
   );
 }
-
-/* ---------------------------------------------------------------- rules */

@@ -7,6 +7,8 @@ import { useApi, Loading } from '../../components/ui.jsx';
  * unchanged by the move; only the imports are new.
  */
 
+/* -------------------------------------------------------------- content */
+
 export function Content() {
   const [rows, { loading }] = useApi('/admin/content');
   if (loading) return <Loading />;
@@ -35,20 +37,3 @@ export function Content() {
     </section>
   );
 }
-
-/* ------------------------------------------------------------ campaigns */
-
-/**
- * Campaigns.
- *
- * This screen was read-only but for a Send button — no way to create a campaign
- * even though the API accepted one, and no edit at any layer. A Marketing
- * Manager holding `campaign.manage` could look at campaigns and send them, and
- * nothing else.
- *
- * The audience preview is the part worth arguing for. Consent rules that
- * silently drop recipients teach nobody anything; showing "412 excluded, 388 of
- * them opted out" before the send makes the rule visible at the moment it
- * matters, and stops a marketer wondering why the reach was short afterwards.
- */
-/* Rows per page. The campaign list had no LIMIT on the route at all. */

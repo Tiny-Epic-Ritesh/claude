@@ -22,6 +22,11 @@ import {
   operatorsFor, describe, OPERATORS, SEARCHABLE,
 } from '../src/engine/search.js';
 
+/* Source read from disk, so line endings are whatever git checked out --
+   CRLF on Windows. Every pattern below is written with \n, so normalise once
+   here rather than in each assertion. */
+const CRLF = /\r\n/g;
+
 let passed = 0;
 let failed = 0;
 const test = (name, fn) => {
@@ -186,7 +191,7 @@ test('the capability gate is still what hides a non-encrypted restricted field',
      exclusion above reaches them first and this gate has nothing left to act
      on. It is still the thing standing between a restricted field and a filter,
      so it is checked directly rather than left to rot unnoticed. */
-  const src = readFileSync(new URL('../src/engine/search.js', import.meta.url), 'utf8');
+  const src = readFileSync(new URL('../src/engine/search.js', import.meta.url), 'utf8').replace(CRLF, '\n');
   assert(/read_scope === 'capability'/.test(src) && /caps\.has\(f\.read_capability\)/.test(src),
     'the capability gate has gone from registryFor');
 });

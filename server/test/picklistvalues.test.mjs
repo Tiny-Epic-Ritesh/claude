@@ -18,9 +18,14 @@ import { readFileSync } from 'node:fs';
 import { all, one, run } from '../src/db.js';
 import { valueUsage, fieldDef } from '../src/engine/metadata.js';
 
+/* Source read from disk, so line endings are whatever git checked out --
+   CRLF on Windows. Every pattern below is written with \n, so normalise once
+   here rather than in each assertion. */
+const CRLF = /\r\n/g;
+
 let passed = 0;
 let failed = 0;
-const readSetup = () => readFileSync(new URL('../src/routes/setup.js', import.meta.url), 'utf8');
+const readSetup = () => readFileSync(new URL('../src/routes/setup.js', import.meta.url), 'utf8').replace(CRLF, '\n');
 
 const test = (name, fn) => {
   try { fn(); passed += 1; console.log(`  ok   ${name}`); }

@@ -8,6 +8,20 @@ import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Icon } from '../..
  * unchanged by the move; only the imports are new.
  */
 
+/* ----------------------------------------------------------- calendars */
+
+/**
+ * Working calendars.
+ *
+ * Two of them, because a broking firm runs on two weeks that do not coincide —
+ * the office is open Saturdays, the exchange is not; Maharashtra Day closes one
+ * and not the other. The SLA clock and every follow-up reschedule read these.
+ *
+ * The list is editable rather than shipped because the dates that matter most
+ * move: Holi, Diwali, Eid and Dussehra follow the lunar calendar and come out
+ * in an NSE circular each year. Guessing them in code would be worse than
+ * leaving them out.
+ */
 export function Calendars() {
   const [data, { loading, reload }] = useApi('/admin/calendars');
   const [adding, setAdding] = useState(null);   // kind
@@ -148,26 +162,3 @@ function AddCalendarDay({ kind, onClose, onSaved }) {
     </Modal>
   );
 }
-
-/* ------------------------------------------------------- rule builder */
-
-/**
- * Building an automation without writing JSON.
- *
- * The screen was read-only: you could see a rule, dry-run it and toggle it, but
- * the only way to create one was a POST by hand. That is the difference between
- * a platform an operations lead can change and one that needs a developer for
- * every "chase leads that went quiet".
- *
- * The vocabulary comes from the server — `condition_fields` and `action_types`
- * ride along on GET /admin/rules — so this form does not know what a rule means.
- * Adding a condition field or an action type on the server makes it appear here
- * with no change to this file.
- *
- * DRY RUN IS THE PRIMARY BUTTON, NOT SAVE
- * ---------------------------------------
- * A rule that fires on 495,118 leads is a rule you want to have tested first.
- * The builder makes dry-run the obvious path and creates every rule disabled,
- * so the sequence is always: build, see who it would hit, then enable. Nothing
- * a person types here can send a message until they deliberately turn it on.
- */

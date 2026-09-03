@@ -8,6 +8,8 @@ import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Icon } from '../..
  * unchanged by the move; only the imports are new.
  */
 
+/* ---------------------------------------------------------------- rules */
+
 export function Rules() {
   const [data, { loading, reload }] = useApi('/admin/rules');
   const [meta] = useApi('/meta');
@@ -120,7 +122,28 @@ export function Rules() {
   );
 }
 
-/* ------------------------------------------------------------------ SLA */
+/* ------------------------------------------------------- rule builder */
+
+/**
+ * Building an automation without writing JSON.
+ *
+ * The screen was read-only: you could see a rule, dry-run it and toggle it, but
+ * the only way to create one was a POST by hand. That is the difference between
+ * a platform an operations lead can change and one that needs a developer for
+ * every "chase leads that went quiet".
+ *
+ * The vocabulary comes from the server — `condition_fields` and `action_types`
+ * ride along on GET /admin/rules — so this form does not know what a rule means.
+ * Adding a condition field or an action type on the server makes it appear here
+ * with no change to this file.
+ *
+ * DRY RUN IS THE PRIMARY BUTTON, NOT SAVE
+ * ---------------------------------------
+ * A rule that fires on 495,118 leads is a rule you want to have tested first.
+ * The builder makes dry-run the obvious path and creates every rule disabled,
+ * so the sequence is always: build, see who it would hit, then enable. Nothing
+ * a person types here can send a message until they deliberately turn it on.
+ */
 
 const OPS_BY_TYPE = {
   number: [['gt', 'is greater than'], ['gte', 'is at least'], ['lt', 'is less than'],
