@@ -454,6 +454,42 @@ async function run() {
   /* ----------------------------------------------------------- 9. tickets */
   suite('09 ticketing & SLA');
 
+  await check('the API issues no cookie and grants no ambient authority', async () => {
+    /* There is nothing to check for an id in a cookie, because there are no
+       cookies: the server never reads or sets one, the browser client never
+       touches document.cookie, and cookie-parser is not a dependency. Every
+       request carries a Bearer token or it carries nothing.
+
+       Pinned rather than left as an observation, because it is an
+       architectural property with a security consequence and it could drift.
+       Ambient credentials are what make cross-site requests dangerous — a form
+       posted from another origin sends cookies and cannot send an Authorization
+       header — so if a session cookie is ever introduced, the CSRF posture
+       changes on that day and it should be a decision somebody makes rather
+       than a default they inherit.
+
+       The trade is real and worth stating: a token in localStorage is reachable
+       by script, so this buys CSRF immunity and pays for it in XSS exposure.
+       That is why sanitize.test.mjs exists. */
+    const { res } = await req('/api/auth/login', {
+      method: 'POST', body: { email: 'admin@bonanza.test', password: 'bonanza' }, expect: 200,
+    });
+    eq(res.headers.get('set-cookie'), null, 'sign-in issued a cookie');
+
+    const { res: read } = await req('/api/leads?limit=1', { token: T.admin, expect: 200 });
+    eq(read.headers.get('set-cookie'), null, 'a read issued a cookie');
+
+    /* And a forged one changes nothing — naming the other book, another user
+       and a higher role at once. */
+    const books = (rows) => [...new Set(rows.map((r) => r.sales_org))].sort().join(',');
+    const { data } = await req('/api/leads?limit=200', {
+      token: T.admin,
+      expect: 200,
+      headers: { Cookie: 'sales_org=BIGUL; active_org=BIGUL; user_id=1; role=superadmin' },
+    });
+    eq(books(data), 'BONANZA', 'a forged cookie changed what the reader could see');
+  });
+
   await check('the org header can narrow what you see and never widen it', async () => {
     /* X-Sales-Org is the only header carrying a scope identifier, it is entirely
        client-controlled, and it feeds activeOrg() which is passed to every scope

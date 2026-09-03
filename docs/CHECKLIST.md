@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,126** — 597 end-to-end and 529 unit. All green.
+**Tests: 1,127** — 598 end-to-end and 529 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -1387,3 +1387,40 @@ two is not enough to prove it.
 Removing both also tripped an existing test — "a forged org parameter cannot
 widen entitlement" — which already covered the `?org=` form. The header
 form and the malformed shapes were the genuine gap, and are pinned now.
+
+
+---
+
+## Ids in cookies — audited 2 Sep 2026, there are none
+
+There is nothing to check, and the reason is worth writing down rather than
+leaving as an empty result.
+
+The server never reads a cookie and never sets one:
+`req.cookies`, `res.cookie`, `Set-Cookie` and
+`headers.cookie` appear nowhere in it, the browser client never touches
+`document.cookie`, and `cookie-parser` is not a dependency.
+Confirmed at the wire as well as in the source: sign-in and every endpoint
+probed returned no `Set-Cookie`, a forged cookie naming the other book,
+another user id and a higher role changed nothing, and a request with no
+`Authorization` header is refused with a 401.
+
+### Why this is a property and not an absence
+
+Every request carries a Bearer token or it carries nothing. Ambient credentials
+are what make cross-site requests dangerous — a form posted from another origin
+sends cookies automatically and cannot set an Authorization header — so this
+design has no CSRF surface of that kind.
+
+The trade is real and should be stated rather than banked as a free win: the
+token lives in localStorage, which is reachable by script, so what is bought in
+CSRF immunity is paid for in XSS exposure. That is what
+`sanitize.test.mjs` is defending.
+
+### Pinned, because it can drift
+
+A test asserts that sign-in and a read both return no `Set-Cookie`, and
+that a forged cookie changes nothing. If a session cookie is introduced later
+the CSRF posture changes on that day, and it should be a decision somebody makes
+rather than a default they inherit. Verified by making the login route set a
+cookie and watching the test fail.
