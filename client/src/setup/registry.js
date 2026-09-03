@@ -38,11 +38,20 @@ const Telephony = lazy(() => import('../crm/Telephony.jsx'));
 const Logs = lazy(() => import('../crm/Logs.jsx'));
 const Database = lazy(() => import('../crm/Database.jsx'));
 
-/* Screens that still live inside Admin.jsx. Exported from there rather than
-   moved: relocating 1,700 lines to change how they are reached would put every
-   one of them at risk for no benefit to the person using them. */
-const Admin = () => import('../crm/Admin.jsx');
-const from = (name) => lazy(() => Admin().then((m) => ({ default: m[name] })));
+/* These eleven shared one file, so opening any one of them fetched all eleven.
+   They are a file each now, and each is its own chunk. Named rather than
+   default exports, so the module is unwrapped on the way through. */
+const Rules = lazy(() => import('../crm/admin/Rules.jsx').then((m) => ({ default: m.Rules })));
+const Sla = lazy(() => import('../crm/admin/Sla.jsx').then((m) => ({ default: m.Sla })));
+const Calendars = lazy(() => import('../crm/admin/Calendars.jsx').then((m) => ({ default: m.Calendars })));
+const Journeys = lazy(() => import('../crm/admin/Journeys.jsx').then((m) => ({ default: m.Journeys })));
+const Templates = lazy(() => import('../crm/admin/Templates.jsx').then((m) => ({ default: m.Templates })));
+const Content = lazy(() => import('../crm/admin/Content.jsx').then((m) => ({ default: m.Content })));
+const Campaigns = lazy(() => import('../crm/admin/Campaigns.jsx').then((m) => ({ default: m.Campaigns })));
+const Integrations = lazy(() => import('../crm/admin/Integrations.jsx').then((m) => ({ default: m.Integrations })));
+const MetaConnector = lazy(() => import('../crm/admin/MetaConnector.jsx').then((m) => ({ default: m.MetaConnector })));
+const Audit = lazy(() => import('../crm/admin/Audit.jsx').then((m) => ({ default: m.Audit })));
+const Residency = lazy(() => import('../crm/admin/Residency.jsx').then((m) => ({ default: m.Residency })));
 
 /*
  * Six groups, and the labels are as short as they can be and stay honest.
@@ -145,7 +154,7 @@ export const SECTIONS = [
     needs: ['admin.rules'],
     blurb: 'What happens automatically when a record changes',
     keywords: ['rule', 'automation', 'trigger', 'workflow', 'assign', 'routing', 'score', 'auto', 'when then'],
-    Component: from('Rules'),
+    Component: Rules,
   },
   {
     key: 'outcomes',
@@ -165,7 +174,7 @@ export const SECTIONS = [
     needs: ['admin.sla'],
     blurb: 'Response and resolution clocks, and how cases are classified',
     keywords: ['sla', 'response time', 'resolution', 'breach', 'escalation', 'clock', 'category', 'case', 'ticket', 'priority'],
-    Component: from('Sla'),
+    Component: Sla,
   },
   {
     key: 'calendars',
@@ -175,7 +184,7 @@ export const SECTIONS = [
     needs: ['admin.sla'],
     blurb: 'Business hours and holidays — when the SLA clock runs',
     keywords: ['calendar', 'holiday', 'business hours', 'working day', 'weekend', 'diwali', 'shift', 'timing'],
-    Component: from('Calendars'),
+    Component: Calendars,
   },
   {
     key: 'journeys',
@@ -185,7 +194,7 @@ export const SECTIONS = [
     needs: ['admin.kyc.journeys'],
     blurb: 'The steps an applicant goes through to open an account',
     keywords: ['kyc', 'ekyc', 'journey', 'onboarding', 'digilocker', 'esign', 'penny drop', 'aadhaar', 'verification', 'account opening'],
-    Component: from('Journeys'),
+    Component: Journeys,
   },
 
   /* ------------------------------------------------ customer communication */
@@ -197,7 +206,7 @@ export const SECTIONS = [
     needs: ['admin.templates'],
     blurb: 'Approved wording for email, SMS and WhatsApp',
     keywords: ['template', 'email', 'sms', 'whatsapp', 'message', 'merge field', 'wording', 'approved'],
-    Component: from('Templates'),
+    Component: Templates,
   },
   {
     key: 'content',
@@ -207,7 +216,7 @@ export const SECTIONS = [
     needs: ['admin.content'],
     blurb: 'Collateral a client can be sent, with approval and expiry',
     keywords: ['content', 'library', 'collateral', 'brochure', 'factsheet', 'document', 'attachment', 'marketing hub', 'approval', 'expiry'],
-    Component: from('Content'),
+    Component: Content,
   },
   {
     key: 'campaigns',
@@ -217,7 +226,7 @@ export const SECTIONS = [
     needs: ['campaign.manage'],
     blurb: 'Outbound sends, their audience and their results',
     keywords: ['campaign', 'blast', 'bulk', 'audience', 'segment', 'send', 'broadcast', 'outbound'],
-    Component: from('Campaigns'),
+    Component: Campaigns,
   },
 
   /* --------------------------------------------------------- integrations */
@@ -228,7 +237,7 @@ export const SECTIONS = [
     icon: 'cable',
     blurb: 'Every external system the CRM talks to, and whether it is live',
     keywords: ['integration', 'vendor', 'api', 'webhook', 'connector', 'smartping', 'aisensy', 'kyc api', 'credentials', 'key'],
-    Component: from('Integrations'),
+    Component: Integrations,
   },
   {
     key: 'telephony',
@@ -248,7 +257,7 @@ export const SECTIONS = [
     needs: ['admin.system'],
     blurb: 'Lead ads flowing in from Meta',
     keywords: ['facebook', 'instagram', 'meta', 'lead ads', 'social', 'leadgen', 'ads'],
-    Component: from('MetaConnector'),
+    Component: MetaConnector,
   },
 
   /* ------------------------------------------------------ monitoring & data */
@@ -260,7 +269,7 @@ export const SECTIONS = [
     needs: ['report.system'],
     blurb: 'Who changed what, and when',
     keywords: ['audit', 'log', 'history', 'change', 'who did', 'trail', 'compliance', 'sebi'],
-    Component: from('Audit'),
+    Component: Audit,
   },
   {
     key: 'logs',
@@ -289,7 +298,7 @@ export const SECTIONS = [
     icon: 'public',
     blurb: 'Where client data physically sits, and what leaves India',
     keywords: ['residency', 'india', 'location', 'dpdp', 'compliance', 'sovereignty', 'region', 'hosting', 'egress'],
-    Component: from('Residency'),
+    Component: Residency,
   },
 ];
 

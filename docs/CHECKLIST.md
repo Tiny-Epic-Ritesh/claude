@@ -2179,14 +2179,77 @@ Campaigns, Integrations, MetaConnector, Audit and Residency - are all served
 from `Admin.jsx` through `lazy(() => Admin().then(...))`, so opening any one of
 them fetches all eleven, 47.64 kB together.
 
-That is a real coupling and it is deliberate: the file says relocating 1,700
-lines to change how they are reached would put every one of them at risk for no
-benefit to the person using them. Splitting it is a considered refactor with
-real regression surface, not a bundle tweak, and it was not done as part of a
-check for eager imports. Worth knowing it is there.
+That coupling was deliberate, on the reasoning recorded in the file itself. It
+was split immediately afterwards - see the section below - once the benefit it
+said did not exist had been measured.
 
 ### Verified
 
 Rule builder (Admin-backed), Objects & fields and Field masking - the last two
 being screens whose dead imports were just removed - all open and render with
 live data. Server suite 600/600, build silent.
+
+---
+
+## Admin.jsx split into its eleven sections - 3 Sep 2026
+
+The refactor the file itself argued against: "relocating 1,700 lines to change
+how they are reached would put every one of them at risk for no benefit to the
+person using them." The benefit now exists - eleven Setup sections shared one
+chunk, so opening any of them fetched all of them - so the move was made, and
+made mechanically.
+
+### What it cost to open a Setup section
+
+| section | before | after |
+|---|---|---|
+| Templates | 47.64 kB | **1.05 kB** |
+| Audit | 47.64 kB | 1.08 kB |
+| Journeys | 47.64 kB | 1.12 kB |
+| Content | 47.64 kB | 1.43 kB |
+| SLA | 47.64 kB | 1.78 kB |
+| Residency | 47.64 kB | 3.14 kB |
+| Integrations | 47.64 kB | 3.26 kB |
+| Calendars | 47.64 kB | 3.65 kB |
+| Facebook & Instagram | 47.64 kB | 3.78 kB |
+| Rule builder | 47.64 kB | 11.20 kB |
+| Campaigns | 47.64 kB | 12.26 kB |
+
+### Measured before moving, not after
+
+The question that decides whether this is a mechanical move or a redesign is
+whether the sections reference each other. A script mapped every top-level
+declaration to its section and looked for references across the boundaries.
+Three came back, and two were prose: a comment mentioning campaigns, and a UI
+string reading "Add one under Templates". The only real one was `Rules` needing
+`RuleBuilder`, which sat 1,100 lines below it at the foot of the file, so those
+two moved into the same file.
+
+Every private helper already clustered with its section - `CampaignTh`,
+`CampaignActions`, `CampaignEditor`, `AudiencePreview` with Campaigns,
+`AddCalendarDay` with Calendars, `OPS_BY_TYPE` and `ActionParam` with the rule
+builder. The file was well organised; it was only ever one file too few.
+
+### Verbatim, and checked as verbatim
+
+Nothing was reworded or reformatted. Only the import block of each new file is
+new, computed from the identifiers the moved code actually uses. That claim is
+checked rather than asserted: the bodies were extracted back out of the twelve
+new files and compared against the committed original - identical for all
+twelve - and the count of top-level declarations before and after is the same
+26, with none lost.
+
+### Verified in the browser
+
+All eleven sections opened and rendered with live data: Rule builder (and its
+`New rule` modal, which is the two-range extraction proving itself), Campaigns,
+Templates, Audit log, Working calendars, SLA, KYC journeys, Content library,
+Integrations, Facebook & Instagram, Data residency. Users too, since the three
+user-record helpers moved to `admin/users.jsx` and its Sign in as / Reset link /
+Disable buttons come from there.
+
+One test failed and was right to: `ghost.test.mjs` reads the ghosting entry
+point out of the source, and that entry point had moved. Repointed at
+`admin/users.jsx` with a note saying why.
+
+`Admin.jsx` is gone. 600/600, build silent.

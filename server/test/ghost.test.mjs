@@ -180,7 +180,9 @@ test('signing out while acting as somebody else returns rather than ends', () =>
 
 test('returning lands where the trip started', () => {
   // An administrator working down a list of users comes back to that list.
-  const admin = read('../../client/src/crm/Admin.jsx');
+  // The user-record actions moved out of Admin.jsx when that file was split
+  // into one file per Setup section; the ghosting entry point went with them.
+  const admin = read('../../client/src/crm/admin/users.jsx');
   assert(/returnTo:/.test(admin), 'the origin is no longer recorded when ghosting starts');
   const bar = read('../../client/src/crm/GhostBar.jsx');
   assert(/ghostReturnTo|RETURN_KEY/.test(bar), 'the return path is not read back');

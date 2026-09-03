@@ -27,7 +27,7 @@ import { createPortal } from 'react-dom';
 import { api, ROLE_LABEL } from '../api.js';
 import { useApi, Icon, ErrorBanner, Empty, Spinner } from '../components/ui.jsx';
 import SetupSkeleton from '../setup/SetupSkeleton.jsx';
-import { UserActions, ResetLink, NewUser } from './Admin.jsx';
+import { UserActions, ResetLink, NewUser } from './admin/users.jsx';
 
 /** The primary action, rendered into the shell's header slot. */
 function HeaderAction({ children }) {
