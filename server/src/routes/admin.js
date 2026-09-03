@@ -20,6 +20,10 @@ import {
   restore as restoreVersion, recentVersions,
 } from '../engine/versioning.js';
 import {
+  packageBundle, inspect as inspectBundle, apply as applyBundle,
+  recent as recentPromotions, environment as currentEnvironment, PROMOTABLE, KEEP as PROMOTIONS_KEPT,
+} from '../engine/promotion.js';
+import {
   accessLogSummary, crossBookReads, activityOf, readersOf, RETENTION_DAYS,
 } from '../engine/accesslog.js';
 import {
@@ -427,6 +431,68 @@ router.post('/versions/:id/restore', requirePermission('admin.rules'), (req, res
   const v = versionById(Number(req.params.id));
   audit(req.user.id, 'version_restored', v.kind, null,
     { logical_id: v.logical_id, restored_from: out.restored_from });
+  return res.json(out);
+});
+
+/* --------------------------------------------------- configuration promotion */
+
+/**
+ * Moving configuration between environments. P2-03.
+ *
+ * `admin.system` rather than `admin.rules`: writing a rule in UAT and putting a
+ * rule into Production are different acts, and the second wants the heavier
+ * permission even though it moves the same artefact.
+ */
+
+router.get('/promotions', requirePermission('admin.system'), (_req, res) => {
+  res.json({
+    environment: currentEnvironment(),
+    promotable: PROMOTABLE,
+    kept: PROMOTIONS_KEPT,
+    recent: recentPromotions(),
+  });
+});
+
+/** Package a selection into a bundle. The bundle is the thing that travels. */
+router.post('/promotions/package', requirePermission('admin.system'), (req, res) => {
+  const out = packageBundle({
+    selection: req.body?.selection,
+    note: req.body?.note ?? null,
+    userId: req.user.id,
+  });
+  if (!out.ok) return res.status(400).json(out);
+
+  audit(req.user.id, 'config_bundle_packaged', 'promotion', null, {
+    bundle_id: out.bundle.bundle_id,
+    entries: out.bundle.entries.length,
+  });
+  return res.json(out);
+});
+
+/**
+ * What applying this bundle would do here, without doing any of it.
+ *
+ * Separate from apply rather than a flag on it, so that "show me" cannot be
+ * turned into "do it" by a mistyped parameter.
+ */
+router.post('/promotions/inspect', requirePermission('admin.system'), (req, res) => {
+  const out = inspectBundle(req.body?.bundle);
+  return res.status(out.ok ? 200 : 400).json(out);
+});
+
+/** Apply a bundle to this environment. All of it, or none of it. */
+router.post('/promotions/apply', requirePermission('admin.system'), (req, res) => {
+  const bundle = req.body?.bundle;
+  const out = applyBundle(bundle, { userId: req.user.id, note: req.body?.note ?? null });
+  if (!out.ok) return res.status(400).json(out);
+
+  audit(req.user.id, 'config_bundle_applied', 'promotion', null, {
+    bundle_id: out.bundle_id,
+    source_env: out.source_env,
+    target_env: out.target_env,
+    created: out.created,
+    updated: out.updated,
+  });
   return res.json(out);
 });
 

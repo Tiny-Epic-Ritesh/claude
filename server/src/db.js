@@ -891,6 +891,35 @@ CREATE TABLE IF NOT EXISTS artefact_versions (
 CREATE INDEX IF NOT EXISTS idx_artefact_versions_current
   ON artefact_versions(kind, logical_id, is_current);
 
+/* ---- Configuration promotion --------------------------------------- */
+
+/* One row per promotion, in both directions: exporting a bundle out of an
+   environment and applying one into it. Both are recorded because the question
+   an auditor asks is "what went to Production, when, and who signed it", and
+   half that answer lives at each end.
+
+   The bundle is stored whole. It is small -- rules, templates, journeys and SLA
+   policies, not data -- and keeping it means a promotion can be re-examined or
+   replayed long after the source environment has moved on. The bundle_id is
+   stable across environments, so the export row here and the apply row there
+   are the same promotion seen from two sides. */
+CREATE TABLE IF NOT EXISTS config_promotions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  bundle_id   TEXT NOT NULL,
+  direction   TEXT NOT NULL,              -- 'exported' or 'applied'
+  source_env  TEXT NOT NULL,
+  target_env  TEXT,                       -- null on an export: not yet known
+  checksum    TEXT NOT NULL,
+  entry_count INTEGER NOT NULL,
+  payload     TEXT NOT NULL,
+  note        TEXT,
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_config_promotions_recent
+  ON config_promotions(created_at DESC, id DESC);
+
 CREATE TABLE IF NOT EXISTS request_log (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,

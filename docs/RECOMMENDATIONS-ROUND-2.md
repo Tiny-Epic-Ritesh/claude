@@ -399,6 +399,51 @@ does not need it to be built, because export-and-apply is the same work whatever
 sits at the far end. It does need it before anything can actually be promoted,
 and it needs IT rather than a decision from you.
 
+### Built 4 Sep 2026
+
+`server/src/engine/promotion.js`, with `POST /api/admin/promotions/package`,
+`/inspect` and `/apply`, and `GET /api/admin/promotions` for the history. Rules,
+templates, KYC journeys and SLA policies travel; the last ten promotions are
+kept, counted across both directions.
+
+**The hard part was not the envelope, it was identity.** `versioning.js` keys an
+artefact by `logical_id`, which for a rule or a template is its primary key.
+Those are assigned by whichever environment inserted the row first, so rule 4 in
+UAT and rule 4 in Production are different rules that happen to share a number.
+A bundle carrying ids would apply cleanly, report success, and write one
+environment's rule over an unrelated rule in the other — an UPDATE that matches
+a row and corrupts the target, invisible at every layer, because it looks
+exactly like a rule being saved.
+
+So a bundle carries an **identity**: a rule is its name, a template its name and
+channel, and journeys and policies travel by the product's `code`, which is the
+one column in the schema that is unique and assigned by us rather than by the
+database. Applying resolves the identity locally and creates what is absent,
+which is what makes a first promotion into empty Production infrastructure work
+at all. `test/promotion.test.mjs` holds this with a test that promotes one rule
+while a second sits at a different id and must come through untouched.
+
+Three other decisions worth recording:
+
+- **It does not promote data.** No leads, clients or users. An environment sync
+  that quietly carried client records is the incident we are already holding a
+  report about, and the residency rules are not weaker because the mechanism is
+  convenient.
+- **It does not delete.** A bundle says what should exist, never what should
+  not. Removing configuration from Production is a decision to be made in
+  Production, by someone looking at what depends on it.
+- **All of it or none of it.** Configuration is interdependent, so a
+  part-applied bundle is a combination nobody tested. Anything the target cannot
+  identify blocks the whole apply, and `inspect` shows what would change before
+  anything does.
+
+The environment names itself through `CRM_ENVIRONMENT`, deliberately not
+inferred from `NODE_ENV` — UAT and Production both run `NODE_ENV=production`,
+and telling those two apart is the entire purpose of the label in an audit row.
+
+**Still blocked on Production infrastructure**, exactly as above: the mechanism
+is built and tested, and there is nowhere to promote to yet.
+
 ### A-5 (original question)
 
 Today there is one environment. Two questions inside this item:
