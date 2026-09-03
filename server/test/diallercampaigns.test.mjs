@@ -47,6 +47,70 @@ test('a lead resolves to its own book, never the other one', () => {
   }
 });
 
+test('a campaign belongs to a team, and the team wins over the product', () => {
+  /* Ritesh, 3 Sep 2026: a Cube campaign is per team. That is why this is asked
+     before the product — a team is a property of whoever is dialling, while a
+     product is a property of the lead, so two people on one team calling the
+     same lead about different things belong in the same queue. */
+  const team = one("SELECT id FROM teams WHERE name = 'Digital Desk'");
+  const row = one('SELECT cube_campaign_id FROM dialler_campaigns WHERE team_id = ?', [team.id]);
+  assert(row, 'the Digital Desk has no campaign mapped, so this test proves nothing');
+
+  const member = one('SELECT user_id FROM team_members WHERE team_id = ?', [team.id]);
+  const lead = one("SELECT id, sales_org FROM leads WHERE sales_org = 'BONANZA' AND deleted_at IS NULL");
+
+  // With a product that has its own queue, the team still wins.
+  const res = campaignFor(lead, eqd.id, member.user_id);
+  assert.equal(res.source, 'team', `resolved by ${res.source}, not the team`);
+  assert.equal(res.campaign, row.cube_campaign_id);
+});
+
+test('the mapped campaign is Cube\'s name, not one of ours', () => {
+  /* `cube_campaign_id` is the CampaignId as CUBE knows it. Ours are labels.
+     Sending our own code would have CUBE reject the call naming a campaign it
+     does not have, which is a failure at the switch rather than here. */
+  const team = one("SELECT id FROM teams WHERE name = 'Digital Desk'");
+  const row = one('SELECT cube_campaign_id, label FROM dialler_campaigns WHERE team_id = ?', [team.id]);
+  assert.equal(row.cube_campaign_id, 'Bonanza_APITest',
+    'the Digital Desk is not mapped to the campaign Cube gave us');
+  assert(!row.cube_campaign_id.startsWith('PLACEHOLDER_'),
+    'a placeholder is mapped to a real team, which would fail at the switch');
+});
+
+test('a team in the other book is no way across the boundary', () => {
+  /* The boundary again, from the new direction. Somebody on a Bonanza team
+     calling a Bigul lead must not be handed their own team's queue — that
+     would be the book crossed on the vendor's side, where it cannot be
+     corrected afterwards. */
+  const team = one("SELECT id FROM teams WHERE name = 'Digital Desk'");
+  const member = one('SELECT user_id FROM team_members WHERE team_id = ?', [team.id]);
+  const bigulLead = one("SELECT id, sales_org FROM leads WHERE sales_org = 'BIGUL' AND deleted_at IS NULL");
+
+  if (!bigulLead) {
+    assert(false, 'no Bigul lead in the seed, so the boundary cannot be tested');
+    return;
+  }
+
+  const res = campaignFor(bigulLead, null, member.user_id);
+  assert.notEqual(res.source, 'team', 'a Bonanza team was used to dial a Bigul lead');
+  assert.notEqual(res.campaign, 'Bonanza_APITest', 'a Bigul lead resolved to the Bonanza test campaign');
+});
+
+test('somebody with no team campaign still falls through to the book', () => {
+  // The chain has to keep working for everyone who is not on a mapped team.
+  const lead = one("SELECT id, sales_org FROM leads WHERE sales_org = 'BONANZA' AND deleted_at IS NULL");
+  const orphan = one(
+    `SELECT id FROM users WHERE sales_org = 'BONANZA' AND id NOT IN (
+       SELECT m.user_id FROM team_members m
+        JOIN dialler_campaigns dc ON dc.team_id = m.team_id)`,
+  );
+  assert(orphan, 'every Bonanza user is on a mapped team, so this path is untested');
+
+  const res = campaignFor(lead, null, orphan.id);
+  assert(['product', 'book', 'fallback'].includes(res.source),
+    `resolved by ${res.source}, which is not one of the fallbacks`);
+});
+
 test('an explicit product picks that product’s queue', () => {
   const lead = one("SELECT id, sales_org FROM leads WHERE sales_org = 'BONANZA' AND deleted_at IS NULL LIMIT 1");
   const res = campaignFor(lead, eqd.id);

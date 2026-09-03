@@ -212,8 +212,29 @@ export function send(channel, {
  * across both books dials each lead into its own book's queue, which is the
  * same boundary every other query in the product holds.
  */
-export function campaignFor(lead, productTypeId = null) {
+export function campaignFor(lead, productTypeId = null, userId = null) {
   const org = lead?.sales_org || 'BONANZA';
+
+  /* The caller's team first, because a Cube campaign is per team: Cube creates
+     one campaign per team and that team's agents log into it. This is asked
+     before product for a reason — a team is a property of the person dialling,
+     while a product is a property of the lead, and two people on one team
+     calling the same lead about different products belong in the same queue.
+
+     `sales_org = ?` on both the team and the row keeps the boundary the rest of
+     this function keeps: an agent whose team sits in the other book finds no
+     campaign here and falls through, rather than dialling out of a queue that
+     is not theirs. */
+  const byTeam = userId && one(
+    `SELECT dc.cube_campaign_id FROM dialler_campaigns dc
+       JOIN teams tm      ON tm.id = dc.team_id
+       JOIN team_members m ON m.team_id = tm.id
+      WHERE dc.active = 1 AND tm.active = 1 AND m.user_id = ?
+        AND dc.sales_org = ? AND tm.sales_org = ?
+      ORDER BY dc.is_default DESC, dc.id LIMIT 1`,
+    [userId, org, org],
+  );
+  if (byTeam) return { campaign: byTeam.cube_campaign_id, source: 'team' };
 
   /* A lead has no product column — products hang off it as product_cards, and
      it can hold several. "The lead's product" therefore needs a stated rule
@@ -267,7 +288,7 @@ export async function click2call({ userId, leadId, mobile, campaign = null, prod
     : null;
 
   // An explicit campaign always wins; otherwise it is resolved from the lead.
-  const resolved = campaign ? { campaign, source: 'explicit' } : campaignFor(lead, productTypeId);
+  const resolved = campaign ? { campaign, source: 'explicit' } : campaignFor(lead, productTypeId, userId);
 
   /* No simulation branch here any more. The adapter simulates below its own
      field mapping, so the same code builds the request body whether or not

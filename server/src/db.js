@@ -1083,6 +1083,12 @@ const COLUMNS = [
 
   // Client-generated, so an offline queue can retry a send whose response was
   // lost without logging the same meeting twice. Unique where present.
+  /* A dialler campaign belongs to a team: Cube creates one campaign per team
+     and the agents on that team log into it. Resolution used to key on the
+     lead's product, which is a property of the lead rather than of whoever is
+     dialling, so two members of one team calling the same lead about different
+     products landed in different Cube queues. */
+  ['dialler_campaigns', 'team_id', 'INTEGER REFERENCES teams(id) ON DELETE SET NULL'],
   ['activities', 'client_ref', 'TEXT'],
   ['activities', 'geo_status', 'TEXT'],            // captured / declined / unavailable / expired
   ['activities', 'geo_lat', 'REAL'],

@@ -259,7 +259,52 @@ Everything below therefore remains unverified against a live switch:
 questions 4 and 5, the duration units, the `CallBackDateTime` timezone, and
 whether `AuthFreeMe` accepts our disposition codes.
 
-### The campaign mapping question, which the test campaign exposes
+### Answered 3 Sep 2026: our rows carry Cube's name, and a campaign is per team
+
+Both decisions from Ritesh.
+
+**Our rows carry the Cube campaign.** This was already the design and only the
+data was wrong: the column is `cube_campaign_id` and its comment already said
+"the CampaignId string as CUBE knows it, not our label". `Bonanza_APITest` is
+now mapped to the Digital Desk team; `BNZ_SALES_OUT` and the other two stay as
+placeholders under their own names, because renaming them would churn four tests
+without making anything truer.
+
+**A campaign is per team**, and that was a real change. Resolution keyed on the
+lead's product, which is a property of the lead rather than of whoever is
+dialling — so two people on one team calling the same lead about different
+products landed in different Cube queues. `campaignFor` now asks the caller's
+team first, then falls back to product, then to the book, then to the configured
+value. `dialler_campaigns.team_id` records the mapping.
+
+The book boundary survives the new path: the team query filters on
+`sales_org` for both the team and the row, so somebody on a Bonanza team calling
+a Bigul lead finds nothing and falls through rather than dialling out of a queue
+that is not theirs. Verified by removing that filter and watching the test fail.
+
+The test campaign is deliberately **not** the book default. It is reached by
+being on the team; making it the default would put every unmapped Bonanza caller
+into a test campaign.
+
+### Why the credentials are parked
+
+They were set, the adapter reported live, and three e2e tests immediately failed
+— click-to-call, the opted-out call, and the autodialler push all expect the
+simulator and got a 502 from an unreachable host.
+
+That is the tests being right. The credentials cannot reach anything while UAT
+does not resolve, so they bought nothing and cost a green suite. Both lines are
+commented in `server/.env` with a note saying to uncomment them the moment Cube
+confirms a reachable endpoint. The campaign stays configured, because it is
+harmless and correct either way.
+
+There is a wider point here worth keeping: **the suite must not depend on a
+third party being reachable.** Right now it does, in three places, and the only
+reason it passes is that the vendor is unconfigured. If Cube becomes reachable,
+those three tests will pass for a reason nobody chose — and will fail the next
+time Cube has an outage.
+
+### The campaign mapping question, which the test campaign exposed
 
 `CUBE_QUICKCALL_CAMPAIGN` is only a fallback. A dial resolves its campaign from
 the `dialler_campaigns` table — `BNZ_SALES_OUT`, `BNZ_EQ_DESK`, `BGL_SALES_OUT`

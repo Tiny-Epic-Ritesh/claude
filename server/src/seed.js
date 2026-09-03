@@ -121,17 +121,43 @@ function seedDiallerCampaigns() {
   const productId = (org, code) =>
     one('SELECT id FROM product_types WHERE sales_org = ? AND code = ?', [org, code])?.id ?? null;
 
+  const teamId = (name) => one('SELECT id FROM teams WHERE name = ?', [name])?.id ?? null;
+
+  /* `cube_campaign_id` is Cube's name for the campaign, not ours.
+     `Bonanza_APITest` is the one real value we have — Cube's test campaign,
+     supplied 3 Sep 2026 — and it is mapped to a team, because a Cube campaign
+     is per team. The other three are still placeholders and are named as such:
+     a value that looks like a campaign id but is not one is worse than an
+     obviously fake one, because it fails at the switch rather than here. */
   const queues = [
-    ['BNZ_SALES_OUT', 'Bonanza — outbound sales', 'BONANZA', null, 1],
-    ['BNZ_EQ_DESK', 'Bonanza — equity desk', 'BONANZA', productId('BONANZA', 'EQD'), 0],
-    ['BGL_SALES_OUT', 'Bigul — outbound sales', 'BIGUL', null, 1],
+    /* The one real value we have: Cube's test campaign, supplied 3 Sep 2026,
+       mapped to a team because a Cube campaign is per team. `is_default` stays
+       0 — it is reached by being on the team, not by being the book's fallback,
+       and making it the default would put every unmapped Bonanza caller into a
+       test campaign. */
+    ['Bonanza_APITest', 'Digital Desk — Cube test campaign', 'BONANZA', null, 0, teamId('Digital Desk')],
+
+    /* Still placeholders, and still not campaigns Cube has. Left under their
+       original names rather than relabelled: the config comment already says
+       the default is not a real CUBE campaign, and renaming them here would
+       churn four tests that name them without making anything truer. */
+    ['BNZ_SALES_OUT', 'Bonanza — outbound sales', 'BONANZA', null, 1, null],
+    ['BNZ_EQ_DESK', 'Bonanza — equity desk', 'BONANZA', productId('BONANZA', 'EQD'), 0, null],
+    ['BGL_SALES_OUT', 'Bigul — outbound sales', 'BIGUL', null, 1, null],
   ];
 
-  for (const [cubeId, label, org, ptId, isDefault] of queues) {
+  /* If teams have not been seeded yet this is null, the mapping is silently
+     lost, and the only symptom is a dial landing in the wrong Cube queue weeks
+     later. Fail here instead. */
+  if (!teamId('Digital Desk')) {
+    throw new Error('seedDiallerCampaigns ran before the teams existed — the Cube campaign would be unmapped');
+  }
+
+  for (const [cubeId, label, org, ptId, isDefault, tmId] of queues) {
     run(
-      `INSERT INTO dialler_campaigns (cube_campaign_id, label, sales_org, product_type_id, is_default)
-       VALUES (?,?,?,?,?)`,
-      [cubeId, label, org, ptId, isDefault],
+      `INSERT INTO dialler_campaigns (cube_campaign_id, label, sales_org, product_type_id, is_default, team_id)
+       VALUES (?,?,?,?,?,?)`,
+      [cubeId, label, org, ptId, isDefault, tmId],
     );
   }
 }
@@ -677,7 +703,9 @@ seedDispositions();
    last running server left them holding — including values retired by a test
    run, which then read as missing for outcomes that plainly exist. */
 syncDispositionPicklists();
-seedDiallerCampaigns();
+/* Deliberately not called here. It maps a Cube campaign to a team, and teams
+   are seeded further down this file — running it now would look like it worked
+   and leave the mapping null. Called after `addTeam` instead. */
 
 /* ---------------------------------------------------- custom fields
  *
@@ -784,6 +812,9 @@ addTeam('west', 'West Region', 'round_robin', U.sales_sup, [U.sales_rm, U.caller
 addTeam('south', 'South Region', 'round_robin', U.sales_sup, [U.caller2, U.dealer]);
 addTeam('bigul_digital', 'Bigul Digital Desk', 'round_robin', U.bigul_sup,
   [U.bigul_rm, U.bigul_caller], 'BIGUL');
+
+/* Now that the teams exist, the dialler campaigns can point at one. */
+seedDiallerCampaigns();
 
 /* --------------------------------------------------- assignment rules */
 
