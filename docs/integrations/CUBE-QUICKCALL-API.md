@@ -229,9 +229,48 @@ Five questions for Ritesh or for CUBE. The first is the one that matters.
 |---|---|---|
 | 1 | ~~Does `AuthClick2Call` dial or queue?~~ **Answered 31 Aug: it dials.** The calling design in §7 holds as written. | *closed* |
 | 2 | ~~Is `Extension` fixed per agent?~~ **Answered 31 Aug: fixed per agent.** It becomes a field on the user record, set once. | *closed* |
-| 3 | What are the real **`CampaignId`** values, and is a campaign per team, per product or per user? No endpoint lists them, so they must be configured by hand. | Ritesh / CUBE |
+| 3 | ~~What are the real **`CampaignId`** values?~~ **Partly answered 3 Sep 2026: `Bonanza_APITest`**, a test campaign, supplied by Ritesh. Still open: whether a campaign is per team, per product or per user — and see the mapping note below, because the CRM does not currently use this value for a dial. |
 | 4 | Does the **`AuthFreeMe` `DispositionCode`** accept our existing outcome codes, and is there a way to send a **sub-disposition** through the secure endpoint as the legacy PHP one allows? | CUBE |
 | 5 | Are the **duration fields seconds**, and is `CallBackDateTime` in IST? The two sample formats differ between endpoints — `2024-05-21 18:13:33` on `AuthFreeMe` versus `28-02-2023 07:08:00 pm` on `DisposeCall.php`. Sending the wrong one silently books a callback at the wrong time. | CUBE / verify on UAT |
+
+### Configured 3 Sep 2026, and immediately blocked
+
+Credentials and the test campaign are set in `server/.env`, and the adapter
+reports **live** rather than simulated: endpoint `https://uat-raphsody.in`,
+campaign `Bonanza_APITest`.
+
+**The UAT host does not resolve.** `getaddrinfo` fails for
+`uat-raphsody.in` while `raphsody.in` resolves to 203.95.216.59 and answers 200,
+so this is not a DNS problem at our end — the hostname in the vendor's own
+Swagger portal, recorded in §1 of this document, does not exist publicly. Either
+UAT is reachable only from inside Cube's network or over a VPN, or the published
+hostname is wrong or retired.
+
+**Ask Cube:** is there a publicly resolvable UAT endpoint, or does UAT require
+an allowlisted IP or VPN?
+
+**We are not pointing this at production to get around it.** Production is
+reachable, the seeded leads carry plausible real Indian mobile numbers, and a
+click-to-call against them would ring actual strangers. Testing a dialler
+against production with test data is how somebody's grandmother gets a call from
+a broker at nine in the morning.
+
+Everything below therefore remains unverified against a live switch:
+questions 4 and 5, the duration units, the `CallBackDateTime` timezone, and
+whether `AuthFreeMe` accepts our disposition codes.
+
+### The campaign mapping question, which the test campaign exposes
+
+`CUBE_QUICKCALL_CAMPAIGN` is only a fallback. A dial resolves its campaign from
+the `dialler_campaigns` table — `BNZ_SALES_OUT`, `BNZ_EQ_DESK`, `BGL_SALES_OUT`
+— chosen by the lead's book and product, and `makeCall` takes that in preference
+to the configured value. Those three codes are **our** names, seeded as
+placeholders; they are not campaigns that exist in Cube.
+
+So one Cube test campaign does not slot straight in. Either the CRM's rows carry
+the Cube campaign each maps to, or Cube creates campaigns matching our codes.
+That is a real design decision and it is the second half of question 3 above —
+worth settling before the mapping is invented twice.
 
 Question 5 is answerable by us against the UAT server once we have credentials,
 and should be verified rather than assumed. The differing date formats between
