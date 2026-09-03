@@ -1,17 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import TabVisibility from './TabVisibility.jsx';
-import Dispositions from './Dispositions.jsx';
-import KraSetup from './KraSetup.jsx';
-import FieldMasking from './FieldMasking.jsx';
 import { api, appUrl, token, rupees, dateTime, shortDate, ROLE_LABEL } from '../api.js';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, Icon, useDropUp } from '../components/ui.jsx';
-import ObjectManager from './ObjectManager.jsx';
-import RolesSetup from './RolesSetup.jsx';
 import { stashParentToken } from './GhostBar.jsx';
-import Telephony from './Telephony.jsx';
-import Logs from './Logs.jsx';
-import Database from './Database.jsx';
 
 /*
  * This file is now a module of Setup screens, not a screen of its own.

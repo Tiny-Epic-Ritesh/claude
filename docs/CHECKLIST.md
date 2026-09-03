@@ -2141,3 +2141,52 @@ partner sign-in, and the CRM cockpit. Console carried nothing new; the 401s in
 it are one per unauthenticated page load, from `/api/auth/me` checking for a
 session, and the current load's returned 200. Server suite 600/600, build
 silent.
+
+---
+
+## The Setup screens - checked 3 Sep 2026
+
+The split works. `registry.js` declares thirteen screens lazily and the built
+chunks confirm each is its own: ObjectManager 35.76 kB, SetupShell 21.81,
+Logs 15.08, KraSetup, RolesSetup, Telephony, Dispositions and the rest. Nothing
+in the Setup tree is loaded by anyone who does not open it.
+
+### What was actually there: nine dead imports
+
+`Admin.jsx` imported nine screens it never uses - TabVisibility, Dispositions,
+KraSetup, FieldMasking, ObjectManager, RolesSetup, Telephony, Logs and Database.
+They are leftovers from when those screens lived inside that file and were
+extracted one at a time. The only mentions of `RolesSetup` besides its import
+are two comments, and the dependency runs the other way round: `UsersSetup`
+imports *from* `Admin.jsx`, not the reverse.
+
+**They cost nothing.** Rollup had already tree-shaken all nine, and the proof is
+that removing them produced a byte-identical Admin chunk - same 47.64 kB, same
+content hash. This is a clarity fix and it would be wrong to report it as a
+performance one.
+
+What they were is a loaded gun. They made the file read as though Setup's
+largest screens were dependencies of Admin, and the moment anybody referenced
+one - a stray usage, a merge, a copy-paste - the Admin chunk would have
+swallowed that screen's chunk silently. That is precisely what happened with
+`Dashboard` earlier the same day, where a static import from `Cockpit` made a
+dynamic import moot and Rollup had to point it out.
+
+### Left alone, on purpose
+
+Eleven Setup sections - Rules, SLA, Calendars, Journeys, Templates, Content,
+Campaigns, Integrations, MetaConnector, Audit and Residency - are all served
+from `Admin.jsx` through `lazy(() => Admin().then(...))`, so opening any one of
+them fetches all eleven, 47.64 kB together.
+
+That is a real coupling and it is deliberate: the file says relocating 1,700
+lines to change how they are reached would put every one of them at risk for no
+benefit to the person using them. Splitting it is a considered refactor with
+real regression surface, not a bundle tweak, and it was not done as part of a
+check for eager imports. Worth knowing it is there.
+
+### Verified
+
+Rule builder (Admin-backed), Objects & fields and Field masking - the last two
+being screens whose dead imports were just removed - all open and render with
+live data. Server suite 600/600, build silent.
