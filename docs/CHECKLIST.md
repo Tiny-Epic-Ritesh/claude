@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,129** — 599 end-to-end and 530 unit. All green.
+**Tests: 1,136** — 599 end-to-end and 537 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -1511,6 +1511,44 @@ password and still refuses a wrong one.
 
 ### Not covered
 
-The legacy cleartext branch in `verifyPassword` is still there. It is dead for
-the rows that exist now, but it will accept a cleartext value if one is ever
-written again. Removing it is the obvious follow-up and was not done here.
+The legacy cleartext branch in `verifyPassword` was the obvious follow-up, and
+it was removed the same day - see the section below.
+
+---
+
+## The legacy cleartext branch, removed 3 Sep 2026
+
+The follow-up left open by the cleartext-credentials fix above.
+
+`verifyPassword` treated any stored value not starting with `scrypt$` as
+cleartext: it compared the two strings and, on a match, returned
+`needsRehash: true` so `login` could upgrade the row on the way past. That was a
+migration affordance for a pre-hardening seed. It is also precisely what turned
+the admin routes writing cleartext into a full credential disclosure rather than
+a weak hash, because a stored value that compares equal needs no cracking.
+
+Every write path hashes now and the existing rows were migrated, so the branch
+could only ever have accepted a cleartext value written by some later mistake.
+It is gone, along with the `needsRehash` field and the two upgrade blocks in
+`auth.js` that existed solely to serve it - `hashPassword` is no longer imported
+there at all.
+
+It fails closed. If cleartext reaches the column again that account cannot sign
+in, which makes the `db.js` migration load bearing: a row it does not hash is a
+row that is locked out. That is the intended direction. A lockout gets reported;
+quiet acceptance of plaintext does not.
+
+### A latent 500 went with it
+
+The old code built `Buffer.from(saltHex, 'hex')` before entering its `try`, so a
+malformed value with too few fields - `scrypt$` on its own - threw a TypeError
+out of `verifyPassword` and off the login route as a 500 rather than a 401. The
+parse now happens inside the `try`. Both behaviours are pinned by the new tests,
+and both fail against the old code.
+
+### Tests
+
+`test/passwords.test.mjs`, seven cases. The one that matters is a cleartext
+stored value that matches the password typed at the sign-in box, since that is
+the case that used to succeed. The rest cover malformed `scrypt$` values, other
+hash formats, empty and null, and the per-row salt.

@@ -70,33 +70,36 @@ export function hashPassword(plain) {
 }
 
 /**
- * Constant-time verify. Returns { ok, needsRehash }.
- * `needsRehash` is true for a legacy plaintext row, so login can transparently
- * upgrade the stored credential on the next successful sign-in.
+ * Constant-time verify. Returns { ok }.
+ *
+ * Anything that is not an scrypt hash fails. Until September 2026 a stored
+ * value not starting with `scrypt$` was compared as cleartext and flagged for
+ * upgrade on the next sign-in, so a pre-hardening seed kept working. That also
+ * meant a stored value which compared equal needed no cracking at all, which is
+ * what turned the admin routes writing cleartext into a full credential
+ * disclosure rather than a weak hash. Every write path hashes now and the
+ * existing rows were migrated, so the fallback could only have accepted a
+ * cleartext value written by some later mistake.
+ *
+ * Fails closed on purpose. If cleartext ever reaches the column again that
+ * account cannot sign in, and a lockout is the loud failure; quietly accepting
+ * the plaintext is the one nobody notices.
  */
 export function verifyPassword(plain, stored) {
-  if (!stored) return { ok: false, needsRehash: false };
+  const value = String(stored ?? '');
+  if (!value.startsWith('scrypt$')) return { ok: false };
 
-  if (!stored.startsWith('scrypt$')) {
-    // Legacy plaintext (pre-hardening seed). Compare, then flag for upgrade.
-    const a = Buffer.from(String(plain));
-    const b = Buffer.from(String(stored));
-    const ok = a.length === b.length && timingSafeEqual(a, b);
-    return { ok, needsRehash: ok };
-  }
-
-  const [, n, r, p, saltHex, hashHex] = stored.split('$');
-  const salt = Buffer.from(saltHex, 'hex');
-  const expected = Buffer.from(hashHex, 'hex');
-
-  let actual;
   try {
-    actual = scryptSync(String(plain), salt, expected.length, { N: Number(n), r: Number(r), p: Number(p) });
+    const [, n, r, p, saltHex, hashHex] = value.split('$');
+    const expected = Buffer.from(hashHex, 'hex');
+    const actual = scryptSync(String(plain), Buffer.from(saltHex, 'hex'), expected.length,
+      { N: Number(n), r: Number(r), p: Number(p) });
+    // A truncated hash would make two empty buffers compare equal.
+    return { ok: expected.length > 0 && actual.length === expected.length && timingSafeEqual(actual, expected) };
   } catch {
-    return { ok: false, needsRehash: false };
+    // A malformed scrypt$ value: wrong field count, bad hex, unusable parameters.
+    return { ok: false };
   }
-  const ok = actual.length === expected.length && timingSafeEqual(actual, expected);
-  return { ok, needsRehash: false };
 }
 
 /* ------------------------------------------------------ field encryption */

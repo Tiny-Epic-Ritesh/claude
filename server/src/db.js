@@ -1945,12 +1945,18 @@ if (db.prepare("SELECT name FROM pragma_table_info('dispositions')").all().some(
  * Admin -> Users was readable in the database file. Every other write path
  * hashed correctly.
  *
- * `verifyPassword` accepts a cleartext match so a legacy row can be upgraded on
- * its owner's next sign-in, which is what kept those accounts working. It is
- * also what made the exposure complete: a stored value that compares equal
- * needs no cracking. Waiting for each owner to sign in is no fix for the rows
- * that exist now, so they are hashed here instead -- the plaintext is sitting
- * in the column, so it can be hashed directly with nobody re-entering anything.
+ * `verifyPassword` used to accept a cleartext match so a legacy row could be
+ * upgraded on its owner's next sign-in, which is what kept those accounts
+ * working. It is also what made the exposure complete: a stored value that
+ * compares equal needs no cracking. Waiting for each owner to sign in was no
+ * fix for the rows that existed then, so they are hashed here instead -- the
+ * plaintext was sitting in the column, so it hashes directly with nobody
+ * re-entering anything.
+ *
+ * That fallback has since been removed, which makes this migration load
+ * bearing: a cleartext row that is not hashed here can no longer sign in at
+ * all. That is the intended direction -- a lockout is noticed, quiet acceptance
+ * of plaintext is not.
  *
  * A no-op on every start after the first.
  */

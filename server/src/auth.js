@@ -19,7 +19,7 @@ import {
   seedAccessModel, roleCapabilities, effectiveCapabilities, dataScope,
 } from './engine/access.js';
 import {
-  hashPassword, verifyPassword, newSessionToken,
+  verifyPassword, newSessionToken,
   SESSION_TTL_HOURS, SESSION_IDLE_MINUTES,
 } from './security.js';
 
@@ -185,16 +185,10 @@ export function login(email, password) {
   const user = one('SELECT * FROM users WHERE lower(email) = lower(?) AND active = 1', [email]);
   if (!user) return null;
 
-  const { ok, needsRehash } = verifyPassword(password, user.password);
+  const { ok } = verifyPassword(password, user.password);
   if (!ok) {
     audit(null, 'login_failed', 'user', user.id, { email });
     return null;
-  }
-
-  // Transparently upgrade a legacy plaintext credential on first successful sign-in.
-  if (needsRehash) {
-    run('UPDATE users SET password = ? WHERE id = ?', [hashPassword(password), user.id]);
-    audit(user.id, 'password_rehashed', 'user', user.id, {});
   }
 
   const token = newSessionToken();
@@ -210,13 +204,10 @@ export function partnerLogin(email, password) {
   const partner = one('SELECT * FROM partners WHERE lower(email) = lower(?)', [email]);
   if (!partner || !partner.portal_password) return null;
 
-  const { ok, needsRehash } = verifyPassword(password, partner.portal_password);
+  const { ok } = verifyPassword(password, partner.portal_password);
   if (!ok) {
     audit(null, 'partner_login_failed', 'partner', partner.id, { email });
     return null;
-  }
-  if (needsRehash) {
-    run('UPDATE partners SET portal_password = ? WHERE id = ?', [hashPassword(password), partner.id]);
   }
   if (!['ACTIVE', 'ONBOARDING'].includes(partner.state_code)) return { blocked: partner.state_code };
 
