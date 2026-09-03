@@ -1,6 +1,6 @@
 # Gap Analysis — current build vs. the LeadSquared audit
 
-**Date:** 21 Aug 2026 · **Scorecard re-checked against the code:** 31 Aug 2026
+**Date:** 21 Aug 2026 · **Scorecard re-checked against the code:** 3 Sep 2026
 **Audit basis:** `docs/legacy-leadsquared/LEADSQUARED-CRM-REFERENCE.md`, Parts 1 and 7
 **Subject:** the CRM in this repo (`server/`, `client/`) as built to date
 
@@ -396,8 +396,8 @@ data, which is generic ("Bertha Boxer", "Farmers Coop. of Florida").
 
 ## Filling in the two placeholders the brief left blank
 
-**Stack:** Node 24 · Express 4 · `node:sqlite` (Postgres at pilot) · React 18 +
-Vite. 303 passing tests. **No production data** — seeded fixtures only.
+**Stack:** Node 24 · Express 5 · `node:sqlite` (Postgres at pilot) · React 19 +
+Vite. 1,153 passing tests. **No production data** — seeded fixtures only.
 
 **Scope and timeline:** phased cutover, Digital Onboarding Team first, per the
 decisions recorded above. Correct me if either is wrong; both shape everything
@@ -411,22 +411,38 @@ below.
 |---|---|---|
 | 1 | One shared Interaction timeline, never mirrored | ✅ Met — `activities` with multi-parent FKs |
 | 2 | Notes on the interaction, never on the parent | ✅ Met |
-| 3 | **Computed fields are a schema feature, not automation** | ⚠️ **Half met** — values are computed, but as a bespoke module, not a field type |
-| 4 | Field-change history + stage entry/exit, queryable | ❌ **Not met** |
-| 5 | **Label ≠ API name** | ❌ **Not met — no field metadata exists at all** |
-| 6 | **Uniform per-object configuration** | ❌ **Not met — this is the big one** |
-| 7 | OWD floor, then grants only | ⚠️ Half met — grant-only ✅, no OWD floor, no internal/external split |
-| 8 | **Owner is polymorphic (User or Queue)** | ❌ Not met — `owner_id` points at users only |
+| 3 | **Computed fields are a schema feature, not automation** | ✅ **Met** — `formula` and `rollup` are declared field types in `engine/metadata.js`, marked `derived`, computed on read and never stored |
+| 4 | Field-change history + stage entry/exit, queryable | ✅ **Met** — `field_history`, indexed by record and by field |
+| 5 | **Label ≠ API name** | ✅ **Met** — `field_def.api_name` is immutable, `field_def.label` renameable |
+| 6 | **Uniform per-object configuration** | ✅ **Met** — `entity_def` and `field_def` cover all seven objects: lead, client, case, partner, task, interaction, product_interest |
+| 7 | OWD floor, then grants only | ⚠️ **Half met, unchanged** — grant-only ✅, still no OWD floor and no internal/external split |
+| 8 | **Owner is polymorphic (User or Queue)** | ✅ **Met** — `queues` table with `leads.owner_queue_id` beside `owner_id`, two nullable keys rather than a type-plus-ref pair |
 | 9 | Record types over pipeline sprawl | ⚠️ Sideways — per-product cards instead; see below |
-| 10 | Segments as live nested queries | ✅ Met — condition tree, built yesterday |
+| 10 | Segments as live nested queries | ✅ Met — condition tree, nested to any depth |
 | 11 | Cascading picklists enforced at the API | ✅ Met — `dispositions` |
-| 12 | Rule priority + static conflict detection | ⚠️ Half met — priority ✅, no conflict detection, no "what runs when" view |
-| 13 | **Automation failure queue** | ❌ Not met |
-| 14 | **Configuration audit log** | ⚠️ Half met — `audit_log` records data changes, not config diffs |
-| 15 | Vendor detail quarantined | ✅ Mostly — two leaks noted in Part 1 §3.4 |
-| 16 | **Encrypted field type at schema level** | ⚠️ Half met — encryption exists, but applied per call site, not declared on a field |
+| 12 | Rule priority + static conflict detection | ✅ **Met** — `engine/conflicts.js` provides `detectConflicts`, `ambiguousOrdering` and `healthReport` |
+| 13 | **Automation failure queue** | ✅ **Met** — `rule_failures`; each action is attempted independently, so one dead number no longer aborts the run and skips every lead after it |
+| 14 | **Configuration audit log** | ✅ **Met** — `config_audit` beside `audit_log`, plus versioned snapshots with diff and rollback in `engine/versioning.js` |
+| 15 | Vendor detail quarantined | ✅ **Mostly, unchanged** — `activities.external_id` and `activities.recording_url` still sit on the core record, as noted in §3.4 |
+| 16 | **Encrypted field type at schema level** | ✅ **Met** — `encrypted_text` is a declared type; PAN carries it on the field rather than being encrypted at each call site |
 
-Six met, six half, four not. The four zeros share one cause.
+Thirteen met, one mostly, two half. **No zeros.**
+
+The four that were zero on 21 August shared one cause — there was no field
+metadata layer — and building that one thing closed all four: label versus API
+name, uniform per-object configuration, field-change history, and the polymorphic
+owner that needed a place to declare itself.
+
+Three things are left, and only the first is a hole rather than a choice:
+
+- **7 · no OWD floor.** Access is grant-only with no restrictive default
+  underneath it and no internal/external split. This is the one item on this
+  scorecard that is a real hole rather than a design choice.
+- **15 · two vendor columns on the core record.** `activities.external_id` and
+  `activities.recording_url` belong in a vendor-reference table. Small, known,
+  and not yet worth a migration.
+- **9 · record types.** Still per-product cards instead. That is a divergence
+  from the Salesforce pattern taken on purpose; see the section below.
 
 ---
 
