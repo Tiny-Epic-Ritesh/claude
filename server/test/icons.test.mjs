@@ -106,7 +106,14 @@ function usedIcons(vocabulary) {
        that nothing renders — the same false positive as the two strips above,
        arriving from a third direction. Only the quoted first argument is
        blanked, so an icon name sitting in a later one is still scanned. */
-    .replace(/\.(?:set|get|append|setItem|getItem|has|delete)\((['"`])[a-z][a-z0-9_]*\1/g, '.x(0');
+    .replace(/\.(?:set|get|append|setItem|getItem|has|delete)\((['"`])[a-z][a-z0-9_]*\1/g, '.x(0')
+    /* The right-hand side of a `typeof` comparison is a JavaScript type, not
+       an icon. "function", "string", "number", "object" and "boolean" are all
+       in the Material Symbols vocabulary, so a feature test written the
+       ordinary way -- `typeof window.requestIdleCallback === 'function'` --
+       reported `function` as a missing glyph. The same false positive as the
+       four strips above, arriving from a fifth direction. */
+    .replace(/typeof\s+[^=!]+[=!]==?\s*(['"`])(?:function|string|number|object|boolean|undefined|symbol|bigint)\1/g, ' ');
 
   for (const file of walk(CLIENT)) {
     const src = strip(readFileSync(file, 'utf8'));

@@ -2004,11 +2004,83 @@ shell (a `React.lazy` route, so its own chunk), and Objects & fields inside it
 (a second, nested lazy chunk). All rendered with live data, and the console held
 nothing but the usual pre-sign-in 401 from `/api/auth/me`.
 
-### Still on the table
+### Taken further
 
-The app chunk is 436 kB because every CRM screen - leads, clients, pipeline,
-tickets, tasks, calendar, KYC, partners, campaigns - is imported eagerly. Only
-the Setup area is lazy. Making the main routes lazy would cut what a user
-downloads before seeing their cockpit, which is the improvement that would
-actually be felt. It needs Suspense boundaries and its own round of browser
-checking, and was not done here.
+The app chunk was still 436 kB because every CRM screen was imported eagerly.
+That was done next - see the section below - and it is now 127 kB.
+
+---
+
+## The main routes load on demand - 3 Sep 2026
+
+Twenty-four CRM screens moved behind `React.lazy`, one `Suspense` boundary
+around the route table, and every chunk warmed on idle.
+
+| | index | vendor | before first paint |
+|---|---|---|---|
+| at the start of today | 619.50 kB | 34.40 kB | 653.90 kB |
+| after the vendor fix | 436.16 kB | 217.55 kB | 653.71 kB |
+| now | **126.95 kB** | 217.55 kB | **344.50 kB** |
+
+Gzipped, 344 kB becomes 105 kB. Unlike the vendor fix, this one is a real
+reduction rather than a redistribution: 47% less has to arrive before the app
+renders.
+
+### The objection that was already on record
+
+The file carried a comment saying the screens people use all day stayed in the
+main bundle, because "a loading flicker on the screens people live in would be a
+worse trade than the bytes". That was a real objection and lazy loading alone
+would have earned it - an RM who opens Leads forty times a day should not watch
+a spinner.
+
+So the screens are not merely lazy. Each is declared through a small `screen()`
+helper that keeps a `preload` handle, and the shell fetches all of them once
+`requestIdleCallback` fires - after first paint, so the critical path stays
+short, but long before anyone clicks. Confirmed in the network log: index and
+vendor load, then twenty-four chunks arrive unprompted, and tab-to-tab
+navigation renders with no loading state at all.
+
+The fallback is still reachable, and should be: deep-linking straight to
+`/leads/4` in a cold tab shows the shell with a Loading in the page area for a
+moment. That is the honest cost, and it is paid by the first visit to a URL
+rather than by every navigation.
+
+The old comment was rewritten rather than deleted. It was right about the
+flicker and wrong about the remedy, and that is worth the next reader knowing.
+
+### What stayed eager
+
+`Cockpit`, because it is the landing route and lazy-loading the first screen
+adds a round trip before anything useful paints. `Login`, needed before
+everything. `Placeholder`, tiny. `Market`, whose `MarketStrip` renders in the
+shell. `Copilot`, which is mounted unconditionally, so lazy would import it
+immediately and change its state semantics for nothing.
+
+`Dashboard` was made lazy and then put back: `Cockpit` imports it statically, so
+the dynamic import moved nothing and Rollup said so in a warning. A dynamic
+import that cannot split is worse than a static one, because it reads as a
+decision that was never taken.
+
+### Two things the change broke, and how they surfaced
+
+**The icon test failed**, reporting `function` as an icon rendering as raw text
+in `Crm.jsx`. The scan matches any quoted lowercase word that exists in the
+Material Symbols vocabulary, and the idle-callback feature test is written
+`typeof window.requestIdleCallback === 'function'`. `function` is a real glyph
+name, so it was a false positive - the fifth documented in that file, after
+`className=`, `key:`, `group:` and `.set('sort')`. Fixed in the scan rather than
+by rewording the feature test, since the trap would otherwise wait for the next
+person: the right-hand side of a `typeof` comparison is a JavaScript type and is
+never an icon.
+
+**A second build warning** appeared where the chunk-size one had been, about
+`Dashboard` being imported both ways. Both are gone; the build is now silent.
+
+### Verified in the browser
+
+Sign-in, the cockpit, then Leads, Calendar, Lead Lists and Tasks by clicking the
+tab bar - the path that would break first if the `Suspense` boundary were
+missing or misplaced - plus `LeadDetail` cold on a deep link, which is the
+largest chunk. Console held nothing but the usual pre-sign-in 401. Server suite
+600/600.

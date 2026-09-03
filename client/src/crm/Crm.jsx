@@ -7,33 +7,11 @@ import { AppLauncher, TabBar, GlobalSearch, UserMenu } from '../components/AppNa
 import { applyOrgAccent } from '../theme.js';
 import Login from './Login.jsx';
 import Cockpit from './Cockpit.jsx';
-import Leads from './Leads.jsx';
-import LeadDetail from './LeadDetail.jsx';
-import Clients from './Clients.jsx';
-import LeadLists from './LeadLists.jsx';
+/* Cockpit imports this statically, so a dynamic import here would move
+   nothing out of the main chunk -- Rollup warns about exactly that. */
 import Dashboard from './Dashboard.jsx';
-import Dashboards from './Dashboards.jsx';
-import Pipeline from './Pipeline.jsx';
-import Products from './Products.jsx';
-import Ccm from './Ccm.jsx';
-import Team from './Team.jsx';
-import Revenue from './Revenue.jsx';
-import Campaigns from './Campaigns.jsx';
-import Content from './Content.jsx';
-import Calendar from './Calendar.jsx';
-import Kra from './Kra.jsx';
-import Incentives from './Incentives.jsx';
-import ListDetail from './ListDetail.jsx';
-import ClientDetail from './ClientDetail.jsx';
-import Tickets from './Tickets.jsx';
-import Partners from './Partners.jsx';
-import PartnerProfile from './PartnerProfile.jsx';
-import KycConsole from './KycConsole.jsx';
-import Tasks from './Tasks.jsx';
 import MarketTab, { MarketStrip } from '../components/Market.jsx';
-import Approvals from './Approvals.jsx';
 import BrandLogo from '../components/BrandLogo.jsx';
-import Reports from './Reports.jsx';
 import Placeholder from './Placeholder.jsx';
 import Copilot from './Copilot.jsx';
 
@@ -45,11 +23,82 @@ import Copilot from './Copilot.jsx';
  * that weight with it. Nine of the eleven roles cannot open either of these
  * and were downloading both on every first load.
  *
- * Everything an RM, caller or dealer uses all day stays in the main bundle:
- * a loading flicker on the screens people live in would be a worse trade than
- * the bytes.
+ * This used to be the only thing loaded on demand, on the reasoning that a
+ * loading flicker on the screens people live in would be a worse trade than the
+ * bytes. The reasoning was right about the flicker and wrong about the choice:
+ * the screens are on demand now too, and the flicker is answered by warming
+ * them on idle rather than by shipping them all up front. See `screen` below.
  */
 const SetupShell = lazy(() => import('../setup/SetupShell.jsx'));
+
+/**
+ * A screen that loads on demand and can be fetched ahead of time.
+ *
+ * `lazy` alone would trade bytes for a spinner on every first visit to a tab,
+ * which is the objection recorded above and a fair one: an RM who opens Leads
+ * forty times a day should not watch it load. `preload` is what settles it --
+ * the shell warms every screen once it is idle, so the chunk is usually already
+ * in memory by the time anyone clicks, and the download has moved off the path
+ * to first paint rather than out of the product.
+ */
+const screen = (load) => {
+  const Component = lazy(load);
+  Component.preload = load;
+  return Component;
+};
+
+const Leads = screen(() => import('./Leads.jsx'));
+const LeadDetail = screen(() => import('./LeadDetail.jsx'));
+const Clients = screen(() => import('./Clients.jsx'));
+const ClientDetail = screen(() => import('./ClientDetail.jsx'));
+const LeadLists = screen(() => import('./LeadLists.jsx'));
+const ListDetail = screen(() => import('./ListDetail.jsx'));
+const Dashboards = screen(() => import('./Dashboards.jsx'));
+const Pipeline = screen(() => import('./Pipeline.jsx'));
+const Products = screen(() => import('./Products.jsx'));
+const Ccm = screen(() => import('./Ccm.jsx'));
+const Team = screen(() => import('./Team.jsx'));
+const Revenue = screen(() => import('./Revenue.jsx'));
+const Campaigns = screen(() => import('./Campaigns.jsx'));
+const Content = screen(() => import('./Content.jsx'));
+const Calendar = screen(() => import('./Calendar.jsx'));
+const Kra = screen(() => import('./Kra.jsx'));
+const Incentives = screen(() => import('./Incentives.jsx'));
+const Tickets = screen(() => import('./Tickets.jsx'));
+const Partners = screen(() => import('./Partners.jsx'));
+const PartnerProfile = screen(() => import('./PartnerProfile.jsx'));
+const KycConsole = screen(() => import('./KycConsole.jsx'));
+const Tasks = screen(() => import('./Tasks.jsx'));
+const Reports = screen(() => import('./Reports.jsx'));
+const Approvals = screen(() => import('./Approvals.jsx'));
+
+/** Warmed on idle, after the shell has painted. Order is not significant. */
+const SCREENS = [
+  Leads,
+  LeadDetail,
+  Clients,
+  ClientDetail,
+  LeadLists,
+  ListDetail,
+  Dashboards,
+  Pipeline,
+  Products,
+  Ccm,
+  Team,
+  Revenue,
+  Campaigns,
+  Content,
+  Calendar,
+  Kra,
+  Incentives,
+  Tickets,
+  Partners,
+  PartnerProfile,
+  KycConsole,
+  Tasks,
+  Reports,
+  Approvals,
+];
 
 /**
  * `/admin` was Setup's address for the whole of the build so far, and
@@ -112,6 +161,22 @@ export default function Crm() {
   });
   const navigate = useNavigate();
   const location = useLocation();
+
+  /* Fetch every screen's chunk once the shell is idle. This is what keeps the
+     split from costing a spinner on the tabs people use all day: by the time
+     anyone clicks Leads, the chunk is already there. It runs after first paint,
+     so it buys the smaller critical path without giving up the warm cache. */
+  useEffect(() => {
+    let cancelled = false;
+    const warm = () => { if (!cancelled) SCREENS.forEach((s) => s.preload()); };
+
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(warm, { timeout: 4000 });
+      return () => { cancelled = true; window.cancelIdleCallback(id); };
+    }
+    const id = setTimeout(warm, 2000);   // Safari has no requestIdleCallback.
+    return () => { cancelled = true; clearTimeout(id); };
+  }, []);
 
   useEffect(() => {
     if (!token.get('crm')) { setSession(null); return; }
@@ -290,6 +355,7 @@ export default function Crm() {
 
         <div className="page">
 
+          <Suspense fallback={<Loading />}>
           <Routes>
             <Route path="/" element={<Cockpit session={session} />} />
             <Route path="/leads" element={<Leads session={session} />} />
@@ -338,6 +404,7 @@ export default function Crm() {
 
             <Route path="*" element={<Placeholder moduleKey="__unknown" />} />
           </Routes>
+          </Suspense>
         </div>
       </div>
 
