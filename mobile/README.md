@@ -1,7 +1,8 @@
 # Bonanza CRM — field app (throwaway shell)
 
 Against the existing API: **sign in**, **today**, **my leads**, **my tasks**,
-and **log a meeting with a location** — with an offline queue underneath.
+**call a lead**, and **log a meeting with a location** — with an offline queue
+underneath.
 Built to be put on two RMs' phones and argued with. Not built to be extended —
 see `docs/MOBILE-APP-SCOPE.md` for what a real version needs and which
 decisions come first.
@@ -83,6 +84,33 @@ Two more rules worth knowing:
   rather than the queue guessing from the method.
 
 The queue survives sign-out on purpose. It holds work, not session state.
+
+## Calling: the switch dials, not the handset
+
+The obvious mobile answer is a `tel:` link, and for this app's main user it is
+impossible. A Sales RM asking for a lead is given `••••••9300` — the number is
+masked by role, and you cannot dial dots. An Admin is given `9848249300`.
+
+So `POST /api/leads/:id/call` is not a nicety, it is the only route that works:
+the server holds the number, hands it to the switch, and the rep never sees it.
+Verified — the RM saw dots while the vendor was sent `9848249300`. **Masking
+survives onto the phone** rather than being the first thing a mobile app quietly
+gives up. Consent is checked before the call, and the call is logged, both
+without the client having to remember.
+
+The handset is still the fallback, because the route's own comment says it
+should be: when the switch refuses, a rep needs to be able to call from their
+own phone. That is offered only when the number *this device was given* is
+dialable — the app does not reimplement the masking rules to work that out, it
+looks at what it received. Digits can be dialled, dots cannot.
+
+Two refusals are handled differently on purpose:
+
+| | What happens |
+|---|---|
+| **409, consent** | The reason and the fix are shown, and **no handset fallback is offered.** The number is withdrawn or dead; routing around that would defeat a rule the CRM is enforcing |
+| **502, switch refused** | Handset dial offered, if the number is dialable |
+| **`simulated: true`** | Reported as *not called*. QuickCall has no credentials yet, so the switch accepts the request and rings nobody — a success notice would leave a rep waiting for a phone that never rings |
 
 ## Deliberately absent
 

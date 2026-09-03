@@ -4,6 +4,7 @@ import {
 } from 'react-native';
 import * as queue from '../queue.js';
 import { capture, describe } from '../location.js';
+import { viaSwitch, viaHandset, dialable } from '../call.js';
 import { s, t } from '../theme.js';
 
 /**
@@ -23,6 +24,8 @@ export default function LogMeeting({ lead, onDone, onCancel }) {
   const [locating, setLocating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [calling, setCalling] = useState(false);
+  const [call, setCall] = useState(null);
 
   useEffect(() => {
     api.get('/activities/meta')
@@ -105,7 +108,39 @@ export default function LogMeeting({ lead, onDone, onCancel }) {
       <TouchableOpacity onPress={onCancel}><Text style={s.muted}>‹ Back</Text></TouchableOpacity>
 
       <Text style={[s.h1, { marginTop: 12 }]}>Log a meeting</Text>
-      <Text style={[s.muted, { marginBottom: 20 }]}>{lead.name}</Text>
+      <Text style={[s.muted, { marginBottom: 16 }]}>{lead.name}</Text>
+
+      {/* Call first, log after. The switch dials so the number stays masked --
+          see src/call.js for why that is the only route that works for an RM. */}
+      <TouchableOpacity
+        style={[s.ghost, { marginBottom: 8 }]}
+        disabled={calling}
+        onPress={async () => {
+          setCalling(true);
+          setCall(await viaSwitch(lead));
+          setCalling(false);
+        }}
+      >
+        {calling
+          ? <ActivityIndicator color={t.text} />
+          : <Text style={s.ghostText}>Call {lead.name}</Text>}
+      </TouchableOpacity>
+
+      {call && (
+        <View style={[call.ok ? s.notice : s.error, { marginBottom: 16 }]}>
+          <Text style={call.ok ? s.muted : s.errorText}>{call.message}</Text>
+          {call.fix && <Text style={[s.muted, { marginTop: 6 }]}>{call.fix}</Text>}
+
+          {call.offerHandset && (
+            <TouchableOpacity
+              style={[s.ghost, { marginTop: 10 }]}
+              onPress={async () => setCall(await viaHandset(lead.mobile))}
+            >
+              <Text style={s.ghostText}>Dial {dialable(lead.mobile)} from this phone</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
 
       {error && <View style={s.error}><Text style={s.errorText}>{error}</Text></View>}
 

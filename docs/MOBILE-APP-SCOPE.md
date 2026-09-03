@@ -168,8 +168,12 @@ one feed instead of merging two. It says so when the diary is simulated, because
 showing meetings that are not real without saying so is how somebody misses an
 appointment that is.
 
-Still out of the first version: click-to-call, which is the one remaining item
-from the In list above.
+Click-to-call is done too, so the whole In list above is built. It goes through
+the switch rather than a `tel:` link, and the reason is worth recording: a Sales
+RM is given `••••••9300` for a lead, so there is nothing to dial. The server
+holds the number and hands it to the vendor, which means masking survives onto
+the phone and consent is enforced before the call. The handset is the fallback
+only when the number the device received is actually dialable.
 
 **Not verified on a handset.** The shell was built and checked against the
 running API from a browser: the bundle builds clean, and captured, refused and
