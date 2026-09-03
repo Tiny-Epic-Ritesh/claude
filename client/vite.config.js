@@ -13,9 +13,20 @@ export default defineConfig({
          * They change when we upgrade them, which is rarely, while app code
          * changes on every deploy. Split apart, a returning user re-downloads
          * only what actually changed instead of the whole product.
+         *
+         * Matched by path rather than by package name. The list form named
+         * 'react-dom', but the app imports 'react-dom/client', which is a
+         * different module id and never matched -- so react-dom, by some way
+         * the largest of the three, sat in the app chunk and was re-downloaded
+         * on every deploy while a 34 kB "vendor" chunk did the caching. It also
+         * needs `scheduler`, which react-dom depends on and which would
+         * otherwise be stranded in the app chunk on its own.
          */
-        manualChunks: {
-          vendor: ['react', 'react-dom', 'react-router-dom'],
+        manualChunks(id) {
+          if (/[\/]node_modules[\/](react|react-dom|react-router|react-router-dom|scheduler)[\/]/.test(id)) {
+            return 'vendor';
+          }
+          return undefined;
         },
       },
     },

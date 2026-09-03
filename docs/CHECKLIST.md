@@ -1959,3 +1959,56 @@ refuse. Both are the system working.
 The server suite was run afterwards as insurance, since the built client is
 served through the API's SPA fallback: 600/600, and `/ai-crm/leads` still
 resolves.
+
+---
+
+## The bundle size warning - 3 Sep 2026
+
+Vite warned that `index-*.js` was 619.50 kB, over its 500 kB threshold. The
+cause was a `manualChunks` entry that had never worked.
+
+`vite.config.js` listed `vendor: ['react', 'react-dom', 'react-router-dom']`,
+but the app imports `react-dom/client`, which is a different module id and never
+matched. So react-dom - by some way the largest of the three - sat in the app
+chunk, while a 34 kB "vendor" chunk did the caching the comment described.
+
+Matching by path instead, and including `scheduler`, which react-dom depends on
+and which would otherwise be stranded on its own:
+
+| | before | after |
+|---|---|---|
+| index | 619.50 kB (gzip 165.64) | **436.16 kB** (gzip 108.00) |
+| vendor | 34.40 kB | **217.55 kB** (gzip 69.09) |
+| total | 653.90 kB | 653.71 kB |
+
+### What this did and did not do
+
+**It did not make the first visit smaller.** The totals are the same to within a
+rounding error; the same bytes are split differently. This is not a page-weight
+improvement and should not be reported as one.
+
+What it fixes is caching, which is what the config always claimed to do. React,
+react-dom, the router and scheduler change when they are upgraded, which is
+rarely. App code changes on every deploy. Now that they are actually separated,
+a returning user re-downloads 436 kB instead of 654 kB after a deploy, and the
+warning is gone because the chunk is genuinely under the threshold rather than
+because the threshold was raised - which was the other way to make the message
+disappear, and would have fixed nothing.
+
+### Verified in the browser, not just in the build
+
+Chunk splitting is exactly the kind of change that builds cleanly and breaks at
+runtime, through module initialisation order or a lazy chunk that no longer
+resolves. Checked after the rebuild: sign-in, the superadmin cockpit, the Setup
+shell (a `React.lazy` route, so its own chunk), and Objects & fields inside it
+(a second, nested lazy chunk). All rendered with live data, and the console held
+nothing but the usual pre-sign-in 401 from `/api/auth/me`.
+
+### Still on the table
+
+The app chunk is 436 kB because every CRM screen - leads, clients, pipeline,
+tickets, tasks, calendar, KYC, partners, campaigns - is imported eagerly. Only
+the Setup area is lazy. Making the main routes lazy would cut what a user
+downloads before seeing their cockpit, which is the improvement that would
+actually be felt. It needs Suspense boundaries and its own round of browser
+checking, and was not done here.
