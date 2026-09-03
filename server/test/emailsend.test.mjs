@@ -20,6 +20,22 @@ import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
 import * as smtp from '../src/vendors/smtp.js';
 
+/* Refuse to run against a configured relay, for the reason quickcall.test.mjs
+   refuses to run against a configured switch: the send below happens before the
+   assertion that notices it should not have. `client@example.com` is reserved
+   by IANA so nobody receives it, but the message still leaves through Bonanza's
+   own SMTP, lands in its logs and bounces back at whatever mailbox it is sent
+   from. That is a smaller harm than a phone call and the same defect. */
+if (smtp.isLive()) {
+  console.error(`
+Email sending — REFUSING TO RUN
+  SMTP is configured live, and these tests send a message through it.
+  Run under: node scripts/simulate-integrations.mjs npm run test:unit
+  or clear the SMTP credentials in server/.env.
+`);
+  process.exit(1);
+}
+
 /* Source read from disk, so line endings are whatever git checked out --
    CRLF on Windows. Every pattern below is written with \n, so normalise once
    here rather than in each assertion. */

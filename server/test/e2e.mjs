@@ -236,6 +236,57 @@ async function run() {
     }
   });
 
+  /* A live vendor is not a test environment.
+   *
+   * Three checks below POST to /api/leads/:id/call, and others send WhatsApp
+   * and email. All of them are safe only because no vendor has credentials, so
+   * every adapter simulates. That is configuration, not a safeguard, and it
+   * expires the day Cube issues us a tenant login: this suite would begin
+   * placing real calls to the seeded numbers, which are plausible real Indian
+   * mobiles, and it would do it on a green run with nothing to show for it.
+   *
+   * So ask the server what it is actually pointed at, and refuse rather than
+   * dial. The message names the fix, because whoever trips this will be someone
+   * who has just been handed credentials and has no reason to expect it.
+   */
+  /* A live vendor is not a test environment.
+   *
+   * Three checks below POST to /api/leads/:id/call, and others send WhatsApp
+   * and email. All of them are safe only because no vendor has credentials, so
+   * every adapter simulates. That is configuration, not a safeguard, and it
+   * expires the day Cube issues us a tenant login: this suite would begin
+   * placing real calls to the seeded numbers, which are plausible real Indian
+   * mobiles, and it would do it on a green run with nothing to show for it.
+   *
+   * This exits the process rather than failing a check. `check()` records a
+   * failure and carries on to the next one by design, which is right for a
+   * test and wrong for this: carrying on is precisely the thing that must not
+   * happen, because the calls come afterwards. A refusal that gets counted and
+   * stepped over is not a refusal.
+   */
+  await check('no outbound vendor is live', async () => {
+    const { data } = await req('/api/admin/integrations', { token: T.admin, expect: 200 });
+
+    // vendorStatus() mixes a top-level `forced_simulation` flag in among the
+    // vendors, so match on the shape rather than assuming every value is one.
+    const live = Object.entries(data.vendors || {})
+      .filter(([, v]) => v && v.state === 'live')
+      .map(([vendor]) => vendor);
+
+    if (live.length > 0) {
+      console.error(`
+REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} configured live.
+
+  This suite places calls and sends messages. Against a live vendor those stop
+  being assertions and become real calls to the seeded numbers.
+
+  Start the server under:  npm run start:simulated
+  or clear the vendor credentials in server/.env.
+`);
+      process.exit(1);
+    }
+  });
+
   /* --------------------------------------------------------- 2. cockpits */
   suite('02 role cockpits');
 

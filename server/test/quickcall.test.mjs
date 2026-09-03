@@ -19,8 +19,29 @@
 import { strict as assert } from 'node:assert';
 import {
   makeCall, loadCampaign, fetchCallLog, parseCallEvent,
-  normaliseMsisdn, wasAnswered, resetToken,
+  normaliseMsisdn, wasAnswered, resetToken, isLive,
 } from '../src/vendors/quickcall.js';
+
+/* Refuse to run against a configured switch.
+ *
+ * Several tests below call makeCall() with 9899978503 in the argument. That is
+ * a fixture number while the adapter simulates, and a real Indian mobile the
+ * moment it does not. Nothing else in this file would stop it: the simulator is
+ * chosen by whether credentials happen to be present, so a tenant login in
+ * server/.env turns this file from a unit test into a dialler.
+ *
+ * Exit rather than fail. A failure here would be counted, reported and moved
+ * past, and by then the call has already gone out.
+ */
+if (isLive()) {
+  console.error(`
+CUBE QuickCall adapter — REFUSING TO RUN
+  CUBE is configured live, and these tests place calls to a real number.
+  Run under: node scripts/simulate-integrations.mjs npm run test:unit
+  or clear CUBE_QUICKCALL_USER and CUBE_QUICKCALL_PASSWORD in server/.env.
+`);
+  process.exit(1);
+}
 
 let passed = 0;
 let failed = 0;

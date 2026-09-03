@@ -417,11 +417,35 @@ In the order that unblocks us:
 Separately, and ours rather than Cube's: **rotate `api_test1`'s password.** It
 was sent over chat.
 
-There is a wider point worth keeping: **the suite must not depend on a
-third party being reachable.** Right now it does, in three places, and the only
-reason it passes is that the vendor is unconfigured. If Cube becomes reachable,
-those three tests will pass for a reason nobody chose — and will fail the next
-time Cube has an outage.
+### The suite no longer depends on a vendor being unreachable — 3 Sep 2026
+
+This section used to end by noting that **the suite must not depend on a third
+party being reachable**, that it did in three places, and that the only reason
+it passed was that the vendor was unconfigured. That was worse than stated. The
+suite does not merely *read* from Cube in those places — it POSTs to
+`/api/leads/:id/call`, and `test/quickcall.test.mjs` calls `makeCall()` directly
+with `9899978503` in the arguments. Against a configured switch those are not
+assertions, they are **real phone calls to the seeded numbers**, which are
+plausible real Indian mobiles. The safeguard was that nobody had sent us a
+password yet.
+
+Closed three ways:
+
+- **`test/e2e.mjs` asks the server what it is pointed at** and exits the process
+  if any vendor reports `live`. It exits rather than failing a check, because
+  `check()` records a failure and carries on by design — and carrying on is
+  exactly what must not happen, since the calls come afterwards.
+- **`test/quickcall.test.mjs` and `test/emailsend.test.mjs` refuse to load**
+  against a configured vendor. Their existing assertions caught it only *after*
+  the send.
+- **`npm run start:simulated`** wraps the server in
+  `CRM_SIMULATE_INTEGRATIONS=1`, which is the supported way to run the suite on
+  a machine that has real credentials in its `.env`.
+
+Verified both directions: against a server configured live the suite stops
+before the first calling test with exit 1, and against the same server started
+simulated all 603 pass. The flag is read by the **server**, not the suite, so it
+must wrap whatever starts the server — wrapping the suite alone does nothing.
 
 ### The campaign mapping question, which the test campaign exposed
 

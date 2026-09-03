@@ -7,6 +7,8 @@
     "dev": "node --watch-path=./src src/index.js",
     "dev:cheap-hashing": "node scripts/cheap-hashing.mjs npm run dev",
     "start": "node src/index.js",
+    "start:simulated": "node scripts/simulate-integrations.mjs npm start",
+    "dev:simulated": "node scripts/simulate-integrations.mjs npm run dev",
     "seed": "node src/seed.js",
     "test": "node src/seed.js --quiet && npm run test:unit && node test/e2e.mjs",
     "test:cheap-hashing": "node scripts/cheap-hashing.mjs npm test",
