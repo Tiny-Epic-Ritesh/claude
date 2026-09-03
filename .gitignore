@@ -23,3 +23,7 @@ Thumbs.db
 
 # Local probe scripts — never part of a release.
 .scratch/
+
+# Expo build output and caches. node_modules is already covered above.
+mobile/.expo/
+mobile/dist/
