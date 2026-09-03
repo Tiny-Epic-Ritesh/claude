@@ -370,17 +370,54 @@ into a test campaign.
 
 ### Why the credentials are parked
 
-They were set, the adapter reported live, and three e2e tests immediately failed
-— click-to-call, the opted-out call, and the autodialler push all expect the
-simulator and got a 502 from an unreachable host.
+Two reasons, and the second is the one that matters.
 
-That is the tests being right. The credentials cannot reach anything while UAT
-does not resolve, so they bought nothing and cost a green suite. Both lines are
-commented in `server/.env` with a note saying to uncomment them the moment Cube
-confirms a reachable endpoint. The campaign stays configured, because it is
-harmless and correct either way.
+**They are the wrong kind of credential.** Confirmed by Ritesh, 3 Sep 2026:
+`api_test1` is an **agent** credential. `CUBE_QUICKCALL_USER` and
+`CUBE_QUICKCALL_PASSWORD` are the **tenant** credential for `AuthToken`, which
+`config.js` has always said in as many words — *"Tenant credentials for
+AuthToken. Not an agent's credentials."*
 
-There is a wider point here worth keeping: **the suite must not depend on a
+The distinction is easy to miss and expensive to debug, because Cube issues
+agent logins that look exactly like tenant ones. An agent credential in the
+tenant slot fails at `AuthToken` with a **401**, and as the adapter's own
+comment warns, that 401 "reads like bad credentials" — so it looks like a typo'd
+password rather than the wrong species of account. The `.env` note that used to
+say *uncomment these when UAT is reachable* has been rewritten to say the
+opposite, because following it would have produced exactly that hour.
+
+Agent credentials belong to `AuthLogin` (`AgentId`, `Password`, `Extension`,
+`CampaignId`), which is agent session control — a separate, opt-in feature we do
+not configure here — and we have no `Extension` for `api_test1` in any case.
+
+**This closes off click-to-call too.** `AuthClick2Call` is listed under *Call
+Control (Secure)*: it carries `CampaignID` per call and takes no `AuthId`, but it
+is still a secure endpoint, so it goes through `request()` with
+`authenticated = true` and therefore through `token()` and `AuthToken`. Without a
+tenant credential **nothing dials at all** — the agent credential and the test
+campaign together unblock none of it.
+
+**And they could not reach anything anyway.** When they were briefly set, the
+adapter reported live and three e2e tests failed — click-to-call, the opted-out
+call, and the autodialler push all expect the simulator and got a 502 from an
+unreachable host. That is the tests being right.
+
+### What is actually outstanding from Cube
+
+In the order that unblocks us:
+
+1. **Tenant `UserID` / `Password` for `AuthToken`.** The real blocker. Nothing
+   dials without it, click-to-call included.
+2. **A reachable UAT.** `uat-raphsody.in` is still published in the portal and
+   still has no DNS record. Production resolves and dials real numbers, and our
+   seeded leads carry plausible real Indian mobiles, so it is not a substitute.
+3. **An `Extension` for `api_test1`**, if agent session control is wanted. Not
+   needed for click-to-call.
+
+Separately, and ours rather than Cube's: **rotate `api_test1`'s password.** It
+was sent over chat.
+
+There is a wider point worth keeping: **the suite must not depend on a
 third party being reachable.** Right now it does, in three places, and the only
 reason it passes is that the vendor is unconfigured. If Cube becomes reachable,
 those three tests will pass for a reason nobody chose — and will fail the next
