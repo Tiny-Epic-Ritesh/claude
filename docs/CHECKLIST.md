@@ -1917,3 +1917,45 @@ behaviour being guarded, demonstrated rather than described.
 The process-level `unhandledRejection` handler stays. Express 5 covers route
 handlers, which is where the bug was, but not every promise in the process, and
 a server should not die of one.
+
+---
+
+## React 19 - 3 Sep 2026
+
+`react` and `react-dom` 18.3.1 to 19.2.8. Nothing in the client needed changing.
+
+### Why there was nothing to change
+
+The removals in React 19 are for patterns this codebase never had. Scanned for
+and absent: `ReactDOM.render`, `ReactDOM.hydrate`, `findDOMNode`,
+`unmountComponentAtNode`, `createFactory`, PropTypes, `defaultProps` on function
+components, legacy `contextTypes` / `getChildContext`, `useFormState`, string
+refs, and `useRef()` with no argument. The entry point was already on
+`createRoot`, and all eleven `useRef` calls pass an initial value.
+
+`react-router-dom` 6.30.6 deduped onto React 19 with no peer conflict, and
+`@vitejs/plugin-react` needed no change.
+
+### How it was verified
+
+There is no client test suite - the 1,153 tests are all server-side - so a
+passing `vite build` proves compilation and nothing else. React 19 changes
+runtime behaviour, so the browser was the test.
+
+Checked, signed in as a Sales RM: the login screen, the cockpit with its tiles
+and market ticker, the leads list with filters and rows, a lead detail page with
+its tabs, product cards and masked PII, and tab switching on that page. Then
+both other surfaces that `main.jsx` mounts - the partner portal and the public
+DKYC portal - since they are separate route trees and a build says nothing about
+whether they mount.
+
+**No React errors or warnings in the console at any point.** The only two console
+entries across the whole pass were network responses: a 401 from
+`GET /api/auth/me` before signing in, which is the app checking for an existing
+session, and a 403 from `GET /api/leads/1`, which is the book scope refusing a
+lead outside a Sales RM's visibility - a lead deliberately opened to see it
+refuse. Both are the system working.
+
+The server suite was run afterwards as insurance, since the built client is
+served through the API's SPA fallback: 600/600, and `/ai-crm/leads` still
+resolves.
