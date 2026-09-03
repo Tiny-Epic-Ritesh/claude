@@ -1,9 +1,15 @@
 # Bonanza CRM — field app (throwaway shell)
 
-Three screens against the existing API: **sign in**, **my leads**, **log a
-meeting with a location**. Built to be put on two RMs' phones and argued with.
-Not built to be extended — see `docs/MOBILE-APP-SCOPE.md` for what a real
-version needs and which decisions come first.
+Against the existing API: **sign in**, **today**, **my leads**, **my tasks**,
+and **log a meeting with a location** — with an offline queue underneath.
+Built to be put on two RMs' phones and argued with. Not built to be extended —
+see `docs/MOBILE-APP-SCOPE.md` for what a real version needs and which
+decisions come first.
+
+Three tabs, no navigation library: there is no back stack, no deep links and no
+router. A segmented control is what three screens need, and choosing a router
+now would be choosing an architecture for an app whose shape is still being
+argued about.
 
 ## Running it
 
@@ -56,17 +62,25 @@ The hard part is not sending. It is deciding what a failure means:
 | **4xx** | Rejected and shown. The server has an opinion and will have it again |
 | **5xx** | Retried up to five times, then rejected |
 
+It carries any request, not only activities — completing a task goes through it
+too, so a rep can clear their list in a basement.
+
 Two more rules worth knowing:
 
 - **Order is preserved.** A flush stops at the first item it cannot send rather
   than skipping past it, because two activities on one lead must land in the
   order they happened.
-- **Sending twice is safe.** Every item carries a `client_ref`, and
-  `POST /api/activities` returns the original row for a ref it has already seen.
+- **Sending twice is safe.** A request that *creates* carries a `client_ref`,
+  and `POST /api/activities` returns the original row for a ref it has seen.
   Without that, this queue would be a machine for logging the same meeting
   twice — a reply lost in transit is indistinguishable from a request that never
   arrived. Two e2e tests hold it, including one that a ref from one person can
   never hand back another person's activity.
+
+  A request that only *sets* a value needs no key. Completing a task is
+  `PATCH { status: 'Done' }`, which lands in the same place however many times
+  it arrives — verified, not assumed. Items declare which they are with `ref`,
+  rather than the queue guessing from the method.
 
 The queue survives sign-out on purpose. It holds work, not session state.
 

@@ -1,5 +1,5 @@
 /**
- * Activities logged with no signal, sent when there is one.
+ * Work done with no signal, sent when there is one.
  *
  * The scope document called this the hardest part of the app, and the hard part
  * is not the sending. It is deciding what a failure means.
@@ -25,10 +25,15 @@
  *
  * SENDING TWICE IS SAFE
  * ---------------------
- * Every item carries a `client_ref`, and `POST /api/activities` returns the
- * original row for a ref it has already seen. Without that, this queue would be
- * a machine for logging the same meeting twice: a reply lost in transit is
+ * A creating request carries a `client_ref`, and `POST /api/activities` returns
+ * the original row for a ref it has already seen. Without that, this queue would
+ * be a machine for logging the same meeting twice: a reply lost in transit is
  * indistinguishable from a request that never arrived.
+ *
+ * Not every request needs one. Completing a task is `PATCH { status: 'Done' }`,
+ * which sets a value rather than adding a row -- sending it twice lands in the
+ * same place, so it is idempotent by nature and asks for no key. Items say which
+ * they are with `ref`, rather than the queue guessing from the method.
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -68,18 +73,26 @@ export const list = read;
 export const pending = async () => (await read()).filter((i) => i.state === 'queued').length;
 export const rejected = async () => (await read()).filter((i) => i.state === 'rejected');
 
-/** Put an activity on the queue. Returns the stored item. */
-export async function enqueue(payload) {
+/**
+ * Put a request on the queue. Returns the stored item.
+ *
+ * `ref: true` for anything that creates a row, so a retry is recognised rather
+ * than duplicated. `ref: false` for a request that sets a value and is
+ * therefore safe to repeat.
+ */
+export async function enqueue({ path, method = 'POST', body, label, ref = true }) {
   const item = {
     id: Crypto.randomUUID(),
-    client_ref: Crypto.randomUUID(),
-    payload,
+    client_ref: ref ? Crypto.randomUUID() : null,
+    path,
+    method,
+    body,
     state: 'queued',
     attempts: 0,
     queued_at: new Date().toISOString(),
     last_error: null,
-    // Shown in the pending list so a rep can tell one meeting from another.
-    label: payload.__label ?? 'Meeting',
+    // Shown in the pending list so a rep can tell one item from another.
+    label: label || path,
   };
   const items = await read();
   await write([...items, item]);
@@ -114,8 +127,11 @@ export async function flush() {
     if (item.state !== 'queued') continue;
 
     try {
-      const { __label, ...body } = item.payload;
-      await api.post('/activities', { ...body, client_ref: item.client_ref });
+      const body = item.client_ref
+        ? { ...item.body, client_ref: item.client_ref }
+        : item.body;
+      const send = item.method === 'PATCH' ? api.patch : api.post;
+      await send(item.path, body);
       item.state = 'sent';
       result.sent += 1;
       changed = true;

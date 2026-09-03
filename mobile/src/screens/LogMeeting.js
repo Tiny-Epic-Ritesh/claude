@@ -52,21 +52,26 @@ export default function LogMeeting({ lead, onDone, onCancel }) {
     setError(null);
 
     await queue.enqueue({
-      __label: `${lead.name} — ${mode}`,
-      lead_id: lead.id,
-      type: 'Meeting',
-      direction: 'outbound',
-      /* The API names this `disposition` and aliases it to `code` internally.
-         Sending `code` is silently ignored and comes back as "a Meeting
-         activity needs an outcome", which reads like the form is broken. */
-      disposition: code,
-      body: notes || null,
-      meeting_mode: mode,
-      meeting_at: new Date().toISOString(),
-      /* Sent only when the server asked for it. A refusal travels as a value
-         of its own rather than as an absent field, which is what lets the
-         server tell "would not" from "could not". */
-      ...(wantsLocation ? { geo: geo ?? { status: 'unavailable' } } : {}),
+      path: '/activities',
+      label: `Meeting · ${lead.name}`,
+      // A meeting creates a row, so a retry must be recognised, not repeated.
+      ref: true,
+      body: {
+        lead_id: lead.id,
+        type: 'Meeting',
+        direction: 'outbound',
+        /* The API names this `disposition` and aliases it to `code` internally.
+           Sending `code` is silently ignored and comes back as "a Meeting
+           activity needs an outcome", which reads like the form is broken. */
+        disposition: code,
+        body: notes || null,
+        meeting_mode: mode,
+        meeting_at: new Date().toISOString(),
+        /* Sent only when the server asked for it. A refusal travels as a value
+           of its own rather than as an absent field, which is what lets the
+           server tell "would not" from "could not". */
+        ...(wantsLocation ? { geo: geo ?? { status: 'unavailable' } } : {}),
+      },
     });
 
     const result = await queue.flush();

@@ -156,10 +156,20 @@ after. This argues for a small first version and a slow widening.
 
 ## What exists, as of 3 Sep 2026
 
-Steps 2 and 3 above are done. `mobile/` holds the throwaway shell — sign in, my
-leads, log a meeting with a location — and the offline queue behind it. Server
-side, `POST /api/activities` now takes a `client_ref` and returns the original
-row for one it has seen, with two e2e tests holding it.
+Steps 2, 3 and 4 above are done. `mobile/` holds the throwaway shell — sign in,
+today, my leads, my tasks, and log a meeting with a location — with the offline
+queue behind all of it. Server side, `POST /api/activities` now takes a
+`client_ref` and returns the original row for one it has seen, with two e2e
+tests holding it.
+
+Today is one list rather than two: `GET /api/calendar` already returns meetings
+and tasks on a single timeline with `kind` saying which, so the screen renders
+one feed instead of merging two. It says so when the diary is simulated, because
+showing meetings that are not real without saying so is how somebody misses an
+appointment that is.
+
+Still out of the first version: click-to-call, which is the one remaining item
+from the In list above.
 
 **Not verified on a handset.** The shell was built and checked against the
 running API from a browser: the bundle builds clean, and captured, refused and
