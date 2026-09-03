@@ -1671,9 +1671,10 @@ refused rather than tolerated:
 
 `node scripts/cheap-hashing.mjs npm test`, because npm runs scripts through cmd
 on Windows, where `CRM_SCRYPT_N=16384 npm test` is not an assignment but a
-command it cannot find. **The existing `dev:webhooks` and `test:webhooks`
-scripts are written that way and do not work on this machine** - noticed while
-doing this, not fixed.
+command it cannot find. The `dev:webhooks` and `test:webhooks` scripts were
+written that way and did not work on this machine either; they were fixed the
+same way straight afterwards - see the section below - and both wrappers now
+share `scripts/run-with-env.mjs`.
 
 ### What the tests assert now
 
@@ -1683,3 +1684,60 @@ number that does not follow the configuration is the floor itself: a test
 asserts `default_N` is still 2^17, since the configuration is exactly what could
 quietly lower it, and that `maxmem` is large enough for a default-cost hash,
 since if it were not, those rows could not be verified at all.
+
+---
+
+## The webhook scripts, fixed the same way - 3 Sep 2026
+
+`dev:webhooks` and `test:webhooks` set their environment inline, POSIX style.
+`npm config get script-shell` is null here, so npm runs scripts through cmd,
+where `CUBE_QUICKCALL_WEBHOOK_SECRET=e2e-webhook-secret node ...` is not an
+assignment but a command it cannot find. Both scripts were dead on Windows.
+They now go through `scripts/webhook-secrets.mjs`, the way the hashing cost
+does.
+
+### One constant instead of four literals
+
+`e2e-webhook-secret` was written out four times across the two scripts - three
+vendor variables for the server, `E2E_WEBHOOK_SECRET` for the suite - and they
+have to match. Changing one would have broken the pairing quietly. There is now
+one constant, and the script sets all four from it.
+
+### Both halves, again
+
+The suite signs its callbacks with `E2E_WEBHOOK_SECRET` and the server verifies
+against the three vendor variables, so both must run under the wrapper. This
+pairing fails more kindly than the hashing one: a mismatch means the signed
+requests are refused and those tests fail, rather than everything quietly
+getting slower. Without `E2E_WEBHOOK_SECRET` the suite runs only the refusal
+paths, which is the deliberate default - those are the paths that matter in
+production, and they are never skipped.
+
+`test:webhooks` still runs the suite without reseeding first, exactly as it did
+before. It wants a fresh seed to pass cleanly.
+
+### A bug in the wrapper, found by testing it properly
+
+The first version passed the command as an argument array alongside
+`shell: true`. Node concatenates those without escaping and warns about it
+(DEP0190), so any argument containing a space was mangled - which surfaced the
+moment a smoke test used `node -e "console.log(...)"`. The command now goes to
+the shell as a single pre-quoted string. **`cheap-hashing.mjs` shipped with this
+same defect** in the previous commit; its own usage never passes a quoted
+argument, so it worked, but it was one call away from not.
+
+Exit-code propagation is now checked rather than assumed: child 7 gives wrapper
+7, child 0 gives wrapper 0. npm chains on those, so a wrapper that swallowed a
+failure would turn a red suite green.
+
+### Verified
+
+Against a server started with `npm run dev:webhooks`: an unsigned callback is
+refused 401, a wrongly signed one 401, and a correctly signed one is accepted
+200. `npm run test:webhooks` then runs **608/608**, nine checks more than the
+599 of a plain run, which are the signed paths that cannot execute without a
+secret on both sides.
+
+One plain run in the same session came back 598/599 and did not reproduce on a
+repeat. That is the low-rate intermittent failure noted earlier in this
+document, still not root-caused, and unrelated to this change.
