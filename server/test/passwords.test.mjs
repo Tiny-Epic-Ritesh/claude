@@ -20,7 +20,7 @@
 
 import { strict as assert } from 'node:assert';
 import { scryptSync, randomBytes } from 'node:crypto';
-import { hashPassword, hashPasswordSync, verifyPassword } from '../src/security.js';
+import { hashPassword, hashPasswordSync, verifyPassword, scryptPolicy } from '../src/security.js';
 import { login } from '../src/auth.js';
 import { one, run } from '../src/db.js';
 
@@ -32,8 +32,14 @@ const test = async (name, fn) => {
        ${err.message}`); }
 };
 
-/** A hash in the format the app stored before the cost was raised. */
-const legacyHash = (plain, { N = 16384, r = 8, p = 1, keylen = 64 } = {}) => {
+/* The cost these tests must agree with, which CRM_SCRYPT_N can lower for a
+   cheap suite run. Hardcoding it would make every assertion below a statement
+   about one configuration rather than about the code. */
+const POLICY = scryptPolicy();
+const WEAK_N = Math.max(1024, POLICY.N / 8);
+
+/** A hash made under weaker parameters than policy, as an older row would be. */
+const legacyHash = (plain, { N = WEAK_N, r = 8, p = 1, keylen = 64 } = {}) => {
   const salt = randomBytes(16);
   const hash = scryptSync(String(plain), salt, keylen, { N, r, p, maxmem: 256 * 1024 * 1024 });
   return `scrypt$${N}$${r}$${p}$${salt.toString('hex')}$${hash.toString('hex')}`;
@@ -106,9 +112,21 @@ console.log('\nCost — raising it, and carrying old rows forward');
 
 await test('new hashes are written at the current parameters', async () => {
   const [, n, r, p] = (await hashPassword('bonanza')).split('$');
-  assert.equal(n, '131072', 'N is not the OWASP floor');
+  assert.equal(Number(n), POLICY.N, 'hashes are not written at the configured cost');
   assert.equal(r, '8');
   assert.equal(p, '1');
+});
+
+await test('the default cost is the OWASP floor', async () => {
+  // The one number here that must not follow the configuration, since the
+  // configuration is exactly what could quietly lower it.
+  assert.equal(POLICY.default_N, 131072, 'the default N is no longer the OWASP floor');
+  assert.equal(POLICY.r, 8);
+  assert.equal(POLICY.p, 1);
+  assert.equal(POLICY.keylen, 64);
+  // 128*N*r has to fit, or nothing verifies at all.
+  assert.ok(POLICY.maxmem >= 128 * POLICY.default_N * POLICY.r,
+    'maxmem is below what a default-cost hash needs, so those rows cannot be verified');
 });
 
 await test('a hash made at the old cost still verifies', async () => {
@@ -129,9 +147,9 @@ await test('a hash at the current cost does not', async () => {
 });
 
 await test('every weaker parameter counts, not just N', async () => {
-  for (const weaker of [{ N: 16384 }, { r: 4 }, { keylen: 32 }]) {
+  for (const weaker of [{ N: WEAK_N }, { r: 4 }, { keylen: 32 }]) {
     // eslint-disable-next-line no-await-in-loop
-    const { ok, needsRehash } = await verifyPassword('bonanza', legacyHash('bonanza', { N: 131072, ...weaker }));
+    const { ok, needsRehash } = await verifyPassword('bonanza', legacyHash('bonanza', { N: POLICY.N, ...weaker }));
     assert.equal(ok, true, `${JSON.stringify(weaker)} did not verify`);
     assert.equal(needsRehash, true, `${JSON.stringify(weaker)} was not flagged for upgrade`);
   }
@@ -151,7 +169,7 @@ await test('a stronger stored hash is left alone', async () => {
   // a stronger N here would exceed MAXMEM and fail to verify at all.
   for (const stronger of [{ p: 2 }, { keylen: 128 }]) {
     // eslint-disable-next-line no-await-in-loop
-    const { ok, needsRehash } = await verifyPassword('bonanza', legacyHash('bonanza', { N: 131072, ...stronger }));
+    const { ok, needsRehash } = await verifyPassword('bonanza', legacyHash('bonanza', { N: POLICY.N, ...stronger }));
     assert.equal(ok, true, `${JSON.stringify(stronger)} did not verify`);
     assert.equal(needsRehash, false, `${JSON.stringify(stronger)} was downgraded`);
   }
@@ -170,13 +188,13 @@ await test('signing in upgrades a hash stored at the old cost', async () => {
 
   try {
     const before = stored();
-    assert.ok(before.startsWith('scrypt$16384$'), 'the probe did not start at the old cost');
+    assert.ok(before.startsWith(`scrypt$${WEAK_N}$`), 'the probe did not start below policy');
 
     const result = await login(email, 'bonanza');
     assert.ok(result?.token, 'the sign-in that should have triggered the upgrade failed');
 
     const after = stored();
-    assert.ok(after.startsWith('scrypt$131072$'), `still at the old cost: ${after.slice(0, 24)}`);
+    assert.ok(after.startsWith(`scrypt$${POLICY.N}$`), `still at the old cost: ${after.slice(0, 24)}`);
     assert.equal((await verifyPassword('bonanza', after)).ok, true,
       'the upgraded row stopped accepting the password');
 

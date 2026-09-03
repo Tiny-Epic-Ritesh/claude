@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 
 import { attachSession, login, partnerLogin, logout, publicUser, publicPartner } from './auth.js';
-import { rateLimiter, usingDevKey } from './security.js';
+import { rateLimiter, usingDevKey, usingReducedCost, scryptPolicy } from './security.js';
 import { ROLE_LABELS, one, run, audit } from './db.js';
 import { hashPassword } from './security.js';
 
@@ -491,5 +491,9 @@ app.listen(PORT, () => {
   console.log(`[server] Bonanza CRM API on http://localhost:${PORT}`);
   if (usingDevKey()) {
     console.warn('[security] CRM_MASTER_KEY is unset — using the development key. Encrypted fields are NOT protected. Set it before any pilot.');
+  }
+  if (usingReducedCost()) {
+    const { N, default_N: floor } = scryptPolicy();
+    console.warn(`[security] CRM_SCRYPT_N=${N} — passwords are being hashed below the ${floor} floor. For test runs only; unset it before any pilot.`);
   }
 });

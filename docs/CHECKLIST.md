@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,146** — 599 end-to-end and 547 unit. All green.
+**Tests: 1,147** — 599 end-to-end and 548 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -1625,7 +1625,61 @@ rows.
 ### The cost
 
 The full suite went from about 50s to about 170s, e2e alone from 34s to 92s,
-because the tests sign in constantly and each sign-in is now real work. Nothing
-was done about that. Making the cost configurable would fix it and would also
-be a way to run production weak by accident, so it should be a deliberate
-decision rather than a convenience.
+because the tests sign in constantly and each sign-in is now real work. That was
+then made configurable - see the section below, including what stops the knob
+from being left on in production.
+
+---
+
+## The hashing cost is configurable for test runs - 3 Sep 2026
+
+`CRM_SCRYPT_N` lowers N below the OWASP floor. It exists because the suite signs
+in constantly and each sign-in at full cost is about 600ms of real work, which
+took a run from roughly 50s to roughly 170s.
+
+```
+npm run dev:cheap-hashing     # the server
+npm run test:cheap-hashing    # the suite
+```
+
+Measured: 2m50s at the default cost, 1m09s under the knob, both 599/599. The
+password unit file alone goes from 34.7s to 3.6s.
+
+### Both halves, or it is worse than doing nothing
+
+The scripts must be used together. The e2e suite talks to a long-lived server
+that the developer starts separately, so if only the tests run cheap, every
+sign-in verifies a cheap hash and then **rehashes it back up** to the server's
+full cost - slower than not bothering, and quietly so. The wrapper says this on
+every run.
+
+### Guarding a setting that makes things cheap
+
+A setting that makes things cheap is a setting somebody leaves on, so it is
+refused rather than tolerated:
+
+- **Refused in production.** With `NODE_ENV=production` the process will not
+  start. Same rule and same reason as the development master key.
+- **Validated.** scrypt needs N to be a power of two, and an invalid value makes
+  every call throw - which `verifyPassword` catches and reports as a wrong
+  password. A typo would look like every account in the system having the wrong
+  credentials, so it refuses to start instead.
+- **Announced.** The server logs a warning naming the value and the floor it is
+  below, next to the development-key warning.
+
+### A wrapper script rather than inline env vars
+
+`node scripts/cheap-hashing.mjs npm test`, because npm runs scripts through cmd
+on Windows, where `CRM_SCRYPT_N=16384 npm test` is not an assignment but a
+command it cannot find. **The existing `dev:webhooks` and `test:webhooks`
+scripts are written that way and do not work on this machine** - noticed while
+doing this, not fixed.
+
+### What the tests assert now
+
+`passwords.test.mjs` reads the configured policy through `scryptPolicy()`
+instead of hardcoding numbers, so the same 18 cases hold at either cost. The one
+number that does not follow the configuration is the floor itself: a test
+asserts `default_N` is still 2^17, since the configuration is exactly what could
+quietly lower it, and that `maxmem` is large enough for a default-cost hash,
+since if it were not, those rows could not be verified at all.

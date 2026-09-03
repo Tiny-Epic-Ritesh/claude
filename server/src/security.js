@@ -62,7 +62,8 @@ export const generateMasterKey = () => randomBytes(32).toString('hex');
 /* -------------------------------------------------------------- passwords */
 
 /**
- * Cost parameters. N=2^17 with r=8 and p=1 is the OWASP floor for scrypt.
+ * Cost parameters. N=2^17 with r=8 and p=1 is the OWASP floor for scrypt, and
+ * the default; see configuredN below for the one way it is allowed to differ.
  *
  * Two things follow from raising N that are easy to get wrong. Memory is
  * 128*N*r, so 128 MiB per call, and Node caps that at 32 MiB unless `maxmem`
@@ -77,8 +78,43 @@ export const generateMasterKey = () => randomBytes(32).toString('hex');
  * `maxmem` is also the ceiling on what a stored hash can ask us to allocate,
  * since the N in the row decides the work, not the N here.
  */
-const SCRYPT = { N: 131072, r: 8, p: 1, keylen: 64 };
+const DEFAULT_N = 131072;
 const MAXMEM = 256 * 1024 * 1024;
+
+/**
+ * The OWASP floor, unless CRM_SCRYPT_N lowers it.
+ *
+ * The knob exists because the test suite signs in constantly and each sign-in
+ * is otherwise 600ms of real work, which took the suite from about 50s to about
+ * 170s. It is a convenience with an obvious failure mode: a setting that makes
+ * things cheap is a setting somebody leaves on. So it is refused outright in
+ * production, by the same rule and for the same reason as the development
+ * master key above, rather than warned about and tolerated.
+ *
+ * Validated rather than trusted. scrypt requires N to be a power of two, and an
+ * invalid one makes every call throw -- which `verifyPassword` catches and
+ * reports as a wrong password, so a typo here would look like every account in
+ * the system having the wrong credentials. Better to refuse to start.
+ */
+function configuredN() {
+  const raw = process.env.CRM_SCRYPT_N;
+  if (!raw) return DEFAULT_N;
+
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('CRM_SCRYPT_N must not be set in production - refusing to start with a reduced password cost');
+  }
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1024 || (n & (n - 1)) !== 0) {
+    throw new Error(`CRM_SCRYPT_N must be a power of two of at least 1024, not ${JSON.stringify(raw)}`);
+  }
+  return n;
+}
+
+const SCRYPT = { N: configuredN(), r: 8, p: 1, keylen: 64 };
+
+/** What we are actually hashing at, and the floor we would hash at untold. */
+export const scryptPolicy = () => ({ ...SCRYPT, maxmem: MAXMEM, default_N: DEFAULT_N });
+export const usingReducedCost = () => SCRYPT.N < DEFAULT_N;
 
 const scryptAsync = promisify(scrypt);
 
