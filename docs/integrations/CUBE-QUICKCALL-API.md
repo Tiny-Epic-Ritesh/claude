@@ -6,13 +6,17 @@ the spec was read from the rendered page. Title reported as *CUBE Telephony API*
 
 **Servers**
 
-| | |
-|---|---|
-| Production | `https://raphsody.in` |
-| UAT | `https://uat-raphsody.in` |
+| | | |
+|---|---|---|
+| Production | `https://raphsody.in` | resolves, 203.95.216.59, answers 200 |
+| UAT | `https://uat-raphsody.in` | **does not resolve** — see 3 Sep 2026 below |
 
-A UAT server exists, which means the integration can be built and exercised
-end-to-end without touching production dialer traffic. That is worth using.
+**Read the 3 Sep note before trusting either row.** Neither hostname serves the
+endpoints below at its root: `AuthClick2Call` is 404 on every prefix we could
+find. A UAT server being listed here is what made it look like the integration
+could be exercised end-to-end without touching production dialler traffic —
+which is still what we want, and still what we do not have a reachable address
+for.
 
 ---
 
@@ -258,6 +262,55 @@ a broker at nine in the morning.
 Everything below therefore remains unverified against a live switch:
 questions 4 and 5, the duration units, the `CallBackDateTime` timezone, and
 whether `AuthFreeMe` accepts our disposition codes.
+
+### Traced 3 Sep 2026: the UAT hostname is wrong, and the popup is a different service
+
+Ritesh logged into the live agent popup and asked whether that helped. It did,
+though not in the way either of us expected: it did not yield the API base, it
+proved that two of our assumptions were wrong.
+
+**The agent popup runs on `cubehosted.net`, not `raphsody.in`.** The tab is
+`https://cubehosted.net/cube/`, which resolves to 164.52.198.147 and answers 200
+from our server. `raphsody.in` is a *separate* host at 203.95.216.59. The
+`uat-raphsody.in` recorded in the table at the top of this document — taken from
+the vendor's own Swagger portal — resolves to nothing at all.
+
+**The popup and the integration API are not the same application.** The popup's
+bundle (`cubehosted.net/cube/build/main.js`, v7.2.4.5) contains **zero**
+occurrences of `AuthClick2Call`, `AuthFreeMe`, `AuthDisposition` or `Click2Call`.
+It drives the agent over a socket.io channel at `/cubeqcsv3/` instead. So an
+authenticated agent session tells us nothing about where the REST API lives, and
+a browser cookie would not have transferred to our server in any case.
+
+What the bundle *does* compile in are these application bases, which are real:
+
+| Base | Status from our server |
+|---|---|
+| `https://raphsody.in/QuickCallRaphsody3/` | 403 — exists, listing denied |
+| `https://raphsody.in/QuickCallRaphsody/` | 403 — exists, listing denied |
+| `https://cubesoftservices.com/QuickCallAdmin_InhouseAPI/` | 404 |
+| `https://cubehosted.net/cubeqcsv3/` | 400 — socket.io rejecting a bare handshake |
+
+`AuthClick2Call` is **not** under any of them (404 on all four). The REST API is
+a deployment we cannot locate by guessing, and further probing would just be
+knocking on a vendor's production host, so that stopped here.
+
+**The settings file is encrypted.** `cube/assets/settings/settings.json` returns
+`{"encryptedSettings":"<iv>:<ciphertext>"}`, and the app decrypts it at runtime
+without leaving the result on any reachable global — checked. The base URL is
+not readable from the client.
+
+**What actually answers this:** the Swagger portal, which redirects to a login at
+`https://raphsody.in/cubeapidocs/auth/login.aspx` and which Ritesh already has
+access to — it is where the `uat-raphsody.in` in our table came from on 31 Aug.
+Standard Swagger UI prints the server base above the endpoint list. **One look at
+that line settles it**, where nothing we can do from outside will.
+
+Until then `CUBE_QUICKCALL_URL` stays empty and the adapter stays simulated. The
+default in `src/vendors/config.js` is still `https://uat-raphsody.in`, which we
+now know is a hostname that does not exist; it is left in place only because it
+is what the vendor published, and changing it to another guess would trade a
+documented wrong value for an undocumented one.
 
 ### Answered 3 Sep 2026: our rows carry Cube's name, and a campaign is per team
 
