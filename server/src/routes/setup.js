@@ -302,7 +302,7 @@ router.get('/users', requirePermission('admin.users'), (req, res) => {
   res.json({ users: rows, total: rows.length, active: rows.filter((u) => u.active).length });
 });
 
-router.post('/users', requirePermission('admin.users'), (req, res) => {
+router.post('/users', requirePermission('admin.users'), async (req, res) => {
   const {
     name, email, role, password, sales_org: org, org_access: orgAccess,
     manager_id: managerId, product_type_id: productTypeId,
@@ -349,7 +349,7 @@ router.post('/users', requirePermission('admin.users'), (req, res) => {
                         sales_org, org_access, employee_code, branch, phone_extension, whatsapp, active)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)`,
     [
-      name, email, hashPassword(initial), role, productTypeId ?? null, managerId ?? null,
+      name, email, await hashPassword(initial), role, productTypeId ?? null, managerId ?? null,
       phone ?? null, targetOrg, access, employeeCode ?? null, branch ?? null, ext ?? null, whatsapp ?? null,
     ],
   );
@@ -364,7 +364,7 @@ router.post('/users', requirePermission('admin.users'), (req, res) => {
   });
 });
 
-router.patch('/users/:id', requirePermission('admin.users'), (req, res) => {
+router.patch('/users/:id', requirePermission('admin.users'), async (req, res) => {
   const user = one('SELECT * FROM users WHERE id = ?', [req.params.id]);
   if (!user) return res.status(404).json({ error: 'User not found' });
   if (!mayUseOrg(req.user, user.sales_org)) return res.status(403).json({ error: 'That user is outside your sales org' });
@@ -409,7 +409,7 @@ router.patch('/users/:id', requirePermission('admin.users'), (req, res) => {
     if (String(password).length < 8) {
       return res.status(400).json({ error: 'Password must be at least 8 characters', field: 'password' });
     }
-    run('UPDATE users SET password = ? WHERE id = ?', [hashPassword(String(password)), user.id]);
+    run('UPDATE users SET password = ? WHERE id = ?', [await hashPassword(String(password)), user.id]);
     run("DELETE FROM sessions WHERE user_id = ?", [user.id]);   // force re-auth everywhere
     audit(req.user.id, 'user_password_reset', 'user', user.id, {});
   }

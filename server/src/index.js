@@ -151,14 +151,14 @@ app.use('/api', (_req, res, next) => {
 
 app.use('/api', accessLog);
 
-app.post('/api/auth/login', loginLimiter, (req, res) => {
-  const result = login(req.body.email, req.body.password);
+app.post('/api/auth/login', loginLimiter, async (req, res) => {
+  const result = await login(req.body.email, req.body.password);
   if (!result) return res.status(401).json({ error: 'Email or password is incorrect' });
   res.json(result);
 });
 
-app.post('/api/auth/partner-login', loginLimiter, (req, res) => {
-  const result = partnerLogin(req.body.email, req.body.password);
+app.post('/api/auth/partner-login', loginLimiter, async (req, res) => {
+  const result = await partnerLogin(req.body.email, req.body.password);
   if (!result) return res.status(401).json({ error: 'Email or password is incorrect' });
   if (result.blocked) return res.status(403).json({ error: `Your partner account is ${result.blocked.toLowerCase()}. Contact your Partner RM.` });
   res.json(result);
@@ -178,7 +178,7 @@ app.use(attachSession);
  * "never existed" from "already used" tells somebody probing which of the two
  * they found.
  */
-app.post('/api/auth/reset/:token', (req, res) => {
+app.post('/api/auth/reset/:token', async (req, res) => {
   const row = one(
     `SELECT * FROM password_reset
      WHERE token = ? AND used_at IS NULL AND expires_at > datetime('now')`,
@@ -198,7 +198,7 @@ app.post('/api/auth/reset/:token', (req, res) => {
     return res.status(400).json({ error: 'That link is no longer valid. Ask for a new one.' });
   }
 
-  run('UPDATE users SET password = ? WHERE id = ?', [hashPassword(password), user.id]);
+  run('UPDATE users SET password = ? WHERE id = ?', [await hashPassword(password), user.id]);
   run("UPDATE password_reset SET used_at = datetime('now') WHERE token = ?", [row.token]);
   /* Every existing session ends. Resetting a password because it may be known
      to somebody else and leaving their session alive achieves nothing. */

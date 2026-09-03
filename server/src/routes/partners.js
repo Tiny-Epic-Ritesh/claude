@@ -437,7 +437,7 @@ router.post('/:id/request-elevation', requirePermission('partner.elevate.request
   res.json({ requested: true });
 });
 
-router.post('/:id/elevate', requirePermission('partner.elevate'), (req, res) => {
+router.post('/:id/elevate', requirePermission('partner.elevate'), async (req, res) => {
   /* The book before the state, or the refusal tells the other book what state
      its partner is in while declining to change it. */
   const found = loadPartner(req);
@@ -449,7 +449,7 @@ router.post('/:id/elevate', requirePermission('partner.elevate'), (req, res) => 
   const password = req.body.portal_password || `partner${partner.id}`;
 
   run("UPDATE partners SET state_code = 'ACTIVE', partner_code = ?, onboarded_at = datetime('now'), portal_password = ? WHERE id = ?",
-    [code, hashPassword(password), req.params.id]);
+    [code, await hashPassword(password), req.params.id]);
   run('INSERT INTO activities (partner_id, type, direction, subject, body, user_id) VALUES (?,?,?,?,?,?)', [
     req.params.id, 'Partner Activity', 'system', 'Elevated to Partner entity',
     `Partner code ${code} issued. Portal access enabled.`, req.user.id,

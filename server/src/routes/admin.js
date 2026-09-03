@@ -42,7 +42,7 @@ router.get('/users', requirePermission('admin.users'), (_req, res) => {
     ORDER BY u.role, u.name`).map(({ password, ...u }) => u));
 });
 
-router.post('/users', requirePermission('admin.users'), (req, res) => {
+router.post('/users', requirePermission('admin.users'), async (req, res) => {
   const { name, email, password, role, product_type_id, manager_id, phone } = req.body;
   if (!name?.trim() || !email?.trim()) return res.status(400).json({ error: 'Name and email are required' });
   if (!ROLES.includes(role)) return res.status(400).json({ error: `Role must be one of: ${ROLES.join(', ')}` });
@@ -50,13 +50,13 @@ router.post('/users', requirePermission('admin.users'), (req, res) => {
 
   const result = run(
     'INSERT INTO users (name, email, password, role, product_type_id, manager_id, phone) VALUES (?,?,?,?,?,?,?)',
-    [name, email, hashPassword(password || 'demo1234'), role, product_type_id || null, manager_id || null, phone || null],
+    [name, email, await hashPassword(password || 'demo1234'), role, product_type_id || null, manager_id || null, phone || null],
   );
   audit(req.user.id, 'user_created', 'user', Number(result.lastInsertRowid), { role });
   res.status(201).json({ id: Number(result.lastInsertRowid) });
 });
 
-router.patch('/users/:id', requirePermission('admin.users'), (req, res) => {
+router.patch('/users/:id', requirePermission('admin.users'), async (req, res) => {
   const fields = ['name', 'email', 'role', 'product_type_id', 'manager_id', 'phone', 'active', 'password'];
   const sets = [];
   const params = [];
@@ -68,7 +68,7 @@ router.patch('/users/:id', requirePermission('admin.users'), (req, res) => {
       const next = String(req.body.password).trim();
       if (!next) continue;
       sets.push('password = ?');
-      params.push(hashPassword(next));
+      params.push(await hashPassword(next));
       continue;
     }
     sets.push(`${f} = ?`);

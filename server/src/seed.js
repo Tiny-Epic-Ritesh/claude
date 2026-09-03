@@ -21,7 +21,7 @@ import { createFollowUp } from './engine/followups.js';
 import { DEFAULT_SLA } from './engine/sla.js';
 import { ticketSummary } from './ai/mock.js';
 import { convertLead } from './engine/clients.js';
-import { hashPassword, encryptField } from './security.js';
+import { hashPasswordSync, encryptField } from './security.js';
 
 const ago = (d, h = 0) => new Date(Date.now() - d * 864e5 - h * 36e5).toISOString().slice(0, 19).replace('T', ' ');
 const ahead = (d, h = 0) => new Date(Date.now() + d * 864e5 + h * 36e5).toISOString().slice(0, 19).replace('T', ' ');
@@ -270,7 +270,7 @@ const addUser = (key, name, email, role, extra = {}) => {
                         sales_org, org_access, employee_code, branch, avatar_hue)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
-      name, email, hashPassword('bonanza'), role,
+      name, email, hashPasswordSync('bonanza'), role,
       extra.product_type_id ?? null, extra.manager_id ?? null, extra.phone ?? null,
       org,
       extra.orgs ? JSON.stringify(extra.orgs) : null,
@@ -495,7 +495,7 @@ PARTNERS.forEach(([name, business, model, state, city, st, pan, sebi, stepsDone,
       `98${String(20000000 + idx * 111111).slice(0, 8)}`,
       `${name.split(' ')[0].toLowerCase()}@partner.test`,
       city, st, encryptField(pan), sebi, U.partner_rm, [40, 30, 35, 25, 20, 40, 35, 30][idx] ?? 30,
-      isActive || state === 'SUSPENDED' ? hashPassword('partner') : null,
+      isActive || state === 'SUSPENDED' ? hashPasswordSync('partner') : null,
       isActive || state === 'SUSPENDED' ? ago(120 - idx * 10) : null,
       ago(200 - idx * 25)],
   );

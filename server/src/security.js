@@ -33,9 +33,10 @@
  */
 
 import {
-  randomBytes, scryptSync, timingSafeEqual, createCipheriv,
+  randomBytes, scrypt, scryptSync, timingSafeEqual, createCipheriv,
   createDecipheriv, createHmac, randomUUID,
 } from 'node:crypto';
+import { promisify } from 'node:util';
 
 /* ------------------------------------------------------------------ keys */
 
@@ -60,17 +61,65 @@ export const generateMasterKey = () => randomBytes(32).toString('hex');
 
 /* -------------------------------------------------------------- passwords */
 
-const SCRYPT = { N: 16384, r: 8, p: 1, keylen: 64 };
+/**
+ * Cost parameters. N=2^17 with r=8 and p=1 is the OWASP floor for scrypt.
+ *
+ * Two things follow from raising N that are easy to get wrong. Memory is
+ * 128*N*r, so 128 MiB per call, and Node caps that at 32 MiB unless `maxmem`
+ * says otherwise -- without it every call throws
+ * ERR_CRYPTO_INVALID_SCRYPT_PARAMS, which `verifyPassword` would report as a
+ * failed sign-in rather than as a fault. And one hash is roughly 600ms of
+ * arithmetic, so `scryptSync` would hold the event loop for that long and make
+ * every other request in flight wait; the async form runs on the libuv pool
+ * instead. The sync variant below is kept only for the callers where nothing is
+ * waiting on the loop.
+ *
+ * `maxmem` is also the ceiling on what a stored hash can ask us to allocate,
+ * since the N in the row decides the work, not the N here.
+ */
+const SCRYPT = { N: 131072, r: 8, p: 1, keylen: 64 };
+const MAXMEM = 256 * 1024 * 1024;
 
-/** Returns `scrypt$N$r$p$salt$hash`. */
-export function hashPassword(plain) {
+const scryptAsync = promisify(scrypt);
+
+const options = ({ N, r, p }) => ({ N, r, p, maxmem: MAXMEM });
+const encode = (salt, hash) => `scrypt$${SCRYPT.N}$${SCRYPT.r}$${SCRYPT.p}$${salt.toString('hex')}$${hash.toString('hex')}`;
+
+/** Returns `scrypt$N$r$p$salt$hash`. Off the event loop. */
+export async function hashPassword(plain) {
   const salt = randomBytes(16);
-  const hash = scryptSync(String(plain), salt, SCRYPT.keylen, { N: SCRYPT.N, r: SCRYPT.r, p: SCRYPT.p });
-  return `scrypt$${SCRYPT.N}$${SCRYPT.r}$${SCRYPT.p}$${salt.toString('hex')}$${hash.toString('hex')}`;
+  return encode(salt, await scryptAsync(String(plain), salt, SCRYPT.keylen, options(SCRYPT)));
 }
 
 /**
- * Constant-time verify. Returns { ok }.
+ * The same, blocking.
+ *
+ * For the three callers where holding the event loop costs nothing and going
+ * async would cost something: the startup migration in db.js, which runs before
+ * the server listens and sits at module top level; the seed, which is a script;
+ * and `issuePortalCredential`, which runs inside the approvals engine's
+ * transaction, where an await would let another request's statements land
+ * between this BEGIN and its COMMIT. Everything reached by an HTTP request
+ * should use `hashPassword`.
+ */
+export function hashPasswordSync(plain) {
+  const salt = randomBytes(16);
+  return encode(salt, scryptSync(String(plain), salt, SCRYPT.keylen, options(SCRYPT)));
+}
+
+/** True when a stored hash was made under weaker parameters than we now demand. */
+const belowPolicy = (n, r, p, keylen) =>
+  n < SCRYPT.N || r < SCRYPT.r || p < SCRYPT.p || keylen < SCRYPT.keylen;
+
+/**
+ * Constant-time verify. Returns { ok, needsRehash }.
+ *
+ * `needsRehash` is true when the password was right but the stored hash was
+ * made under weaker parameters than SCRYPT now demands, so sign-in can upgrade
+ * it. That is the only moment an upgrade is possible: rehashing needs the
+ * plaintext, and the database deliberately does not have it. Rows therefore
+ * strengthen as their owners appear, and a dormant account keeps its old cost
+ * until someone signs in.
  *
  * Anything that is not an scrypt hash fails. Until September 2026 a stored
  * value not starting with `scrypt$` was compared as cleartext and flagged for
@@ -85,20 +134,26 @@ export function hashPassword(plain) {
  * account cannot sign in, and a lockout is the loud failure; quietly accepting
  * the plaintext is the one nobody notices.
  */
-export function verifyPassword(plain, stored) {
+export async function verifyPassword(plain, stored) {
   const value = String(stored ?? '');
-  if (!value.startsWith('scrypt$')) return { ok: false };
+  if (!value.startsWith('scrypt$')) return { ok: false, needsRehash: false };
 
   try {
     const [, n, r, p, saltHex, hashHex] = value.split('$');
     const expected = Buffer.from(hashHex, 'hex');
-    const actual = scryptSync(String(plain), Buffer.from(saltHex, 'hex'), expected.length,
-      { N: Number(n), r: Number(r), p: Number(p) });
+    // The row's own parameters, not ours: an old hash has to be checked the way
+    // it was made, which is the whole point of storing them alongside it.
+    const actual = await scryptAsync(String(plain), Buffer.from(saltHex, 'hex'), expected.length,
+      { N: Number(n), r: Number(r), p: Number(p), maxmem: MAXMEM });
     // A truncated hash would make two empty buffers compare equal.
-    return { ok: expected.length > 0 && actual.length === expected.length && timingSafeEqual(actual, expected) };
+    const ok = expected.length > 0 && actual.length === expected.length && timingSafeEqual(actual, expected);
+    // Only worth reporting when it is true, since an upgrade needs the verified
+    // plaintext and the caller only has that on a successful sign-in.
+    return { ok, needsRehash: ok && belowPolicy(Number(n), Number(r), Number(p), expected.length) };
   } catch {
-    // A malformed scrypt$ value: wrong field count, bad hex, unusable parameters.
-    return { ok: false };
+    // A malformed scrypt$ value: wrong field count, bad hex, unusable
+    // parameters, or one asking for more memory than MAXMEM allows.
+    return { ok: false, needsRehash: false };
   }
 }
 

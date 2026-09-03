@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,136** — 599 end-to-end and 537 unit. All green.
+**Tests: 1,146** — 599 end-to-end and 547 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -1552,3 +1552,80 @@ and both fail against the old code.
 stored value that matches the password typed at the sign-in box, since that is
 the case that used to succeed. The rest cover malformed `scrypt$` values, other
 hash formats, empty and null, and the per-row salt.
+
+---
+
+## scrypt raised to the OWASP floor, with upgrade on sign-in - 3 Sep 2026
+
+`SCRYPT` is now `N = 2^17, r = 8, p = 1, keylen = 64`, the OWASP minimum, up
+from `N = 2^14`. Two things about raising N are easy to get wrong and both would
+have shipped silently.
+
+**Memory.** scrypt needs `128 * N * r`, so 128 MiB per call, and Node caps that
+at 32 MiB unless `maxmem` says otherwise. Without it every call throws
+`ERR_CRYPTO_INVALID_SCRYPT_PARAMS` - and `verifyPassword` catches its own
+exceptions, so that would have surfaced as *every sign-in failing*, not as a
+fault anyone could read. `MAXMEM` is 256 MiB.
+
+It is also the ceiling on what a stored hash may ask us to allocate, since the N
+in the row decides the work, not the N in the constant. That bounds a corrupt
+row, and it means **raising `SCRYPT.N` again requires raising `MAXMEM` first**,
+or existing rows stop verifying and their owners are locked out.
+
+**Blocking.** One hash is roughly 600ms of arithmetic, and `scryptSync` holds
+the event loop for all of it, so every other request in flight would have waited
+behind each sign-in. Verification moved to the async `scrypt`, which runs on the
+libuv pool.
+
+Measured, four concurrent sign-ins against `/api/health`:
+
+| | median | max |
+|---|---|---|
+| health while idle | 8 ms | 197 ms |
+| health during four concurrent logins | 10 ms | 36 ms |
+
+The four logins took 2.5s of real work between them and cost the rest of the
+server nothing.
+
+### Why a sync variant still exists
+
+`hashPasswordSync` is kept for the three callers where holding the loop costs
+nothing and going async would cost something:
+
+- the startup migration in `db.js`, which sits at module top level and runs
+  before the server listens;
+- `seed.js`, which is a script;
+- `issuePortalCredential`, which runs inside the approvals engine's
+  transaction, where an `await` would let another request's statements land
+  between the `BEGIN` and its `COMMIT`.
+
+Everything reached by an HTTP request uses the async `hashPassword`: both login
+paths, the admin and setup user routes, the password reset, and partner
+elevation.
+
+### needsRehash, meaning something different this time
+
+It was removed a few hours earlier because its only trigger was the cleartext
+branch. It is back with the meaning it should always have had: the password was
+right, but the stored hash was made under weaker parameters than policy now
+demands. Any of N, r, p or key length being lower counts; a stronger stored hash
+is left alone, so lowering policy never quietly downgrades a row.
+
+It is reported only when verification succeeded. An upgrade needs the verified
+plaintext, and sign-in is the only moment it exists - which is why there is no
+migration for this the way there was for the cleartext rows. Rows strengthen as
+their owners appear, and a dormant account keeps its old cost until someone
+signs in.
+
+Confirmed live rather than only in tests: after signing in as one user and one
+partner, the database held 27 users at `scrypt$16384` and 1 at `scrypt$131072`,
+5 partners at the old cost and 1 at the new, and three `password_rehashed` audit
+rows.
+
+### The cost
+
+The full suite went from about 50s to about 170s, e2e alone from 34s to 92s,
+because the tests sign in constantly and each sign-in is now real work. Nothing
+was done about that. Making the cost configurable would fix it and would also
+be a way to run production weak by accident, so it should be a deliberate
+decision rather than a convenience.

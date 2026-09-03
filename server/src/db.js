@@ -7,7 +7,7 @@
 
 import { DatabaseSync } from 'node:sqlite';
 import { actingActor } from './engine/reqcontext.js';
-import { hashPassword } from './security.js';
+import { hashPasswordSync } from './security.js';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1967,7 +1967,7 @@ for (const [table, column] of [['users', 'password'], ['partners', 'portal_passw
   ).all();
   if (!stale.length) continue;
   const write = db.prepare(`UPDATE "${table}" SET "${column}" = ? WHERE id = ?`);
-  for (const row of stale) write.run(hashPassword(String(row.secret)), row.id);
+  for (const row of stale) write.run(hashPasswordSync(String(row.secret)), row.id);
   console.log(`[db] hashed ${stale.length} cleartext ${table}.${column} value(s)`);
 }
 

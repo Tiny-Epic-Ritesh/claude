@@ -19,7 +19,7 @@ import {
   seedAccessModel, roleCapabilities, effectiveCapabilities, dataScope,
 } from './engine/access.js';
 import {
-  verifyPassword, newSessionToken,
+  hashPassword, verifyPassword, newSessionToken,
   SESSION_TTL_HOURS, SESSION_IDLE_MINUTES,
 } from './security.js';
 
@@ -181,14 +181,28 @@ export const permissionsFor = (userOrRole) => {
 
 /* ------------------------------------------------------------- sessions */
 
-export function login(email, password) {
+export async function login(email, password) {
   const user = one('SELECT * FROM users WHERE lower(email) = lower(?) AND active = 1', [email]);
   if (!user) return null;
 
-  const { ok } = verifyPassword(password, user.password);
+  const { ok, needsRehash } = await verifyPassword(password, user.password);
   if (!ok) {
     audit(null, 'login_failed', 'user', user.id, { email });
     return null;
+  }
+
+  /* Upgrade a hash made under weaker parameters, now that the plaintext has
+     been verified and is briefly in hand. Sign-in is the only place this can
+     happen, so rows strengthen as their owners appear rather than all at once.
+     A failure here must not cost anyone their session: the old hash still
+     verifies, so log it and carry on. */
+  if (needsRehash) {
+    try {
+      run('UPDATE users SET password = ? WHERE id = ?', [await hashPassword(password), user.id]);
+      audit(user.id, 'password_rehashed', 'user', user.id, {});
+    } catch (err) {
+      console.warn('[auth] could not upgrade a stored password:', err.message);
+    }
   }
 
   const token = newSessionToken();
@@ -200,14 +214,22 @@ export function login(email, password) {
   return { token, user: publicUser(user), expires_in_hours: SESSION_TTL_HOURS };
 }
 
-export function partnerLogin(email, password) {
+export async function partnerLogin(email, password) {
   const partner = one('SELECT * FROM partners WHERE lower(email) = lower(?)', [email]);
   if (!partner || !partner.portal_password) return null;
 
-  const { ok } = verifyPassword(password, partner.portal_password);
+  const { ok, needsRehash } = await verifyPassword(password, partner.portal_password);
   if (!ok) {
     audit(null, 'partner_login_failed', 'partner', partner.id, { email });
     return null;
+  }
+
+  if (needsRehash) {
+    try {
+      run('UPDATE partners SET portal_password = ? WHERE id = ?', [await hashPassword(password), partner.id]);
+    } catch (err) {
+      console.warn('[auth] could not upgrade a stored portal password:', err.message);
+    }
   }
   if (!['ACTIVE', 'ONBOARDING'].includes(partner.state_code)) return { blocked: partner.state_code };
 

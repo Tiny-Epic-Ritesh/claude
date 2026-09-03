@@ -9,7 +9,7 @@
  */
 
 import { one, run, audit, notify } from '../db.js';
-import { hashPassword } from '../security.js';
+import { hashPasswordSync } from '../security.js';
 import { send } from '../integrations.js';
 
 /** The partner code. Stable and derived, so it never collides or renumbers. */
@@ -23,7 +23,7 @@ export const newPartnerCode = (partner) => `BNZ-P${String(partner.id).padStart(4
  */
 export function issuePortalCredential(partner, plaintext = null) {
   const password = plaintext || `partner${partner.id}`;
-  run('UPDATE partners SET portal_password = ? WHERE id = ?', [hashPassword(password), partner.id]);
+  run('UPDATE partners SET portal_password = ? WHERE id = ?', [hashPasswordSync(password), partner.id]);
 
   const code = newPartnerCode(partner);
   run(
