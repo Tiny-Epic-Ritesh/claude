@@ -11,12 +11,14 @@ the spec was read from the rendered page. Title reported as *CUBE Telephony API*
 | Production | `https://raphsody.in` | resolves, 203.95.216.59, answers 200 |
 | UAT | `https://uat-raphsody.in` | **does not resolve** — see 3 Sep 2026 below |
 
-**Read the 3 Sep note before trusting either row.** Neither hostname serves the
-endpoints below at its root: `AuthClick2Call` is 404 on every prefix we could
-find. A UAT server being listed here is what made it look like the integration
-could be exercised end-to-end without touching production dialler traffic —
-which is still what we want, and still what we do not have a reachable address
-for.
+Every endpoint below is **relative to a server above plus the prefix
+`/QuickCall61AuthToken/`** — they are not at the server root. Confirmed against
+the portal and live against production on 3 Sep 2026.
+
+A UAT server is listed, which is what would let the integration be exercised
+end-to-end without touching production dialler traffic. That is still what we
+want and still what we cannot have: the hostname has no DNS record. See the
+3 Sep note below.
 
 ---
 
@@ -282,35 +284,62 @@ It drives the agent over a socket.io channel at `/cubeqcsv3/` instead. So an
 authenticated agent session tells us nothing about where the REST API lives, and
 a browser cookie would not have transferred to our server in any case.
 
-What the bundle *does* compile in are these application bases, which are real:
-
-| Base | Status from our server |
-|---|---|
-| `https://raphsody.in/QuickCallRaphsody3/` | 403 — exists, listing denied |
-| `https://raphsody.in/QuickCallRaphsody/` | 403 — exists, listing denied |
-| `https://cubesoftservices.com/QuickCallAdmin_InhouseAPI/` | 404 |
-| `https://cubehosted.net/cubeqcsv3/` | 400 — socket.io rejecting a bare handshake |
-
-`AuthClick2Call` is **not** under any of them (404 on all four). The REST API is
-a deployment we cannot locate by guessing, and further probing would just be
-knocking on a vendor's production host, so that stopped here.
+What the bundle *does* compile in are other application bases —
+`raphsody.in/QuickCallRaphsody3/`, `raphsody.in/QuickCallRaphsody/`,
+`cubesoftservices.com/QuickCallAdmin_InhouseAPI/` — none of which serve the
+integration endpoints.
 
 **The settings file is encrypted.** `cube/assets/settings/settings.json` returns
 `{"encryptedSettings":"<iv>:<ciphertext>"}`, and the app decrypts it at runtime
 without leaving the result on any reachable global — checked. The base URL is
 not readable from the client.
 
-**What actually answers this:** the Swagger portal, which redirects to a login at
-`https://raphsody.in/cubeapidocs/auth/login.aspx` and which Ritesh already has
-access to — it is where the `uat-raphsody.in` in our table came from on 31 Aug.
-Standard Swagger UI prints the server base above the endpoint list. **One look at
-that line settles it**, where nothing we can do from outside will.
+### Correction, same day: the endpoints were never missing
 
-Until then `CUBE_QUICKCALL_URL` stays empty and the adapter stays simulated. The
-default in `src/vendors/config.js` is still `https://uat-raphsody.in`, which we
-now know is a hostname that does not exist; it is left in place only because it
-is what the vendor published, and changing it to another guess would trade a
-documented wrong value for an undocumented one.
+An earlier revision of this section claimed `AuthClick2Call` was 404 everywhere
+and the REST API could not be located. That was wrong, and wrong in an
+embarrassing direction: it was probed against the *server root* while §2 of this
+very document had already recorded the path prefix on 31 August.
+
+Read from the Swagger portal on 3 Sep 2026, signed in via Google SSO, the
+servers block and prefix are:
+
+| | |
+|---|---|
+| Production | `https://raphsody.in` |
+| UAT | `https://uat-raphsody.in` |
+| Prefix for every secure endpoint | `/QuickCall61AuthToken/` |
+
+Verified live against production with a bodyless `POST`, which cannot place a
+call:
+
+| Endpoint | |
+|---|---|
+| `https://raphsody.in/QuickCall61AuthToken/AuthToken/` | **411 Length Required** |
+| `https://raphsody.in/QuickCall61AuthToken/AuthLogin/` | **411 Length Required** |
+| `https://raphsody.in/QuickCall61AuthToken/AuthClick2Call/` | **411 Length Required** |
+| `https://raphsody.in/QuickCall61AuthToken/AuthFreeMe/` | **411 Length Required** |
+
+411 is the server asking for a request body: the endpoints exist and are
+reachable from us. Every path in §2 is confirmed against the portal, and
+`src/vendors/quickcall.js` already builds all of them correctly.
+
+Two legacy PHP endpoints sit outside the prefix, as §2 records:
+`/QuickCallRaphsody/DisposeCall.php` and `/QuickCallRaphsody/Uploadlead61.php`.
+
+**UAT is still listed in the portal and still does not resolve** — `POST` to
+`uat-raphsody.in/QuickCall61AuthToken/AuthToken/` returns nothing at all, no DNS.
+That sharpens the ask to Cube from "what is the URL" to: *the UAT server you
+publish has no DNS record; give us a reachable one, or tell us it is retired.*
+
+**The default stays at UAT on purpose.** `config.js` defaults `baseUrl` to
+`https://uat-raphsody.in` so that "a misconfigured deployment should fail against
+the test switch, not ring a real client". That a dead hostname now backs that
+default makes it safer, not less safe, and it is not to be quietly repointed at
+production to make something work. Simulation is keyed on credentials
+(`simulating() = FORCE_SIMULATION || !cfg.configured`), not on the URL, so the
+adapter simulates while `CUBE_QUICKCALL_USER` and `CUBE_QUICKCALL_PASSWORD` are
+unset regardless of what `baseUrl` says.
 
 ### Answered 3 Sep 2026: our rows carry Cube's name, and a campaign is per team
 

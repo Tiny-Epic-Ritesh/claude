@@ -36,6 +36,13 @@ export const quickcall = {
    * https://uat-raphsody.in — both documented in the published specification.
    * Defaulted to UAT rather than production: a misconfigured deployment should
    * fail against the test switch, not ring a real client.
+   *
+   * As of 3 Sep 2026 `uat-raphsody.in` has no DNS record, while the portal still
+   * lists it. That makes this default fail closed rather than merely cautious,
+   * which is a property worth keeping: do NOT repoint it at production to get
+   * something working. Production dials real numbers, and our seeded leads carry
+   * plausible real Indian mobiles. Set CUBE_QUICKCALL_URL explicitly instead,
+   * and only for a deployment meant to place live calls.
    */
   baseUrl: env('CUBE_QUICKCALL_URL', 'https://uat-raphsody.in'),
   /** Tenant credentials for AuthToken. Not an agent's credentials. */
