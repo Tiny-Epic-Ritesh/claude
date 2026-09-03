@@ -302,6 +302,13 @@ things need deciding:
 | 5 | **What lives on the device** | Anything cached offline is client data on a phone that can be lost. DPDP and SEBI both bear on this, and it decides whether the app can work offline at all. |
 | 6 | **Authentication on device** | The web keeps a session token in localStorage. A phone needs Keychain and Keystore, and users will expect biometric unlock. |
 
+**Scope answered, 3 Sep 2026.** A field-force app: the sales team is on the
+road, cannot carry a laptop, and needs to record meeting information and lead
+details from a phone. Not CRM parity. Scoped in `docs/MOBILE-APP-SCOPE.md`,
+which also records the headline — the server side of this is already built and
+tested, so the work is a phone client against a working API rather than a new
+system.
+
 **One question worth asking before any of that.** If geolocation on in-person
 meetings is the whole reason for the app, then a native app is an expensive way
 to buy it — the browser already gives a position, with permission, over HTTPS.
