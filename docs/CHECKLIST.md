@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,127** — 598 end-to-end and 529 unit. All green.
+**Tests: 1,128** — 599 end-to-end and 529 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -1424,3 +1424,41 @@ that a forged cookie changes nothing. If a session cookie is introduced later
 the CSRF posture changes on that day, and it should be a decision somebody makes
 rather than a default they inherit. Verified by making the login route set a
 cookie and watching the test fail.
+
+
+---
+
+## Ids in websocket messages - audited 3 Sep 2026, there is no websocket
+
+Nothing to check, and as with cookies the reason is worth recording rather than
+leaving as an empty result.
+
+There is no `ws` or `socket.io` dependency, no `server.on('upgrade')`,
+and `app.listen()` keeps no `http.Server` handle for one to attach to.
+The client opens no `WebSocket` and no `EventSource`. Its only network
+polling is `/market/indices` every sixty seconds, which is public market
+data and takes no id; the other intervals in the client are local countdown
+timers that fetch nothing.
+
+Confirmed at the wire with a real handshake over a raw socket against
+`/api/health`, `/`, `/ws` and `/socket.io/`: every one answered
+200 or 401, never 101, and no `Sec-WebSocket-Accept` came back.
+
+### Why it is pinned, given there is nothing there
+
+For what a websocket would bypass rather than what it would add. Every
+protection this sweep built - `requireAuth`, `activeOrg` and the scope
+helpers - lives in Express middleware and route handlers. An upgrade is handled
+off the raw HTTP server and reaches none of it by default, so a channel added
+later would start life outside the book boundary rather than inside it.
+
+The sabotage run made that concrete rather than theoretical. With a real upgrade
+handler attached, `/api/leads` stopped answering 401 and answered 101
+instead: the handshake never reached the auth middleware at all.
+
+### A note on the test
+
+It uses a raw socket rather than `fetch` because undici rejects
+`Connection` and `Upgrade` as forbidden header names and throws before
+sending. A fetch-based version could not perform the handshake, so it would have
+asserted nothing.

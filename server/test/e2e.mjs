@@ -490,6 +490,60 @@ async function run() {
     eq(books(data), 'BONANZA', 'a forged cookie changed what the reader could see');
   });
 
+  await check('no websocket channel exists to carry an unscoped id', async () => {
+    /* There is nothing to check for an id in a websocket message, because there
+       is no websocket: no ws or socket.io dependency, no server.on('upgrade'),
+       and app.listen() keeps no http.Server handle for one to attach to. The
+       only polling the client does is /market/indices, which is public market
+       data and takes no id.
+
+       Pinned for what a websocket would bypass rather than what it would add.
+       Every protection this suite covers -- requireAuth, activeOrg and the scope
+       helpers -- lives in Express middleware and route handlers. An upgrade is
+       handled off the raw HTTP server and reaches none of it by default, so a
+       channel added later would start life outside the book boundary rather than
+       inside it. That should be a decision somebody makes deliberately.
+
+       Raw socket rather than fetch: undici rejects Connection and Upgrade as
+       forbidden header names and throws before sending, so a fetch-based version
+       of this test could not perform the handshake at all. */
+    const net = await import('node:net');
+    const { hostname, port } = new URL(BASE);
+    const CRLF = String.fromCharCode(13, 10);
+
+    const handshake = (path) => new Promise((resolve) => {
+      const sock = net.connect(Number(port) || 80, hostname, () => {
+        sock.write([
+          `GET ${path} HTTP/1.1`,
+          `Host: ${hostname}:${port}`,
+          'Connection: Upgrade',
+          'Upgrade: websocket',
+          'Sec-WebSocket-Version: 13',
+          'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+          '', '',
+        ].join(CRLF));
+      });
+      let buf = '';
+      sock.on('data', (d) => {
+        buf += d;
+        if (buf.includes(CRLF + CRLF)) { sock.end(); resolve(buf); }
+      });
+      sock.on('error', (e) => { sock.destroy(); resolve(`error: ${e.message}`); });
+      setTimeout(() => { sock.destroy(); resolve(buf || 'no reply'); }, 5000);
+    });
+
+    for (const path of ['/api/health', '/', '/ws', '/socket.io/?EIO=4&transport=websocket']) {
+      // eslint-disable-next-line no-await-in-loop
+      const head = (await handshake(path)).split(CRLF + CRLF)[0];
+      assert(!head.startsWith('HTTP/1.1 101'), `${path} completed a websocket upgrade`);
+      assert(!/sec-websocket-accept/i.test(head), `${path} answered as a websocket server`);
+    }
+
+    /* And an upgrade-shaped request is still just a GET, so auth applies. */
+    const guarded = (await handshake('/api/leads')).split(CRLF)[0];
+    includes(guarded, '401', 'an unauthenticated read did not refuse an upgrade-shaped request');
+  });
+
   await check('the org header can narrow what you see and never widen it', async () => {
     /* X-Sales-Org is the only header carrying a scope identifier, it is entirely
        client-controlled, and it feeds activeOrg() which is passed to every scope
