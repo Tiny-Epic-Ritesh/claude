@@ -277,7 +277,40 @@ unchanged.
 These are not in Section C and I cannot proceed on the related items without
 them.
 
-### A-1 · P2-01 — is "mobile application" a native app?
+### A-1 · P2-01 — is "mobile application" a native app? — **answered 3 Sep 2026**
+
+**Ritesh: yes, an Android and iOS app.**
+
+Two consequences follow, and the first matters more than the second.
+
+**P2-01 is not met by what is built.** Geolocation works today in a mobile
+browser over HTTPS, and that was built against the reading below. If the
+requirement is a native app then the item is not done — it is not started, and
+it is not a feature.
+
+**This is a separate product.** Its own codebase, build, signing keys, release
+cycle, store review and maintenance. It cannot be absorbed into a feature list
+and should not be sequenced against P2 numbering. Before it can be scoped, six
+things need deciding:
+
+| | Decision | Why it cannot be deferred |
+|---|---|---|
+| 1 | **Scope** — full CRM, or a field-force subset? | Parity with the web CRM is measured in quarters. "My meetings, log a meeting with location, my leads, click-to-call" is a fraction of that. This single answer moves the estimate more than the other five together. |
+| 2 | **Technology** — React Native, or native Swift and Kotlin? | Native means two codebases and two skill sets. React Native reuses the React already here and roughly half the logic. With the current team size there is really only one answer, but it should be a decision rather than a default. |
+| 3 | **Store accounts** | Apple Developer Program and Google Play, registered to Bonanza with a named responsible person. Procurement, and it takes time — Apple's organisation verification is not same-day. |
+| 4 | **Release cadence** | Store review means no hot fix. A defect that is a ten-minute deploy on the web is a one-to-three-day round trip on mobile. That changes how severity is triaged, not just how releases are shipped. |
+| 5 | **What lives on the device** | Anything cached offline is client data on a phone that can be lost. DPDP and SEBI both bear on this, and it decides whether the app can work offline at all. |
+| 6 | **Authentication on device** | The web keeps a session token in localStorage. A phone needs Keychain and Keystore, and users will expect biometric unlock. |
+
+**One question worth asking before any of that.** If geolocation on in-person
+meetings is the whole reason for the app, then a native app is an expensive way
+to buy it — the browser already gives a position, with permission, over HTTPS.
+Native buys better accuracy, capture while the app is backgrounded, and evidence
+that is harder to spoof. If those are what the business is actually after, that
+is a good reason. If the app is wanted for its own sake, that is also a good
+reason, but it is a different one and it changes the scope in question 1.
+
+### A-1 (original reasoning)
 
 There is no native app. The portal is responsive web, and geolocation works in a
 mobile browser over HTTPS with the user's permission.
@@ -341,7 +374,25 @@ Facebook and Google connectors cannot be built or tested without accounts and
 credentials. Which specific products — Facebook Lead Ads? Google Ads? Gmail?
 Calendar? Each is a different API with a different consent model.
 
-### A-5 · P2-03 — does Production exist, and what is being promoted?
+### A-5 · P2-03 — what is being promoted — **half answered 3 Sep 2026**
+
+**Ritesh: it is configuration.** So the build is configuration promotion, not
+code promotion, which is the larger of the two and the one that is a product
+feature rather than CI/CD.
+
+That much is now buildable, and mostly by assembly rather than new machinery:
+`engine/versioning.js` already snapshots rules, templates, KYC journeys and SLA
+policies with diff and rollback, and the approvals engine already does
+maker-checker. What is missing is the envelope around them — selecting a set of
+artefacts, packaging it, applying it in another environment, and keeping the
+last ten promotions.
+
+**Still open: does Production infrastructure exist?** The promotion mechanism
+does not need it to be built, because export-and-apply is the same work whatever
+sits at the far end. It does need it before anything can actually be promoted,
+and it needs IT rather than a decision from you.
+
+### A-5 (original question)
 
 Today there is one environment. Two questions inside this item:
 
@@ -377,12 +428,18 @@ workstreams:
 | 3 | **Drill-through correctness** | P2-13, P2-16, P2-17c | Medium — a defect against agreed behaviour |
 | 4 | **Configuration surfaces** | P2-05, P2-06, P2-21, P2-22, P2-20 | Large; A-6 open |
 | 5 | **Integrations** | P2-14, P2-23, P2-25, P2-02, P2-15 | Large; blocked on A-3, A-4 |
+| 9 | **Mobile app** | P2-01 | A product, not a workstream. A-1 answered: native Android and iOS. Nothing built; six decisions listed under A-1 come first |
 | 6 | **Dashboards** | P2-17, P2-17a/b/d, P2-12 | Large |
 | 7 | **User management** | P2-04, P2-04a | Medium; A-2 open |
-| 8 | **Platform** | P2-03, P2-19, P2-01 | Largest; A-1, A-5 open |
+| 8 | **Platform** | P2-03, P2-19 | Largest; A-5 answered for configuration, still needs Production infrastructure from IT |
 
 **Workstream 1 is unblocked and I can start on it the moment you say so.**
 Workstreams 2, 5, 7 and 8 have open questions in front of them.
+
+*Updated 3 Sep 2026: workstream 1 is delivered, and so is most of the rest of
+the list. What is left of the twenty-five is P2-03, P2-14, P2-23 and P2-25 —
+see the status note at the head of this file. P2-01 moved out of workstream 8
+into its own row once A-1 came back as a native app.*
 
 Being straight with you about scale: this is not a one-week list. Workstreams 5,
 6 and 8 are each larger than everything delivered in Round 1. If there is a date
