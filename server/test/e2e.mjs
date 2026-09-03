@@ -19,13 +19,29 @@ let currentSuite = 'general';
 
 const suite = (name) => { currentSuite = name; };
 
+/**
+ * Unwrap an error onto one line, causes included.
+ *
+ * fetch() reports every transport problem as the same three words, "fetch
+ * failed", and puts the errno that says what actually happened in `cause`. A
+ * failure reported without it is unactionable: a connection refused, a
+ * connection reset and a timeout all read identically.
+ */
+function detail(err) {
+  const parts = [err.message];
+  for (let c = err.cause, depth = 0; c && depth < 4; c = c.cause, depth += 1) {
+    parts.push([c.code, c.syscall, c.message].filter(Boolean).join(' '));
+  }
+  return parts.join(' <- ');
+}
+
 async function check(name, fn) {
   const started = Date.now();
   try {
     await fn();
     results.push({ suite: currentSuite, name, ok: true, ms: Date.now() - started });
   } catch (err) {
-    results.push({ suite: currentSuite, name, ok: false, ms: Date.now() - started, error: err.message });
+    results.push({ suite: currentSuite, name, ok: false, ms: Date.now() - started, error: detail(err) });
   }
 }
 
