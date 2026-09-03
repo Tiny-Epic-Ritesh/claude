@@ -60,6 +60,7 @@ import { seedQueues } from './engine/queues.js';
 import { seedKra, seedIncentives } from './engine/kra.js';
 import { purge as purgeLocations } from './engine/geolocation.js';
 import { archiveExpired as archiveExpiredLists } from './engine/leadlists.js';
+import { wrap } from './asyncroute.js';
 
 /* Register the core entities and fields as metadata. Idempotent, and it
    preserves any label an administrator has renamed. */
@@ -152,18 +153,18 @@ app.use('/api', (_req, res, next) => {
 
 app.use('/api', accessLog);
 
-app.post('/api/auth/login', loginLimiter, async (req, res) => {
+app.post('/api/auth/login', loginLimiter, wrap(async (req, res) => {
   const result = await login(req.body?.email, req.body?.password);
   if (!result) return res.status(401).json({ error: 'Email or password is incorrect' });
   res.json(result);
-});
+}));
 
-app.post('/api/auth/partner-login', loginLimiter, async (req, res) => {
+app.post('/api/auth/partner-login', loginLimiter, wrap(async (req, res) => {
   const result = await partnerLogin(req.body?.email, req.body?.password);
   if (!result) return res.status(401).json({ error: 'Email or password is incorrect' });
   if (result.blocked) return res.status(403).json({ error: `Your partner account is ${result.blocked.toLowerCase()}. Contact your Partner RM.` });
   res.json(result);
-});
+}));
 
 app.use(attachSession);
 
@@ -179,7 +180,7 @@ app.use(attachSession);
  * "never existed" from "already used" tells somebody probing which of the two
  * they found.
  */
-app.post('/api/auth/reset/:token', async (req, res) => {
+app.post('/api/auth/reset/:token', wrap(async (req, res) => {
   const row = one(
     `SELECT * FROM password_reset
      WHERE token = ? AND used_at IS NULL AND expires_at > datetime('now')`,
@@ -207,7 +208,7 @@ app.post('/api/auth/reset/:token', async (req, res) => {
 
   audit(user.id, 'password_reset_used', 'user', user.id, { issued_by: row.created_by });
   return res.json({ ok: true, email: user.email });
-});
+}));
 
 /** Is this link still good? Lets the page say so before asking for a password. */
 app.get('/api/auth/reset/:token', (req, res) => {

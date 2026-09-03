@@ -15,6 +15,7 @@ import { hashPassword } from '../security.js';
 import * as ai from '../ai/index.js';
 import { applyFieldSecurity } from '../engine/metadata.js';
 import { lockRefusal } from '../engine/approvals.js';
+import { wrap } from '../asyncroute.js';
 
 const router = Router();
 router.use(requireUser);
@@ -437,7 +438,7 @@ router.post('/:id/request-elevation', requirePermission('partner.elevate.request
   res.json({ requested: true });
 });
 
-router.post('/:id/elevate', requirePermission('partner.elevate'), async (req, res) => {
+router.post('/:id/elevate', requirePermission('partner.elevate'), wrap(async (req, res) => {
   /* The book before the state, or the refusal tells the other book what state
      its partner is in while declining to change it. */
   const found = loadPartner(req);
@@ -465,7 +466,7 @@ router.post('/:id/elevate', requirePermission('partner.elevate'), async (req, re
   audit(req.user.id, 'partner_elevated', 'partner', partner.id, { code });
 
   res.json({ elevated: true, partner_code: code, portal_login: { email: partner.email, password } });
-});
+}));
 
 /* ------------------------------------------------------------ activity */
 
@@ -506,7 +507,7 @@ router.post('/:id/sourced-leads', requirePermission('partner.view'), (req, res) 
   res.json({ ok: true });
 });
 
-router.get('/:id/insight', requirePermission('partner.view'), async (req, res, next) => {
+router.get('/:id/insight', requirePermission('partner.view'), wrap(async (req, res, next) => {
   try {
     /* The sibling of /partners/:id, and it was missed when that one was fixed
      * -- the same "one of a pair" slip as /cards/:id/detail and /cards/:id/audit.
@@ -522,6 +523,6 @@ router.get('/:id/insight', requirePermission('partner.view'), async (req, res, n
     if (!ctx) return res.status(404).json({ error: 'Partner not found' });
     res.json(await ai.partnerInsight(ctx));
   } catch (err) { next(err); }
-});
+}));
 
 export default router;

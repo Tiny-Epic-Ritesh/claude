@@ -14,6 +14,7 @@ import { digilockerFetch, pennyDrop, esign, sendOtp, verifyOtp, DEMO_OTP } from 
 import { generateCards } from './crm.js';
 import * as ai from '../ai/index.js';
 import { kycStatusSql, kycStatusFor } from '../engine/kycstatus.js';
+import { wrap } from '../asyncroute.js';
 
 /* ============================== internal =============================== */
 
@@ -81,7 +82,7 @@ internal.post('/journeys/:id/override', requirePermission('kyc.override'), (req,
   res.json(kyc.getJourney(Number(req.params.id)));
 });
 
-internal.get('/journeys/:id/coach', async (req, res, next) => {
+internal.get('/journeys/:id/coach', wrap(async (req, res, next) => {
   try {
     const journey = kyc.getJourney(Number(req.params.id));
     if (!journey) return res.status(404).json({ error: 'Journey not found' });
@@ -107,7 +108,7 @@ internal.get('/journeys/:id/coach', async (req, res, next) => {
       form_summary: Object.fromEntries(Object.entries(journey.form).slice(0, 8)),
     }));
   } catch (err) { next(err); }
-});
+}));
 
 internal.post('/sweep', (_req, res) => res.json(kyc.sweepKyc()));
 

@@ -27,6 +27,7 @@ import { applyScore } from '../engine/rules.js';
 import { assignLead } from '../engine/assignment.js';
 import { kycStatusSql, kycStatusFor } from '../engine/kycstatus.js';
 import { resolveLead } from '../engine/callmatch.js';
+import { wrap } from '../asyncroute.js';
 
 const router = Router();
 
@@ -279,7 +280,7 @@ router.get('/meta', (req, res) => {
  * changes. Every one is processed independently — a malformed entry must not
  * cost the rest of the batch, because Meta will not resend the good ones.
  */
-router.post('/meta', guard('meta', meta.verifyWebhook), async (req, res) => {
+router.post('/meta', guard('meta', meta.verifyWebhook), wrap(async (req, res) => {
   const body = req.body ?? {};
   const results = { leads: 0, messages: 0, skipped: 0, errors: [] };
 
@@ -317,7 +318,7 @@ router.post('/meta', guard('meta', meta.verifyWebhook), async (req, res) => {
   // Meta retries anything that is not a 200, so acknowledge even a partial
   // batch and keep the detail in the response for our own logs.
   return res.json({ ok: true, ...results });
-});
+}));
 
 /**
  * Turn a Meta lead into a CRM lead.

@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,148** — 600 end-to-end and 548 unit. All green.
+**Tests: 1,153** — 600 end-to-end and 553 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -1767,10 +1767,9 @@ Two guards, because one of them is specific and the other is not:
 - `login` and `partnerLogin` require a string email and password. Anything else
   is not a credential and returns null, which the route answers as 401.
 - `unhandledRejection` is logged rather than fatal. Express 4 knows nothing
-  about a rejected promise, so any async handler can still drop a request; the
-  process should not die of it. **Wrapping every async handler so rejections
-  reach `next()` is the complete fix and is not done** - this is the floor under
-  it, and the log line is what keeps the gap visible.
+  about a rejected promise, so the process should not die of one. Wrapping every
+  async handler so rejections reach `next()` was done straight afterwards - see
+  the section below - and this remains the floor under it.
 
 The suite accepts 401 **or** 429 from those probes. The limiter keys on
 `req.body?.email || req.ip`, so a dozen bodies with no usable email share one
@@ -1811,3 +1810,50 @@ Three changes, in descending order of how much they help:
 A restart causes hundreds of failures, not one. The intermittent single-test
 failure documented above is therefore not this, and the two should stop being
 discussed together.
+
+---
+
+## Every async handler now goes through wrap() - 3 Sep 2026
+
+The completion of the fix above, which left the general case open.
+
+All 27 async route handlers are registered through `wrap()` in
+`src/asyncroute.js`, which resolves the handler's promise and sends any
+rejection to `next()`. Express 4 hands a synchronous throw to its error
+middleware but knows nothing about a rejected promise, so before this an async
+handler that rejected reached nobody.
+
+Demonstrated on the same deliberately-rejecting route, wrapped and not:
+
+| | response | server |
+|---|---|---|
+| unwrapped | connection dropped, no response, logged as an unhandled rejection | survives only because of the process-level net |
+| wrapped | 500 through the error middleware | unaffected |
+
+The two layers do different jobs and both are worth having. The net keeps a
+missed handler from being an outage; the wrap is what actually answers the
+request.
+
+### The part that matters more than the 27
+
+Wrapping the handlers that exist fixes those handlers. `test/asyncroutes.test.mjs`
+is what stops the twenty-eighth from reintroducing the bug, because the next
+person to add an async handler will not have read any of this.
+
+It reads the source rather than a running app - importing `index.js` binds a
+port, and a test that needs the server up to check the server's wiring is a test
+that gets skipped. It asserts that no registration line carries a bare
+`async (req, res`, that every file using `wrap` imports it, and that `wrap`
+itself is not async, since that is precisely what makes an unwrapped handler
+detectable.
+
+It also asserts that the scan finds more than a hundred route registrations at
+all. A regex that quietly matches nothing would make every other assertion in
+the file pass for the wrong reason, which is the characteristic failure of this
+kind of test. Verified by unwrapping one handler and watching two assertions
+fail.
+
+### Not done
+
+Express 5 handles this natively. When this codebase moves to it, `wrap` can be
+deleted and the 27 calls unwound - the comment in `asyncroute.js` says so.

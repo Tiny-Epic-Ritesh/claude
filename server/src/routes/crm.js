@@ -2,6 +2,7 @@
  * Core CRM routes — leads, product cards, activities, tasks, notes and lists.
  */
 
+import { wrap } from '../asyncroute.js';
 import { Router } from 'express';
 import { all, one, run, audit, notify, daysSince, ageBand, AGE_BANDS, CARD_COLOUR, LEAD_STAGES, CARD_STATES } from '../db.js';
 import { can, requireUser, requirePermission, reqScope, isReadOnlyOnLeads, unmaskRequested, maskFor, orgsFor, activeOrg, mayUseOrg } from '../auth.js';
@@ -941,7 +942,7 @@ router.post('/activities', (req, res) => {
 
 /* ---------------------------------------------- telephony & messaging */
 
-router.post('/leads/:id/call', requirePermission('lead.contact'), async (req, res, next) => {
+router.post('/leads/:id/call', requirePermission('lead.contact'), wrap(async (req, res, next) => {
   /* This dialled. A Bonanza account could ring a Bigul client's number and load
      it into the Bigul dialler campaign, which is the other book's data reaching
      the outside world through this one. */
@@ -976,7 +977,7 @@ router.post('/leads/:id/call', requirePermission('lead.contact'), async (req, re
     }
     return next(err);
   }
-});
+}));
 
 router.post('/leads/:id/log-call', requirePermission('lead.contact'), (req, res) => {
   // Wrote an interaction onto a timeline in either book without reading the
@@ -1014,7 +1015,7 @@ router.post('/leads/:id/message', requirePermission('lead.contact'), (req, res) 
   res.status(201).json(entry);
 });
 
-router.post('/autodialler', requirePermission('lead.contact'), async (req, res, next) => {
+router.post('/autodialler', requirePermission('lead.contact'), wrap(async (req, res, next) => {
   try {
     /* Every id, not the list as a whole. This queued a lead from either
        business and answered with their name and mobile — a dial and a
@@ -1030,7 +1031,7 @@ router.post('/autodialler', requirePermission('lead.contact'), async (req, res, 
     if (err.name === 'VendorError') return res.status(502).json({ error: err.message, vendor: err.vendor });
     return next(err);
   }
-});
+}));
 
 /* --------------------------------------------------------------- tasks */
 

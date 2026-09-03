@@ -19,6 +19,7 @@ import { all, one, run } from '../db.js';
 import { requireUser, leadScope, activeOrg } from '../auth.js';
 import * as outlook from '../vendors/outlook.js';
 import { outlook as cfg } from '../vendors/config.js';
+import { wrap } from '../asyncroute.js';
 
 const router = Router();
 router.use(requireUser);
@@ -96,7 +97,7 @@ export async function syncOutlook(user, days = cfg.windowDays) {
 
 /* ----------------------------------------------------------------- read */
 
-router.get('/', async (req, res, next) => {
+router.get('/', wrap(async (req, res, next) => {
   try {
     const days = Math.min(Math.max(Number(req.query.days) || 7, 1), 31);
     const from = new Date(req.query.from ? `${req.query.from}T00:00:00Z` : Date.now());
@@ -189,12 +190,12 @@ router.get('/', async (req, res, next) => {
       },
     });
   } catch (err) { next(err); }
-});
+}));
 
 /** Pull now, for the Refresh button. */
-router.post('/sync', async (req, res, next) => {
+router.post('/sync', wrap(async (req, res, next) => {
   try { res.json(await syncOutlook(req.user)); }
   catch (err) { next(err); }
-});
+}));
 
 export default router;
