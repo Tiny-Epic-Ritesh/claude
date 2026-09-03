@@ -16,6 +16,7 @@ const BASE = process.env.TEST_BASE || 'http://localhost:4100';
 
 const results = [];
 let currentSuite = 'general';
+let BOOT = null;
 
 const suite = (name) => { currentSuite = name; };
 
@@ -130,6 +131,17 @@ async function run() {
   await check('API is reachable', async () => {
     const { data } = await req('/api/health', { expect: 200 });
     eq(data.ok, true, 'health.ok');
+    // Kept so the summary can tell whether the server we finish against is the
+    // one we started against. `npm run dev` restarts on every change under
+    // src/, including the ones git makes on a branch switch, stash or pull, and
+    // a restart mid-run arrives here as an unexplained transport error.
+    BOOT = data.boot ?? null;
+
+    if (data.watching) {
+      console.log('\n  NOTE  this server restarts itself when anything under src/ changes, and git');
+      console.log('        changes those files on a branch switch, stash or pull. Doing either during');
+      console.log('        this run will fail tests for that reason alone. `npm start` does not watch.\n');
+    }
   });
 
   await check('valid credentials return a token', async () => {
@@ -151,6 +163,32 @@ async function run() {
     await req('/api/auth/login', {
       method: 'POST', body: { email: 'nobody@bonanza.test', password: 'bonanza' }, expect: 401,
     });
+  });
+
+  await check('a malformed sign-in body is refused, not fatal', async () => {
+    /* Both sign-in functions are async, so a throw inside one is a rejected
+       promise in an async route handler. Express 4 does not catch those and
+       Node's answer to an unhandled rejection is to end the process, so this is
+       not a 500 -- it is the server going away. node:sqlite refuses to bind
+       undefined, which made an empty POST here an unauthenticated way to stop
+       the service for everyone. Nothing about the body is trustworthy. */
+    /* 401 or 429, either is a refusal. The limiter keys by `req.body?.email ||
+       req.ip`, so bodies with no usable email all share one bucket and a dozen
+       of them in a row runs into the 10/minute limit -- which is the limiter
+       working, and not what this test is about. */
+    for (const body of [{}, { email: null, password: null }, { email: 123, password: [] },
+      { email: { a: 1 } }, { password: 'bonanza' }, []]) {
+      for (const path of ['/api/auth/login', '/api/auth/partner-login']) {
+        // eslint-disable-next-line no-await-in-loop
+        const { status } = await req(path, { method: 'POST', body });
+        assert(status === 401 || status === 429,
+          `${path} answered ${status} to ${JSON.stringify(body)} instead of refusing it`);
+      }
+    }
+
+    // The point of the test: it is still there to answer.
+    const { data } = await req('/api/health', { expect: 200 });
+    eq(data.ok, true, 'the server did not survive a malformed sign-in body');
   });
 
   await check('protected route refuses an unauthenticated request', async () => {
@@ -7691,12 +7729,12 @@ await check('a per-channel withdrawal closes only that channel', async () => {
   });
 
   /* ------------------------------------------------------------- report */
-  report();
+  await report();
 }
 
 /* ---------------------------------------------------------------- output */
 
-function report() {
+async function report() {
   const bySuite = new Map();
   for (const r of results) {
     if (!bySuite.has(r.suite)) bySuite.set(r.suite, []);
@@ -7727,10 +7765,41 @@ function report() {
   console.log(`${passed}/${results.length} passed${failed ? `, ${failed} FAILED` : ''}  ·  ${(ms / 1000).toFixed(1)}s`);
   console.log(`${'─'.repeat(64)}\n`);
 
+  /* A restart explains failures that would otherwise look like faults in the
+     code, and it is the one cause that leaves no trace in the output at all.
+
+     Worth a few seconds of patience: a restart takes a moment, and asking once
+     immediately means asking while the server is still down, which returns
+     nothing and says nothing -- the case where the note was most needed. Being
+     down at the end is itself worth reporting, so both endings are covered. */
+  if (BOOT) {
+    let now = null;
+    for (let attempt = 0; attempt < 6 && now === null; attempt += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      now = await req('/api/health').then((r) => r.data?.boot ?? null).catch(() => null);
+      // eslint-disable-next-line no-await-in-loop
+      if (now === null) await new Promise((r) => { setTimeout(r, 1000); });
+    }
+
+    if (now === null) {
+      console.log('NOTE  the server is not answering at the end of this run. Failures above are');
+      console.log('      likely to be that rather than the code. If it was started with `npm run dev`');
+      console.log('      it restarts whenever anything under src/ changes, and git changes those files');
+      console.log('      on a branch switch, stash or pull; check its output for a crash.');
+      console.log('');
+    } else if (now !== BOOT) {
+      console.log('NOTE  the server restarted during this run, so it is not the process the suite');
+      console.log('      started against. `npm run dev` restarts on every change under src/, and git');
+      console.log('      touches those files on a branch switch, stash or pull. Any failure above may');
+      console.log('      be that rather than the code. Re-run against `npm start`, which does not watch.');
+      console.log('');
+    }
+  }
+
   process.exit(failed ? 1 : 0);
 }
 
-run().catch((err) => {
+run().catch(async (err) => {
   console.error('\nSuite aborted:', err.message);
-  report();
+  await report();
 });

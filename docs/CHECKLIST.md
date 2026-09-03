@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,147** — 599 end-to-end and 548 unit. All green.
+**Tests: 1,148** — 600 end-to-end and 548 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -1741,3 +1741,73 @@ secret on both sides.
 One plain run in the same session came back 598/599 and did not reproduce on a
 repeat. That is the low-rate intermittent failure noted earlier in this
 document, still not root-caused, and unrelated to this change.
+
+---
+
+## The watch restart, and the crash it uncovered - 3 Sep 2026
+
+### An empty POST to /api/auth/login stopped the server
+
+Found while testing the watch fix, and much the more serious of the two.
+
+`node:sqlite` refuses to bind `undefined`, so a sign-in with no email in the
+body threw inside `login()`. While that function was synchronous the throw
+reached Express and became a 500. Raising the scrypt cost made it `async`, and
+the same throw became a rejected promise in an async route handler - which
+Express 4 does not catch and Node answers by ending the process.
+
+So `curl -X POST /api/auth/login -d '{}'` took the service down, unauthenticated,
+in one request. It shipped in the scrypt commit and was live on main for about
+an hour. Reproduced deterministically, fixed, and pinned by a test that sends
+six malformed bodies to both sign-in routes and then asks whether the server is
+still there.
+
+Two guards, because one of them is specific and the other is not:
+
+- `login` and `partnerLogin` require a string email and password. Anything else
+  is not a credential and returns null, which the route answers as 401.
+- `unhandledRejection` is logged rather than fatal. Express 4 knows nothing
+  about a rejected promise, so any async handler can still drop a request; the
+  process should not die of it. **Wrapping every async handler so rejections
+  reach `next()` is the complete fix and is not done** - this is the floor under
+  it, and the log line is what keeps the gap visible.
+
+The suite accepts 401 **or** 429 from those probes. The limiter keys on
+`req.body?.email || req.ip`, so a dozen bodies with no usable email share one
+bucket and run into the 10/minute limit - which is the limiter working, and not
+what that test is about. The first version asserted 401 only and failed roughly
+one run in three.
+
+### The restart itself
+
+`npm run dev` restarts on every change under `src/`, and git changes those files
+on a branch switch, stash or pull. A restart mid-run is not subtle: it produced
+**261 failures** in a controlled test, and before this, nothing in the output
+said why.
+
+Three changes, in descending order of how much they help:
+
+1. **The suite names it.** `/api/health` returns a `boot` id, recorded at the
+   start and checked at the end. If it changed, the summary says the server was
+   replaced; if the server is not answering at all, it says that instead. Both
+   endings matter - asking once immediately means asking while the server is
+   still down, which was the first version's bug and silently printed nothing.
+2. **The suite warns first.** `/api/health` also reports `watching`, so a run
+   against a watched server says so before the tests start rather than after
+   they fail. Watch mode runs the script in a child process and the flag does
+   not reach `process.execArgv`; what does reach it is
+   `WATCH_REPORT_DEPENDENCIES`, which is an implementation detail read
+   defensively.
+3. **Graceful shutdown on SIGTERM/SIGINT** - in-flight requests finish, idle
+   keep-alive sockets are closed so they do not hold it open, and a five second
+   cap stops a hung request wedging a restart. **This does nothing on Windows.**
+   Node can listen for SIGTERM there but the signal is never raised; the process
+   is terminated outright. It is correct for a container or process manager,
+   which is why it is here, and it is dead code on a Windows dev box - which is
+   why the reporting above carries the weight.
+
+### What this ruled out
+
+A restart causes hundreds of failures, not one. The intermittent single-test
+failure documented above is therefore not this, and the two should stop being
+discussed together.

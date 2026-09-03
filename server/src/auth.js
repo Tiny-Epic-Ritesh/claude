@@ -182,6 +182,15 @@ export const permissionsFor = (userOrRole) => {
 /* ------------------------------------------------------------- sessions */
 
 export async function login(email, password) {
+  /* Both come straight from the request body and either may be absent.
+     node:sqlite refuses to bind undefined, and while this function was
+     synchronous that threw into Express and became a 500. Once it became async
+     the same throw was an unhandled rejection in an async route handler, which
+     Express 4 does not catch and Node answers by ending the process -- so an
+     empty POST to /api/auth/login stopped the server. Anyone who could reach
+     the sign-in page could do it. */
+  if (typeof email !== 'string' || typeof password !== 'string') return null;
+
   const user = one('SELECT * FROM users WHERE lower(email) = lower(?) AND active = 1', [email]);
   if (!user) return null;
 
@@ -215,6 +224,9 @@ export async function login(email, password) {
 }
 
 export async function partnerLogin(email, password) {
+  // Same untrusted body, same consequence. See login above.
+  if (typeof email !== 'string' || typeof password !== 'string') return null;
+
   const partner = one('SELECT * FROM partners WHERE lower(email) = lower(?)', [email]);
   if (!partner || !partner.portal_password) return null;
 

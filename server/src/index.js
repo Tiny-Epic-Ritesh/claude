@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { randomUUID } from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
 import { fileURLToPath } from 'node:url';
@@ -152,13 +153,13 @@ app.use('/api', (_req, res, next) => {
 app.use('/api', accessLog);
 
 app.post('/api/auth/login', loginLimiter, async (req, res) => {
-  const result = await login(req.body.email, req.body.password);
+  const result = await login(req.body?.email, req.body?.password);
   if (!result) return res.status(401).json({ error: 'Email or password is incorrect' });
   res.json(result);
 });
 
 app.post('/api/auth/partner-login', loginLimiter, async (req, res) => {
-  const result = await partnerLogin(req.body.email, req.body.password);
+  const result = await partnerLogin(req.body?.email, req.body?.password);
   if (!result) return res.status(401).json({ error: 'Email or password is incorrect' });
   if (result.blocked) return res.status(403).json({ error: `Your partner account is ${result.blocked.toLowerCase()}. Contact your Partner RM.` });
   res.json(result);
@@ -244,7 +245,29 @@ app.get('/api/auth/me', (req, res) => {
   res.status(401).json({ error: 'Not signed in' });
 });
 
-app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'bonanza-crm' }));
+/* Changes on every start, so anything long-running can tell that the process it
+   was talking to has been replaced. `node --watch` restarts on every source
+   change, including the ones git makes when you switch branches or stash, and a
+   restart mid-run otherwise shows up only as an unexplained transport error. */
+const BOOT_ID = randomUUID();
+
+/* Whether this process will restart itself when a source file changes. Reported
+   so a long-running client can warn about it before it happens rather than
+   after, which on Windows is the only thing that can be done about it -- see
+   the shutdown handler at the foot of this file.
+
+   Watch mode runs the script in a child process and the flag does not reach it:
+   `process.execArgv` is empty either way. What the child does get is
+   WATCH_REPORT_DEPENDENCIES, which is how the watcher asks it to report what it
+   loaded. That is an implementation detail rather than a documented API, so it
+   is read defensively -- if it ever goes away this reports false and the warning
+   simply stops appearing, which is the harmless direction. */
+const WATCHING = process.env.WATCH_REPORT_DEPENDENCIES === '1'
+  || process.execArgv.some((a) => a.startsWith('--watch'));
+
+app.get('/api/health', (_req, res) => res.json({
+  ok: true, service: 'bonanza-crm', boot: BOOT_ID, watching: WATCHING,
+}));
 
 /* --------------------------------------------------------------- routes */
 
@@ -487,7 +510,7 @@ try {
   console.error('[clients] backfill failed', e.message);
 }
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`[server] Bonanza CRM API on http://localhost:${PORT}`);
   if (usingDevKey()) {
     console.warn('[security] CRM_MASTER_KEY is unset — using the development key. Encrypted fields are NOT protected. Set it before any pilot.');
@@ -496,4 +519,62 @@ app.listen(PORT, () => {
     const { N, default_N: floor } = scryptPolicy();
     console.warn(`[security] CRM_SCRYPT_N=${N} — passwords are being hashed below the ${floor} floor. For test runs only; unset it before any pilot.`);
   }
+});
+
+/**
+ * Finish what is in flight before exiting.
+ *
+ * A process manager or container stopping this service sends SIGTERM. Without a
+ * handler the process dies on the spot and every request in flight is reset,
+ * which reaches the caller as a bare "fetch failed" that says nothing about why
+ * -- the same signature as a real fault.
+ *
+ * A restart still has a window where nothing is listening. This closes the part
+ * that is ours to close: requests already accepted are answered.
+ *
+ * WINDOWS: none of this runs there. Node can listen for SIGTERM on Windows but
+ * the signal is never raised -- the process is terminated outright -- so the
+ * handler is dead code on a Windows dev box and `node --watch` will always cut
+ * whatever was in flight. That is why /api/health reports `watching`: on the
+ * platform where this cannot be fixed, the suite says so up front instead.
+ */
+let closing = false;
+
+function shutdown(signal) {
+  if (closing) return;
+  closing = true;
+  console.log(`[server] ${signal} — finishing in-flight requests`);
+
+  server.close(() => process.exit(0));
+
+  // An idle keep-alive socket would otherwise hold the close open for its full
+  // timeout. Requests actually in flight are not affected by this.
+  server.closeIdleConnections();
+
+  // And a request that never finishes must not wedge a restart.
+  setTimeout(() => {
+    console.warn('[server] in-flight requests did not finish in 5s — exiting anyway');
+    process.exit(1);
+  }, 5000).unref();
+}
+
+for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => shutdown(signal));
+
+/**
+ * Do not let one bad promise take the service down.
+ *
+ * Express 4 hands a synchronous throw to its error middleware but knows nothing
+ * about a rejected promise, so an async route handler that rejects reaches
+ * nobody -- and Node's default answer to an unhandled rejection is to end the
+ * process. That is how an empty POST to /api/auth/login became a way to stop
+ * the server: a query threw, and the throw had nowhere to go.
+ *
+ * The offending request still hangs, and this leaves the process running in a
+ * state its author did not plan for. Both are worse than handling the error
+ * where it happens and better than an outage. Wrapping every async handler so
+ * rejections reach `next()` is the complete fix and is not done here; this is
+ * the floor under it, and the log line is what makes the gap visible.
+ */
+process.on('unhandledRejection', (reason) => {
+  console.error('[server] unhandled rejection — a request has been dropped:', reason?.stack || reason);
 });
