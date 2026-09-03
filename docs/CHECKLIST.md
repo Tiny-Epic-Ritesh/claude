@@ -1462,3 +1462,55 @@ It uses a raw socket rather than `fetch` because undici rejects
 `Connection` and `Upgrade` as forbidden header names and throws before
 sending. A fetch-based version could not perform the handshake, so it would have
 asserted nothing.
+
+---
+
+## Cleartext credentials in Admin -> Users - found and fixed 3 Sep 2026
+
+Found while chasing an intermittent test failure, not by looking for it.
+
+`POST /api/admin/users` and `PATCH /api/admin/users/:id` wrote `req.body.password`
+straight into the column. `admin.js` predated the password-hashing work and never
+imported `hashPassword`, so every account created or given a new password through
+Admin -> Users was readable in the database file. Every other write path -
+`setup.js`, `auth.js`, `index.js`, `partners.js`, `partners-support.js` - hashed
+correctly. The PATCH even scrubbed the password out of its own audit entry with
+`password: undefined`, so the sensitivity was understood; the same body just went
+to the database unhashed.
+
+Two facts limit it, and one fact makes it worse. Both routes sit behind
+`requirePermission('admin.users')`, so this was never an escalation path, and
+`auth.js` rehashes a legacy row on its owner's next successful sign-in. But
+`verifyPassword` accepts a cleartext match in order to make that upgrade
+possible, so a stored value that compares equal needs no cracking at all: anyone
+reading the database file, a backup or the WAL held working credentials
+directly.
+
+### Why the test covering this did not catch it
+
+"stored credentials are not recoverable from the database file" read only
+`bonanza.db`. In WAL mode a fresh write lands in `bonanza.db-wal` and reaches the
+main file only at a checkpoint, so the check passed or failed on timing - roughly
+one run in five. It read as a flaky test rather than as the finding it was, which
+is the more useful lesson: an intermittent failure in a security check deserves
+the same attention as a red one.
+
+The check now reads the WAL as well, and fails deterministically against the old
+code. It skips `-shm`, which Windows keeps memory-mapped and locked and which
+holds the WAL frame index rather than page payload, and it retries briefly on
+`EBUSY` because the WAL itself can be locked mid-checkpoint.
+
+### Existing rows
+
+Hashed by a guarded migration in `db.js` rather than left to self-heal on next
+sign-in, which would have left them cleartext until each owner happened to log
+in. The plaintext was sitting in the column, so it could be hashed directly with
+nobody re-entering anything. Two rows in this database; a no-op on every start
+afterwards. Verified that a rehashed account still signs in with its original
+password and still refuses a wrong one.
+
+### Not covered
+
+The legacy cleartext branch in `verifyPassword` is still there. It is dead for
+the rows that exist now, but it will accept a cleartext value if one is ever
+written again. Removing it is the obvious follow-up and was not done here.

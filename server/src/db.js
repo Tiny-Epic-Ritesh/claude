@@ -7,6 +7,7 @@
 
 import { DatabaseSync } from 'node:sqlite';
 import { actingActor } from './engine/reqcontext.js';
+import { hashPassword } from './security.js';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1933,6 +1934,35 @@ if (db.prepare("SELECT name FROM pragma_table_info('dispositions')").all().some(
   } catch (err) {
     console.warn('[db] could not drop dispositions.sales_org:', err.message);
   }
+}
+
+/**
+ * Hash any credential still stored as cleartext.
+ *
+ * `POST /api/admin/users` and its PATCH wrote `req.body.password` straight into
+ * the column: admin.js predated the hashing work and never imported
+ * `hashPassword`, so every account created or given a new password through
+ * Admin -> Users was readable in the database file. Every other write path
+ * hashed correctly.
+ *
+ * `verifyPassword` accepts a cleartext match so a legacy row can be upgraded on
+ * its owner's next sign-in, which is what kept those accounts working. It is
+ * also what made the exposure complete: a stored value that compares equal
+ * needs no cracking. Waiting for each owner to sign in is no fix for the rows
+ * that exist now, so they are hashed here instead -- the plaintext is sitting
+ * in the column, so it can be hashed directly with nobody re-entering anything.
+ *
+ * A no-op on every start after the first.
+ */
+for (const [table, column] of [['users', 'password'], ['partners', 'portal_password']]) {
+  const stale = db.prepare(
+    `SELECT id, "${column}" AS secret FROM "${table}"
+      WHERE "${column}" IS NOT NULL AND "${column}" != '' AND "${column}" NOT LIKE 'scrypt$%'`,
+  ).all();
+  if (!stale.length) continue;
+  const write = db.prepare(`UPDATE "${table}" SET "${column}" = ? WHERE id = ?`);
+  for (const row of stale) write.run(hashPassword(String(row.secret)), row.id);
+  console.log(`[db] hashed ${stale.length} cleartext ${table}.${column} value(s)`);
 }
 
 db.exec(`

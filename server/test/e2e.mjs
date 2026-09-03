@@ -2091,9 +2091,9 @@ async function run() {
   });
 
   await check('stored credentials are not recoverable from the database file', async () => {
-    const { readFileSync } = await import('node:fs');
+    const { readFileSync, existsSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
-    const { dirname, join } = await import('node:path');
+    const { dirname, join, basename } = await import('node:path');
     const dbPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'data', 'bonanza.db');
 
     // Use a password that appears nowhere else, so a hit is unambiguous.
@@ -2103,9 +2103,32 @@ async function run() {
       body: { name: 'Crypto Probe', email: `crypto.${RUN}@bonanza.test`, role: 'caller', password: secret },
     });
 
-    const raw = readFileSync(dbPath).toString('latin1');
-    assert(!raw.includes(secret), 'a credential is stored in plaintext in the database file');
-    assert(raw.includes('scrypt$'), 'no scrypt hashes present — hashing is not in effect');
+    /* The WAL counts. In WAL mode a fresh write lands there and only reaches
+       bonanza.db at a checkpoint, so reading the main file alone passes or fails
+       on timing -- which is how cleartext credentials written by
+       POST /api/admin/users hid behind this very check. It read as a flaky test
+       rather than as the finding it was. */
+    const wal = `${dbPath}-wal`;
+    assert(existsSync(wal), 'no WAL beside the database, so this check reads a stale file');
+
+    /* Not -shm: Windows keeps it memory-mapped and locked, and it holds the
+       WAL's frame index rather than page payload, so a credential cannot be in
+       it. The WAL itself can still be briefly locked mid-checkpoint. */
+    for (const file of [dbPath, wal]) {
+      let raw = null;
+      for (let attempt = 0; attempt < 5 && raw === null; attempt += 1) {
+        try {
+          raw = readFileSync(file).toString('latin1');
+        } catch (err) {
+          if (err.code !== 'EBUSY' && err.code !== 'EPERM') throw err;
+          await new Promise((r) => { setTimeout(r, 150); });
+        }
+      }
+      assert(raw !== null, `could not read ${basename(file)} to check it`);
+      assert(!raw.includes(secret), `a credential is stored in plaintext in ${basename(file)}`);
+    }
+    assert(readFileSync(dbPath).toString('latin1').includes('scrypt$'),
+      'no scrypt hashes present, so hashing is not in effect');
 
     // And the credential still authenticates.
     const token = await login(`crypto.${RUN}@bonanza.test`, secret);

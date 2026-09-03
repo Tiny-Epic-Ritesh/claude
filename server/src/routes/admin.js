@@ -6,6 +6,7 @@
 import { Router } from 'express';
 import { all, one, run, audit, ROLES, ROLE_LABELS } from '../db.js';
 import { requireUser, requirePermission, permissionsFor, orgsFor, activeOrg, PERMISSIONS } from '../auth.js';
+import { hashPassword } from '../security.js';
 import { CONDITION_FIELDS, ACTION_TYPES, runRule } from '../engine/rules.js';
 import { MASTER_STEPS } from '../engine/kyc.js';
 import { integrationRegistry, getOutbox, syncTradingDb, vendorStatus } from '../integrations.js';
@@ -49,7 +50,7 @@ router.post('/users', requirePermission('admin.users'), (req, res) => {
 
   const result = run(
     'INSERT INTO users (name, email, password, role, product_type_id, manager_id, phone) VALUES (?,?,?,?,?,?,?)',
-    [name, email, password || 'demo1234', role, product_type_id || null, manager_id || null, phone || null],
+    [name, email, hashPassword(password || 'demo1234'), role, product_type_id || null, manager_id || null, phone || null],
   );
   audit(req.user.id, 'user_created', 'user', Number(result.lastInsertRowid), { role });
   res.status(201).json({ id: Number(result.lastInsertRowid) });
@@ -59,7 +60,20 @@ router.patch('/users/:id', requirePermission('admin.users'), (req, res) => {
   const fields = ['name', 'email', 'role', 'product_type_id', 'manager_id', 'phone', 'active', 'password'];
   const sets = [];
   const params = [];
-  for (const f of fields) if (req.body[f] !== undefined) { sets.push(`${f} = ?`); params.push(req.body[f]); }
+  for (const f of fields) {
+    if (req.body[f] === undefined) continue;
+    if (f === 'password') {
+      /* Never store what the administrator typed. A blank means leave it
+         alone rather than set an empty password. */
+      const next = String(req.body.password).trim();
+      if (!next) continue;
+      sets.push('password = ?');
+      params.push(hashPassword(next));
+      continue;
+    }
+    sets.push(`${f} = ?`);
+    params.push(req.body[f]);
+  }
   if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
 
   run(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`, [...params, req.params.id]);
