@@ -8,7 +8,6 @@ import { requireUser, can, leadScope, activeOrg } from '../auth.js';
 import { loadInBook } from '../engine/bookscope.js';
 import { applyScore } from '../engine/rules.js';
 import * as ai from '../ai/index.js';
-import { wrap } from '../asyncroute.js';
 
 const router = Router();
 router.use(requireUser);
@@ -59,7 +58,7 @@ router.get('/residency/log', (req, res) => {
  * caller confirms, which is the human-in-the-loop control the BRD risk
  * register requires ("start with a confirm screen, not auto-apply").
  */
-router.post('/disposition', wrap(async (req, res, next) => {
+router.post('/disposition', async (req, res, next) => {
   try {
     const { lead_id, transcript, duration_s } = req.body;
     if (!lead_id) return res.status(400).json({ error: 'lead_id is required' });
@@ -84,7 +83,7 @@ router.post('/disposition', wrap(async (req, res, next) => {
       cards: ctx.cards.map((c) => ({ id: c.id, code: c.product_code, name: c.product_name, state: c.state })),
     });
   } catch (err) { next(err); }
-}));
+});
 
 /** Apply a confirmed (and possibly edited) disposition. */
 router.post('/disposition/confirm', (req, res) => {
@@ -166,7 +165,7 @@ router.post('/disposition/confirm', (req, res) => {
   res.json({ ok: true, cards_updated: applied, cards_refused: refused, compliance_ticket_id: ticketId });
 });
 
-router.get('/leads/:id/next-action', wrap(async (req, res, next) => {
+router.get('/leads/:id/next-action', async (req, res, next) => {
   try {
     /* The advice is assembled from the lead's tickets, cards and KYC state, so
      * an unscoped answer describes the record about as thoroughly as the
@@ -182,7 +181,7 @@ router.get('/leads/:id/next-action', wrap(async (req, res, next) => {
     if (!ctx) return res.status(404).json({ error: 'Lead not found' });
     res.json({ ...(await ai.nextAction(ctx)), provider: ai.providerName });
   } catch (err) { next(err); }
-}));
+});
 
 
 /**
@@ -247,7 +246,7 @@ function contextLine(context, user) {
   return where;
 }
 
-router.post('/copilot', wrap(async (req, res, next) => {
+router.post('/copilot', async (req, res, next) => {
   try {
     const { question, history = [], context = null } = req.body;
     if (!question?.trim()) return res.status(400).json({ error: 'A question is required' });
@@ -274,6 +273,6 @@ router.post('/copilot', wrap(async (req, res, next) => {
       },
     });
   } catch (err) { next(err); }
-}));
+});
 
 export default router;

@@ -1853,7 +1853,67 @@ the file pass for the wrong reason, which is the characteristic failure of this
 kind of test. Verified by unwrapping one handler and watching two assertions
 fail.
 
-### Not done
+### Since removed
 
-Express 5 handles this natively. When this codebase moves to it, `wrap` can be
-deleted and the 27 calls unwound - the comment in `asyncroute.js` says so.
+Express 5 handles this natively, and the codebase moved to it the same day - see
+the section below. The 27 calls are unwound and `asyncroute.js` is gone.
+
+---
+
+## Express 5, and the wrappers unwound - 3 Sep 2026
+
+`express` 4.22.2 to 5.2.1, which brings `body-parser` 2, `router` 2 and
+`path-to-regexp` 8. Five dependencies in total made this a small upgrade to
+attempt and 1,153 tests made it a safe one.
+
+### The one break
+
+`app.get('*')`, the SPA fallback. path-to-regexp v8 requires a named wildcard
+and refuses the bare star at startup, loudly, which is the good kind of
+breakage.
+
+It became `app.get('/{*splat}')` rather than `/*splat`: the braces make the
+segment optional, and without them the route matches `/leads` but not `/`, so
+the site would have served the app everywhere except its own front door.
+Checked both.
+
+Everything else scanned for and absent: `req.param()`, `res.send(status)`,
+`res.json(obj, status)`, `app.del()`, `redirect('back')`, `res.sendfile`,
+assignment to `req.query`, pluralised `acceptsCharset`. The two apparent
+`res.json` hits were single-object calls.
+
+`req.body` is `undefined` rather than `{}` in Express 5 when nothing parsed a
+body, and there are 263 reads of it. None broke, because `express.json()` is
+mounted globally and the sign-in paths that take untrusted bodies were already
+guarded when they were the crash.
+
+### Unwinding
+
+All 27 `wrap()` calls removed, the imports with them, and
+`src/asyncroute.js` deleted. The route files are now byte-identical to the
+commit before wrapping - checked with `git diff 987c00b^`, which is a better
+proof than reading the diff.
+
+### The test that replaced the guard
+
+The old one checked our code kept wrapping. There is nothing to wrap now, so it
+was replaced by one that checks **the dependency**, which is what the removal
+actually rests on: an async handler that rejects must reach the error
+middleware. Four ways in - a thrown Error, a thrown non-Error, a rejection two
+frames down (the shape the real bug had), and a synchronous throw - plus a
+successful request, because if everything returned 500 the other four would pass
+for the wrong reason.
+
+It builds its own one-route app on an ephemeral port. The real app has no route
+that rejects on purpose, and adding one to production code so a test could reach
+it would be worse than this.
+
+Falsified by installing Express 4 and running it: the process does not fail the
+assertions, it **crashes outright** on the unhandled rejection. That is the
+behaviour being guarded, demonstrated rather than described.
+
+### Kept
+
+The process-level `unhandledRejection` handler stays. Express 5 covers route
+handlers, which is where the bug was, but not every promise in the process, and
+a server should not die of one.

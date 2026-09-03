@@ -3,7 +3,6 @@
  * content library, KYC journey composer, rule builder, integrations, audit.
  */
 
-import { wrap } from '../asyncroute.js';
 import { Router } from 'express';
 import { all, one, run, audit, ROLES, ROLE_LABELS } from '../db.js';
 import { requireUser, requirePermission, permissionsFor, orgsFor, activeOrg, PERMISSIONS } from '../auth.js';
@@ -43,7 +42,7 @@ router.get('/users', requirePermission('admin.users'), (_req, res) => {
     ORDER BY u.role, u.name`).map(({ password, ...u }) => u));
 });
 
-router.post('/users', requirePermission('admin.users'), wrap(async (req, res) => {
+router.post('/users', requirePermission('admin.users'), async (req, res) => {
   const { name, email, password, role, product_type_id, manager_id, phone } = req.body;
   if (!name?.trim() || !email?.trim()) return res.status(400).json({ error: 'Name and email are required' });
   if (!ROLES.includes(role)) return res.status(400).json({ error: `Role must be one of: ${ROLES.join(', ')}` });
@@ -55,9 +54,9 @@ router.post('/users', requirePermission('admin.users'), wrap(async (req, res) =>
   );
   audit(req.user.id, 'user_created', 'user', Number(result.lastInsertRowid), { role });
   res.status(201).json({ id: Number(result.lastInsertRowid) });
-}));
+});
 
-router.patch('/users/:id', requirePermission('admin.users'), wrap(async (req, res) => {
+router.patch('/users/:id', requirePermission('admin.users'), async (req, res) => {
   const fields = ['name', 'email', 'role', 'product_type_id', 'manager_id', 'phone', 'active', 'password'];
   const sets = [];
   const params = [];
@@ -80,7 +79,7 @@ router.patch('/users/:id', requirePermission('admin.users'), wrap(async (req, re
   run(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`, [...params, req.params.id]);
   audit(req.user.id, 'user_updated', 'user', Number(req.params.id), { ...req.body, password: undefined });
   res.json({ ok: true });
-}));
+});
 
 /** The full permission matrix, for the Admin → Roles screen. */
 router.get('/roles', requireUser, (_req, res) => {
@@ -783,7 +782,7 @@ router.get('/campaigns/:id/audience', requirePermission('campaign.manage'), (req
  * Catches a broken template before ten thousand clients see it. Goes to the
  * sender's own contact details, never to a lead.
  */
-router.post('/campaigns/:id/test', requirePermission('campaign.manage'), wrap(async (req, res) => {
+router.post('/campaigns/:id/test', requirePermission('campaign.manage'), async (req, res) => {
   const campaign = one('SELECT * FROM campaigns WHERE id = ?', [req.params.id]);
   if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
@@ -808,10 +807,10 @@ router.post('/campaigns/:id/test', requirePermission('campaign.manage'), wrap(as
 
   audit(req.user.id, 'campaign_test_sent', 'campaign', Number(req.params.id), { to });
   res.json({ sent_to: to, note: 'Sent to you only. No lead was contacted.' });
-}));
+});
 
 /** Send a campaign to every member of its list who may lawfully receive it. */
-router.post('/campaigns/:id/send', requirePermission('campaign.manage'), wrap(async (req, res) => {
+router.post('/campaigns/:id/send', requirePermission('campaign.manage'), async (req, res) => {
   const campaign = one('SELECT * FROM campaigns WHERE id = ?', [req.params.id]);
   if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
   if (isSent(campaign)) {
@@ -878,7 +877,7 @@ router.post('/campaigns/:id/send', requirePermission('campaign.manage'), wrap(as
         + 'opted out, no contact details, or a number flagged invalid.'
       : null,
   });
-}));
+});
 
 /* ----------------------------------------------------------- connectors */
 
@@ -921,7 +920,7 @@ router.get('/connectors/meta/leads', requirePermission('admin.system'), (_req, r
  * it is pressed is a bad idea however good the confirmation dialog; a human
  * starts it in Ads Manager having seen it.
  */
-router.post('/connectors/meta/campaigns', requirePermission('campaign.manage'), wrap(async (req, res, next) => {
+router.post('/connectors/meta/campaigns', requirePermission('campaign.manage'), async (req, res, next) => {
   const { name, objective, daily_budget: dailyBudget } = req.body ?? {};
   if (!name?.trim()) return res.status(400).json({ error: 'Give the ad campaign a name' });
 
@@ -936,15 +935,15 @@ router.post('/connectors/meta/campaigns', requirePermission('campaign.manage'), 
     if (err.name === 'VendorError') return res.status(502).json({ error: err.message, vendor: 'meta' });
     return next(err);
   }
-}));
+});
 
-router.get('/connectors/meta/campaigns/:id/insights', requirePermission('campaign.manage'), wrap(async (req, res, next) => {
+router.get('/connectors/meta/campaigns/:id/insights', requirePermission('campaign.manage'), async (req, res, next) => {
   try { return res.json(await meta.campaignInsights(req.params.id)); }
   catch (err) {
     if (err.name === 'VendorError') return res.status(502).json({ error: err.message, vendor: 'meta' });
     return next(err);
   }
-}));
+});
 
 /**
  * Push a lead list to Meta as a Custom Audience.
@@ -954,7 +953,7 @@ router.get('/connectors/meta/campaigns/:id/insights', requirePermission('campaig
  * explains the conflict rather than reporting a missing setting — whoever hits
  * it needs to know it is a policy decision.
  */
-router.post('/connectors/meta/audiences', requirePermission('campaign.manage'), wrap(async (req, res, next) => {
+router.post('/connectors/meta/audiences', requirePermission('campaign.manage'), async (req, res, next) => {
   const { name, list_id: listId } = req.body ?? {};
   if (!name?.trim() || !listId) {
     return res.status(400).json({ error: 'A name and a lead list are both required' });
@@ -984,7 +983,7 @@ router.post('/connectors/meta/audiences', requirePermission('campaign.manage'), 
     if (err.name === 'VendorError') return res.status(502).json({ error: err.message, vendor: 'meta' });
     return next(err);
   }
-}));
+});
 
 /* ----------------------------------------------------------- calendars */
 

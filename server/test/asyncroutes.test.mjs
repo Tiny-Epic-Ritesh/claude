@@ -1,90 +1,119 @@
 /**
- * Every async route handler must be registered through wrap().
+ * Express forwards a rejected promise to the error middleware.
  *
- * Express 4 hands a synchronous throw to its error middleware but knows nothing
- * about a rejected promise: an async handler that rejects reaches nobody, and
- * Node's answer to an unhandled rejection is to end the process. That is how a
- * sign-in with no email in the body — one unauthenticated request — stopped the
- * server for everybody.
+ * The app relies on this and no longer does anything itself about it. Express 4
+ * did not: an async handler that rejected reached nobody, and Node's answer to
+ * an unhandled rejection is to end the process, which is how a sign-in with no
+ * email in the body — one unauthenticated request — stopped the server. That
+ * was fixed by wrapping all 27 async handlers, and the wrapper was removed
+ * again when this codebase moved to Express 5, which does it natively.
  *
- * Wrapping the twenty-seven handlers that existed on the day fixes those
- * twenty-seven. This is what stops the twenty-eighth from reintroducing it,
- * because the next person to add an async handler will not have read any of the
- * above.
+ * So this tests the dependency, not our code. It is the assumption the removal
+ * rests on: if a future upgrade, downgrade or swap stops forwarding rejections,
+ * the crash comes back everywhere at once and nothing else in the suite would
+ * say why.
  *
- * Read from source rather than from a running app on purpose: importing
- * index.js binds a port, and a test that needs the server running to check the
- * server's wiring is a test that gets skipped.
+ * Built as its own throwaway app on an ephemeral port rather than against the
+ * real one. The real app has no route that rejects on purpose, and adding one
+ * to production code so a test can reach it would be worse than this.
  */
 
 import { strict as assert } from 'node:assert';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join, relative } from 'node:path';
+import express from 'express';
 
 let passed = 0;
 let failed = 0;
-const test = (name, fn) => {
-  try { fn(); passed += 1; console.log(`  ok   ${name}`); }
+const test = async (name, fn) => {
+  try { await fn(); passed += 1; console.log(`  ok   ${name}`); }
   catch (err) { failed += 1; console.log(`  FAIL ${name}\n       ${err.message}`); }
 };
 
-const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', 'src');
-
-const jsFiles = (dir) => readdirSync(dir).flatMap((entry) => {
-  const full = join(dir, entry);
-  if (statSync(full).isDirectory()) return jsFiles(full);
-  return full.endsWith('.js') ? [full] : [];
-});
-
-/** Every line that registers a route handler, with its file and line number. */
-const registrations = [];
-for (const file of jsFiles(SRC)) {
-  const lines = readFileSync(file, 'utf8').split('\n');
-  lines.forEach((line, i) => {
-    if (/(?:router|app|internal|publicIndices)\.(?:get|post|patch|put|delete|use)\(/.test(line)) {
-      registrations.push({ file: relative(SRC, file), line: i + 1, text: line });
-    }
+/** A one-route app on a port the OS picks, torn down after the callback. */
+async function withApp(register, run) {
+  const app = express();
+  const seen = [];
+  register(app);
+  // eslint-disable-next-line no-unused-vars
+  app.use((err, _req, res, _next) => {
+    seen.push(err);
+    res.status(500).json({ error: 'handled' });
   });
+
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, () => resolve(s));
+  });
+  try {
+    const { port } = server.address();
+    return await run(`http://127.0.0.1:${port}`, seen);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 }
 
-console.log('\nAsync route handlers — none may escape wrap()');
+console.log('\nExpress — a rejected promise must reach the error middleware');
 
-test('the scan finds the routes it is supposed to be checking', () => {
-  // Guards the guard: a regex that quietly matches nothing would make every
-  // assertion below vacuous, which is the failure mode of this kind of test.
-  assert(registrations.length > 100,
-    `only ${registrations.length} route registrations found — the scan is not seeing the routes`);
+console.log(`  (express ${(await import('express/package.json', { with: { type: 'json' } })).default.version})`);
+
+await test('an async handler that rejects becomes a 500, not a dropped request', async () => {
+  await withApp(
+    (app) => app.get('/boom', async () => { throw new Error('deliberate'); }),
+    async (base, seen) => {
+      const res = await fetch(`${base}/boom`);
+      assert.equal(res.status, 500, 'the rejection did not reach the error middleware');
+      assert.equal(seen.length, 1, `the error middleware saw ${seen.length} errors, expected 1`);
+      assert.equal(seen[0].message, 'deliberate', 'a different error arrived');
+    },
+  );
 });
 
-test('every async handler is wrapped', () => {
-  const bare = registrations.filter((r) => /async \(req, res/.test(r.text) && !/wrap\(async \(req, res/.test(r.text));
-  assert.equal(bare.length, 0,
-    `unwrapped async handler(s):\n${bare.map((r) => `         ${r.file}:${r.line}`).join('\n')}`);
+await test('so does an async handler that rejects with a non-Error', async () => {
+  await withApp(
+    // eslint-disable-next-line prefer-promise-reject-errors
+    (app) => app.get('/boom', async () => { throw 'a string'; }),
+    async (base, seen) => {
+      const res = await fetch(`${base}/boom`);
+      assert.equal(res.status, 500);
+      assert.equal(seen.length, 1);
+    },
+  );
 });
 
-test('and there are as many wrapped handlers as the codebase has async ones', () => {
-  const wrapped = registrations.filter((r) => /wrap\(async \(req, res/.test(r.text));
-  assert(wrapped.length >= 27, `only ${wrapped.length} wrapped handlers found`);
+await test('and a rejection from an awaited call deeper in the handler', async () => {
+  // The shape the real bug had: the throw was two frames down, inside login().
+  const deep = async () => { throw new Error('from below'); };
+  await withApp(
+    (app) => app.get('/boom', async (_req, res) => { await deep(); res.json({}); }),
+    async (base, seen) => {
+      const res = await fetch(`${base}/boom`);
+      assert.equal(res.status, 500);
+      assert.equal(seen[0].message, 'from below');
+    },
+  );
 });
 
-test('every file that wraps also imports wrap', () => {
-  const missing = [];
-  for (const file of jsFiles(SRC)) {
-    const body = readFileSync(file, 'utf8');
-    if (body.includes('wrap(async (req, res') && !/import \{[^}]*\bwrap\b[^}]*\} from '.*asyncroute\.js'/.test(body)) {
-      missing.push(relative(SRC, file));
-    }
-  }
-  assert.equal(missing.length, 0, `uses wrap without importing it: ${missing.join(', ')}`);
+await test('a synchronous throw still reaches it too', async () => {
+  await withApp(
+    (app) => app.get('/boom', () => { throw new Error('sync'); }),
+    async (base, seen) => {
+      const res = await fetch(`${base}/boom`);
+      assert.equal(res.status, 500);
+      assert.equal(seen[0].message, 'sync');
+    },
+  );
 });
 
-test('wrap itself is not async, which is what makes it detectable', () => {
-  // If wrap returned an async function the check above could not tell a wrapped
-  // handler from a bare one.
-  const body = readFileSync(join(SRC, 'asyncroute.js'), 'utf8');
-  assert(!/export const wrap = async/.test(body), 'wrap must not be async');
-  assert(/\.catch\(next\)/.test(body), 'wrap must send the rejection to next()');
+await test('a handler that resolves normally is untouched', async () => {
+  // Guards the guard: if every request returned 500 the assertions above would
+  // pass for the wrong reason.
+  await withApp(
+    (app) => app.get('/fine', (_req, res) => res.json({ ok: true })),
+    async (base, seen) => {
+      const res = await fetch(`${base}/fine`);
+      assert.equal(res.status, 200);
+      assert.deepEqual(await res.json(), { ok: true });
+      assert.equal(seen.length, 0, 'the error middleware ran for a successful request');
+    },
+  );
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

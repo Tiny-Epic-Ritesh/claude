@@ -19,7 +19,6 @@
  * exactly this — attribution that cannot be traced to a human.
  */
 
-import { wrap } from '../asyncroute.js';
 import { Router } from 'express';
 import { all, one, run, audit, transact, SALES_ORGS, CARD_STATES } from '../db.js';
 import {
@@ -303,7 +302,7 @@ router.get('/users', requirePermission('admin.users'), (req, res) => {
   res.json({ users: rows, total: rows.length, active: rows.filter((u) => u.active).length });
 });
 
-router.post('/users', requirePermission('admin.users'), wrap(async (req, res) => {
+router.post('/users', requirePermission('admin.users'), async (req, res) => {
   const {
     name, email, role, password, sales_org: org, org_access: orgAccess,
     manager_id: managerId, product_type_id: productTypeId,
@@ -363,9 +362,9 @@ router.post('/users', requirePermission('admin.users'), wrap(async (req, res) =>
     // Returned once, never stored in the clear, so the administrator can hand it over.
     initial_password: password ? null : initial,
   });
-}));
+});
 
-router.patch('/users/:id', requirePermission('admin.users'), wrap(async (req, res) => {
+router.patch('/users/:id', requirePermission('admin.users'), async (req, res) => {
   const user = one('SELECT * FROM users WHERE id = ?', [req.params.id]);
   if (!user) return res.status(404).json({ error: 'User not found' });
   if (!mayUseOrg(req.user, user.sales_org)) return res.status(403).json({ error: 'That user is outside your sales org' });
@@ -417,7 +416,7 @@ router.patch('/users/:id', requirePermission('admin.users'), wrap(async (req, re
 
   audit(req.user.id, 'user_updated', 'user', user.id, { fields: Object.keys(req.body) });
   return res.json(one('SELECT id, name, email, role, sales_org, employee_code, branch, active FROM users WHERE id = ?', [user.id]));
-}));
+});
 
 /**
  * Activate or deactivate. There is deliberately no delete.

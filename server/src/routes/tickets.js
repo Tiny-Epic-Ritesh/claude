@@ -10,7 +10,6 @@ import { assertValid } from '../engine/validation.js';
 import { applySla, sweepSla, handleStatusChange, slaRemaining, DEFAULT_SLA } from '../engine/sla.js';
 import { send } from '../integrations.js';
 import * as ai from '../ai/index.js';
-import { wrap } from '../asyncroute.js';
 
 const router = Router();
 router.use(requireUser);
@@ -238,7 +237,7 @@ router.get('/:id', (req, res) => {
 
 /* -------------------------------------------------------------- create */
 
-router.post('/', requirePermission('ticket.create'), wrap(async (req, res) => {
+router.post('/', requirePermission('ticket.create'), async (req, res) => {
   const { subject, description, priority = 'Medium', category_id, lead_id, card_id, partner_id, channel = 'CRM' } = req.body;
   if (!subject?.trim()) return res.status(400).json({ error: 'Subject is required' });
   if (!PRIORITIES.includes(priority)) return res.status(400).json({ error: `Priority must be one of ${PRIORITIES.join(', ')}` });
@@ -308,11 +307,11 @@ router.post('/', requirePermission('ticket.create'), wrap(async (req, res) => {
   audit(req.user.id, 'ticket_created', 'ticket', id, { priority, category_id });
   await refreshSummary(id);
   res.status(201).json(decorate(one('SELECT * FROM tickets WHERE id = ?', [id])));
-}));
+});
 
 /* --------------------------------------------------------- interaction */
 
-router.post('/:id/replies', requirePermission('ticket.reply'), wrap(async (req, res) => {
+router.post('/:id/replies', requirePermission('ticket.reply'), async (req, res) => {
   /* A reply is correspondence with somebody else's client. */
   const found = loadInBook(req, 'ticket', req.params.id);
   if (found.error) return res.status(found.status).json({ error: found.error });
@@ -338,9 +337,9 @@ router.post('/:id/replies', requirePermission('ticket.reply'), wrap(async (req, 
   }
   await refreshSummary(Number(req.params.id));
   res.status(201).json({ ok: true });
-}));
+});
 
-router.patch('/:id', wrap(async (req, res) => {
+router.patch('/:id', async (req, res) => {
   /* Loaded within the reader's book. This route gated reassignment on a
      capability and never checked which case was being changed, so a Bonanza
      agent could reopen, reprioritise or reassign a Bigul case. It went
@@ -401,7 +400,7 @@ router.patch('/:id', wrap(async (req, res) => {
 
   await refreshSummary(Number(req.params.id));
   res.json(decorate(one('SELECT * FROM tickets WHERE id = ?', [req.params.id])));
-}));
+});
 
 router.post('/:id/escalate', requirePermission('ticket.escalate'), (req, res) => {
   /* Escalating answered with the name of the person it went to, so this both

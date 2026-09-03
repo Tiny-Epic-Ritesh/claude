@@ -27,7 +27,6 @@ import {
 } from '../engine/leadlists.js';
 import { checkConsent } from '../engine/consent.js';
 import { send, pushToAutodialler } from '../integrations.js';
-import { wrap } from '../asyncroute.js';
 
 const router = Router();
 router.use(requireUser);
@@ -669,7 +668,7 @@ router.post('/:id/import', (req, res) => {
  * same partial-load truth. Inventing a second queue here would have given the
  * two paths different behaviour on the day one of them mattered.
  */
-router.post('/:id/bulk/dialler', requirePermission('lead.contact'), wrap(async (req, res, next) => {
+router.post('/:id/bulk/dialler', requirePermission('lead.contact'), async (req, res, next) => {
   const list = loadList(req);
   if (!list || !mayReadList(list, req.user)) return res.status(404).json({ error: 'List not found' });
 
@@ -713,7 +712,7 @@ router.post('/:id/bulk/dialler', requirePermission('lead.contact'), wrap(async (
     if (err.name === 'VendorError') return res.status(502).json({ error: err.message, vendor: err.vendor });
     return next(err);
   }
-}));
+});
 
 /** Add every member to another list, or take them out of one. */
 router.post('/:id/bulk/membership', (req, res) => {
