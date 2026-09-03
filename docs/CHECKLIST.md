@@ -8,7 +8,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done
 **Status: 123 done, 1 open** (2 Sep 2026). The single open item is blocked on
 the business, not on development: the LeadSquared export has not been run.
 
-**Tests: 1,124** — 595 end-to-end and 529 unit. All green.
+**Tests: 1,126** — 597 end-to-end and 529 unit. All green.
 
 Since this header was last accurate the build has also closed the last of the
 LeadSquared audit findings that were still open on 21 August: field-change
@@ -1344,3 +1344,46 @@ The question was about query-string ids and found two entirely unscoped list
 routes. The id was the smaller half: filtering on it merely made the leak
 easier to aim. Worth remembering that a narrow question can be the thing that
 gets you to look at a route at all.
+
+
+---
+
+## Ids in headers — audited 2 Sep 2026, nothing found
+
+Ten headers are read across the codebase. Nine are authentication — webhook
+signatures and API keys — and one carries a scope identifier:
+`X-Sales-Org`, the business switcher. It is entirely client-controlled and
+feeds `activeOrg()`, which is passed to every scope helper in the system,
+so if it could widen rather than narrow, one header would undo the boundary
+everything else in this sweep enforces.
+
+It cannot. Probed as a Bonanza admin with `BIGUL`, lowercase
+`bigul`, `ALL`, a quote-injection, a comma-separated pair and a
+padded value, through both the header and the `?org=` form it also reads,
+against leads, clients, cases and partners: Bonanza saw Bonanza every time. A
+superadmin, entitled to both, still narrows to either — refusing to narrow would
+be its own bug.
+
+The nine authentication headers fail closed when their secret is unconfigured,
+require a presented signature, and compare it with a constant-time
+`safeEqual`. Two of them also accept the secret as `?token=`, which
+would be a real weakness if query strings were recorded — the access log strips
+them at `originalUrl.split('?')[0]`, deliberately and with a comment
+saying so.
+
+### The protection is doubled, which nearly fooled the verification
+
+Removing the check inside `activeOrg()` changed nothing: the suite stayed
+green. `orgScope()` re-validates independently —
+`activeOrg && allowed.includes(activeOrg) ? [activeOrg] : allowed` — so an
+unentitled value falls back to the reader's own entitlement a second time. Both
+had to be removed before the tests failed.
+
+That is good design and a bad trap. The first attempt at verifying looked exactly
+like a test that does not work, and reporting it as verified on that evidence
+would have been wrong in the other direction: the test was fine, and one layer of
+two is not enough to prove it.
+
+Removing both also tripped an existing test — "a forged org parameter cannot
+widen entitlement" — which already covered the `?org=` form. The header
+form and the malformed shapes were the genuine gap, and are pinned now.

@@ -454,6 +454,52 @@ async function run() {
   /* ----------------------------------------------------------- 9. tickets */
   suite('09 ticketing & SLA');
 
+  await check('the org header can narrow what you see and never widen it', async () => {
+    /* X-Sales-Org is the only header carrying a scope identifier, it is entirely
+       client-controlled, and it feeds activeOrg() which is passed to every scope
+       helper in the system. If it could widen rather than narrow, one header
+       would undo the boundary everything else enforces.
+
+       It cannot — `orgsFor(req.user).includes(requested)` decides, and anything
+       not on that list falls back to the reader's own entitlement. Nothing
+       tested it, though, and this is the single place where a regression would
+       be worst, so the malformed shapes are pinned as well as the plain one. */
+    const books = (rows) => [...new Set(rows.map((r) => r.sales_org))].sort().join(',');
+
+    const { data: plain } = await req('/api/leads?limit=200', { token: T.admin, expect: 200 });
+    eq(books(plain), 'BONANZA', 'the baseline already crosses the book');
+
+    for (const value of ['BIGUL', 'bigul', 'ALL', "BONANZA' OR '1'='1", 'BONANZA,BIGUL', '  BIGUL  ']) {
+      // eslint-disable-next-line no-await-in-loop
+      const { data } = await req('/api/leads?limit=200', {
+        token: T.admin, expect: 200, headers: { 'X-Sales-Org': value },
+      });
+      eq(books(data), 'BONANZA', `X-Sales-Org: ${value} widened what an admin can see`);
+    }
+
+    // activeOrg reads ?org= as well, so the same must hold there.
+    const { data: viaQuery } = await req('/api/leads?limit=200&org=BIGUL', { token: T.admin, expect: 200 });
+    eq(books(viaQuery), 'BONANZA', '?org= widened what an admin can see');
+  });
+
+  await check('the org header narrows for somebody entitled to both books', async () => {
+    /* The other half: it is a switcher, and refusing to narrow would be a bug
+       of its own. A superadmin reaches both books, so they are the only reader
+       for whom the header does anything at all. */
+    const books = (rows) => [...new Set(rows.map((r) => r.sales_org))].sort().join(',');
+
+    const { data: both } = await req('/api/leads?limit=200', { token: T.superadmin, expect: 200 });
+    eq(books(both), 'BIGUL,BONANZA', 'a superadmin should reach both books');
+
+    for (const org of ['BIGUL', 'BONANZA']) {
+      // eslint-disable-next-line no-await-in-loop
+      const { data } = await req('/api/leads?limit=200', {
+        token: T.superadmin, expect: 200, headers: { 'X-Sales-Org': org },
+      });
+      eq(books(data), org, `the switcher did not narrow to ${org}`);
+    }
+  });
+
   await check('an id in the query string is checked too, and neither list is unscoped', async () => {
     /* Asking the query-string question found something larger than the question.
        `/activities` and `/cards` had no scope of any kind: asked for a lead or
