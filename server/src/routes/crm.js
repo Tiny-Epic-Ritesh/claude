@@ -361,6 +361,41 @@ router.get('/leads', (req, res) => {
   return res.json(maskRecords(leads, maskFor(req, 'lead_list')));
 });
 
+/* ------------------------------------------------- lead export columns
+ *
+ * Above `/leads/:id` deliberately. Express matches in registration order and
+ * both are two segments, so registered after it this route is never reached --
+ * the id route answers "Lead not found" for a path that is not an id at all.
+ */
+/** What a lead export may contain, and what it contains by default. */
+export const LEAD_EXPORT_COLUMNS = [
+  { key: 'name', label: 'Name' },
+  { key: 'mobile', label: 'Mobile' },
+  { key: 'email', label: 'Email' },
+  { key: 'stage', label: 'Stage' },
+  { key: 'source', label: 'Source' },
+  { key: 'city', label: 'City' },
+  { key: 'owner_name', label: 'Owner' },
+  { key: 'partner_name', label: 'Partner', default: false },
+  { key: 'age_days', label: 'Age (days)' },
+  { key: 'client_code', label: 'Client code', default: false },
+  { key: 'sales_org', label: 'Business', default: false },
+  { key: 'state', label: 'State', default: false },
+  { key: 'language', label: 'Language', default: false },
+  { key: 'risk_profile', label: 'Risk profile', default: false },
+  { key: 'created_at', label: 'Created' },
+  { key: 'updated_at', label: 'Last modified', default: false },
+];
+
+/** The columns the picker offers. */
+router.get('/leads/export-columns', requirePermission('export.lead'), (_req, res) => {
+  res.json({
+    columns: LEAD_EXPORT_COLUMNS,
+    default: LEAD_EXPORT_COLUMNS.filter((c) => c.default !== false).map((c) => c.key),
+    note: 'Fields masked for you on screen are masked in the file.',
+  });
+});
+
 router.get('/leads/:id', (req, res) => {
   const lead = one(
     `SELECT l.*, ${kycStatusSql('l')} AS kyc_status
@@ -738,35 +773,6 @@ router.post('/leads/export', requirePermission('export.lead'), (req, res) => {
   });
 
   return sendCsv(res, 'leads', visible, chosen);
-});
-
-/** What a lead export may contain, and what it contains by default. */
-export const LEAD_EXPORT_COLUMNS = [
-  { key: 'name', label: 'Name' },
-  { key: 'mobile', label: 'Mobile' },
-  { key: 'email', label: 'Email' },
-  { key: 'stage', label: 'Stage' },
-  { key: 'source', label: 'Source' },
-  { key: 'city', label: 'City' },
-  { key: 'owner_name', label: 'Owner' },
-  { key: 'partner_name', label: 'Partner', default: false },
-  { key: 'age_days', label: 'Age (days)' },
-  { key: 'client_code', label: 'Client code', default: false },
-  { key: 'sales_org', label: 'Business', default: false },
-  { key: 'state', label: 'State', default: false },
-  { key: 'language', label: 'Language', default: false },
-  { key: 'risk_profile', label: 'Risk profile', default: false },
-  { key: 'created_at', label: 'Created' },
-  { key: 'updated_at', label: 'Last modified', default: false },
-];
-
-/** The columns the picker offers. */
-router.get('/leads/export-columns', requirePermission('export.lead'), (_req, res) => {
-  res.json({
-    columns: LEAD_EXPORT_COLUMNS,
-    default: LEAD_EXPORT_COLUMNS.filter((c) => c.default !== false).map((c) => c.key),
-    note: 'Fields masked for you on screen are masked in the file.',
-  });
 });
 
 /* --------------------------------------------------------- import/export */

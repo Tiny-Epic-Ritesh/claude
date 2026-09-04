@@ -79,13 +79,23 @@ export const api = {
    * every other call throws. A failed export that saved itself as a .csv
    * containing an error message would be the worst of both.
    */
-  blob: async (p, kind = 'crm') => {
+  /**
+   * Download a file from an authenticated endpoint.
+   *
+   * `body` makes it a POST. Exports that take a set of chosen columns send them
+   * rather than stringing them through the URL, and an export is not something
+   * to leave in a browser cache keyed by its query.
+   */
+  blob: async (p, kind = 'crm', body = null) => {
     const headers = {};
     const t = token.get(kind);
     if (t) headers.Authorization = `Bearer ${t}`;
     if (activeOrg) headers['X-Sales-Org'] = activeOrg;
+    if (body) headers['Content-Type'] = 'application/json';
 
-    const res = await fetch(`/api${p}`, { headers });
+    const res = await fetch(`/api${p}`, body
+      ? { method: 'POST', headers, body: JSON.stringify(body) }
+      : { headers });
     if (!res.ok) {
       const detail = await res.json().catch(() => ({}));
       const err = new Error(detail.error || `Export failed (${res.status})`);

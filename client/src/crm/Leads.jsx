@@ -7,6 +7,7 @@ import ActionMenu, { BulkBar } from '../components/ActionMenu.jsx';
 import ActionModal from './ActionModals.jsx';
 import { useLeadActions, CallNumber } from './leadActions.jsx';
 import AdvancedSearch from '../components/AdvancedSearch.jsx';
+import ExportDialog from '../components/ExportDialog.jsx';
 
 const BANDS = ['Fresh', 'Active', 'Ageing', 'At Risk', 'Cold'];
 
@@ -247,6 +248,7 @@ export default function Leads({ session }) {
   const navigate = useNavigate();
 
   const canCreate = session.permissions.includes('lead.create');
+  const [exporting, setExporting] = useState(false);
   const set = (k) => (e) => setFilters({ ...filters, [k]: e.target.value });
 
   return (
@@ -351,6 +353,11 @@ export default function Leads({ session }) {
               onToggle={toggleColumn}
               onReset={resetColumns}
             />
+            {session.permissions.includes('export.lead') && (
+              <button className="btn-sm" onClick={() => setExporting(true)}>
+                <Icon name="download" size={15} /> Export
+              </button>
+            )}
             <button className="btn-sm" onClick={reload}>Refresh</button>
           </div>
         </div>
@@ -480,6 +487,19 @@ export default function Leads({ session }) {
           </div>
         )}
       </section>
+
+      {exporting && (
+        <ExportDialog
+          title="Export leads"
+          subtitle="The file contains what this screen is showing"
+          columnsFrom="/leads/export-columns"
+          filename="leads"
+          onClose={() => setExporting(false)}
+          /* The same query string the list is using, so the file is the screen
+             rather than a second opinion about it. */
+          download={(columns) => api.blob(`/leads/export?${query}`, 'crm', { columns })}
+        />
+      )}
 
       <BulkBar
         count={selected.size}
