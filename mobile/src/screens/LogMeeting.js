@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator,
 } from 'react-native';
+import { api } from '../api.js';
 import * as queue from '../queue.js';
 import { capture, describe } from '../location.js';
 import { viaSwitch, viaHandset, dialable } from '../call.js';
