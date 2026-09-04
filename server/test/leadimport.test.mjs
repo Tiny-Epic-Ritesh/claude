@@ -15,8 +15,15 @@
  */
 
 import { strict as assert } from 'node:assert';
+import { probeAdmin } from './helpers/probeadmin.mjs';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
+
+/* Its own administrator. Several test files and the e2e run all signed in as
+   admin@bonanza.test, and ten a minute is the limiter's budget for one account --
+   so the eleventh attempt was refused and the failure looked like a broken
+   feature. A test that needs to sign in as somebody brings its own somebody. */
+const PROBE = await probeAdmin('leadimport');
 
 let passed = 0;
 let failed = 0;
@@ -37,7 +44,7 @@ const login = async (email, password = 'bonanza') => {
   return (await res.json()).token;
 };
 
-const token = await login('admin@bonanza.test');
+const token = await login(PROBE.email);
 const H = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 
 /** The same minimal parse the screen does, so the test reads the file as a person would. */

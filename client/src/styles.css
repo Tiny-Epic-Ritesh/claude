@@ -6277,3 +6277,27 @@ tr.row-inactive .user-cell strong { color: var(--ink-3); }
 .notif-live { cursor: pointer; border-radius: 6px; padding: 4px 6px; margin: -4px -6px; }
 .notif-live:hover { background: var(--surface-2, rgba(127, 127, 127, 0.08)); }
 .notif-live:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ------------------------------------------------------ the org tree (P3-07)
+ *
+ * Indentation rather than drawn connector lines. The depth is whatever an
+ * administrator makes it, and lines that have to stay correct at every depth
+ * are a lot of CSS to say what a left margin already says.
+ */
+.orgroot { margin-bottom: 18px; }
+.orgroot:last-child { margin-bottom: 0; }
+.orgbranch { margin-left: 13px; padding-left: 13px; border-left: 1px solid var(--line, rgba(127,127,127,0.22)); }
+.orgnode {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; border-radius: 6px; cursor: pointer;
+  font-size: 13.5px;
+}
+.orgnode:hover { background: var(--surface-2, rgba(127,127,127,0.08)); }
+.orgnode:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.orgnode.is-root { cursor: default; font-size: 15px; }
+.orgnode.is-root:hover { background: none; }
+.orgnode.is-off { opacity: 0.55; }
+.orgdot {
+  width: 8px; height: 8px; border-radius: 50%; flex: none;
+  background: var(--ink-3, #888);
+}

@@ -21,8 +21,15 @@
 
 import { strict as assert } from 'node:assert';
 import { all, one, run } from '../src/db.js';
+import { probeAdmin } from './helpers/probeadmin.mjs';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
+
+/* Its own administrator. Several test files and the e2e run all signed in as
+   admin@bonanza.test, and ten a minute is the limiter's budget for one account --
+   so the eleventh attempt was refused and the failure looked like a broken
+   feature. A test that needs to sign in as somebody brings its own somebody. */
+const PROBE = await probeAdmin('groups');
 
 let passed = 0;
 let failed = 0;
@@ -39,7 +46,7 @@ const admin = async () => {
   const res = await fetch(`${BASE}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'admin@bonanza.test', password: 'bonanza' }),
+    body: JSON.stringify({ email: PROBE.email, password: 'bonanza' }),
   });
   if (!res.ok) throw new Error(`could not sign in: HTTP ${res.status}`);
   token = (await res.json()).token;
@@ -53,6 +60,25 @@ const call = async (method, path, body) => {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   return { status: res.status, body: await res.json().catch(() => null) };
+};
+
+/**
+ * A direct write, retried.
+ *
+ * These tests share the database file with a running server, and SQLite refuses
+ * a writer while a reader holds the lock. Without this a write that lands in
+ * the middle of a request throws "database is locked" and takes the whole run
+ * with it -- which looks like a broken feature and is a busy file.
+ */
+const write = async (sql, params = []) => {
+  for (let i = 0; i < 20; i += 1) {
+    try { return run(sql, params); }
+    catch (err) {
+      if (!/locked|busy/i.test(err.message) || i === 19) throw err;
+      await new Promise((r) => setTimeout(r, 100));      // eslint-disable-line no-await-in-loop
+    }
+  }
+  return undefined;
 };
 
 const NAME = 'Groups probe desk';
@@ -132,13 +158,13 @@ await test('a member from the other business is refused', async () => {
 
 await test('a group in another business cannot be touched', async () => {
   const before = one('SELECT sales_org FROM teams WHERE id = ?', [groupId]).sales_org;
-  run("UPDATE teams SET sales_org = 'BIGUL' WHERE id = ?", [groupId]);
+  await write("UPDATE teams SET sales_org = 'BIGUL' WHERE id = ?", [groupId]);
   try {
     const r = await call('PATCH', `/setup/groups/${groupId}`, { name: 'Reached across the book' });
     assert.equal(r.status, 403, `a Bonanza admin edited a Bigul group: HTTP ${r.status}`);
     assert.notEqual(one('SELECT name FROM teams WHERE id = ?', [groupId]).name, 'Reached across the book');
   } finally {
-    run('UPDATE teams SET sales_org = ? WHERE id = ?', [before, groupId]);
+    await write('UPDATE teams SET sales_org = ? WHERE id = ?', [before, groupId]);
   }
 });
 
@@ -157,8 +183,8 @@ await test('membership does not grant sight of records', async () => {
      somebody should bring its own somebody. */
   const seeded = one("SELECT password FROM users WHERE email = 'admin@bonanza.test'");
   const email = 'groups-probe-rm@bonanza.test';
-  run('DELETE FROM users WHERE email = ?', [email]);
-  run(`INSERT INTO users (name, email, password, role, sales_org, active)
+  await write('DELETE FROM users WHERE email = ?', [email]);
+  await write(`INSERT INTO users (name, email, password, role, sales_org, active)
        VALUES ('Groups Probe RM', ?, ?, 'sales_rm', 'BONANZA', 1)`, [email, seeded.password]);
   const rm = one('SELECT id FROM users WHERE email = ?', [email]);
 
@@ -182,7 +208,7 @@ await test('membership does not grant sight of records', async () => {
     assert.equal(after, before,
       `joining a group changed what an RM can see: ${before} leads before, ${after} after`);
   } finally {
-    run('DELETE FROM users WHERE email = ?', [email]);
+    await write('DELETE FROM users WHERE email = ?', [email]);
   }
 });
 
@@ -207,6 +233,136 @@ await test('deleting a group takes its membership and leaves the people', async 
   assert.equal(all('SELECT user_id FROM team_members WHERE team_id = ?', [groupId]).length, 0,
     'the membership rows outlived the group');
   assert(one('SELECT id FROM users WHERE id = ?', [rm.id]), 'deleting a group deleted a user');
+});
+
+/* ============================================================ the org tree */
+
+/**
+ * P3-07. Ritesh, 5 Sep: the roles named in the ticket were an example and do
+ * not exist here — what he wants is a configurable tree with as many branches
+ * as needed, hanging under Bonanza and Bigul.
+ *
+ * The businesses are the roots and are not rows in `teams`. A branch is a
+ * group, so there is one structure describing the organisation rather than two
+ * that can disagree about it.
+ */
+
+const tree = async () => (await call('GET', '/setup/org-tree')).body;
+const find = (nodes, name) => {
+  for (const n of nodes ?? []) {
+    if (n.name === name) return n;
+    const deeper = find(n.children, name);
+    if (deeper) return deeper;
+  }
+  return null;
+};
+
+let parentId = null;
+let childId = null;
+
+await test('the businesses are the roots, and are not groups', async () => {
+  const t = await tree();
+  const names = t.roots.map((r) => r.name);
+  assert(names.includes('Bonanza'), `Bonanza is not a root: ${names.join(', ')}`);
+
+  /* If the roots were rows in `teams` they would appear in the groups list as
+     two entries with no members, no manager and no routing, and every screen
+     listing groups would have to skip them. */
+  const listed = (await call('GET', '/setup/groups')).body.groups.map((g) => g.name);
+  assert(!listed.includes('Bonanza'), 'the business is in the groups list as a group');
+});
+
+await test('a branch can hang under another branch, to any depth', async () => {
+  let r = await call('POST', '/setup/groups', { name: 'Groups probe region' });
+  assert.equal(r.status, 201, `parent create failed: ${JSON.stringify(r.body)}`);
+  parentId = r.body.id;
+
+  r = await call('POST', '/setup/groups', { name: 'Groups probe branch', parent_id: parentId });
+  assert.equal(r.status, 201, `child create failed: ${JSON.stringify(r.body)}`);
+  childId = r.body.id;
+
+  const grand = await call('POST', '/setup/groups', { name: 'Groups probe desk', parent_id: childId });
+  assert.equal(grand.status, 201, 'a third level was refused');
+
+  const t = await tree();
+  const region = find(t.roots.flatMap((x) => x.children), 'Groups probe region');
+  assert(region, 'the region is not on the tree');
+  assert(find(region.children, 'Groups probe branch'), 'the branch is not under its region');
+  assert(find(region.children, 'Groups probe desk'), 'the third level is missing');
+});
+
+await test('a branch cannot be put inside its own branch', async () => {
+  /* The check that has to exist before a tree is editable. Without it every
+     later walk of the tree runs forever: the screen hangs, the API times out,
+     and the only way back is a database edit. */
+  let r = await call('PATCH', `/setup/groups/${parentId}`, { parent_id: childId });
+  assert.equal(r.status, 400, `a loop was allowed: HTTP ${r.status}`);
+
+  r = await call('PATCH', `/setup/groups/${parentId}`, { parent_id: parentId });
+  assert.equal(r.status, 400, 'a group was put under itself');
+
+  // And the tree still walks, which is the thing the guard protects.
+  const t = await tree();
+  assert(t.roots.length, 'the tree could not be read after the refused moves');
+});
+
+await test('a branch cannot hang under the other business', async () => {
+  const bigulGroup = one("SELECT id FROM teams WHERE sales_org = 'BIGUL' LIMIT 1");
+  if (!bigulGroup) return;
+
+  const r = await call('PATCH', `/setup/groups/${childId}`, { parent_id: bigulGroup.id });
+  assert.equal(r.status, 400, `a Bonanza branch hangs under a Bigul one: HTTP ${r.status}`);
+});
+
+await test('deleting a branch lifts its children rather than losing them', async () => {
+  /* Deleting a region should not delete the branches under it, and a branch
+     pointing at a group that no longer exists is invisible on the tree and
+     cannot be fixed from the screen. */
+  const before = one('SELECT parent_id FROM teams WHERE id = ?', [childId]).parent_id;
+  assert.equal(before, parentId, 'setup: the child should start under the parent');
+
+  const r = await call('DELETE', `/setup/groups/${parentId}`);
+  assert.equal(r.status, 200, `delete failed: ${JSON.stringify(r.body)}`);
+
+  const after = one('SELECT parent_id FROM teams WHERE id = ?', [childId]);
+  assert(after, 'deleting the parent deleted the child');
+  assert.equal(after.parent_id, null, `the child should have moved up, its parent is ${after.parent_id}`);
+
+  // Still reachable on the tree, which is what "not lost" means in practice.
+  const t = await tree();
+  assert(find(t.roots.flatMap((x) => x.children), 'Groups probe branch'),
+    'the child is not on the tree after its parent was deleted');
+});
+
+await test('a parent cannot dangle, and a parent in the other book does not hide a branch', async () => {
+  /* Two different protections, and the first one is not mine.
+     parent_id is a foreign key, so pointing it at an id that does not exist is
+     refused by the database. There is no way to create the orphan this was
+     originally written to survive. */
+  let refused = false;
+  try {
+    run('UPDATE teams SET parent_id = 999999 WHERE id = ?', [childId]);
+  } catch {
+    refused = true;
+  }
+  assert(refused, 'a group was given a parent that does not exist');
+
+  /* What IS reachable: a parent in the other business, because a group's
+     sales_org can be changed. The tree puts such a child under its own business
+     rather than under a parent nobody in that book can see -- a node that is
+     invisible is a node nobody can move. */
+  const bigulGroup = one("SELECT id FROM teams WHERE sales_org = 'BIGUL' LIMIT 1");
+  if (!bigulGroup) return;
+
+  await write('UPDATE teams SET parent_id = ? WHERE id = ?', [bigulGroup.id, childId]);
+  try {
+    const t = await tree();
+    const bonanza = t.roots.find((r) => r.name === 'Bonanza');
+    assert(find(bonanza.children, 'Groups probe branch'),
+      'a branch whose parent is in the other business vanished from the tree');
+  } finally {
+    await write('UPDATE teams SET parent_id = NULL WHERE id = ?', [childId]);
+  }
 });
 
 clean();

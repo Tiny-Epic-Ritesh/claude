@@ -18,8 +18,15 @@
 
 import { strict as assert } from 'node:assert';
 import { all, one } from '../src/db.js';
+import { probeAdmin } from './helpers/probeadmin.mjs';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
+
+/* Its own administrator. Several test files and the e2e run all signed in as
+   admin@bonanza.test, and ten a minute is the limiter's budget for one account --
+   so the eleventh attempt was refused and the failure looked like a broken
+   feature. A test that needs to sign in as somebody brings its own somebody. */
+const PROBE = await probeAdmin('exportrights');
 
 let passed = 0;
 let failed = 0;
@@ -96,7 +103,7 @@ await test('export rights are per object, not one switch', async () => {
   /* The point of the ticket. Taken away through the roles API rather than the
      table, because the server caches role capabilities in its own process and
      would not see a direct write. */
-  const admin = await tokenFor('admin@bonanza.test');
+  const admin = await tokenFor(PROBE.email);
   const before = all("SELECT capability FROM role_capabilities WHERE role_code = 'sales_supervisor'")
     .map((r) => r.capability);
   assert(before.includes('export.lead'), 'setup: the supervisor should start with export.lead');
@@ -147,7 +154,7 @@ await test('a filter on the screen is a filter on the file', async () => {
   /* The export takes the same query the list does, through the same code. If
      these two ever disagreed the report would be "the export is missing leads",
      which is a hard thing to believe and a harder thing to find. */
-  const token = await tokenFor('admin@bonanza.test');
+  const token = await tokenFor(PROBE.email);
   const q = '?stage=New';
 
   const list = await (await fetch(`${BASE}/api/leads${q}&limit=500`, { headers: headers(token) })).json();
@@ -188,7 +195,7 @@ await test('a field masked on screen is masked in the file', async () => {
 
 await test('exporting leads is recorded', async () => {
   const before = one("SELECT COUNT(*) n FROM audit_log WHERE action = 'leads_exported'").n;
-  await exportLeads(await tokenFor('admin@bonanza.test'));
+  await exportLeads(await tokenFor(PROBE.email));
   const after = one("SELECT COUNT(*) n FROM audit_log WHERE action = 'leads_exported'").n;
 
   assert.equal(after, before + 1, 'a lead export left no trace');

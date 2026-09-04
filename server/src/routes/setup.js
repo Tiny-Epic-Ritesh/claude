@@ -342,6 +342,70 @@ const groupRow = (id) => {
   };
 };
 
+/**
+ * Would moving `id` under `parentId` make a loop?
+ *
+ * The check that has to exist before a tree is editable. Without it an
+ * administrator can put a branch under its own child, and every walk of the
+ * tree afterwards runs forever -- the screen hangs, the API times out, and the
+ * only way back is a database edit.
+ */
+function wouldCycle(id, parentId) {
+  let at = parentId;
+  const seen = new Set();
+  while (at) {
+    if (Number(at) === Number(id)) return true;
+    if (seen.has(at)) return true;              // already-broken data, do not add to it
+    seen.add(at);
+    at = one('SELECT parent_id FROM teams WHERE id = ?', [at])?.parent_id ?? null;
+  }
+  return false;
+}
+
+/**
+ * The organisation, as a tree (P3-07).
+ *
+ * The two businesses are the roots and are not rows in `teams` — a group with
+ * no parent hangs directly under its own business. Any depth below that.
+ */
+router.get('/org-tree', requirePermission('admin.users'), (req, res) => {
+  const orgs = orgsFor(req.user);
+  const placeholders = orgs.map(() => '?').join(',') || "''";
+
+  const groups = all(
+    `SELECT t.id, t.name, t.description, t.parent_id, t.sales_org, t.active,
+            m.name AS manager_name, m.id AS manager_id,
+            (SELECT COUNT(*) FROM team_members tm WHERE tm.team_id = t.id) AS member_count
+       FROM teams t
+       LEFT JOIN users m ON m.id = t.manager_id
+      WHERE t.sales_org IN (${placeholders})
+      ORDER BY t.name`,
+    orgs,
+  );
+
+  /* Built by walking parents rather than recursing in SQL, so a row whose
+     parent has been deleted or points outside this book still appears — under
+     its business, where somebody can see it and move it. A node that vanishes
+     from the screen because its parent is missing is unfixable from the UI. */
+  const byId = new Map(groups.map((g) => [g.id, { ...g, children: [] }]));
+  const roots = all(
+    `SELECT code, name, accent FROM sales_orgs WHERE code IN (${placeholders}) AND active = 1 ORDER BY sort_order`,
+    orgs,
+  ).map((o) => ({ ...o, children: [] }));
+  const rootFor = new Map(roots.map((r) => [r.code, r]));
+
+  for (const node of byId.values()) {
+    const parent = node.parent_id ? byId.get(node.parent_id) : null;
+    if (parent && parent.sales_org === node.sales_org) parent.children.push(node);
+    else rootFor.get(node.sales_org)?.children.push(node);
+  }
+
+  res.json({
+    roots,
+    note: 'A branch is a group. Businesses are the roots and cannot be moved or removed.',
+  });
+});
+
 /** Every group in the books this administrator can see. */
 router.get('/groups', requirePermission('admin.users'), (req, res) => {
   const orgs = orgsFor(req.user);
@@ -375,9 +439,20 @@ router.post('/groups', requirePermission('admin.users'), (req, res) => {
     }
   }
 
+  /* Where it hangs. A parent in another business would be a branch of the
+     wrong company, which is the book boundary drawn through the org chart. */
+  const parentId = req.body?.parent_id ? Number(req.body.parent_id) : null;
+  if (parentId) {
+    const parent = one('SELECT id, sales_org FROM teams WHERE id = ?', [parentId]);
+    if (!parent) return res.status(400).json({ error: 'That parent group does not exist', field: 'parent_id' });
+    if (parent.sales_org !== targetOrg) {
+      return res.status(400).json({ error: 'The parent belongs to a different business', field: 'parent_id' });
+    }
+  }
+
   const made = run(
-    'INSERT INTO teams (name, description, manager_id, sales_org) VALUES (?,?,?,?)',
-    [name.trim(), description?.trim() || null, managerId || null, targetOrg],
+    'INSERT INTO teams (name, description, manager_id, sales_org, parent_id) VALUES (?,?,?,?,?)',
+    [name.trim(), description?.trim() || null, managerId || null, targetOrg, parentId],
   );
   const id = Number(made.lastInsertRowid);
   auditConfig('group', String(id), 'create', null, { name: name.trim(), manager_id: managerId ?? null }, req.user.id);
@@ -404,9 +479,30 @@ router.patch('/groups/:id', requirePermission('admin.users'), (req, res) => {
     }
   }
 
+  /* Moving a branch. Three ways this goes wrong and all three are refused:
+     into another business, under itself, or under one of its own descendants --
+     the last leaves a ring that every walk of the tree loops on forever. */
+  let parentId = found.team.parent_id;
+  if (req.body?.parent_id !== undefined) {
+    parentId = req.body.parent_id ? Number(req.body.parent_id) : null;
+    if (parentId) {
+      const parent = one('SELECT id, sales_org FROM teams WHERE id = ?', [parentId]);
+      if (!parent) return res.status(400).json({ error: 'That parent group does not exist', field: 'parent_id' });
+      if (parent.sales_org !== found.team.sales_org) {
+        return res.status(400).json({ error: 'The parent belongs to a different business', field: 'parent_id' });
+      }
+      if (parentId === found.team.id) {
+        return res.status(400).json({ error: 'A group cannot sit under itself', field: 'parent_id' });
+      }
+      if (wouldCycle(found.team.id, parentId)) {
+        return res.status(400).json({ error: 'That would put the group inside its own branch', field: 'parent_id' });
+      }
+    }
+  }
+
   run(
     `UPDATE teams SET name = COALESCE(?, name), description = COALESCE(?, description),
-                      manager_id = ?, active = COALESCE(?, active)
+                      manager_id = ?, active = COALESCE(?, active), parent_id = ?
       WHERE id = ?`,
     [
       name?.trim() || null,
@@ -414,6 +510,7 @@ router.patch('/groups/:id', requirePermission('admin.users'), (req, res) => {
       // Explicit null clears the manager; undefined leaves it alone.
       managerId === undefined ? found.team.manager_id : (managerId || null),
       active === undefined ? null : (active ? 1 : 0),
+      parentId,
       found.team.id,
     ],
   );
@@ -434,6 +531,11 @@ router.delete('/groups/:id', requirePermission('admin.users'), (req, res) => {
   const found = loadGroup(req);
   if (found.error) return res.status(found.status).json({ error: found.error });
 
+  /* Its children move up to where it was, rather than being deleted with it or
+     orphaned. Deleting a region should not delete the branches under it, and a
+     branch pointing at a group that no longer exists is invisible on the tree
+     and unfixable from the screen. */
+  run('UPDATE teams SET parent_id = ? WHERE parent_id = ?', [found.team.parent_id ?? null, found.team.id]);
   run('DELETE FROM teams WHERE id = ?', [found.team.id]);
   auditConfig('group', String(found.team.id), 'delete', found.team, null, req.user.id);
   return res.json({ ok: true });

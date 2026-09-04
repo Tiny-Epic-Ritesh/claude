@@ -1182,6 +1182,13 @@ const COLUMNS = [
   ['users', 'whatsapp', 'TEXT'],
   ['users', 'updated_at', 'TEXT'],            // maintained by a trigger, see below
 
+  /* P3-07. A group's place in the org tree. Null means it hangs directly under
+     its own business, which is the root — the two businesses are assembled from
+     `sales_orgs` when the tree is read rather than written into `teams`, where
+     they would be two rows with no members and no routing that every groups
+     screen would have to skip. */
+  ['teams', 'parent_id', 'INTEGER REFERENCES teams(id)'],
+
   /* P3-02, benchmarked against the LeadSquared user grid and the Salesforce
      User object, confirmed by Ritesh on 4 Sep. `last_login_at` cannot be
      derived: sessions are deleted on sign-out, idle sweep, password reset and
