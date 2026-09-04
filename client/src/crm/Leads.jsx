@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, money, shortDate, STATE_LABEL } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty, Modal, Spinner, CardStrip, AgeBadge } from '../components/ui.jsx';
+import ColumnChooser from '../components/ColumnChooser.jsx';
 import ActionMenu, { BulkBar } from '../components/ActionMenu.jsx';
 import ActionModal from './ActionModals.jsx';
 import { useLeadActions, CallNumber } from './leadActions.jsx';
@@ -60,6 +61,54 @@ const PAGE_SIZES = [25, 50, 100, 200];
 /* Which columns can be ordered, and how each is read. Mirrors LEAD_SORTS on the
    server, which is the authority -- a key not in that table is ignored there,
    so offering one here would be a header that silently does nothing. */
+/**
+ * How each lead column is read. P3-38.
+ *
+ * Mirrors LIST_COLUMNS.lead on the server, which decides which of these a
+ * person actually sees. Keys match; the rendering lives here because a table
+ * cell is a rendering concern and the server has no business knowing that Age
+ * is a badge.
+ */
+const LEAD_COLUMNS = {
+  name: {
+    render: (l, ctx) => (
+      <>
+        <div style={{ fontWeight: 570 }}>{l.name}</div>
+        <div className="tiny muted row wrap" style={{ gap: 6 }}>
+          <CallNumber
+            lead={l}
+            permissions={ctx.session.permissions}
+            onCall={(x) => ctx.actions.run('call', x)}
+            dialling={ctx.actions.dialling === l.id}
+          />
+          <span>· {l.city || '—'} · {l.source}</span>
+          {l.open_tickets > 0 && <span className="badge badge-red">{l.open_tickets} open ticket</span>}
+        </div>
+      </>
+    ),
+  },
+  stage: { render: (l) => <span className="badge">{l.stage}</span> },
+  products: { render: (l) => <CardStrip cards={l.cards} /> },
+  age_days: { render: (l) => <AgeBadge band={l.age_band} days={l.age_days} /> },
+  owner_name: { cls: 'small', render: (l) => l.owner_name || <span className="muted">—</span> },
+  partner_name: { cls: 'small muted', render: (l) => l.partner_name || '—' },
+  aum: { cls: 'num small', num: true, render: (l) => (l.aum ? money(l.aum) : '—') },
+  score: { cls: 'num', num: true, render: (l) => l.score },
+
+  mobile: { cls: 'small', render: (l) => l.mobile || '—' },
+  email: { cls: 'small muted', render: (l) => l.email || '—' },
+  city: { cls: 'small', render: (l) => l.city || '—' },
+  state: { cls: 'small muted', render: (l) => l.state || '—' },
+  source: { cls: 'small', render: (l) => l.source || '—' },
+  language: { cls: 'small muted', render: (l) => l.language || '—' },
+  risk_profile: { cls: 'small', render: (l) => l.risk_profile || '—' },
+  kyc_status: { cls: 'small', render: (l) => (l.kyc_status ? <span className="badge">{l.kyc_status}</span> : '—') },
+  client_code: { cls: 'small mono', render: (l) => l.client_code || '—' },
+  created_at: { cls: 'tiny muted', render: (l) => shortDate(l.created_at) },
+  updated_at: { cls: 'tiny muted', render: (l) => shortDate(l.updated_at) },
+  callback_at: { cls: 'tiny muted', render: (l) => (l.callback_at ? shortDate(l.callback_at) : '—') },
+};
+
 const SORTABLE = [
   { key: 'name', label: 'Lead' },
   { key: 'stage', label: 'Stage' },
@@ -149,6 +198,29 @@ export default function Leads({ session }) {
     dir: sort === key && dir === 'desc' ? 'asc' : 'desc',
     offset: 0,
   });
+
+  /* Column choice, resolved server-side: role default, then this person's own
+     override. P3-38. */
+  const [cols, { reload: reloadCols }] = useApi('/setup/columns/lead');
+  const [colOverride, setColOverride] = useState(null);
+  const columns = colOverride ?? cols?.columns ?? [];
+
+  /* Only columns this build knows how to draw. A key added to the server
+     catalogue before its renderer exists would otherwise be an empty column
+     with a heading, which reads as missing data rather than missing code. */
+  const visibleCols = columns.filter((c) => c.visible && LEAD_COLUMNS[c.key]);
+
+  const toggleColumn = (key, next) => {
+    setColOverride(columns.map((c) => (c.key === key ? { ...c, visible: next, source: 'user' } : c)));
+    api.put('/setup/columns/lead', { columns: { [key]: next } })
+      .then(() => reloadCols())
+      .catch(() => { setColOverride(null); reloadCols(); });
+  };
+
+  const resetColumns = () => {
+    setColOverride(null);
+    api.del('/setup/columns/lead').then(() => reloadCols()).catch(() => reloadCols());
+  };
 
   const choosePageSize = (n) => {
     setPageSize(n);
@@ -271,8 +343,16 @@ export default function Leads({ session }) {
 
       <section className="card">
         <div className="card-head">
-          <h2>{loading ? 'Loading…' : found ? `${found.rows.length} of ${found.total} shown` : `${leads?.length ?? 0} leads`}</h2>
-          <button className="btn-sm" onClick={reload}>Refresh</button>
+          <h2>{loading ? 'Loading…' : found ? `${found.rows.length} of ${found.total} shown` : `${count.toLocaleString('en-IN')} leads`}</h2>
+          <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+            <ColumnChooser
+              columns={columns}
+              hasOwnChoice={Boolean(cols?.has_own_choice) || Boolean(colOverride)}
+              onToggle={toggleColumn}
+              onReset={resetColumns}
+            />
+            <button className="btn-sm" onClick={reload}>Refresh</button>
+          </div>
         </div>
         {loading ? <Loading /> : !(found ? found.rows : leads)?.length ? <Empty>No leads match these filters.</Empty> : (
           <table>
@@ -293,10 +373,17 @@ export default function Leads({ session }) {
                     cannot. Products, AUM and Score are assembled per page after
                     the query, so offering a header that only reordered the
                     fifty rows in front of you would be a sort that lies. */}
-                {SORTABLE.slice(0, 2).map((c) => <SortTh key={c.key} col={c} sort={sort} dir={dir} onSort={setSort} />)}
-                <th>Products</th>
-                {SORTABLE.slice(2).map((c) => <SortTh key={c.key} col={c} sort={sort} dir={dir} onSort={setSort} />)}
-                <th className="num">AUM</th><th className="num">Score</th><th className="col-actions" />
+                {visibleCols.map((c) => {
+                  const sortable = SORTABLE.find((sc) => sc.key === c.key);
+                  return sortable
+                    ? <SortTh key={c.key} col={{ key: sortable.key, label: c.label }} sort={sort} dir={dir} onSort={setSort} />
+                    : (
+                      <th key={c.key} className={LEAD_COLUMNS[c.key].num ? 'num' : undefined}>
+                        {c.label}
+                      </th>
+                    );
+                })}
+                <th className="col-actions" />
               </tr>
             </thead>
             <tbody>
@@ -316,26 +403,15 @@ export default function Leads({ session }) {
                       onChange={() => toggle(l.id)}
                     />
                   </td>
-                  <td>
-                    <div style={{ fontWeight: 570 }}>{l.name}</div>
-                    <div className="tiny muted row wrap" style={{ gap: 6 }}>
-                      <CallNumber
-                        lead={l}
-                        permissions={session.permissions}
-                        onCall={(x) => actions.run('call', x)}
-                        dialling={actions.dialling === l.id}
-                      />
-                      <span>· {l.city || '—'} · {l.source}</span>
-                      {l.open_tickets > 0 && <span className="badge badge-red">{l.open_tickets} open ticket</span>}
-                    </div>
-                  </td>
-                  <td><span className="badge">{l.stage}</span></td>
-                  <td><CardStrip cards={l.cards} /></td>
-                  <td><AgeBadge band={l.age_band} days={l.age_days} /></td>
-                  <td className="small">{l.owner_name || <span className="muted">—</span>}</td>
-                  <td className="small muted">{l.partner_name || '—'}</td>
-                  <td className="num small">{l.aum ? money(l.aum) : '—'}</td>
-                  <td className="num">{l.score}</td>
+                  {/* Header and body walk the same list, so a hidden column
+                      cannot leave the two out of step -- which is what
+                      positional cells would have done the first time somebody
+                      hid one. */}
+                  {visibleCols.map((c) => (
+                    <td key={c.key} className={LEAD_COLUMNS[c.key].cls}>
+                      {LEAD_COLUMNS[c.key].render(l, { session, actions })}
+                    </td>
+                  ))}
                   <td className="col-actions" onClick={(e) => e.stopPropagation()}>
                     <ActionMenu
                       lead={l}

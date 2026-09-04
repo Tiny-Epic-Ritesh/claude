@@ -62,6 +62,40 @@ export const LIST_COLUMNS = {
     { key: 'last_traded_at', label: 'Last trade', default: true },
     { key: 'owner_name', label: 'Owner', default: true },
   ],
+
+  /* The lead list. P3-38.
+   *
+   * Ritesh settled the mandatory set on 4 Sep: the lead's name and nothing
+   * else. Every other column is somebody's noise -- a caller does not need AUM,
+   * a dealer does not need Source -- but a row you cannot identify is not a row.
+   *
+   * The eight that shipped default on, so nobody's list changes on the day this
+   * arrives. The rest are available and off, which is the point of the ticket:
+   * they were in the payload already and there was no way to see them. */
+  lead: [
+    { key: 'name', label: 'Lead', default: true, always: true },
+    { key: 'stage', label: 'Stage', default: true },
+    { key: 'products', label: 'Products', default: true },
+    { key: 'age_days', label: 'Age', default: true },
+    { key: 'owner_name', label: 'Owner', default: true },
+    { key: 'partner_name', label: 'Partner', default: true },
+    { key: 'aum', label: 'AUM', default: true },
+    { key: 'score', label: 'Score', default: true },
+
+    // Present in the list payload, never shown until now.
+    { key: 'mobile', label: 'Mobile', default: false },
+    { key: 'email', label: 'Email', default: false },
+    { key: 'city', label: 'City', default: false },
+    { key: 'state', label: 'State', default: false },
+    { key: 'source', label: 'Source', default: false },
+    { key: 'language', label: 'Language', default: false },
+    { key: 'risk_profile', label: 'Risk profile', default: false },
+    { key: 'kyc_status', label: 'KYC status', default: false },
+    { key: 'client_code', label: 'UCC', default: false },
+    { key: 'created_at', label: 'Created', default: false },
+    { key: 'updated_at', label: 'Last updated', default: false },
+    { key: 'callback_at', label: 'Callback due', default: false },
+  ],
 };
 
 export const isList = (list) => Object.hasOwn(LIST_COLUMNS, list);

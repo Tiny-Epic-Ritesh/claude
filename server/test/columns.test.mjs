@@ -173,6 +173,44 @@ test('the server and the client know the same columns', () => {
   }
 });
 
+test('the server and the client know the same lead columns', () => {
+  /* Same guard as the account book above. The lead table renders from
+     LEAD_COLUMNS in Leads.jsx and the server decides which of them a person
+     sees from LIST_COLUMNS.lead -- a key in one and not the other is either a
+     column with a heading and no content, or a setting for a column that does
+     not exist. */
+  const src = readFileSync('../client/src/crm/Leads.jsx', 'utf8').replace(CRLF, '\n');
+  const block = src.match(/const LEAD_COLUMNS = \{([\s\S]*?)\n\};/);
+  assert(block, 'could not find LEAD_COLUMNS in Leads.jsx');
+
+  const clientKeys = [...block[1].matchAll(/^  ([a-z_]+):/gm)].map((m) => m[1]);
+  const serverKeys = LIST_COLUMNS.lead.map((c) => c.key);
+
+  for (const key of serverKeys) {
+    assert(clientKeys.includes(key),
+      `the server offers lead column "${key}" and the client cannot draw it`);
+  }
+  for (const key of clientKeys) {
+    assert(serverKeys.includes(key),
+      `the client draws lead column "${key}" and the server never offers it`);
+  }
+});
+
+test('only the lead name is mandatory', () => {
+  // Ritesh's answer to Q7, 4 Sep: the name and nothing else.
+  const always = LIST_COLUMNS.lead.filter((c) => c.always).map((c) => c.key);
+  assert.deepEqual(always, ['name'],
+    `mandatory lead columns are ${always.join(', ')} -- the agreed set is the name alone`);
+});
+
+test('the eight that shipped are still on by default', () => {
+  /* Nobody's list should change on the day the chooser arrives. */
+  const on = LIST_COLUMNS.lead.filter((c) => c.default !== false).map((c) => c.key);
+  assert.deepEqual(on,
+    ['name', 'stage', 'products', 'age_days', 'owner_name', 'partner_name', 'aum', 'score'],
+    `the default lead columns changed: ${on.join(', ')}`);
+});
+
 /* -------------------------------------------------------- role defaults */
 
 test('a role default is visible to Setup and scoped to that role', () => {

@@ -15,6 +15,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, rupeesCompact, shortDate } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty, Stat, Modal } from '../components/ui.jsx';
 import AdvancedSearch from '../components/AdvancedSearch.jsx';
+import ColumnChooser from '../components/ColumnChooser.jsx';
 
 /* Rows per page. The tab used to ask for two hundred and render whatever came
    back, so an account book larger than that showed a fraction of itself while
@@ -64,94 +65,6 @@ const COLUMNS = [
   },
   { key: 'owner_name', label: 'Owner', cls: 'muted', render: (c) => c.owner_name || '—' },
 ];
-
-/**
- * Choose which columns this book shows.
- *
- * The choice is a preference and nothing more: the field is still returned by
- * the API and still masked by whatever applies to the person asking, so ticking
- * one back on grants nothing. Hiding a column is tidying, the same way hiding a
- * tab is — which is why this needs no permission and is not audited.
- *
- * It resolves server-side through role default then personal override, so an
- * administrator can set a sensible starting set for a role and anybody can
- * still disagree with it for themselves.
- */
-function ColumnChooser({ columns, onToggle, onReset, hasOwnChoice }) {
-  const [open, setOpen] = useState(false);
-  const wrapRef = useRef(null);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const onDown = (e) => { if (!wrapRef.current?.contains(e.target)) setOpen(false); };
-    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
-
-  const hidden = columns.filter((c) => !c.visible).length;
-
-  return (
-    <div className="action-menu" ref={wrapRef}>
-      <button
-        type="button"
-        className="btn-ghost btn-sm"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <Icon name="view_column" size={15} /> Columns
-        {hidden > 0 && <span className="muted"> · {hidden} hidden</span>}
-      </button>
-
-      {open && (
-        <div className="menu" role="menu" style={{ padding: 8, minWidth: 210 }}>
-          {columns.map((col) => (
-            <label
-              key={col.key}
-              className="tiny"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '5px 6px',
-                cursor: col.always ? 'default' : 'pointer',
-                opacity: col.always ? 0.6 : 1,
-              }}
-              title={col.always ? 'Every row needs something to identify it by' : undefined}
-            >
-              <input
-                type="checkbox"
-                checked={col.visible}
-                disabled={col.always}
-                onChange={() => onToggle(col.key, !col.visible)}
-              />
-              <span style={{ fontWeight: 545 }}>{col.label}</span>
-              {col.source === 'role' && <span className="muted">· from your role</span>}
-            </label>
-          ))}
-
-          {/* Only offered when there is something to go back to: "same as my
-              role" and "I ticked all six" are different states. */}
-          {hasOwnChoice && (
-            <button
-              type="button"
-              className="btn-ghost btn-sm"
-              style={{ marginTop: 6, width: '100%' }}
-              onClick={() => { onReset(); setOpen(false); }}
-            >
-              Back to my role&rsquo;s default
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 /** Hand the browser a file without a round trip to the server for it. */
 function download(filename, text) {
