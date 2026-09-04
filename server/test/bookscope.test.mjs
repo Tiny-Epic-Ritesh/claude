@@ -122,6 +122,12 @@ const NOT_A_RECORD = {
   '/api/setup/objects/:entity': 'Object definition. Configuration.',
   '/api/setup/objects/:entity/derivable': 'Formula sources for an entity type. Configuration.',
   '/api/setup/objects/:entity/validation-rules': 'Validation rules for an entity type. Configuration, not a client record — a rule scoped to one business carries sales_org and is checked by mayUseOrg where it is written.',
+  '/api/setup/columns/:list': 'A list name, not a record id. The setting is a display '
+    + 'preference on tab_visibility keyed by role and user -- it decides which columns a '
+    + 'person is shown, never which rows, so the book boundary does not arise. columns.test.mjs '
+    + 'asserts the preference cannot reach client data or masking.',
+  '/api/setup/columns/:list/roles': 'The column catalogue and its role defaults. Configuration, '
+    + 'identical in both businesses.',
   '/api/setup/logs/:kind': 'A kind of log, not a record id. Rows inside are scoped to the reader entitlement by readLog, which is asserted in logs.test.mjs.',
   '/api/libraries/:id': 'A content library, not a client record. Readability is decided by owner_role and shared_with, and by sales_org where the library names one — asserted in library.test.mjs.',
   '/api/dashboards/:id': 'A dashboard definition. The panels inside it are scoped to whoever opens it, never to whoever built it.',

@@ -575,9 +575,26 @@ were already good; three things were missing and one was an outright absence.
       only. A bulk action over a *filter* rather than an explicit list is a
       different safety proposition to the lead-list ones and wants deciding
       before building.
-- [ ] **No column chooser.** A lead list is an object that can own a column
-      choice; the account book is a tab, so the choice would have to belong to
-      the person. That is a preference store this system does not yet have.
+- [x] **Column chooser** — done 4 Sep 2026. The note below was right about the
+      shape and wrong about the store: a lead list is an object that can own a
+      column choice, the account book is a tab, so the choice belongs to the
+      person rather than to a row. The preference store it needed already
+      existed — `tab_visibility`, keyed `(scope_type, scope_key, tab_id)`, which
+      is exactly a visibility decision per scope and already resolves
+      user-beats-role-beats-shipped.
+
+      So `engine/columns.js` rides that table with a `cols:` prefix rather than
+      adding a second preference store to drift against the first, and a Client
+      List object was deliberately not invented to have somewhere to hang six
+      booleans. When saved, shareable client views are actually wanted, that is
+      when a Client List earns its place — and it will own its columns the way a
+      lead list does.
+
+      The rule that keeps it honest: hiding a column is tidying, never security.
+      The field is still returned and still masked by whatever applies to the
+      person asking, so ticking it back on grants nothing. Two tests hold that
+      by asserting the column engine never reads client data and that masking
+      never consults the chooser.
 
 
 ---

@@ -10,7 +10,7 @@
  * Every tile is a link into this same list, filtered (Q-05).
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, rupeesCompact, shortDate } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty, Stat, Modal } from '../components/ui.jsx';
@@ -24,13 +24,134 @@ const PAGE = 50;
 
 /** Which of the seven columns can be ordered by, and how each one is read. */
 const COLUMNS = [
-  { key: 'name', label: 'Client' },
-  { key: 'client_code', label: 'UCC' },
-  { key: 'holding_value', label: 'Holdings', num: true },
-  { key: 'brokerage_ytd', label: 'Brokerage YTD', num: true },
-  { key: 'last_traded_at', label: 'Last trade' },
-  { key: 'owner_name', label: 'Owner' },
+  {
+    key: 'name',
+    label: 'Client',
+    render: (c) => (
+      <>
+        <div>{c.name}</div>
+        <div className="small muted">{c.mobile}</div>
+      </>
+    ),
+  },
+  { key: 'client_code', label: 'UCC', cls: 'mono', render: (c) => c.client_code },
+  {
+    key: 'holding_value',
+    label: 'Holdings',
+    num: true,
+    cls: 'num',
+    render: (c) => rupeesCompact(c.holding_value),
+  },
+  {
+    key: 'brokerage_ytd',
+    label: 'Brokerage YTD',
+    num: true,
+    cls: 'num',
+    render: (c) => rupeesCompact(c.brokerage_ytd),
+  },
+  {
+    key: 'last_traded_at',
+    label: 'Last trade',
+    /* Dormant is derived by the list query; a search row carries the date and
+       nothing to colour it with. */
+    render: (c, { searching }) => (!searching && c.activity_status === 'Dormant' ? (
+      <span className="badge badge-amber" title={`${c.days_since_trade} days since last trade`}>
+        Dormant · {c.days_since_trade}d
+      </span>
+    ) : (
+      <span className="muted">{shortDate(c.last_traded_at)}</span>
+    )),
+  },
+  { key: 'owner_name', label: 'Owner', cls: 'muted', render: (c) => c.owner_name || '—' },
 ];
+
+/**
+ * Choose which columns this book shows.
+ *
+ * The choice is a preference and nothing more: the field is still returned by
+ * the API and still masked by whatever applies to the person asking, so ticking
+ * one back on grants nothing. Hiding a column is tidying, the same way hiding a
+ * tab is — which is why this needs no permission and is not audited.
+ *
+ * It resolves server-side through role default then personal override, so an
+ * administrator can set a sensible starting set for a role and anybody can
+ * still disagree with it for themselves.
+ */
+function ColumnChooser({ columns, onToggle, onReset, hasOwnChoice }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (!wrapRef.current?.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const hidden = columns.filter((c) => !c.visible).length;
+
+  return (
+    <div className="action-menu" ref={wrapRef}>
+      <button
+        type="button"
+        className="btn-ghost btn-sm"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <Icon name="view_column" size={15} /> Columns
+        {hidden > 0 && <span className="muted"> · {hidden} hidden</span>}
+      </button>
+
+      {open && (
+        <div className="menu" role="menu" style={{ padding: 8, minWidth: 210 }}>
+          {columns.map((col) => (
+            <label
+              key={col.key}
+              className="tiny"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '5px 6px',
+                cursor: col.always ? 'default' : 'pointer',
+                opacity: col.always ? 0.6 : 1,
+              }}
+              title={col.always ? 'Every row needs something to identify it by' : undefined}
+            >
+              <input
+                type="checkbox"
+                checked={col.visible}
+                disabled={col.always}
+                onChange={() => onToggle(col.key, !col.visible)}
+              />
+              <span style={{ fontWeight: 545 }}>{col.label}</span>
+              {col.source === 'role' && <span className="muted">· from your role</span>}
+            </label>
+          ))}
+
+          {/* Only offered when there is something to go back to: "same as my
+              role" and "I ticked all six" are different states. */}
+          {hasOwnChoice && (
+            <button
+              type="button"
+              className="btn-ghost btn-sm"
+              style={{ marginTop: 6, width: '100%' }}
+              onClick={() => { onReset(); setOpen(false); }}
+            >
+              Back to my role&rsquo;s default
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** Hand the browser a file without a round trip to the server for it. */
 function download(filename, text) {
@@ -120,6 +241,29 @@ export default function Clients({ session }) {
   const searching = Boolean(found);
   const [summary] = useApi('/clients/summary');
   const [meta] = useApi('/clients/meta');
+
+  /* Column choice, resolved server-side: role default, then this person's own
+     override on top. Held in state so a tick redraws the table at once rather
+     than after a round trip. */
+  const [cols, { reload: reloadCols }] = useApi('/setup/columns/client');
+  const [colOverride, setColOverride] = useState(null);
+  const columns = colOverride ?? cols?.columns ?? [];
+  const visible = columns.length
+    ? COLUMNS.filter((c) => columns.find((r) => r.key === c.key)?.visible !== false)
+    : COLUMNS;
+
+  const toggleColumn = (key, next) => {
+    // Optimistic: the list redraws immediately, and the save follows.
+    setColOverride(columns.map((c) => (c.key === key ? { ...c, visible: next, source: 'user' } : c)));
+    api.put('/setup/columns/client', { columns: { [key]: next } })
+      .then(() => reloadCols())
+      .catch(() => { setColOverride(null); reloadCols(); });
+  };
+
+  const resetColumns = () => {
+    setColOverride(null);
+    api.del('/setup/columns/client').then(() => reloadCols()).catch(() => reloadCols());
+  };
 
   const setFilter = (key, value) => {
     const next = new URLSearchParams(search);
@@ -266,6 +410,12 @@ export default function Clients({ session }) {
                 cases, tasks and partners all had one. The account book is the
                 revenue, so the absence meant the most valuable table here was
                 the one people copied out by hand. */}
+            <ColumnChooser
+              columns={columns}
+              hasOwnChoice={Boolean(cols?.has_own_choice) || Boolean(colOverride)}
+              onToggle={toggleColumn}
+              onReset={resetColumns}
+            />
             {meta?.may_export && (
               <button className="btn-ghost btn-sm" onClick={() => setExporting(true)}>
                 <Icon name="download" size={15} /> Export
@@ -276,7 +426,7 @@ export default function Clients({ session }) {
             <table className="table">
               <thead>
                 <tr>
-                  {COLUMNS.map((col) => (
+                  {visible.map((col) => (
                     <th key={col.key} className={col.num ? 'num' : undefined}
                       aria-sort={sort === col.key ? (dir === 'asc' ? 'ascending' : 'descending') : undefined}>
                       {/* "Who are my largest clients" is the question this book
@@ -300,25 +450,13 @@ export default function Clients({ session }) {
               <tbody>
                 {shown.map((c) => (
                   <tr key={c.id} className="row-link" onClick={() => navigate(`/clients/${c.id}`)}>
-                    <td>
-                      <div>{c.name}</div>
-                      <div className="small muted">{c.mobile}</div>
-                    </td>
-                    <td className="mono">{c.client_code}</td>
-                    <td className="num">{rupeesCompact(c.holding_value)}</td>
-                    <td className="num">{rupeesCompact(c.brokerage_ytd)}</td>
-                    <td>
-                      {/* Dormant is derived by the list query; a search row
-                          carries the date and nothing to colour it with. */}
-                      {!searching && c.activity_status === 'Dormant' ? (
-                        <span className="badge badge-amber" title={`${c.days_since_trade} days since last trade`}>
-                          Dormant · {c.days_since_trade}d
-                        </span>
-                      ) : (
-                        <span className="muted">{shortDate(c.last_traded_at)}</span>
-                      )}
-                    </td>
-                    <td className="muted">{c.owner_name || '—'}</td>
+                    {/* Body and header walk the same filtered list, so a
+                        hidden column cannot leave the two out of step -- which
+                        is what positional cells would have done the first time
+                        somebody hid one. */}
+                    {visible.map((col) => (
+                      <td key={col.key} className={col.cls}>{col.render(c, { searching })}</td>
+                    ))}
                     {!searching && (
                       <td>
                         <div className="row wrap" style={{ gap: 4 }}>

@@ -20,7 +20,7 @@
  */
 
 import { Router } from 'express';
-import { all, one, run, audit, transact, SALES_ORGS, CARD_STATES } from '../db.js';
+import { all, one, run, audit, transact, SALES_ORGS, CARD_STATES, ROLES } from '../db.js';
 import {
   requireUser, requirePermission, orgsFor, mayUseOrg, can, permissionsFor,
 } from '../auth.js';
@@ -30,6 +30,10 @@ import {
 } from '../engine/access.js';
 import { vendorStatus } from '../vendors/config.js';
 import { snapshot } from '../engine/versioning.js';
+import {
+  LIST_COLUMNS, isList, resolveColumns, setUserColumns, setRoleColumns,
+  clearUserColumns, roleDefaultsFor, hasUserChoice,
+} from '../engine/columns.js';
 import {
   OWD_LEVELS, allDefaults as owdDefaults, setDefaults as setOwd,
   defaultsFor as owdFor, EXTERNAL_PINNED, EXTERNAL_PIN_REASON, OWD_ENTITIES,
@@ -600,6 +604,83 @@ router.get('/preferences', (req, res) => {
       .filter((sec) => !sec.needs || sec.needs.some((c) => can(req.user.role, c)))
       .filter((sec) => visible.has(setupTabId(sec.key)))
       .map((sec) => sec.key),
+  });
+});
+
+/* ---------------------------------------------------- list columns */
+
+/**
+ * Which columns a list shows for the person asking.
+ *
+ * No capability gate, for the same reason the preferences route above has none:
+ * a column choice changes nothing about what anybody may see. The field is
+ * still returned, still masked by whatever rules apply to the caller, and
+ * ticking it back on grants nothing. Hiding a column is tidying.
+ */
+router.get('/columns/:list', (req, res) => {
+  const { list } = req.params;
+  if (!isList(list)) return res.status(404).json({ error: `There is no list called "${list}"` });
+
+  return res.json({
+    list,
+    columns: resolveColumns(req.user, list),
+    // So the chooser can offer "back to my role's default" only when there is
+    // something to go back to.
+    has_own_choice: hasUserChoice(req.user.id, list),
+  });
+});
+
+/** The caller's own choices. Not audited: a wrong value costs them one click. */
+router.put('/columns/:list', (req, res) => {
+  // The list name is checked first so an unknown one 404s rather than 400s.
+  if (!isList(req.params.list)) {
+    return res.status(404).json({ error: `There is no list called "${req.params.list}"` });
+  }
+
+  const applied = setUserColumns(req.user.id, req.params.list, req.body?.columns ?? {}, req.user.id);
+  if (!applied.ok) return res.status(400).json(applied);
+
+  return res.json({ ok: true, columns: resolveColumns(req.user, req.params.list) });
+});
+
+/** Drop the caller's choices so they follow their role again. */
+router.delete('/columns/:list', (req, res) => {
+  if (!isList(req.params.list)) {
+    return res.status(404).json({ error: `There is no list called "${req.params.list}"` });
+  }
+  clearUserColumns(req.user.id, req.params.list);
+  return res.json({ ok: true, columns: resolveColumns(req.user, req.params.list) });
+});
+
+/**
+ * The role default, which anybody's own choice still beats.
+ *
+ * Audited, unlike the personal one: this decides what a colleague opens the
+ * list to tomorrow morning.
+ */
+router.put('/columns/:list/role/:role', requirePermission('admin.users'), (req, res) => {
+  const { list, role } = req.params;
+  if (!isList(list)) return res.status(404).json({ error: `There is no list called "${list}"` });
+  if (!ROLES.includes(role)) return res.status(400).json({ error: `No such role: ${role}` });
+
+  const before = roleDefaultsFor(list).filter((r) => r.role === role);
+  const applied = setRoleColumns(role, list, req.body?.columns ?? {}, req.user.id);
+  if (!applied.ok) return res.status(400).json(applied);
+
+  auditConfig('columns', `${list}.${role}`, 'updated', before,
+    roleDefaultsFor(list).filter((r) => r.role === role), req.user.id);
+
+  return res.json({ ok: true, role_defaults: roleDefaultsFor(list) });
+});
+
+/** The catalogue and every role default, for a Setup grid. */
+router.get('/columns/:list/roles', requirePermission('admin.users'), (req, res) => {
+  const { list } = req.params;
+  if (!isList(list)) return res.status(404).json({ error: `There is no list called "${list}"` });
+  return res.json({
+    list,
+    catalogue: LIST_COLUMNS[list],
+    role_defaults: roleDefaultsFor(list),
   });
 });
 
