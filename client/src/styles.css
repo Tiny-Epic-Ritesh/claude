@@ -6193,3 +6193,19 @@ tr.row-inactive .user-cell strong { color: var(--ink-3); }
    Shown, so the list is the whole truth, but not offered as a decision. */
 .pick-row.is-locked { cursor: default; opacity: 0.72; }
 .pick-row.is-locked:hover { background: none; }
+
+/* Choosing a file to import (P3-41). A styled label rather than a bare file
+   input, because the browser's own control cannot be made to match anything
+   and says "No file chosen" in a voice that is not ours. */
+.filedrop {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 13px;
+  border: 1px dashed var(--line, rgba(127, 127, 127, 0.4));
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13.5px;
+}
+.filedrop:hover { border-style: solid; }
+.filedrop input[type="file"] { display: none; }

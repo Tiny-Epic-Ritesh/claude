@@ -7,6 +7,7 @@ import { all, one, run, audit, notify, daysSince, ageBand, AGE_BANDS, CARD_COLOU
 import { can, requireUser, requirePermission, reqScope, isReadOnlyOnLeads, unmaskRequested, maskFor, orgsFor, activeOrg, mayUseOrg } from '../auth.js';
 import { owdGrant } from '../engine/owd.js';
 import { encryptField, decryptField, maskRecord, maskRecords, validate, blindIndex } from '../security.js';
+import { sendCsv } from '../engine/csv.js';
 import { applyScore } from '../engine/rules.js';
 import { click2call, pushToAutodialler, send, logCall } from '../integrations.js';
 import { checkConsent, contactability } from '../engine/consent.js';
@@ -670,6 +671,50 @@ router.post('/leads/:id/restore', requirePermission('lead.delete'), (req, res) =
 });
 
 /* --------------------------------------------------------- import/export */
+
+/**
+ * The columns a lead import understands (P3-41).
+ *
+ * One list, used to validate a row, to describe the format on screen and to
+ * generate the sample file. A second copy of this anywhere is a sample that
+ * quietly stops matching the importer.
+ *
+ * `example` is a realistic value rather than a placeholder: somebody opens the
+ * sample in Excel and types over the top of it, so a row of ALL CAPS
+ * INSTRUCTIONS is a row they have to delete first, and sometimes do not.
+ */
+export const IMPORT_COLUMNS = [
+  { key: 'name', label: 'Name', required: true, example: 'Rohan Kulkarni', note: 'The only required column.' },
+  { key: 'mobile', label: 'Mobile', example: '9812345670', note: '10 digits, starting 6 to 9. A duplicate is reported and skipped.' },
+  { key: 'email', label: 'Email', example: 'rohan.k@example.in' },
+  { key: 'city', label: 'City', example: 'Pune' },
+  { key: 'source', label: 'Source', example: 'Website', note: 'Defaults to "Import" when blank.' },
+];
+
+/** What the import screen tells the person before they choose a file. */
+router.get('/leads/import/format', requirePermission('lead.create'), (_req, res) => {
+  res.json({
+    columns: IMPORT_COLUMNS,
+    accepts: ['.csv'],
+    max_rows: 5000,
+    note: 'A header row naming the columns, then one lead per row. Columns may be in any order, and any column not listed here is ignored.',
+  });
+});
+
+/**
+ * The sample, as a file.
+ *
+ * Generated rather than stored, from the list above, so it describes the
+ * importer as it is today rather than as it was when somebody wrote the sample.
+ */
+router.get('/leads/import/sample', requirePermission('lead.create'), (_req, res) => {
+  const rows = [
+    { name: 'Rohan Kulkarni', mobile: '9812345670', email: 'rohan.k@example.in', city: 'Pune', source: 'Website' },
+    { name: 'Meera Iyer', mobile: '9812345671', email: 'meera.i@example.in', city: 'Chennai', source: 'Referral' },
+    { name: 'Arjun Nair', mobile: '9812345672', email: 'arjun.n@example.in', city: 'Kochi', source: 'Campaign' },
+  ];
+  return sendCsv(res, 'lead-import-sample', rows, IMPORT_COLUMNS.map((c) => ({ key: c.key, label: c.key })));
+});
 
 router.post('/leads/import', requirePermission('lead.create'), (req, res) => {
   const { rows = [], commit = false } = req.body;

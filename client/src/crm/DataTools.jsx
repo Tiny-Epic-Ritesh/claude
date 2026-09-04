@@ -8,7 +8,7 @@
 
 import { useState } from 'react';
 import { api } from '../api.js';
-import { useApi, Loading, ErrorBanner, Empty, Tabs, Spinner } from '../components/ui.jsx';
+import { useApi, Loading, ErrorBanner, Empty, Tabs, Spinner, Icon } from '../components/ui.jsx';
 import { dateTime } from '../api.js';
 
 /* ---------------------------------------------------------------- import */
@@ -99,6 +99,29 @@ function Import() {
   // The API reports problems by 1-based row index. Map them back onto the parsed
   // rows so each line carries its own verdict, rather than making the user
   // cross-reference two lists.
+  const [fileName, setFileName] = useState(null);
+  const [sampling, setSampling] = useState(false);
+
+  /* Fetched rather than built from the SAMPLE constant above: the server
+     generates it from the same column list the importer validates against, so
+     the file somebody follows cannot describe an importer we no longer have. */
+  const downloadSample = async () => {
+    setSampling(true);
+    try {
+      const blob = await api.blob('/leads/import/sample');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'lead-import-sample.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } finally {
+      setSampling(false);
+    }
+  };
+
   const verdicts = new Map();
   if (report) {
     for (const d of report.duplicates) verdicts.set(d.row, { kind: 'duplicate', text: 'already in the CRM' });
@@ -109,12 +132,43 @@ function Import() {
     <div className="grid grid-2">
       <section className="card">
         <div className="card-head">
-          <h2>Paste CSV</h2>
-          <button className="btn-sm" onClick={() => { setText(SAMPLE); setReport(null); setCommitted(null); }}>
-            Use sample
-          </button>
+          <h2>Import leads</h2>
+          <div className="row" style={{ gap: 6 }}>
+            <button className="btn-sm" onClick={downloadSample} disabled={sampling}>
+              {sampling ? <Spinner /> : 'Sample .csv'}
+            </button>
+            <button className="btn-sm" onClick={() => { setText(SAMPLE); setReport(null); setCommitted(null); }}>
+              Use sample
+            </button>
+          </div>
         </div>
         <div style={{ padding: 14 }}>
+          {/* P3-41. The file goes through the same parse as a paste, so the
+              preview below is what was actually read out of it rather than a
+              promise about what the server will find. */}
+          <label className="filedrop">
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                setFileName(file.name);
+                setReport(null);
+                setCommitted(null);
+                setText(await file.text());
+                e.target.value = '';        // so the same file can be chosen twice
+              }}
+            />
+            <Icon name="upload" size={17} />
+            <span>{fileName ? `${fileName} — choose another` : 'Choose a .csv file'}</span>
+          </label>
+
+          <p className="tiny muted" style={{ margin: '8px 0 10px' }}>
+            Accepted format: <strong>.csv</strong>, with a header row naming the columns.
+            You can also paste the rows below.
+          </p>
+
           <textarea
             value={text}
             onChange={(e) => { setText(e.target.value); setReport(null); setCommitted(null); }}
