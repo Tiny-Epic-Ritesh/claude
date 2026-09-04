@@ -1445,6 +1445,50 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
 :root[data-theme='dark'] .popover-item[aria-selected='true'] { color: var(--accent); }
 
 /* Click-catcher so the menu closes when you click anywhere else. */
+/* ------------------------------------------------------- filter bars */
+
+/**
+ * The shared filter-and-export bar. P3-01, P3-22, P3-23, P3-24, P3-25.
+ *
+ * Wraps rather than scrolls: these sit above a table that already scrolls, and
+ * two scroll axes in one screen is how a control ends up somewhere nobody
+ * finds it.
+ */
+.filterbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.filterbar-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.filterbar-field input,
+.filterbar-field select {
+  min-width: 8.5rem;
+  max-width: 14rem;
+}
+
+/* Pushed to the trailing edge, so the actions sit in the same place on every
+   screen however many fields precede them. */
+.filterbar-actions {
+  margin-inline-start: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 640px) {
+  .filterbar-actions { margin-inline-start: 0; width: 100%; }
+}
+
 /* ------------------------------------------------- console switching */
 
 /**

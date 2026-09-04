@@ -66,6 +66,35 @@ export const api = {
   patch: (p, body, kind) => request(`/api${p}`, { method: 'PATCH', body, kind }),
   put: (p, body, kind) => request(`/api${p}`, { method: 'PUT', body, kind }),
   del: (p, kind) => request(`/api${p}`, { method: 'DELETE', kind }),
+
+  /**
+   * Fetch a file rather than JSON.
+   *
+   * A download cannot be a plain anchor here: the session token lives in
+   * memory, not in a cookie, so a link the browser follows on its own arrives
+   * unauthenticated and the server answers 401 -- which the user sees as a
+   * download that produced a file full of "Sign in required".
+   *
+   * An error still comes back as JSON, so it is unwrapped into the same shape
+   * every other call throws. A failed export that saved itself as a .csv
+   * containing an error message would be the worst of both.
+   */
+  blob: async (p, kind = 'crm') => {
+    const headers = {};
+    const t = token.get(kind);
+    if (t) headers.Authorization = `Bearer ${t}`;
+    if (activeOrg) headers['X-Sales-Org'] = activeOrg;
+
+    const res = await fetch(`/api${p}`, { headers });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      const err = new Error(detail.error || `Export failed (${res.status})`);
+      err.status = res.status;
+      err.payload = detail;
+      throw err;
+    }
+    return res.blob();
+  },
 };
 
 /**

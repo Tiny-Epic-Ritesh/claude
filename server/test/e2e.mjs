@@ -2068,7 +2068,8 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
   });
 
   await check('the audit log records actions with an actor', async () => {
-    const { data } = await req('/api/admin/audit', { token: T.admin, expect: 200 });
+    const { data: log } = await req('/api/admin/audit', { token: T.admin, expect: 200 });
+    const data = log.rows;
     assert(data.length > 0, 'audit log empty');
     assert(data.some((a) => a.action === 'card_state'), 'card state changes not audited');
   });
@@ -2201,7 +2202,8 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
   });
 
   await check('every unmask is written to the audit log', async () => {
-    const { data } = await req('/api/admin/audit', { token: T.admin, expect: 200 });
+    const { data: log } = await req('/api/admin/audit', { token: T.admin, expect: 200 });
+    const data = log.rows;
     assert(data.some((a) => a.action === 'pii_unmasked'), 'unmask not audited');
   });
 
@@ -3954,7 +3956,8 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
     const lead = need(REF.leadId, 'a lead');
     await req(`/api/leads/${lead}?unmask=true`, { token: T.sales_supervisor, expect: 200 });
 
-    const { data } = await req('/api/admin/audit', { token: T.admin, expect: 200 });
+    const { data: log } = await req('/api/admin/audit', { token: T.admin, expect: 200 });
+    const data = log.rows;
     assert(data.some((r) => r.action === 'pii_unmasked'),
       'a PII reveal left no audit trail');
   });

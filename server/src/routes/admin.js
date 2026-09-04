@@ -24,6 +24,7 @@ import {
   recent as recentPromotions, environment as currentEnvironment, PROMOTABLE,
   KEEP as PROMOTIONS_KEPT, candidates as promotionCandidates,
 } from '../engine/promotion.js';
+import { sendCsv } from '../engine/csv.js';
 import {
   accessLogSummary, crossBookReads, activityOf, readersOf, RETENTION_DAYS,
 } from '../engine/accesslog.js';
@@ -550,19 +551,99 @@ router.get('/access-log/record', requirePermission('report.system'), (req, res) 
   return res.json({ path, rows: readersOf(path, { limit: req.query.limit }) });
 });
 
-router.get('/audit', requirePermission('report.system'), (req, res) => {
+/**
+ * What the audit log can be narrowed by. P3-01, P3-22.
+ *
+ * It filtered on entity and user id and nothing else, and returned a fixed 300
+ * rows -- so finding one action meant scrolling, and the id filter was unusable
+ * from the screen because nobody knows a colleague's user id.
+ *
+ * Kept as one function because the export must apply exactly the filters the
+ * screen is showing. Two copies of this logic is how an export quietly returns
+ * a different set from the table above it, which is the worst possible outcome
+ * for a file somebody is about to treat as evidence.
+ */
+function auditFilter(req) {
   const where = [];
   const params = [];
+
   if (req.query.entity) { where.push('a.entity = ?'); params.push(req.query.entity); }
   if (req.query.user_id) { where.push('a.user_id = ?'); params.push(req.query.user_id); }
+  if (req.query.action) { where.push('a.action = ?'); params.push(req.query.action); }
 
-  res.json(all(
-    `SELECT a.*, u.name AS user_name, u.role AS user_role
-     FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
-     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-     ORDER BY a.created_at DESC LIMIT 300`,
+  // By name, because that is what somebody investigating actually has.
+  const q = String(req.query.q ?? '').trim();
+  if (q) { where.push('u.name LIKE ?'); params.push(`%${q}%`); }
+
+  /* Dates are inclusive of the whole day at both ends. A range of "the 3rd to
+     the 3rd" that returned nothing because the rows carry a time is the kind of
+     filter people conclude is broken. */
+  if (req.query.from) { where.push('date(a.created_at) >= date(?)'); params.push(req.query.from); }
+  if (req.query.to) { where.push('date(a.created_at) <= date(?)'); params.push(req.query.to); }
+
+  return { clause: where.length ? `WHERE ${where.join(' AND ')}` : '', params };
+}
+
+const AUDIT_SELECT = `SELECT a.*, u.name AS user_name, u.role AS user_role
+   FROM audit_log a LEFT JOIN users u ON u.id = a.user_id`;
+
+router.get('/audit', requirePermission('report.system'), (req, res) => {
+  const { clause, params } = auditFilter(req);
+  const limit = Math.min(Math.max(Number(req.query.limit) || 300, 1), 1000);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+  const total = one(
+    `SELECT COUNT(*) n FROM audit_log a LEFT JOIN users u ON u.id = a.user_id ${clause}`,
     params,
-  ));
+  ).n;
+
+  res.set('X-Total-Count', String(total));
+  res.json({
+    rows: all(
+      `${AUDIT_SELECT} ${clause} ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?`,
+      [...params, limit, offset],
+    ),
+    total,
+    /* The values actually present, so the screen can offer a filter that
+       returns something. A dropdown listing every action the codebase can emit
+       includes plenty this deployment has never done. */
+    actions: all('SELECT DISTINCT action FROM audit_log ORDER BY action').map((r) => r.action),
+    entities: all("SELECT DISTINCT entity FROM audit_log WHERE entity IS NOT NULL ORDER BY entity")
+      .map((r) => r.entity),
+  });
+});
+
+/**
+ * The audit log as a file. P3-22.
+ *
+ * `admin.users` rather than `report.system`: the ticket restricts this to Admin
+ * and Super Admin, and `report.system` is held more widely. Reading the log on
+ * screen and carrying it out of the building are different acts.
+ */
+router.get('/audit/export', requirePermission('admin.users'), (req, res) => {
+  const { clause, params } = auditFilter(req);
+
+  const rows = all(
+    `${AUDIT_SELECT} ${clause} ORDER BY a.created_at DESC, a.id DESC LIMIT 20000`,
+    params,
+  );
+
+  /* Exporting the audit log is itself an audited act. It would be a strange
+     omission in this of all tables. */
+  audit(req.user.id, 'audit_log_exported', 'audit_log', null, {
+    rows: rows.length,
+    filter: clause || 'no filter',
+  });
+
+  return sendCsv(res, 'audit-log', rows, [
+    { key: 'created_at', label: 'When' },
+    { key: 'user_name', label: 'Who' },
+    { key: 'user_role', label: 'Role' },
+    { key: 'action', label: 'Action' },
+    { key: 'entity', label: 'Record type' },
+    { key: 'entity_id', label: 'Record' },
+    { key: 'detail', label: 'Detail' },
+  ]);
 });
 
 /* ----------------------------------------------------------- campaigns */
