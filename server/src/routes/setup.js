@@ -384,6 +384,87 @@ router.post('/users/required-fields', requirePermission('admin.users'), (req, re
   res.json({ ok: true, required: after });
 });
 
+/**
+ * Everything a user record can be exported with (P3-02).
+ *
+ * Wider than USER_FIELDS, because the fields Ritesh named -- last login, role,
+ * created on -- are maintained by the system rather than typed into a form, and
+ * they are the point of the export. `password` is not here and never will be.
+ */
+export const USER_EXPORT_COLUMNS = [
+  { key: 'name', label: 'Name' },
+  { key: 'email', label: 'Email' },
+  { key: 'role_name', label: 'Role' },
+  { key: 'title', label: 'Job title' },
+  { key: 'sales_org', label: 'Business' },
+  { key: 'employee_code', label: 'Employee code' },
+  { key: 'branch', label: 'Branch' },
+  { key: 'phone', label: 'Mobile' },
+  { key: 'whatsapp', label: 'WhatsApp' },
+  { key: 'manager_name', label: 'Reports to' },
+  { key: 'product_name', label: 'Product' },
+  { key: 'active_label', label: 'Status' },
+  { key: 'last_login_at', label: 'Last login' },
+  { key: 'last_password_changed_at', label: 'Password last changed' },
+  { key: 'date_of_joining', label: 'Date of joining' },
+  { key: 'date_of_exit', label: 'Date of exit' },
+  { key: 'created_at', label: 'Created on' },
+  { key: 'updated_at', label: 'Last modified' },
+  { key: 'phone_extension', label: 'Extension' },
+  { key: 'cti_agent_id', label: 'Agent ID' },
+  { key: 'cube_campaign_id', label: 'Dialler campaign' },
+  { key: 'lead_count', label: 'Leads owned' },
+];
+
+/** The columns offered, so the picker and the export cannot disagree. */
+router.get('/users/export-columns', requirePermission('admin.users'), (_req, res) => {
+  res.json({
+    columns: USER_EXPORT_COLUMNS,
+    /* What a person gets if they just press the button. The fields Ritesh
+       named for the login check, plus enough to tell two people apart. */
+    default: ['name', 'email', 'role_name', 'sales_org', 'active_label', 'last_login_at', 'created_at'],
+  });
+});
+
+router.get('/users/export', requirePermission('admin.users'), (req, res) => {
+  const asked = String(req.query.columns ?? '').split(',').map((c) => c.trim()).filter(Boolean);
+  const chosen = asked.length
+    ? USER_EXPORT_COLUMNS.filter((c) => asked.includes(c.key))
+    : USER_EXPORT_COLUMNS;
+  if (!chosen.length) return res.status(400).json({ error: 'Choose at least one column' });
+
+  /* Same book scoping as the list it comes from. An export is the one place
+     where getting this wrong is unrecoverable -- the file has left. */
+  const orgs = orgsFor(req.user);
+  const placeholders = orgs.map(() => '?').join(',') || 'NULL';
+
+  const rows = all(
+    `SELECT u.*,
+            m.name AS manager_name,
+            pt.name AS product_name,
+            r.name AS role_name,
+            CASE WHEN u.active = 1 THEN 'Active' ELSE 'Deactivated' END AS active_label,
+            (SELECT COUNT(*) FROM leads WHERE owner_id = u.id AND deleted_at IS NULL) AS lead_count
+       FROM users u
+       LEFT JOIN users m ON m.id = u.manager_id
+       LEFT JOIN product_types pt ON pt.id = u.product_type_id
+       LEFT JOIN roles r ON r.code = u.role
+      WHERE u.sales_org IN (${placeholders})
+      ORDER BY u.active DESC, u.name`,
+    orgs,
+  );
+
+  /* Audited, like the audit-log export. Reading the user list on screen and
+     carrying it out as a file are different acts, and only one of them ends up
+     in somebody's inbox. */
+  audit(req.user.id, 'users_exported', 'user', null, {
+    rows: rows.length,
+    columns: chosen.map((c) => c.key),
+  });
+
+  return sendCsv(res, 'users', rows, chosen);
+});
+
 router.post('/users', requirePermission('admin.users'), async (req, res) => {
   const {
     name, email, role, password, sales_org: org, org_access: orgAccess,

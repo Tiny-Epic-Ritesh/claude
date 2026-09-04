@@ -28,6 +28,7 @@ import { api, ROLE_LABEL } from '../api.js';
 import { useApi, Icon, ErrorBanner, Empty, Spinner } from '../components/ui.jsx';
 import SetupSkeleton from '../setup/SetupSkeleton.jsx';
 import { UserActions, ResetLink, NewUser } from './admin/users.jsx';
+import { ExportUsers, RequiredFields } from './admin/UserExport.jsx';
 
 /** The primary action, rendered into the shell's header slot. */
 function HeaderAction({ children }) {
@@ -40,6 +41,8 @@ const ORG_LABEL = { BONANZA: 'Bonanza', BIGUL: 'Bigul' };
 export default function UsersSetup() {
   const [users, { loading, error, reload }] = useApi('/admin/users');
   const [creating, setCreating] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [requiring, setRequiring] = useState(false);
   const [link, setLink] = useState(null);
   const [problem, setProblem] = useState(null);
 
@@ -130,6 +133,12 @@ export default function UsersSetup() {
   return (
     <div className="stack" style={{ gap: 14 }}>
       <HeaderAction>
+        <button type="button" className="btn" onClick={() => setRequiring(true)}>
+          <Icon name="rule" size={16} /> Required fields
+        </button>
+        <button type="button" className="btn" onClick={() => setExporting(true)}>
+          <Icon name="download" size={16} /> Export
+        </button>
         <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
           <Icon name="add" size={16} /> Create user
         </button>
@@ -272,6 +281,10 @@ export default function UsersSetup() {
       </section>
 
       {creating && <NewUser onClose={() => setCreating(false)} onCreated={() => { setCreating(false); reload(); }} />}
+      {exporting && <ExportUsers onClose={() => setExporting(false)} />}
+      {/* Reloaded on close: making a field required changes what the create
+          form marks, and the form reads that list when it opens. */}
+      {requiring && <RequiredFields onClose={() => { setRequiring(false); reload(); }} />}
     </div>
   );
 }

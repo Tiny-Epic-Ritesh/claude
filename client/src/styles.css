@@ -6163,3 +6163,33 @@ tr.row-inactive .user-cell strong { color: var(--ink-3); }
    to be told apart on sight; which fields these are is configurable, so the
    marker is driven by the server rather than written into each form. */
 .field label .req { color: var(--danger); font-weight: 700; }
+
+/* ------------------------------------------------- field pickers (P3-02)
+ *
+ * Used by the user export and the required-fields control. Two columns rather
+ * than one long list: twenty-two fields down a single column turns choosing
+ * into scrolling, and the point of the control is to see the whole set at once.
+ */
+.pick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 2px 14px;
+  margin-bottom: 12px;
+}
+.pick-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13.5px;
+}
+.pick-row:hover { background: var(--surface-2, rgba(127, 127, 127, 0.08)); }
+.pick-row input { margin: 0; flex: none; }
+.pick-row span:first-of-type { flex: 1; }
+
+/* A field that is required by the shape of the record rather than by choice.
+   Shown, so the list is the whole truth, but not offered as a decision. */
+.pick-row.is-locked { cursor: default; opacity: 0.72; }
+.pick-row.is-locked:hover { background: none; }
