@@ -24,7 +24,9 @@ import { leadScope, clientScope, ticketScope } from '../src/auth.js';
 import {
   OWD_LEVELS, OWD_ENTITIES, defaultsFor, allDefaults, setDefaults,
   owdGrant, isExternal, isLevel, EXTERNAL_PINNED,
+  OWD_APPROVAL_KEY, approvalKeyFor,
 } from '../src/engine/owd.js';
+import { APPROVAL_SCOPES } from '../src/engine/approvals.js';
 
 let passed = 0;
 let failed = 0;
@@ -227,6 +229,31 @@ test('every enforced object is one the scope functions actually consult', () => 
       `${entity} is enforced but is not a configured object`);
   }
   assert(allDefaults().some((e) => e.enforced), 'nothing reports itself as enforced');
+});
+
+/* ------------------------------------------------ the approval gate */
+
+test('the approval numbering is fixed, and covers every enforced object', () => {
+  /* approvals.entity_id is an INTEGER and these objects are keyed by name, so a
+     fixed number bridges the two. Renumbering would attach a pending request to
+     a different object than the one it was raised against -- silently, because
+     the payload would still read correctly. Add to these; never move them. */
+  assert.deepEqual(OWD_APPROVAL_KEY, { lead: 1, client: 2, case: 3 },
+    'the approval numbering moved. A pending request would now point at the wrong object.');
+
+  for (const entity of OWD_ENTITIES) {
+    assert(approvalKeyFor(entity), `${entity} is enforced but has no approval key`);
+  }
+  const keys = Object.values(OWD_APPROVAL_KEY);
+  assert.equal(new Set(keys).size, keys.length, 'two objects share an approval key');
+});
+
+test('changing a sharing default is an approval scope', () => {
+  const scope = APPROVAL_SCOPES.owd_change;
+  assert(scope, 'owd_change is not an approval scope');
+  assert.equal(scope.approver, 'audit.read',
+    'the approver capability must differ from the requester one, or one person holds both and nothing can ever be decided');
+  assert(scope.why && scope.why.length > 20, 'the scope does not say why it needs approving');
 });
 
 resetAll();

@@ -37,7 +37,9 @@ import {
 import {
   OWD_LEVELS, allDefaults as owdDefaults, setDefaults as setOwd,
   defaultsFor as owdFor, EXTERNAL_PINNED, EXTERNAL_PIN_REASON, OWD_ENTITIES,
+  isLevel as isOwdLevel, approvalKeyFor,
 } from '../engine/owd.js';
+import { request as requestApproval } from '../engine/approvals.js';
 import { syncDispositionPicklists } from '../engine/metadata.js';
 import {
   validateRule, operatorCatalogue, wouldRefuseExisting,
@@ -1740,7 +1742,12 @@ const DISPOSITION_FIELDS = [
  * see client records across a whole book, which is a heavier act than editing a
  * rule and belongs with the people who hold the system permission.
  */
-router.get('/owd', requirePermission('admin.system'), (_req, res) => {
+/* Read is `audit.read`, write is `admin.system`.
+
+   The approver holds `audit.read` and has to see what they are being asked to
+   agree to; gating the read on the requester's capability would show them a
+   decision and none of its context. */
+router.get('/owd', requirePermission('audit.read'), (_req, res) => {
   res.json({
     levels: OWD_LEVELS,
     entities: owdDefaults(),
@@ -1753,21 +1760,77 @@ router.get('/owd', requirePermission('admin.system'), (_req, res) => {
   });
 });
 
+/**
+ * Ask to change a sharing default. Nobody changes one alone.
+ *
+ * This is the most consequential control in the product: one value that decides
+ * whether every record of an object is readable by everyone in the same book.
+ * It cannot cross the Bonanza/Bigul boundary -- that is structural -- but
+ * inside one business it is the whole book.
+ *
+ * So it is maker-checker, through the engine the firm already uses for fee
+ * waivers and partner elevation. A confirm dialog would stop a slip; it would
+ * not stop one person deciding this on their own at five o'clock, which is the
+ * failure worth designing against.
+ *
+ * Narrowing is not exempt. Setting an object back to Private takes sight-lines
+ * away from people who have them, which is its own kind of incident on a
+ * Monday morning, and the approver is the person who should hear about it.
+ */
 router.patch('/owd/:entity', requirePermission('admin.system'), (req, res) => {
-  const before = owdFor(req.params.entity);
-  const out = setOwd(req.params.entity, {
-    internal: req.body?.internal,
-    external: req.body?.external,
+  const entity = req.params.entity;
+  const before = owdFor(entity);
+
+  if (req.body?.external !== undefined && req.body.external !== EXTERNAL_PINNED) {
+    return res.status(400).json({ ok: false, error: EXTERNAL_PIN_REASON });
+  }
+
+  const next = req.body?.internal;
+  if (!isOwdLevel(next)) {
+    return res.status(400).json({
+      ok: false,
+      error: `"${next}" is not a sharing default. Use one of: ${OWD_LEVELS.map((l) => l.value).join(', ')}`,
+    });
+  }
+
+  const key = approvalKeyFor(entity);
+  if (!key) {
+    return res.status(400).json({
+      ok: false,
+      error: `The floor is not enforced for "${entity}", so there is nothing to change`,
+      enforced_on: OWD_ENTITIES,
+    });
+  }
+
+  if (next === before.internal) {
+    return res.status(400).json({ ok: false, error: `${entity} sharing is already "${next}"` });
+  }
+
+  const out = requestApproval({
+    scope: 'owd_change',
+    entityId: key,
+    subjectName: entity,
+    payload: { api_name: entity, internal: next, from_internal: before.internal },
+    reason: req.body?.reason,
+    requestedBy: req.user.id,
   });
   if (!out.ok) return res.status(400).json(out);
 
-  /* Audited as a configuration change, because "who could see this record in
-     March" is a question that gets asked, and the answer depends on what this
-     was set to at the time. */
-  auditConfig('sharing', req.params.entity, 'owd_changed', before,
-    { internal: out.internal, external: out.external }, req.user.id);
+  /* The request is audited as configuration in its own right, separately from
+     the approval trail: "who asked" and "who agreed" are two questions, and the
+     answer to the first must survive the request being rejected. */
+  auditConfig('sharing', entity, 'owd_change_requested', before,
+    { internal: next, external: before.external }, req.user.id);
 
-  return res.json(out);
+  return res.status(202).json({
+    ok: true,
+    approval_required: true,
+    request_id: out.request.id,
+    entity,
+    from: before.internal,
+    to: next,
+    message: 'Nothing has changed yet. A sharing default is not something one person sets alone.',
+  });
 });
 
 router.get('/dispositions', requirePermission('admin.rules'), (_req, res) => {

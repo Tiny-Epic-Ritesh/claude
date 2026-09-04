@@ -70,6 +70,39 @@ export const APPROVAL_SCOPES = {
     why: 'Moves a book between people — attribution, incentives and coverage all follow it.',
   },
 
+  /**
+   * Widening the organisation-wide default.
+   *
+   * The most consequential control in the product and the one least likely to
+   * be noticed: a single dropdown that opens every record of an object to
+   * everyone in the same book. It cannot cross the book boundary -- an OWD
+   * grant joins the OR-list that is ANDed with org scope -- but inside one
+   * business it is the whole book.
+   *
+   * Maker-checker rather than a confirm dialog. A dialog stops slips; it does
+   * not stop bad judgement at five o'clock, and this is a decision that
+   * deserves two people. It is also the mechanism the firm already applies to
+   * fee waivers and partner elevation, so it needs no new habit.
+   */
+  owd_change: {
+    label: 'Sharing default change',
+    entity: 'entity_def',
+    /* The maker needs `admin.system`, which only a superadmin holds. The checker
+       needs `audit.read`, which a superadmin and an admin both hold.
+       
+       Deliberately different capabilities. If both were `admin.system` there
+       would be exactly one person in the firm who could do either, and the
+       engine refuses self-approval -- so the request could be raised and never
+       decided, and the control would be theatre. `audit.read` is also the right
+       second pair of eyes on its own terms: the person accountable for the
+       record of who saw what is the person who should agree to a change in who
+       can see it. */
+    approver: 'audit.read',
+    describe: (r) => `Set ${r.subject_name} sharing to "${r.payload?.internal}" `
+      + `(from "${r.payload?.from_internal}")`,
+    why: 'Decides who can read every record of an object, for everyone in that business.',
+  },
+
   /* Accounts rather than prospects, and the heavier of the two: a client is
      revenue already won, and moving one moves the relationship, the brokerage
      it books and whoever the client rings when something goes wrong. */
@@ -282,10 +315,26 @@ export const orgOf = (entity, entityId) => {
   const sql = {
     partner: 'SELECT sales_org FROM partners WHERE id = ?',
     lead: 'SELECT sales_org FROM leads WHERE id = ?',
+    /* Accounts were missing, which made every bulk account reassignment
+       undecidable: `inReach` fails closed on a null org, so the request could
+       be raised and then refused to everybody who tried to decide it. */
+    client: 'SELECT sales_org FROM clients WHERE id = ?',
   }[entity];
   if (!sql) return null;
   return one(sql, [entityId])?.sales_org ?? null;
 };
+
+/**
+ * Entities that are configuration rather than records.
+ *
+ * These have no book: an object definition is shared by Bonanza and Bigul, so
+ * asking which of the two it belongs to has no answer. `inReach` fails closed
+ * on a null org, which is right for a record whose book could not be
+ * determined and wrong for a thing that never had one -- without this, a
+ * sharing-default request could be raised and then refused to every possible
+ * approver, which is a control that looks present and does nothing.
+ */
+const ORGLESS_ENTITIES = new Set(['entity_def']);
 
 /**
  * Whether this user's book covers the record an approval is about.
@@ -297,6 +346,9 @@ export const orgOf = (entity, entityId) => {
  */
 export const inReach = (row, user) => {
   if (!row || !user) return false;
+  // Configuration is shared, so there is no book to be outside of. The
+  // capability check is what gates these, and it is applied separately.
+  if (ORGLESS_ENTITIES.has(row.entity)) return true;
   const org = orgOf(row.entity, row.entity_id);
   return org == null ? false : mayUseOrg(user, org);
 };

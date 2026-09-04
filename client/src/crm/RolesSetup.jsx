@@ -35,9 +35,83 @@ const SCOPES = [
   { value: 'org', label: 'Whole business', hint: 'Everything in their book' },
 ];
 
+/**
+ * The organisation-wide default, shown but not settable here.
+ *
+ * NON-NEGOTIABLE 7: one restrictive floor, then grant-only layers. This is the
+ * floor, and it belongs on this screen because it is the first thing the rest
+ * of the access model sits on -- a permission grid read without knowing the
+ * default underneath it tells you half the story.
+ *
+ * It is read-only for a reason that is not squeamishness. Widening a default
+ * opens every record of an object to everyone in the same book, which makes it
+ * the most consequential control in the product, and it goes through
+ * maker-checker: a superadmin asks, somebody holding `audit.read` agrees. A
+ * dropdown here would put a decision that needs two people behind one click,
+ * and a confirm dialog would only stop a slip -- not one person deciding this
+ * alone at five o'clock.
+ *
+ * What it cannot do is worth stating on the screen as well as in the code: an
+ * OWD grant is ORed into the same list as the management chain and then ANDed
+ * with the book boundary, so widening a default can never show a Bonanza user a
+ * Bigul record.
+ */
+function SharingFloor({ owd }) {
+  if (!owd) return null;
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <div>
+          <h2>Sharing defaults</h2>
+          <p className="tiny muted">
+            The floor every grant sits on. Changing one needs a request and a second person.
+          </p>
+        </div>
+      </div>
+
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Object</th>
+            <th>Inside the firm</th>
+            <th>Partner portal</th>
+            <th>Enforced</th>
+          </tr>
+        </thead>
+        <tbody>
+          {owd.entities.map((e) => (
+            <tr key={e.api_name}>
+              <td style={{ fontWeight: 545 }}>{e.label_plural ?? e.label}</td>
+              <td>
+                <span className={`badge ${e.owd_internal === 'private' ? 'badge-green' : 'badge-amber'}`}>
+                  {owd.levels.find((l) => l.value === e.owd_internal)?.label ?? e.owd_internal}
+                </span>
+              </td>
+              <td>
+                <span className="badge badge-green">Private</span>
+                <span className="tiny muted"> · pinned</span>
+              </td>
+              <td className="tiny muted">{e.enforced ? 'Yes' : 'Not read'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <p className="tiny muted" style={{ padding: '10px 14px', margin: 0 }}>
+        Widening a default grants reading rights <strong>inside the same business only</strong> —
+        it can never reach across Bonanza and Bigul, because the book boundary is applied
+        separately. The partner portal is pinned to Private: {owd.external_pin_reason}
+      </p>
+    </div>
+  );
+}
+
 export default function RolesSetup() {
   const [roles, { loading, error, reload }] = useApi('/setup/roles');
   const [caps] = useApi('/setup/capabilities');
+  /* The sharing floor. Read-only here on purpose -- see SharingFloor below. */
+  const [owd] = useApi('/setup/owd');
   const [selected, setSelected] = useState(null);
   const [creating, setCreating] = useState(false);
   const [notice, setNotice] = useState(null);
@@ -64,6 +138,8 @@ export default function RolesSetup() {
           <button className="btn-ghost btn-sm" onClick={() => setNotice(null)}>Dismiss</button>
         </div>
       )}
+
+      <SharingFloor owd={owd} />
 
       <div className="card">
         <div className="card-head">

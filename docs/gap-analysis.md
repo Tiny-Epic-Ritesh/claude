@@ -450,6 +450,22 @@ Three things were left. The first is now closed; the other two remain choices:
   did: the 603 e2e tests pass unchanged, which is the point — declaring a
   hardcoded floor must not move a single sight-line on the day it ships.
 
+  **Changing one needs two people, from 4 Sep 2026.** It goes through the
+  approvals engine as the `owd_change` scope: a superadmin asks and somebody
+  holding `audit.read` agrees. The two capabilities are deliberately different —
+  only one role holds `admin.system`, and since the engine refuses
+  self-approval, making both the same would mean a request could be raised and
+  never decided. `audit.read` is also the right second pair of eyes on its own
+  terms: whoever is accountable for the record of who saw what should agree to a
+  change in who can see it. The Setup screen shows the floor read-only for that
+  reason — a dropdown would put a two-person decision behind one click.
+
+  Two bugs surfaced while wiring it, both in the approvals engine and both
+  latent: `orgOf` had no entry for `client`, so **every bulk account
+  reassignment would have been undecidable** (`inReach` fails closed on a null
+  org, so the request could be raised and then refused to everyone); and
+  configuration entities, which genuinely have no book, hit the same wall.
+
   Two limits, both stated rather than hidden. **Only `read` and `private`**;
   Public Read/Write is not offered because writes are gated by capabilities,
   not by this floor, so the setting would not be enforced. And **the external

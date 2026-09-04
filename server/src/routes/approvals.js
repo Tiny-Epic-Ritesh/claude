@@ -11,6 +11,7 @@ import { Router } from 'express';
 import { all, one, run, audit } from '../db.js';
 import { requireUser, requirePermission, mayUseOrg } from '../auth.js';
 import { newPartnerCode, issuePortalCredential } from './partners-support.js';
+import { setDefaults as setOwd, isLevel } from '../engine/owd.js';
 import {
   APPROVAL_SCOPES, BULK_THRESHOLD, request, decide, withdraw, byId,
   queueFor, history, lockedBy, approversFor, inReach, orgOf,
@@ -52,6 +53,20 @@ const APPLY = {
     if (!Number.isFinite(pct) || pct < 0 || pct > 100) throw new Error('Commission must be between 0 and 100');
     run('UPDATE partners SET commission_pct = ? WHERE id = ?', [pct, req.entity_id]);
     return { commission_pct: pct };
+  },
+
+  owd_change: (req) => {
+    const level = req.payload?.internal;
+    const apiName = req.payload?.api_name;
+    if (!apiName || !isLevel(level)) throw new Error('That is not a sharing default this CRM knows');
+
+    /* Applied through the engine rather than by writing the column here, so the
+       external pin and the level validation are enforced on the way in exactly
+       as they are on a direct call. An apply path that writes the table itself
+       is how a guard gets bypassed a year later. */
+    const out = setOwd(apiName, { internal: level });
+    if (!out.ok) throw new Error(out.error);
+    return { api_name: apiName, internal: out.internal };
   },
 
   /* Accounts. Shaped like bulk_reassign next door but kept separate rather than
@@ -151,6 +166,7 @@ router.post('/', (req, res) => {
     commission_change: 'partner.view',
     bulk_reassign: 'lead.reassign',
     bulk_client_reassign: 'client.reassign',
+    owd_change: 'admin.system',
   };
   const needed = REQUEST_CAP[scope];
   if (needed && !req.caps.has(needed)) {

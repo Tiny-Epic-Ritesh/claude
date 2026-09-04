@@ -8027,6 +8027,140 @@ await check('a per-channel withdrawal closes only that channel', async () => {
   });
 
 
+  /* ------------------------------------------ 59. sharing defaults */
+  suite('59 sharing defaults need two people');
+
+  /**
+   * Ask for a sharing change, clearing anything a previous run left pending.
+   *
+   * Pending requests are unique per (scope, object), so one left behind by a
+   * failed run blocks every later one with a 400 that reads like a bug in the
+   * code rather than residue from before. The refusal carries the id, which is
+   * all that is needed to clear it -- more reliable than listing the queue,
+   * whose shape and reach filtering are somebody else's concern.
+   */
+  const askOwd = async (entity, internal, reason) => {
+    let r = await req(`/api/setup/owd/${entity}`, {
+      method: 'PATCH', token: T.superadmin, body: { internal, reason },
+    });
+    if (r.status === 400 && r.data?.pending_id) {
+      await req(`/api/approvals/${r.data.pending_id}/withdraw`,
+        { method: 'POST', token: T.superadmin });
+      r = await req(`/api/setup/owd/${entity}`, {
+        method: 'PATCH', token: T.superadmin, body: { internal, reason },
+      });
+    }
+    return r;
+  };
+
+  const owdOf = async (entity) => {
+    const { data } = await req('/api/setup/owd', { token: T.superadmin, expect: 200 });
+    return data.entities.find((e) => e.api_name === entity)?.owd_internal;
+  };
+
+  await check('the floor is visible, and private everywhere', async () => {
+    const { data } = await req('/api/setup/owd', { token: T.superadmin, expect: 200 });
+    assert(Array.isArray(data.entities) && data.entities.length > 0, 'no objects came back');
+    for (const e of data.entities) {
+      eq(e.owd_internal, 'private', `${e.api_name} is not private`);
+    }
+    eq(data.external_pinned_to, 'private', 'the external default is not pinned');
+    assert(data.enforced_on.includes('lead'), 'leads are not enforced');
+  });
+
+  await check('asking to widen a default changes nothing yet', async () => {
+    /* Maker-checker. The most consequential control in the product is not one
+       person's to set, and the request must not apply itself on the way past. */
+    const { status, data } = await askOwd('lead', 'read', 'e2e maker-checker check');
+    eq(status, 202, `expected a request, got ${status}: ${JSON.stringify(data)}`);
+
+    eq(data.approval_required, true, 'a sharing default changed without approval');
+    assert(data.request_id, 'no approval request was raised');
+    REF.owdRequestId = data.request_id;
+
+    eq(await owdOf('lead'), 'private', 'the default moved before anybody approved it');
+  });
+
+  await check('approving it applies the change, and rejecting would not have', async () => {
+    const id = need(REF.owdRequestId, 'the sharing request from the previous check');
+
+    /* Decided by the admin, not the superadmin who asked. The engine refuses
+       self-approval, which is the whole point -- and it is why the approver
+       capability is `audit.read` rather than `admin.system`: only one person
+       holds the latter, so a request could never be decided. */
+    await req(`/api/approvals/${id}/decide`, {
+      method: 'POST', token: T.admin, expect: 200,
+      body: { approve: true, reason: 'e2e approval' },
+    });
+
+    eq(await owdOf('lead'), 'read', 'the approval did not apply the change');
+
+    // Put it back the same way it was changed, so the run leaves nothing open.
+    const back = await askOwd('lead', 'private', 'e2e cleanup');
+    await req(`/api/approvals/${back.data.request_id}/decide`, {
+      method: 'POST', token: T.admin, expect: 200,
+      body: { approve: true, reason: 'e2e cleanup' },
+    });
+
+    eq(await owdOf('lead'), 'private', 'the run left leads open');
+  });
+
+  await check('narrowing needs approval too', async () => {
+    /* Taking sight-lines away is its own kind of Monday morning, and the
+       approver is who should hear about it. */
+    const open = await askOwd('client', 'read', 'e2e narrowing setup');
+    eq(open.status, 202, `setup failed: ${JSON.stringify(open.data)}`);
+    await req(`/api/approvals/${open.data.request_id}/decide`, {
+      method: 'POST', token: T.admin, expect: 200,
+      body: { approve: true, reason: 'e2e' },
+    });
+
+    const back = await askOwd('client', 'private', 'e2e narrowing');
+    eq(back.status, 202, 'narrowing skipped approval');
+    eq(back.data.approval_required, true, 'narrowing skipped approval');
+
+    await req(`/api/approvals/${back.data.request_id}/decide`, {
+      method: 'POST', token: T.admin, expect: 200,
+      body: { approve: true, reason: 'e2e' },
+    });
+    eq(await owdOf('client'), 'private', 'the run left accounts open');
+  });
+
+  await check('a request with no reason, no change, or a bad level is refused', async () => {
+    await req('/api/setup/owd/lead', {
+      method: 'PATCH', token: T.superadmin, expect: 400,
+      body: { internal: 'read' },
+    }).then(({ data }) => includes(data.error, 'Say why', 'a sharing change needed no reason'));
+
+    await req('/api/setup/owd/lead', {
+      method: 'PATCH', token: T.superadmin, expect: 400,
+      body: { internal: 'everyone', reason: 'x' },
+    }).then(({ data }) => includes(data.error, 'not a sharing default', 'a bad level was accepted'));
+
+    await req('/api/setup/owd/lead', {
+      method: 'PATCH', token: T.superadmin, expect: 400,
+      body: { internal: 'private', reason: 'already private' },
+    }).then(({ data }) => includes(data.error, 'already', 'a no-op change raised a request'));
+  });
+
+  await check('the external default cannot be widened at all', async () => {
+    const { data } = await req('/api/setup/owd/lead', {
+      method: 'PATCH', token: T.superadmin, expect: 400,
+      body: { external: 'read', reason: 'e2e' },
+    });
+    assert(/partner/i.test(data.error ?? ''),
+      `the refusal does not explain the partner reason: ${data.error}`);
+  });
+
+  await check('setting a sharing default needs admin.system', async () => {
+    await req('/api/setup/owd', { token: T.sales_supervisor, expect: 403 });
+    await req('/api/setup/owd/lead', {
+      method: 'PATCH', token: T.sales_supervisor, expect: 403,
+      body: { internal: 'read', reason: 'should not reach the engine' },
+    });
+  });
+
+
   await report();
 }
 

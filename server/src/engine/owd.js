@@ -69,6 +69,22 @@ export const isLevel = (value) => LEVEL_VALUES.includes(value);
 export const OWD_ENTITIES = ['lead', 'client', 'case'];
 
 /**
+ * A fixed number per object, because `approvals.entity_id` is an INTEGER and
+ * these objects are keyed by name.
+ *
+ * Written out rather than derived from the array's index or from a hash. An
+ * index would shift the moment somebody reorders the list, and a pending
+ * request would then attach itself to a different object than the one it was
+ * raised against — silently, since the payload would still read correctly. A
+ * hash would be stable and unreadable in an audit row.
+ *
+ * These numbers are permanent. Add to them; never renumber. There is a test.
+ */
+export const OWD_APPROVAL_KEY = { lead: 1, client: 2, case: 3 };
+
+export const approvalKeyFor = (apiName) => OWD_APPROVAL_KEY[apiName] ?? null;
+
+/**
  * The declared defaults for one object.
  *
  * Falls back to private when the row is missing rather than to open. An object
