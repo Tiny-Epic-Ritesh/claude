@@ -15,6 +15,7 @@ import { authenticate as authenticateKey, scopedCapabilities } from './engine/ap
 import { queueScopeSql } from './engine/queues.js';
 import { maskedFieldsFor } from './engine/masking.js';
 import { managerScopeSql, explainVisibility } from './engine/sharing.js';
+import { owdGrant } from './engine/owd.js';
 import {
   seedAccessModel, roleCapabilities, effectiveCapabilities, dataScope,
 } from './engine/access.js';
@@ -446,6 +447,14 @@ export function leadScope(user, alias = 'l', active = null) {
    */
   const grants = [role];
 
+  /* The declared organisation-wide default, which is Private unless somebody
+     has widened it in Setup. It joins the OR-list like any other grant, which
+     is what keeps it a floor rather than an override: it can only ever add
+     sight-lines, and it is ANDed with org scope below, so widening it cannot
+     reach across the book boundary. */
+  const owd = owdGrant('lead', user);
+  if (owd) grants.push(owd);
+
   const manager = managerScopeSql(user, alias);
   if (manager) grants.push(manager);
 
@@ -514,6 +523,10 @@ export function clientScope(user, alias = 'c', active = null) {
   })();
 
   const grants = [role];
+
+  const owd = owdGrant('client', user);
+  if (owd) grants.push(owd);
+
   const manager = managerScopeSql(user, alias);
   if (manager) grants.push(manager);
 
@@ -577,6 +590,9 @@ export function ticketScope(user, alias = 't', active = null) {
   })();
 
   const grants = [role];
+
+  const owd = owdGrant('case', user);
+  if (owd) grants.push(owd);
 
   // A supervisor reaches their reports' cases, at any depth of the chain.
   const manager = managerScopeSql(user, alias, 'assignee_id');

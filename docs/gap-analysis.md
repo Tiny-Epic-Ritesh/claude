@@ -415,7 +415,7 @@ below.
 | 4 | Field-change history + stage entry/exit, queryable | ✅ **Met** — `field_history`, indexed by record and by field |
 | 5 | **Label ≠ API name** | ✅ **Met** — `field_def.api_name` is immutable, `field_def.label` renameable |
 | 6 | **Uniform per-object configuration** | ✅ **Met** — `entity_def` and `field_def` cover all seven objects: lead, client, case, partner, task, interaction, product_interest |
-| 7 | OWD floor, then grants only | ⚠️ **Half met, unchanged** — grant-only ✅, still no OWD floor and no internal/external split |
+| 7 | OWD floor, then grants only | ✅ **Met for the three scoped objects** — the floor is now declared per object (`entity_def.owd_internal` / `owd_external`, `engine/owd.js`) and enforced for lead, client and case, the three with scope functions. Grant-only ✅. The internal/external split exists as a declaration; external is **pinned to Private** because partner reads filter on `partner_id` in code without passing through a scope function, so a wider external default would not be enforced — see below |
 | 8 | **Owner is polymorphic (User or Queue)** | ✅ **Met** — `queues` table with `leads.owner_queue_id` beside `owner_id`, two nullable keys rather than a type-plus-ref pair |
 | 9 | Record types over pipeline sprawl | ⚠️ Sideways — per-product cards instead; see below |
 | 10 | Segments as live nested queries | ✅ Met — condition tree, nested to any depth |
@@ -433,11 +433,31 @@ metadata layer — and building that one thing closed all four: label versus API
 name, uniform per-object configuration, field-change history, and the polymorphic
 owner that needed a place to declare itself.
 
-Three things are left, and only the first is a hole rather than a choice:
+Three things were left. The first is now closed; the other two remain choices:
 
-- **7 · no OWD floor.** Access is grant-only with no restrictive default
-  underneath it and no internal/external split. This is the one item on this
-  scorecard that is a real hole rather than a design choice.
+- **7 · OWD floor — closed 4 Sep 2026, with one part deliberately left open.**
+  The floor was always there; it was just never *declared*. It lived inside
+  `leadScope`, `clientScope` and `ticketScope`, which meant an administrator
+  could not see the default, could not change it, and nothing held the objects
+  to one shape. It is now `entity_def.owd_internal` / `owd_external`, read by
+  `engine/owd.js` and ORed into the same grant list as the management chain and
+  queues — so it can only add sight-lines, and being ANDed with org scope it
+  can never reach across the book boundary. There is a test for exactly that,
+  because "make leads public" is the setting somebody reaches for at five
+  o'clock.
+
+  Everything defaults to **Private**, which is precisely what the code already
+  did: the 603 e2e tests pass unchanged, which is the point — declaring a
+  hardcoded floor must not move a single sight-line on the day it ships.
+
+  Two limits, both stated rather than hidden. **Only `read` and `private`**;
+  Public Read/Write is not offered because writes are gated by capabilities,
+  not by this floor, so the setting would not be enforced. And **the external
+  default is pinned to Private**: partner sessions never reach a scope function
+  at all — `requireUser` puts them on `req.partner` and the portal filters on
+  `partner_id` in code — so a wider external default would silently do nothing,
+  or worse, would be wired up later by someone who had not read why. The pin
+  lifts when partner reads move under the same floor as staff reads.
 - **15 · two vendor columns on the core record.** `activities.external_id` and
   `activities.recording_url` belong in a vendor-reference table. Small, known,
   and not yet worth a migration.
@@ -486,7 +506,7 @@ more valuable half:
 | `engine/followups.js` | Business logic, entity-agnostic |
 | `engine/assignment.js` | Needs `owner` to become polymorphic; otherwise unchanged |
 | `engine/metrics.js` | Becomes the *implementation* behind Formula/Rollup field types |
-| `engine/access.js` | Grant-only model is right; needs an OWD floor beneath it |
+| `engine/access.js` | Grant-only model is right; the OWD floor beneath it is `engine/owd.js`, added 4 Sep 2026 |
 | `engine/kyc.js`, `engine/sla.js` | Unaffected |
 | `vendors/*`, `routes/webhooks.js` | Vendor quarantine already correct |
 

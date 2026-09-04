@@ -30,6 +30,10 @@ import {
 } from '../engine/access.js';
 import { vendorStatus } from '../vendors/config.js';
 import { snapshot } from '../engine/versioning.js';
+import {
+  OWD_LEVELS, allDefaults as owdDefaults, setDefaults as setOwd,
+  defaultsFor as owdFor, EXTERNAL_PINNED, EXTERNAL_PIN_REASON, OWD_ENTITIES,
+} from '../engine/owd.js';
 import { syncDispositionPicklists } from '../engine/metadata.js';
 import {
   validateRule, operatorCatalogue, wouldRefuseExisting,
@@ -1645,6 +1649,45 @@ const DISPOSITION_FIELDS = [
   'requires_reason', 'sets_card_state', 'flags_mobile_invalid',
   'suppress_marketing', 'score_delta', 'hint', 'sort_order', 'active',
 ];
+
+/* ------------------------------------------- organisation-wide defaults */
+
+/**
+ * The floor beneath every grant, per object. Non-negotiable 7.
+ *
+ * `admin.system` rather than `admin.rules`: widening a default changes who can
+ * see client records across a whole book, which is a heavier act than editing a
+ * rule and belongs with the people who hold the system permission.
+ */
+router.get('/owd', requirePermission('admin.system'), (_req, res) => {
+  res.json({
+    levels: OWD_LEVELS,
+    entities: owdDefaults(),
+    enforced_on: OWD_ENTITIES,
+    external_pinned_to: EXTERNAL_PINNED,
+    external_pin_reason: EXTERNAL_PIN_REASON,
+    note: 'Private is the default and matches how the product has always behaved. '
+      + 'Widening a default grants reading rights inside the same book only -- it can never '
+      + 'reach across Bonanza and Bigul, because org scope is applied separately.',
+  });
+});
+
+router.patch('/owd/:entity', requirePermission('admin.system'), (req, res) => {
+  const before = owdFor(req.params.entity);
+  const out = setOwd(req.params.entity, {
+    internal: req.body?.internal,
+    external: req.body?.external,
+  });
+  if (!out.ok) return res.status(400).json(out);
+
+  /* Audited as a configuration change, because "who could see this record in
+     March" is a question that gets asked, and the answer depends on what this
+     was set to at the time. */
+  auditConfig('sharing', req.params.entity, 'owd_changed', before,
+    { internal: out.internal, external: out.external }, req.user.id);
+
+  return res.json(out);
+});
 
 router.get('/dispositions', requirePermission('admin.rules'), (_req, res) => {
   const rows = all('SELECT * FROM dispositions ORDER BY activity_type, sort_order');

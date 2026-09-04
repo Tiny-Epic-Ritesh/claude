@@ -1118,6 +1118,27 @@ const COLUMNS = [
      dialling, so two members of one team calling the same lead about different
      products landed in different Cube queues. */
   ['dialler_campaigns', 'team_id', 'INTEGER REFERENCES teams(id) ON DELETE SET NULL'],
+
+  /* The organisation-wide default: the floor beneath every grant, declared per
+     object rather than implied by whatever each scope function happens to do.
+
+     Non-negotiable 7 is "one restrictive floor, then grant-only layers". The
+     layers were built; the floor was real but invisible -- it lived inside
+     leadScope, clientScope and ticketScope, so an administrator could not see
+     what the default was, let alone set it, and the six objects could drift
+     apart without anyone noticing.
+
+     Defaulted to 'private', which is exactly what the code already does. That
+     is deliberate: turning a hardcoded floor into a declared one must not
+     change a single sight-line on the day it ships.
+
+     Internal and external are separate because they answer different
+     questions. Internal is staff; external is the partner portal, where the
+     viewer is outside the firm entirely. Salesforce keeps these apart for the
+     same reason, and collapsing them is how a partner ends up seeing a
+     colleague's book. */
+  ['entity_def', 'owd_internal', "TEXT NOT NULL DEFAULT 'private'"],
+  ['entity_def', 'owd_external', "TEXT NOT NULL DEFAULT 'private'"],
   ['activities', 'client_ref', 'TEXT'],
   ['activities', 'geo_status', 'TEXT'],            // captured / declined / unavailable / expired
   ['activities', 'geo_lat', 'REAL'],
