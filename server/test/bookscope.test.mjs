@@ -23,7 +23,7 @@ import { strict as assert } from 'node:assert';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { one, all } from '../src/db.js';
+import { one, all, run } from '../src/db.js';
 import { RECORD_KINDS, loadInBook, reachable } from '../src/engine/bookscope.js';
 
 /* Source read from disk, so line endings are whatever git checked out --
@@ -395,6 +395,68 @@ await test('no list route returns the other book', async () => {
   }
 
   assert.equal(problems.length, 0, `a list route crosses the book boundary:\n         ${problems.join('\n         ')}`);
+});
+
+/* ---------------------------------------------------- the boundary on writes */
+
+/**
+ * A write is a way across the boundary too.
+ *
+ * Everything above this line is a GET, because the scanner that builds the
+ * route list is `\w+\.get\(`. PATCH /admin/users/:id took name, role, active
+ * and password by id and never asked which book the user was in -- so a Bigul
+ * administrator, who cannot *see* a Bonanza user in the list because that query
+ * is scoped, could still rename, re-role, disable or reset the password of one
+ * by number. Ids are sequential.
+ *
+ * `/setup/users/:id` writes the same columns and has always checked. So have
+ * ghost and reset-link. This endpoint was the one that did not, and no test
+ * looked at it.
+ *
+ * There is no Bigul administrator in the seed, so one is made here: the hole
+ * needed two books to have separate administrators, which is the arrangement
+ * the books exist for.
+ */
+
+await test('a write cannot cross the book boundary', async () => {
+  const victim = one("SELECT id, name, role, cube_campaign_id FROM users WHERE sales_org = 'BONANZA' AND role != 'superadmin' ORDER BY id LIMIT 1");
+  assert(victim, 'no Bonanza user to aim at, so this proves nothing');
+
+  /* Borrow a known-good hash rather than reimplement the KDF, so the seeded
+     password works and the test says nothing about how hashing is done. */
+  const seeded = one("SELECT password FROM users WHERE email = 'admin@bonanza.test'");
+  assert(seeded, 'the seeded administrator is missing');
+
+  const email = 'bookscope-probe@bigul.test';
+  run('DELETE FROM users WHERE email = ?', [email]);
+  run(`INSERT INTO users (name, email, password, role, sales_org, active)
+       VALUES ('Bookscope Probe', ?, ?, 'admin', 'BIGUL', 1)`, [email, seeded.password]);
+
+  try {
+    const token = await login(email);
+    const res = await fetch(`${BASE}/api/admin/users/${victim.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ name: 'Renamed across the book', cube_campaign_id: 'BIGUL_QUEUE' }),
+    });
+
+    assert(res.status === 403 || res.status === 404,
+      `a Bigul admin patched a Bonanza user and got HTTP ${res.status}`);
+
+    // And nothing moved, which is the part that matters.
+    const after = one('SELECT name, cube_campaign_id FROM users WHERE id = ?', [victim.id]);
+    assert.equal(after.name, victim.name, 'the name was written across the boundary');
+    assert(!after.cube_campaign_id,
+      'a dialler campaign was set across the boundary -- those calls reach the switch');
+  } finally {
+    run('DELETE FROM users WHERE email = ?', [email]);
+
+    /* Undo the write if it landed. When this test fails it fails *because* the
+       patch succeeded, so leaving it in place would corrupt the seeded record
+       and the next run would fail on the debris instead of the boundary. */
+    run('UPDATE users SET name = ?, cube_campaign_id = ? WHERE id = ?',
+      [victim.name, victim.cube_campaign_id ?? null, victim.id]);
+  }
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -225,6 +225,26 @@ export function campaignFor(lead, productTypeId = null, userId = null) {
      this function keeps: an agent whose team sits in the other book finds no
      campaign here and falls through, rather than dialling out of a queue that
      is not theirs. */
+  /* The caller's own campaign first. P3-12.
+   *
+   * Above the team on purpose, and consistent with the rule the team lookup
+   * itself follows: the more specific answer wins. A campaign on the team is
+   * where most people's comes from -- Ritesh settled that on 3 Sep -- and a
+   * campaign on the person is the exception that outranks it, for somebody
+   * seconded to another desk who would otherwise dial out under a queue they
+   * are not working and take the reporting with them.
+   *
+   * Book-checked like every other branch. A campaign set on a user in the other
+   * business is not a reason to cross the boundary. */
+  const byUser = userId && one(
+    `SELECT u.cube_campaign_id FROM users u
+      WHERE u.id = ? AND u.active = 1
+        AND u.cube_campaign_id IS NOT NULL AND u.cube_campaign_id != ''
+        AND u.sales_org = ?`,
+    [userId, org],
+  );
+  if (byUser) return { campaign: byUser.cube_campaign_id, source: 'user' };
+
   const byTeam = userId && one(
     `SELECT dc.cube_campaign_id FROM dialler_campaigns dc
        JOIN teams tm      ON tm.id = dc.team_id

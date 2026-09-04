@@ -170,5 +170,75 @@ test('one default per book, so "the book default" has one answer', () => {
   }
 });
 
+/* ------------------------------------------------ P3-12: per-user campaign */
+
+/**
+ * A campaign on the person outranks the one on their team.
+ *
+ * Ritesh settled on 3 Sep that a campaign is per team, and that is still where
+ * most people's comes from. This is the exception: somebody seconded to another
+ * desk for a week would otherwise dial out under a queue they are not working,
+ * and the reporting would follow them there.
+ *
+ * Placed above team for the same reason the team sits above product -- the more
+ * specific answer wins.
+ */
+
+test('a campaign on the user beats the one on their team', () => {
+  const team = one("SELECT id FROM teams WHERE name = 'Digital Desk'");
+  const member = one('SELECT user_id FROM team_members WHERE team_id = ?', [team.id]);
+  const user = one('SELECT id, sales_org FROM users WHERE id = ?', [member.user_id]);
+  const lead = one("SELECT id, sales_org FROM leads WHERE sales_org = ? AND deleted_at IS NULL LIMIT 1",
+    [user.sales_org]);
+
+  // Their team's answer, before anything is set on them.
+  const viaTeam = campaignFor(lead, null, user.id);
+  assert.equal(viaTeam.source, 'team', `expected the team to answer, got ${viaTeam.source}`);
+
+  run("UPDATE users SET cube_campaign_id = 'USER_OVERRIDE_TEST' WHERE id = ?", [user.id]);
+  try {
+    const viaUser = campaignFor(lead, null, user.id);
+    assert.equal(viaUser.source, 'user', `the user campaign did not win, ${viaUser.source} did`);
+    assert.equal(viaUser.campaign, 'USER_OVERRIDE_TEST');
+  } finally {
+    run('UPDATE users SET cube_campaign_id = NULL WHERE id = ?', [user.id]);
+  }
+});
+
+test('a user campaign cannot dial across the book boundary', () => {
+  /* The boundary again, from a new direction. A campaign set on a Bonanza user
+     is not a reason to hand them a Bonanza queue for a Bigul lead -- that is
+     the book crossed on the vendor's side, where it cannot be corrected. */
+  const user = one("SELECT id, sales_org FROM users WHERE sales_org = 'BONANZA' AND active = 1 LIMIT 1");
+  const other = one("SELECT id, sales_org FROM leads WHERE sales_org = 'BIGUL' AND deleted_at IS NULL LIMIT 1");
+  assert(other, 'no Bigul lead seeded, so this proves nothing');
+
+  run("UPDATE users SET cube_campaign_id = 'BONANZA_ONLY_TEST' WHERE id = ?", [user.id]);
+  try {
+    const res = campaignFor(other, null, user.id);
+    assert.notEqual(res.source, 'user', 'a Bonanza user campaign was used to dial a Bigul lead');
+    assert.notEqual(res.campaign, 'BONANZA_ONLY_TEST', 'the campaign crossed the boundary');
+  } finally {
+    run('UPDATE users SET cube_campaign_id = NULL WHERE id = ?', [user.id]);
+  }
+});
+
+test('an empty campaign on a user is not a campaign', () => {
+  /* A blank saved from a form is how an override arrives by accident. It must
+     fall through rather than dial out under an empty string, which CUBE would
+     refuse at the switch with an error nobody here would recognise. */
+  const user = one("SELECT id, sales_org FROM users WHERE sales_org = 'BONANZA' AND active = 1 LIMIT 1");
+  const lead = one("SELECT id, sales_org FROM leads WHERE sales_org = 'BONANZA' AND deleted_at IS NULL LIMIT 1");
+
+  run("UPDATE users SET cube_campaign_id = '' WHERE id = ?", [user.id]);
+  try {
+    const res = campaignFor(lead, null, user.id);
+    assert.notEqual(res.source, 'user', 'an empty string was treated as a campaign');
+    assert(res.campaign !== '', 'a blank campaign reached the switch');
+  } finally {
+    run('UPDATE users SET cube_campaign_id = NULL WHERE id = ?', [user.id]);
+  }
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exitCode = failed ? 1 : 0;

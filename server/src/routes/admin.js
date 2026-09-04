@@ -5,7 +5,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit, ROLES, ROLE_LABELS } from '../db.js';
-import { requireUser, requirePermission, permissionsFor, orgsFor, activeOrg, PERMISSIONS } from '../auth.js';
+import { requireUser, requirePermission, permissionsFor, orgsFor, activeOrg, mayUseOrg, PERMISSIONS } from '../auth.js';
 import { hashPassword } from '../security.js';
 import { CONDITION_FIELDS, ACTION_TYPES, runRule } from '../engine/rules.js';
 import { MASTER_STEPS } from '../engine/kyc.js';
@@ -63,7 +63,27 @@ router.post('/users', requirePermission('admin.users'), async (req, res) => {
 });
 
 router.patch('/users/:id', requirePermission('admin.users'), async (req, res) => {
-  const fields = ['name', 'email', 'role', 'product_type_id', 'manager_id', 'phone', 'active', 'password'];
+  /* The book, before anything is written.
+   *
+   * The users list is scoped -- `WHERE u.sales_org IN (...)` -- so a Bigul
+   * administrator never sees a Bonanza user here. This write was not, and ids
+   * are sequential, so the record could still be reached by number: renamed,
+   * re-roled, disabled, or given a new password. `/setup/users/:id`, which
+   * writes the same columns, has checked this all along; so have ghost and
+   * reset-link. This endpoint was the one that did not.
+   */
+  const target = one('SELECT id, sales_org FROM users WHERE id = ?', [req.params.id]);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  if (!mayUseOrg(req.user, target.sales_org)) {
+    return res.status(403).json({ error: 'That user is outside your sales org' });
+  }
+
+  /* `cube_campaign_id`, `phone_extension` and `cti_agent_id` are the three
+     telephony fields on a user. The first is new (P3-12); the other two were
+     already columns and were not editable from here, so an administrator could
+     see an agent id that nobody could set. */
+  const fields = ['name', 'email', 'role', 'product_type_id', 'manager_id', 'phone', 'active', 'password',
+    'cube_campaign_id', 'phone_extension', 'cti_agent_id'];
   const sets = [];
   const params = [];
   for (const f of fields) {

@@ -13,6 +13,7 @@ import { stashParentToken } from '../GhostBar.jsx';
 
 export function UserActions({ user, reload, onLink, onError }) {
   const [busy, setBusy] = useState(null);
+  const [editing, setEditing] = useState(false);
 
   const ghost = async () => {
     setBusy('ghost');
@@ -52,10 +53,128 @@ export function UserActions({ user, reload, onLink, onError }) {
           </button>
         </>
       )}
+      <button className="btn-sm" onClick={() => setEditing(true)}>Edit</button>
       <button className="btn-sm" onClick={async () => { await api.patch(`/admin/users/${user.id}`, { active: user.active ? 0 : 1 }); reload(); }}>
         {user.active ? 'Disable' : 'Enable'}
       </button>
+      {editing && (
+        <EditUser
+          user={user}
+          onClose={() => setEditing(false)}
+          onSaved={() => { setEditing(false); reload(); }}
+        />
+      )}
     </span>
+  );
+}
+
+/**
+ * Edit one user.
+ *
+ * Posts to `/setup/users/:id` rather than `/admin/users/:id`. Both write the
+ * same columns; the setup one checks the book, refuses a self-referencing
+ * manager, validates the role against the active list and signs the person out
+ * everywhere when their password changes. The admin one is the older twin and
+ * had none of that until today.
+ *
+ * Blank means "leave alone" on the server (COALESCE), which is what allows this
+ * form to send the whole object without wiping the fields it does not show.
+ */
+export function EditUser({ user, onClose, onSaved }) {
+  const [meta] = useApi('/meta');
+  const [people] = useApi('/setup/users');
+  const [form, setForm] = useState({
+    name: user.name ?? '',
+    role: user.role ?? '',
+    manager_id: user.manager_id ?? '',
+    product_type_id: user.product_type_id ?? '',
+    employee_code: user.employee_code ?? '',
+    branch: user.branch ?? '',
+    phone: user.phone ?? '',
+    phone_extension: user.phone_extension ?? '',
+    cti_agent_id: user.cti_agent_id ?? '',
+    cube_campaign_id: user.cube_campaign_id ?? '',
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+
+  /* Anyone but themselves -- the server refuses a self-referencing manager and
+     there is no reason to offer the option and then reject it. */
+  const managers = (people?.users ?? people ?? []).filter((p) => p.id !== user.id);
+
+  return (
+    <Modal title={`Edit ${user.name}`} subtitle={user.email} onClose={onClose}>
+      <form onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        setError(null);
+        try {
+          await api.patch(`/setup/users/${user.id}`, {
+            ...form,
+            manager_id: form.manager_id === '' ? null : Number(form.manager_id),
+            product_type_id: form.product_type_id === '' ? null : Number(form.product_type_id),
+          });
+          onSaved();
+        } catch (err) { setError(err.message); setBusy(false); }
+      }}>
+        <ErrorBanner error={error} />
+
+        <div className="field"><label>Name</label><input value={form.name} onChange={set('name')} required autoFocus /></div>
+
+        <div className="field-row">
+          <div className="field">
+            <label>Role</label>
+            <select value={form.role} onChange={set('role')}>
+              {Object.entries(ROLE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label>Reports to</label>
+            <select value={form.manager_id} onChange={set('manager_id')}>
+              <option value="">—</option>
+              {managers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div className="field-row">
+          <div className="field">
+            <label>Product (Product RM only)</label>
+            <select value={form.product_type_id} onChange={set('product_type_id')}>
+              <option value="">—</option>
+              {(meta?.products || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+          <div className="field"><label>Employee code</label><input value={form.employee_code} onChange={set('employee_code')} /></div>
+        </div>
+
+        <div className="field-row">
+          <div className="field"><label>Branch</label><input value={form.branch} onChange={set('branch')} /></div>
+          <div className="field"><label>Mobile</label><input value={form.phone} onChange={set('phone')} /></div>
+        </div>
+
+        <h4 className="muted">Telephony</h4>
+        <div className="field-row">
+          <div className="field"><label>Extension</label><input value={form.phone_extension} onChange={set('phone_extension')} /></div>
+          <div className="field"><label>Agent ID</label><input value={form.cti_agent_id} onChange={set('cti_agent_id')} /></div>
+        </div>
+        <div className="field">
+          <label>Dialler campaign</label>
+          <input value={form.cube_campaign_id} onChange={set('cube_campaign_id')} placeholder="Leave blank to use the team's" />
+          <p className="hint small muted">
+            Outbound calls normally use the campaign set on this person's team. Set one here only
+            for somebody working another desk — it overrides the team's, and clearing it hands
+            them back.
+          </p>
+        </div>
+
+        <div className="row" style={{ justifyContent: 'flex-end' }}>
+          <button type="button" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" disabled={busy}>{busy ? <Spinner /> : 'Save'}</button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

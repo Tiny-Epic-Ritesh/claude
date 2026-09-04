@@ -1137,6 +1137,15 @@ const COLUMNS = [
      viewer is outside the firm entirely. Salesforce keeps these apart for the
      same reason, and collapsing them is how a partner ends up seeing a
      colleague's book. */
+  /* The dialler campaign this person's calls go out under. P3-12.
+
+     The user record already carried phone_extension and cti_agent_id; the
+     campaign was the one piece of the three that lived only on a team, so a
+     caller seconded to another desk for a week dialled out under the wrong
+     queue and the reporting followed them there. Nullable, because most people
+     should inherit their team's rather than carry their own. */
+  ['users', 'cube_campaign_id', 'TEXT'],
+
   ['entity_def', 'owd_internal', "TEXT NOT NULL DEFAULT 'private'"],
   ['entity_def', 'owd_external', "TEXT NOT NULL DEFAULT 'private'"],
   ['activities', 'client_ref', 'TEXT'],

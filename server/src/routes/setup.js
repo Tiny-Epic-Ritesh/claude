@@ -296,7 +296,7 @@ router.get('/users', requirePermission('admin.users'), (req, res) => {
   const rows = all(
     `SELECT u.id, u.name, u.email, u.role, u.active, u.employee_code, u.branch,
             u.sales_org, u.org_access, u.manager_id, u.product_type_id, u.phone,
-            u.phone_extension, u.created_at,
+            u.phone_extension, u.cube_campaign_id, u.cti_agent_id, u.created_at,
             m.name AS manager_name, pt.name AS product_name, r.name AS role_name,
             (SELECT COUNT(*) FROM leads WHERE owner_id = u.id AND deleted_at IS NULL) AS lead_count,
             (SELECT COUNT(*) FROM user_permission_sets WHERE user_id = u.id) AS grant_count
@@ -385,6 +385,7 @@ router.patch('/users/:id', requirePermission('admin.users'), async (req, res) =>
     name, role, manager_id: managerId, product_type_id: productTypeId,
     employee_code: employeeCode, branch, phone, phone_extension: ext, whatsapp,
     org_access: orgAccess, password,
+    cube_campaign_id: campaign, cti_agent_id: agentId,
   } = req.body;
 
   if (role && !one('SELECT code FROM roles WHERE code = ? AND active = 1', [role])) {
@@ -408,13 +409,22 @@ router.patch('/users/:id', requirePermission('admin.users'), async (req, res) =>
        employee_code = COALESCE(?, employee_code), branch = COALESCE(?, branch),
        phone = COALESCE(?, phone), phone_extension = COALESCE(?, phone_extension),
        whatsapp = COALESCE(?, whatsapp),
+       /* P3-12. A campaign is per team; this is the exception, for somebody
+          seconded to another desk who would otherwise dial out under a queue
+          they are not working. COALESCE means null leaves it alone, so an
+          empty string is how an override is cleared -- and campaignFor()
+          treats '' as absent and falls back to the team. */
+       cube_campaign_id = COALESCE(?, cube_campaign_id),
+       cti_agent_id = COALESCE(?, cti_agent_id),
        org_access = ${access === undefined ? 'org_access' : '?'}
      WHERE id = ?`,
     access === undefined
       ? [name ?? null, role ?? null, managerId ?? null, productTypeId ?? null, employeeCode ?? null,
-        branch ?? null, phone ?? null, ext ?? null, whatsapp ?? null, user.id]
+        branch ?? null, phone ?? null, ext ?? null, whatsapp ?? null,
+        campaign ?? null, agentId ?? null, user.id]
       : [name ?? null, role ?? null, managerId ?? null, productTypeId ?? null, employeeCode ?? null,
-        branch ?? null, phone ?? null, ext ?? null, whatsapp ?? null, access, user.id],
+        branch ?? null, phone ?? null, ext ?? null, whatsapp ?? null,
+        campaign ?? null, agentId ?? null, access, user.id],
   );
 
   if (password) {
