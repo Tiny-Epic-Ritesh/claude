@@ -16,6 +16,7 @@ import { requireUser, leadScope, unmaskRequested, maskFor, activeOrg, orgScope }
 import { maskRecords } from '../security.js';
 import { maskedFieldsFor } from '../engine/masking.js';
 import { kycHealth } from '../engine/kyc.js';
+import { queueFor } from '../engine/approvals.js';
 import { integrationRegistry } from '../integrations.js';
 
 const router = Router();
@@ -126,6 +127,54 @@ const countDueToday = (userId) => one(
 
 /* ------------------------------------------------------------ cockpits */
 
+/* ------------------------------------------------- P3-27 homepage work
+ *
+ * Three counts an administrator can act on, replacing the activity log that
+ * used to fill the page. Deliberately the same predicates the sales dashboard
+ * and the tasks list already use: a homepage tile that counts differently from
+ * the screen it opens is worse than no tile, because somebody acts on the
+ * larger number and finds the smaller one.
+ */
+
+/** Open tasks past their due date, across the books this person may see. */
+function overdueTasks(user, active) {
+  const scope = leadScope(user, 'l', active);
+  return one(
+    `SELECT COUNT(*) n FROM tasks t
+       JOIN leads l ON l.id = t.lead_id
+      WHERE t.status = 'Open' AND t.due_at < datetime('now')
+        AND l.deleted_at IS NULL AND ${scope.sql}`,
+    scope.params,
+  ).n;
+}
+
+/**
+ * Live leads nobody has contacted in two days.
+ *
+ * Won and Lost are excluded: a closed lead is not being ignored, it is
+ * finished, and counting it would make the number unfixable.
+ */
+function unattendedLeads(user, active) {
+  const scope = leadScope(user, 'l', active);
+  return one(
+    `SELECT COUNT(*) n FROM leads l
+      WHERE l.deleted_at IS NULL AND ${scope.sql}
+        AND l.stage NOT IN ('Won','Lost')
+        AND NOT EXISTS (
+          SELECT 1 FROM activities a
+           WHERE a.lead_id = l.id
+             AND a.type IN ('Call','WhatsApp','Email','SMS','Meeting')
+             AND a.created_at > datetime('now','-2 days'))`,
+    scope.params,
+  ).n;
+}
+
+/** Approvals this person is the one holding up. */
+function approvalsWaiting(user) {
+  const queue = queueFor({ ...user, capabilities: user.capabilities ?? new Set() });
+  return queue?.waiting_on_me?.length ?? 0;
+}
+
 const COCKPITS = {
 
   /* ---- P0: Superadmin ------------------------------------------------ */
@@ -142,12 +191,22 @@ const COCKPITS = {
         const live = reg.filter((i) => i.status === 'live').length;
         return metric('Integrations', `${live}/${reg.length}`, live ? `${live} live, rest simulated` : 'all simulated in this build', live ? 'ok' : 'warn');
       })(),
-      metric('Audit events today', one("SELECT COUNT(*) n FROM audit_log WHERE date(created_at) = date('now')").n, null, null, '/admin?tab=audit'),
+      metric('Audit events today', one("SELECT COUNT(*) n FROM audit_log WHERE date(created_at) = date('now')").n, null, null, '/setup/audit'),
+
+      /* P3-27. The three that replaced the activity log: things to do, rather
+         than a record of what was done. Each opens the screen that lists them. */
+      metric('Overdue follow-ups', overdueTasks(user, active), 'Tasks past their due date', 'warn', '/tasks?overdue=true&all=true'),
+      metric('Unattended over 48h', unattendedLeads(user, active), 'No contact logged', 'warn', '/leads?unattended_hours=48'),
+      metric('Approvals waiting on you', approvalsWaiting(user), 'Nobody else can decide these', 'warn', '/approvals'),
     ],
     worklist: {
       type: 'audit',
-      title: 'System activity log',
-      rows: all(`SELECT a.*, u.name AS user_name, u.role AS user_role FROM audit_log a LEFT JOIN users u ON u.id = a.user_id ORDER BY a.created_at DESC LIMIT 120`),
+      title: 'Recent system activity',
+      /* Eight, not 120. P3-27: this is a glance at what just happened, and the
+         log itself is one click away -- 120 rows made the homepage a scroll
+         past everything anybody had ever done to reach anything else. */
+      rows: all(`SELECT a.*, u.name AS user_name, u.role AS user_role FROM audit_log a LEFT JOIN users u ON u.id = a.user_id ORDER BY a.created_at DESC LIMIT 8`),
+      more: { label: 'Open the full audit log', to: '/setup/audit' },
     },
     actions: ['Manage users', 'Rule builder', 'Integration health', 'System config', 'Audit export'],
   }),
@@ -167,6 +226,11 @@ const COCKPITS = {
       metric('SLA breaches', orgCount(user, active, 'tickets', 'breached = 1'), 'open + closed', 'danger', '/tickets?breached=1'),
       metric('Active users', orgCount(user, active, 'users', 'active = 1'), null, null, '/admin?tab=users'),
       metric('Products configured', orgCount(user, active, 'product_types', 'active = 1'), null, null, '/admin?tab=products'),
+
+      // P3-27, on the Admin homepage too -- the ticket names both.
+      metric('Overdue follow-ups', overdueTasks(user, active), 'Tasks past their due date', 'warn', '/tasks?overdue=true&all=true'),
+      metric('Unattended over 48h', unattendedLeads(user, active), 'No contact logged', 'warn', '/leads?unattended_hours=48'),
+      metric('Approvals waiting on you', approvalsWaiting(user), 'Nobody else can decide these', 'warn', '/approvals'),
     ],
     worklist: {
       type: 'users',

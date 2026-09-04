@@ -143,7 +143,7 @@ function WorkList({ list, navigate, session }) {
     case 'partners': return <PartnerRows rows={list.rows} navigate={navigate} />;
     case 'scorecard': return <ScorecardRows rows={list.rows} />;
     case 'users': return <UserRows rows={list.rows} />;
-    case 'audit': return <AuditRows rows={list.rows} />;
+    case 'audit': return <AuditRows rows={list.rows} more={list.more} navigate={navigate} />;
     case 'campaigns': return <CampaignRows rows={list.rows} />;
     case 'sources': return <SourceRows rows={list.rows} />;
     default: return <Empty>Unsupported list type: {list.type}</Empty>;
@@ -331,7 +331,15 @@ function UserRows({ rows }) {
   );
 }
 
-function AuditRows({ rows }) {
+/**
+ * Recent system activity, with the way through to all of it. P3-27.
+ *
+ * This used to be 120 rows, which made the homepage a scroll past everything
+ * anybody had ever done to reach anything else. It is a glance now, and the log
+ * itself is one click away -- where it can be filtered and exported, which it
+ * never could be from here.
+ */
+function AuditRows({ rows, more, navigate }) {
   return (
     <table>
       <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Entity</th><th>Detail</th></tr></thead>
@@ -345,6 +353,15 @@ function AuditRows({ rows }) {
             <td className="tiny muted" style={{ maxWidth: 320, wordBreak: 'break-word' }}>{a.detail}</td>
           </tr>
         ))}
+        {more && (
+          <tr>
+            <td colSpan={5} style={{ textAlign: 'center', padding: '10px 0' }}>
+              <button type="button" className="btn-ghost btn-sm" onClick={() => navigate(more.to)}>
+                {more.label}
+              </button>
+            </td>
+          </tr>
+        )}
       </tbody>
     </table>
   );

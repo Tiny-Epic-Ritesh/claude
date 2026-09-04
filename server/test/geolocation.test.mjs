@@ -14,6 +14,7 @@
 
 import { strict as assert } from 'node:assert';
 import { all, one, run } from '../src/db.js';
+import { readFileSync } from 'node:fs';
 import * as geo from '../src/engine/geolocation.js';
 
 let passed = 0;
@@ -171,6 +172,80 @@ test('refusals are reported as a rate, never as a list of movements', () => {
     assert(!('geo_lat' in r) && !('geo_address' in r), 'the refusal report leaks positions');
     assert('declined' in r && 'asked' in r, 'a rate needs both halves to be a rate');
   }
+});
+
+/* ------------------------------------------------- the web form. P3-10 */
+
+/**
+ * Reported as "the geolocation feature has still not been added", and that was
+ * right about what was tested even though the server half had been complete for
+ * a fortnight. Capture, storage, the retention rule, the consent notice and the
+ * physical-mode logic all existed and were tested; the mobile app used them;
+ * and `client/src` contained no geolocation call at all. From the web the
+ * feature genuinely was not there.
+ *
+ * So these assert the half that was missing, because "the server supports it"
+ * is exactly the reasoning that let it ship half-built.
+ */
+
+const CRLF = /\r\n/g;
+const read = (p) => readFileSync(p, 'utf8').replace(CRLF, '\n');
+
+const COMPOSER = '../client/src/crm/ActivityComposer.jsx';
+const HELPER = '../client/src/location.js';
+
+test('the web has a location helper at all', () => {
+  const src = read(HELPER);
+  assert(/navigator\.geolocation/.test(src), 'the helper never asks the browser for a position');
+  assert(/getCurrentPosition/.test(src), 'no position is requested');
+});
+
+test('every path returns a status the server understands', () => {
+  /* normalise() accepts captured, declined and unavailable. A helper that
+     resolved to undefined on some path would post `geo: undefined` and the
+     activity would record nothing, silently. */
+  const src = read(HELPER);
+  for (const status of ['captured', 'declined', 'unavailable']) {
+    assert(src.includes(`'${status}'`), `the helper never produces "${status}"`);
+  }
+
+  // And the engine accepts each of them.
+  assert.equal(geo.normalise({ status: 'declined' }).status, 'declined');
+  assert.equal(geo.normalise({ status: 'unavailable' }).status, 'unavailable');
+  assert.equal(geo.normalise({ status: 'captured', lat: 19.07, lng: 72.87 }).status, 'captured');
+});
+
+test('a refusal never blocks the save', () => {
+  /* Ritesh, 4 Sep: the activity saves regardless and the reason is recorded.
+     A form that refuses without a position teaches people to log visits from
+     their desk afterwards, which is worse evidence than an honest refusal. */
+  const src = read(HELPER);
+  assert(!/reject\(/.test(src), 'the helper can reject, which would fail the save');
+  assert(!/throw /.test(src), 'the helper can throw, which would fail the save');
+  assert(/code === 1/.test(src), 'a denied permission is not told apart from a failure');
+});
+
+test('the composer sends a location and only when it is wanted', () => {
+  const src = read(COMPOSER);
+  assert(/geo: geo \?\? undefined/.test(src), 'the composer never puts a location in the payload');
+  assert(/wantsGeo\(meta, type, form\.meeting_mode\)/.test(src),
+    'the composer does not ask the server whether a location is wanted');
+  assert(/await capture\(\)/.test(src),
+    'the position is not awaited before the post, so the activity would save without it');
+});
+
+test('the consent notice is shown before the browser prompts', () => {
+  /* The server has supplied this notice all along and only the mobile app ever
+     showed it, so a web user met a bare permission prompt with no statement of
+     purpose, retention or the right to refuse. Under DPDP that statement is the
+     point rather than a courtesy. */
+  const src = read(COMPOSER);
+  for (const part of ['purpose', 'retention', 'visibility', 'optional']) {
+    assert(src.includes(`notice.${part}`), `the web form does not show the ${part} of the notice`);
+  }
+
+  const notice = geo.notice();
+  assert(/decline/i.test(notice.optional), 'the notice does not say refusing is allowed');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

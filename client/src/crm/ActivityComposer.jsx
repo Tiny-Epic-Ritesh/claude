@@ -21,6 +21,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
+import { capture, describe as describeGeo, wants as wantsGeo } from '../location.js';
 import { Icon, Spinner, ErrorBanner } from '../components/ui.jsx';
 
 const TYPE_ICON = {
@@ -133,6 +134,19 @@ export default function ActivityComposer({ lead, cards = [], onLogged }) {
     setError(null);
     setFieldErrors({});
     try {
+      /* Where the meeting happened. P3-10.
+       *
+       * Asked for only when the server says it is wanted -- capture is on or
+       * off for the deployment and applies to the physical meeting modes, so a
+       * phone call never prompts. Awaited before the post rather than sent
+       * afterwards, because an activity that gains a location a second later is
+       * an activity somebody has already navigated away from.
+       *
+       * It never blocks the save. A refused permission is recorded as refused
+       * and the meeting is logged, because a form that would not save without a
+       * position teaches people to log visits from their desk afterwards --
+       * which is worse evidence than an honest "declined". */
+      const geo = wantsGeo(meta, type, form.meeting_mode) ? await capture() : null;
       const payload = {
         lead_id: lead.id,
         type,
@@ -144,13 +158,18 @@ export default function ActivityComposer({ lead, cards = [], onLogged }) {
         sentiment: form.sentiment || undefined,
         meeting_mode: form.meeting_mode || undefined,
         meeting_location: form.meeting_location || undefined,
+        geo: geo ?? undefined,
       };
       // datetime-local gives "YYYY-MM-DDTHH:mm"; the API wants a space.
       if (form.follow_up_at) payload.follow_up_at = form.follow_up_at.replace('T', ' ');
       if (form.meeting_at) payload.meeting_at = form.meeting_at.replace('T', ' ');
 
       const res = await api.post('/activities', payload);
-      setConfirmation(res.confirmation);
+      /* Say what happened to the location as well as to the activity. Silence
+         here is how somebody discovers weeks later that none of their visits
+         carry one. */
+      const geoNote = describeGeo(geo);
+      setConfirmation(geoNote ? `${res.confirmation} ${geoNote}` : res.confirmation);
       setCode('');
       setForm({});
       onLogged?.(res);
@@ -297,6 +316,23 @@ export default function ActivityComposer({ lead, cards = [], onLogged }) {
               <label htmlFor="loc">Location / link</label>
               <input id="loc" type="text" value={form.meeting_location ?? ''} onChange={(e) => set('meeting_location', e.target.value)} />
             </div>
+          </div>
+        )}
+
+        {/* Said before the browser asks, not after. P3-10.
+            The server has supplied this notice all along and only the mobile app
+            ever showed it -- so a web user met a bare permission prompt with no
+            statement of why, how long it is kept, or that refusing is allowed.
+            Under DPDP that statement is the point, not a courtesy. */}
+        {wantsGeo(meta, type, form.meeting_mode) && (
+          <div className="notice" style={{ borderLeftColor: 'var(--accent)' }}>
+            <strong>Your location will be recorded with this meeting.</strong>
+            <ul style={{ margin: '6px 0 0', paddingInlineStart: '18px' }}>
+              <li className="tiny">{meta.geolocation.notice.purpose}</li>
+              <li className="tiny">{meta.geolocation.notice.retention}</li>
+              <li className="tiny">{meta.geolocation.notice.visibility}</li>
+              <li className="tiny">{meta.geolocation.notice.optional}</li>
+            </ul>
           </div>
         )}
 
