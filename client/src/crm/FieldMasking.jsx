@@ -52,6 +52,12 @@ export default function FieldMasking() {
 
       <ErrorBanner error={problem} onDismiss={() => setProblem(null)} />
 
+      <AddField
+        strategies={data.strategies ?? []}
+        onAdded={reload}
+        onError={setProblem}
+      />
+
       <div className="card">
         <div className="card-head">
           <h2>Masked fields by role</h2>
@@ -82,6 +88,28 @@ export default function FieldMasking() {
                   <th scope="row" className="matrix-tab">
                     {f.label}
                     <div className="small muted mono">{f.field}</div>
+                    {f.custom && (
+                      /* Only the added ones. The seven that ship are masked by
+                         design and the server refuses to remove them, so
+                         offering the control here would be a button that
+                         explains itself only after being pressed. */
+                      <button
+                        type="button"
+                        className="btn-sm btn-quiet"
+                        disabled={busy === f.field}
+                        onClick={async () => {
+                          setBusy(f.field);
+                          setProblem(null);
+                          try {
+                            await api.del(`/setup/field-masking/fields/${f.field}`);
+                            reload();
+                          } catch (err) { setProblem(err.message); }
+                          finally { setBusy(null); }
+                        }}
+                      >
+                        Remove
+                      </button>
+                    )}
                   </th>
                   {data.roles.map((r) => {
                     const stored = data.matrix.find((m) => m.role === r.code)?.fields[f.field]
@@ -119,6 +147,91 @@ export default function FieldMasking() {
         </div>
       </div>
       <PendingBar draft={draft} what="masking changes" />
+    </div>
+  );
+}
+
+/**
+ * Add a field to the maskable set (P3-11).
+ *
+ * The strategy is asked for rather than inferred. A field name says nothing
+ * about the shape of what it holds, and the difference matters: showing the
+ * last four characters of an account number is a courtesy, and showing the last
+ * four of a date of birth is most of it.
+ */
+function AddField({ strategies, onAdded, onError }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ field: '', label: '', strategy: 'last4' });
+  const [busy, setBusy] = useState(false);
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+
+  if (!open) {
+    return (
+      <div className="row" style={{ justifyContent: 'flex-end' }}>
+        <button type="button" className="btn-sm" onClick={() => setOpen(true)}>
+          <Icon name="add" size={15} /> Add a field
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h2>Add a field to mask</h2>
+        <span className="tiny muted">
+          The field is masked everywhere it appears — on screen, in exports and in the API.
+        </span>
+      </div>
+      <form
+        className="card-body stack"
+        style={{ gap: 12 }}
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          onError(null);
+          try {
+            await api.post('/setup/field-masking/fields', form);
+            setForm({ field: '', label: '', strategy: 'last4' });
+            setOpen(false);
+            onAdded();
+          } catch (err) { onError(err.message); }
+          finally { setBusy(false); }
+        }}
+      >
+        <div className="field-row">
+          <div className="field">
+            <label>Field name</label>
+            <input
+              value={form.field}
+              onChange={set('field')}
+              placeholder="date_of_birth"
+              required
+              autoFocus
+            />
+            <p className="hint">As the field is named in the record, not its heading.</p>
+          </div>
+          <div className="field">
+            <label>Label</label>
+            <input value={form.label} onChange={set('label')} placeholder="Date of birth" />
+            <p className="hint">What this screen calls it. Defaults to the field name.</p>
+          </div>
+        </div>
+
+        <div className="field">
+          <label>How to mask it</label>
+          {/* Not set('...') like the others: the icon-subset scanner reads any
+              quoted vocabulary word as a glyph name, and this one collides. */}
+          <select value={form.strategy} onChange={(e) => setForm({ ...form, strategy: e.target.value })}>
+            {strategies.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
+
+        <div className="row" style={{ justifyContent: 'flex-end' }}>
+          <button type="button" onClick={() => { setOpen(false); onError(null); }}>Cancel</button>
+          <button className="btn-primary" disabled={busy}>{busy ? 'Adding…' : 'Add field'}</button>
+        </div>
+      </form>
     </div>
   );
 }

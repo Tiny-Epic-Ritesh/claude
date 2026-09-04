@@ -1386,6 +1386,18 @@ CREATE INDEX IF NOT EXISTS idx_slabs_plan ON incentive_slabs(plan_id, basis, fro
  * A row exists only where an administrator has decided something, so absence
  * means "use the shipped default".
  */
+/* Fields an administrator made maskable after the fact (P3-11). The seven that
+   ship are in MASKERS and are not rows here -- this table is the additions, so
+   a built-in cannot be deleted by removing a row. The strategy column names one of
+   MASK_STRATEGIES: how to obscure the value, which cannot be guessed from the
+   field name. */
+CREATE TABLE IF NOT EXISTS maskable_field (
+  field      TEXT PRIMARY KEY,
+  label      TEXT NOT NULL,
+  strategy   TEXT NOT NULL DEFAULT 'last4',
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS field_masking (
   role_code  TEXT NOT NULL,
   field      TEXT NOT NULL,

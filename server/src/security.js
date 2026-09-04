@@ -263,6 +263,36 @@ export const maskAccount = (v) => {
   return s.length < 4 ? s : `${'•'.repeat(Math.max(0, s.length - 4))}${s.slice(-4)}`;
 };
 
+/**
+ * Everything at all, for a field with no safe partial.
+ *
+ * A date of birth or a full name cannot show its last four characters and stay
+ * private, so an administrator adding one needs a strategy that reveals the
+ * presence of a value and nothing else.
+ */
+export const maskAll = (v) => (String(v ?? '') ? '••••••' : '');
+
+/**
+ * The strategies an administrator may choose from, by name (P3-11).
+ *
+ * Named rather than offered as functions because the choice is stored in a
+ * table and has to survive a restart. `last4` is maskMobile and maskAccount,
+ * which are the same implementation under two names.
+ */
+export const MASK_STRATEGIES = {
+  last4: maskAccount,
+  ends: maskPan,
+  email: maskEmail,
+  hide: maskAll,
+};
+
+export const STRATEGY_LABEL = {
+  last4: 'Show the last four characters',
+  ends: 'Show the first two and last two',
+  email: 'Show the first two letters and the domain',
+  hide: 'Hide it entirely',
+};
+
 /** Which masker applies to which field name. */
 export const MASKERS = {
   mobile: maskMobile,
@@ -275,6 +305,30 @@ export const MASKERS = {
 };
 
 /**
+ * Fields made maskable from Setup, filled in by masking.js (P3-11).
+ *
+ * This module does not read the database and masking.js does, so the list
+ * arrives here rather than being fetched here -- importing masking.js from this
+ * file would be a cycle. Empty until registerMaskers() is called, which means
+ * the built-ins work normally even if the table is unreadable.
+ */
+let customMaskers = {};
+
+/** Replace the configured set. Called on boot and after any change. */
+export function registerMaskers(map) {
+  customMaskers = map ?? {};
+}
+
+/**
+ * Every masker in force: the seven that ship, plus whatever was configured.
+ *
+ * Built-ins are spread last, so a row in the table can never quietly change how
+ * `pan` or `mobile` is obscured -- a configuration mistake should be unable to
+ * make an existing field LESS masked than it shipped.
+ */
+export const activeMaskers = () => ({ ...customMaskers, ...MASKERS });
+
+/**
  * Mask PII on an outbound record unless the caller may unmask.
  * Adds `_pii_masked: true` so the client can render an "unmask" affordance
  * rather than silently showing dots.
@@ -284,7 +338,7 @@ export function maskRecord(row, { unmask = false, fields = null } = {}) {
 
   const out = { ...row };
   let masked = false;
-  for (const [field, mask] of Object.entries(MASKERS)) {
+  for (const [field, mask] of Object.entries(activeMaskers())) {
     // `fields` is the role's masked set (ENH-16). Omitted means mask
     // everything, which keeps every existing caller behaving as before.
     if (fields && !fields.has(field)) continue;

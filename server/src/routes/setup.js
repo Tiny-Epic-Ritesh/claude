@@ -24,7 +24,7 @@ import { all, one, run, audit, transact, SALES_ORGS, CARD_STATES, ROLES } from '
 import {
   requireUser, requirePermission, orgsFor, mayUseOrg, can, permissionsFor,
 } from '../auth.js';
-import { hashPassword, validate, newSessionToken } from '../security.js';
+import { hashPassword, validate, newSessionToken, STRATEGY_LABEL } from '../security.js';
 import {
   invalidate, explainAccess, dataScope, CAPABILITY_CATALOGUE,
 } from '../engine/access.js';
@@ -74,7 +74,8 @@ import {
   SETUP_SECTIONS, setupTabId, setupTabList, isSetupTabId, isSetupSection, sectionKeyOf,
 } from '../engine/setupsections.js';
 import {
-  MASKABLE, FIELD_LABEL, maskingMatrix, setMasking, clearMasking, maskedFieldsFor,
+  FIELD_LABEL, maskingMatrix, setMasking, clearMasking, maskedFieldsFor,
+  maskableFields, isMaskable, addMaskable, removeMaskable,
 } from '../engine/masking.js';
 const router = Router();
 router.use(requireUser);
@@ -2073,7 +2074,8 @@ router.delete('/dispositions/:id', requirePermission('admin.rules'), (req, res) 
 router.get('/field-masking', requirePermission('admin.users'), (_req, res) => {
   const roles = all('SELECT code, name FROM roles ORDER BY sort_order, code');
   res.json({
-    fields: MASKABLE.map((f) => ({ field: f, label: FIELD_LABEL[f] ?? f })),
+    fields: maskableFields(),
+    strategies: Object.entries(STRATEGY_LABEL).map(([value, label]) => ({ value, label })),
     roles,
     matrix: maskingMatrix(roles.map((r) => r.code)),
     note: 'Masking is the standing state for a role. Someone who holds the unmask capability can still reveal a single record, and that act is logged.',
@@ -2083,7 +2085,7 @@ router.get('/field-masking', requirePermission('admin.users'), (_req, res) => {
 router.post('/field-masking', requirePermission('admin.users'), (req, res) => {
   const { role, field, masked } = req.body ?? {};
   if (!role || !field) return res.status(400).json({ error: 'Give a role and a field' });
-  if (!MASKABLE.includes(field)) {
+  if (!isMaskable(field)) {
     return res.status(400).json({ error: `"${field}" is not a maskable field` });
   }
   if (!one('SELECT code FROM roles WHERE code = ?', [role])) {
@@ -2102,6 +2104,31 @@ router.post('/field-masking', requirePermission('admin.users'), (req, res) => {
     { masked: before }, { masked: after }, req.user.id);
 
   res.json({ ok: true, masked: after });
+});
+
+/* ------------------------------------------ the maskable list itself (P3-11)
+ *
+ * Which fields CAN be masked, as opposed to which roles see them. Same
+ * capability as the matrix: it is the same decision, one level up.
+ */
+
+router.post('/field-masking/fields', requirePermission('admin.users'), (req, res) => {
+  const { field, label, strategy } = req.body ?? {};
+  if (!field) return res.status(400).json({ error: 'Give a field name' });
+
+  const result = addMaskable(String(field).trim(), String(label ?? '').trim(), strategy, req.user.id);
+  if (result.error) return res.status(400).json({ error: result.error });
+
+  auditConfig('masking', `field.${field}`, 'add', null, { field, label, strategy }, req.user.id);
+  res.json({ ok: true, fields: maskableFields() });
+});
+
+router.delete('/field-masking/fields/:field', requirePermission('admin.users'), (req, res) => {
+  const result = removeMaskable(req.params.field);
+  if (result.error) return res.status(400).json({ error: result.error });
+
+  auditConfig('masking', `field.${req.params.field}`, 'remove', { field: req.params.field }, null, req.user.id);
+  res.json({ ok: true, fields: maskableFields() });
 });
 
 /* ------------------------------------------------------------ telephony

@@ -20,11 +20,68 @@
  * overwritten.
  */
 
-import { all, run } from '../db.js';
-import { MASKERS } from '../security.js';
+import { all, one, run } from '../db.js';
+import { MASKERS, MASK_STRATEGIES, registerMaskers } from '../security.js';
 
-/** The fields that have a masker at all. Nothing else can be masked. */
-export const MASKABLE = Object.keys(MASKERS);
+/** The seven that ship. These cannot be removed from Setup. */
+export const BUILT_IN = Object.keys(MASKERS);
+
+/**
+ * The additions, cached (P3-11).
+ *
+ * maskRecord() runs on every row of every list, so the configured set cannot be
+ * a query. It is read once, kept here, and rebuilt when an administrator
+ * changes it -- which is rare enough that a stale cache is not a risk worth
+ * paying a query per record to avoid.
+ */
+let custom = [];
+
+/**
+ * Re-read the table and hand security.js the maskers it should apply.
+ *
+ * The cache is per process, refreshed by whichever process served the change.
+ * The server is a single process today, so that is the whole story -- but if it
+ * is ever run as workers, a field added on one would not take on the others
+ * until they restarted, and this would need a signal between them.
+ */
+export function refreshMaskable() {
+  try {
+    custom = all('SELECT field, label, strategy FROM maskable_field ORDER BY field');
+  } catch {
+    /* The table is missing on a database older than this migration. An empty
+       list is right: the built-ins still mask, which fails safe. */
+    custom = [];
+  }
+
+  const map = {};
+  for (const row of custom) {
+    const mask = MASK_STRATEGIES[row.strategy];
+    // An unknown strategy is skipped rather than defaulted -- silently masking
+    // by the wrong shape is how a value leaks while looking obscured.
+    if (mask) map[row.field] = mask;
+  }
+  registerMaskers(map);
+  return custom;
+}
+
+/** Every maskable field, shipped and configured, for the Setup screen. */
+export function maskableFields() {
+  return [
+    ...BUILT_IN.map((f) => ({ field: f, label: FIELD_LABEL[f] ?? f, strategy: null, custom: false })),
+    ...custom.map((r) => ({ field: r.field, label: r.label, strategy: r.strategy, custom: true })),
+  ];
+}
+
+/** Can this field be masked at all? */
+export const isMaskable = (field) => BUILT_IN.includes(field) || custom.some((r) => r.field === field);
+
+/**
+ * Kept for callers that want only the names.
+ *
+ * A getter rather than an array, because the set now changes at runtime and a
+ * snapshot taken at import time would be wrong the moment a field is added.
+ */
+export const maskableNames = () => maskableFields().map((f) => f.field);
 
 export const FIELD_LABEL = {
   mobile: 'Mobile number',
@@ -67,7 +124,7 @@ export const UNMASKED_BY_DEFAULT = {
 };
 
 export function defaultMasked(role, field) {
-  if (!MASKABLE.includes(field)) return false;
+  if (!isMaskable(field)) return false;
   const rule = UNMASKED_BY_DEFAULT[role];
   if (rule === 'ALL') return false;
   if (Array.isArray(rule)) return !rule.includes(field);
@@ -90,7 +147,7 @@ const configured = () => {
  */
 export function maskedFieldsFor(role) {
   const cfg = configured();
-  return new Set(MASKABLE.filter((field) => {
+  return new Set(maskableNames().filter((field) => {
     const key = `${role}|${field}`;
     return cfg.has(key) ? cfg.get(key) : defaultMasked(role, field);
   }));
@@ -101,7 +158,7 @@ export function maskingMatrix(roles) {
   const cfg = configured();
   return roles.map((role) => ({
     role,
-    fields: Object.fromEntries(MASKABLE.map((field) => {
+    fields: Object.fromEntries(maskableNames().map((field) => {
       const key = `${role}|${field}`;
       const isSet = cfg.has(key);
       return [field, {
@@ -125,3 +182,56 @@ export function setMasking(role, field, masked, actorId) {
 
 export const clearMasking = (role, field) =>
   run('DELETE FROM field_masking WHERE role_code = ? AND field = ?', [role, field]);
+
+/* ------------------------------------------------ adding and removing (P3-11) */
+
+/**
+ * A field name we are willing to store.
+ *
+ * Masking is by key, so this ends up compared against property names on rows
+ * coming out of the database. Anything that is not a plain identifier is either
+ * a mistake or an attempt to be clever with one.
+ */
+export const VALID_FIELD = /^[a-z][a-z0-9_]{1,48}$/;
+
+export function addMaskable(field, label, strategy, userId) {
+  if (!VALID_FIELD.test(field)) {
+    return { error: 'A field name is lower case letters, digits and underscores, starting with a letter' };
+  }
+  if (BUILT_IN.includes(field)) {
+    return { error: `"${field}" is already masked as standard` };
+  }
+  if (!MASK_STRATEGIES[strategy]) {
+    return { error: `"${strategy}" is not a masking strategy` };
+  }
+  if (one('SELECT field FROM maskable_field WHERE field = ?', [field])) {
+    return { error: `"${field}" is already in the list` };
+  }
+
+  run('INSERT INTO maskable_field (field, label, strategy, created_by) VALUES (?,?,?,?)',
+    [field, label || field, strategy, userId ?? null]);
+  refreshMaskable();
+  return { ok: true };
+}
+
+export function removeMaskable(field) {
+  if (BUILT_IN.includes(field)) {
+    /* Refused rather than ignored. These are the fields the product masks by
+       design, and a screen that appears to remove one and does not is worse
+       than a screen that says no. */
+    return { error: `"${field}" is masked as standard and cannot be removed` };
+  }
+  if (!one('SELECT field FROM maskable_field WHERE field = ?', [field])) {
+    return { error: `"${field}" is not in the list` };
+  }
+
+  run('DELETE FROM maskable_field WHERE field = ?', [field]);
+  /* The per-role decisions go too. Leaving them would mean re-adding the field
+     later silently restored settings nobody could see in the meantime. */
+  run('DELETE FROM field_masking WHERE field = ?', [field]);
+  refreshMaskable();
+  return { ok: true };
+}
+
+// Populate the cache at boot, so the first request masks correctly.
+refreshMaskable();

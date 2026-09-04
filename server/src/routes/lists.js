@@ -18,7 +18,7 @@ import { all, one, run, audit, notify, LEAD_STAGES } from '../db.js';
 import {
   requireUser, requirePermission, reqScope, activeOrg, orgsFor, can,
 } from '../auth.js';
-import { validate } from '../security.js';
+import { validate, activeMaskers } from '../security.js';
 import { validateTree, describe, conditionSchema, FIELDS } from '../engine/conditions.js';
 import {
   LIST_KINDS, KIND_LABEL, KIND_HELP, normaliseKind, membersSql, refreshList,
@@ -554,13 +554,19 @@ router.post('/:id/export', (req, res) => {
     [...members.params, ...scope.params, BULK_CAP],
   );
 
+  /* Which fields, and how much of them, from the maskable set rather than from
+     this file (P3-11). `pii: true` on a column stays as a floor: it was the
+     answer before the set was configurable and removing it could only ever
+     unmask something that used to be masked. */
+  const maskers = activeMaskers();
   const mask = (key, value) => {
+    if (unmasked || !value) return value;
+
+    const fn = maskers[key];
+    if (fn) return fn(String(value)).replace(/\u2022/g, '*');
+
     const col = COLUMN_CHOICES.find((c) => c.key === key);
-    if (!col?.pii || unmasked || !value) return value;
-    const str = String(value);
-    return key === 'email'
-      ? str.replace(/^(.).*(@.*)$/, '$1***$2')
-      : `******${str.slice(-4)}`;
+    return col?.pii ? `******${String(value).slice(-4)}` : value;
   };
 
   const header = chosen.map((k) => csvCell(COLUMN_CHOICES.find((c) => c.key === k)?.label ?? k)).join(',');
