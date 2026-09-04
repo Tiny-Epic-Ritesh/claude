@@ -10,14 +10,15 @@
 
 import { Router } from 'express';
 import { assertValid } from '../engine/validation.js';
-import { all, one, run, audit } from '../db.js';
+import { all, one, run, audit, notify } from '../db.js';
 import {
-  can, requireUser, requirePermission, reqClientScope, unmaskRequested, maskFor,
+  can, requireUser, requirePermission, reqClientScope, unmaskRequested, maskFor, activeOrg,
 } from '../auth.js';
 import { maskRecord, maskRecords, validate } from '../security.js';
 import {
   SEGMENTS, CLIENT_STATUSES, dormantSql, segmentsFor, setSegments, timelineFor, timelineCount,
 } from '../engine/clients.js';
+import { request as requestApproval, BULK_THRESHOLD } from '../engine/approvals.js';
 
 const router = Router();
 router.use(requireUser);
@@ -267,6 +268,140 @@ router.post('/export', requirePermission('data.export'), (req, res) => {
   });
 });
 
+/* --------------------------------------------------------- bulk actions */
+
+/**
+ * The ceiling on one bulk operation.
+ *
+ * Not a performance limit -- the update is trivial. It is a blast radius: a
+ * mis-set filter that would have moved the whole book stops at five hundred and
+ * says so, which is a mistake somebody can walk back in an afternoon rather
+ * than a reassignment nobody can reconstruct.
+ */
+export const BULK_CAP = 500;
+
+/**
+ * Materialise the ids matching the current filter.
+ *
+ * This is the whole "filter selects, list acts" idea in one route. A bulk
+ * action never takes a filter, because a filter is evaluated when it runs:
+ * between somebody reading "1,240 accounts" and the action executing, accounts
+ * arrive and owners change, and the set that moves is not the set that was
+ * read. Worse, an approver cannot be shown what they are agreeing to, and the
+ * threshold cannot be applied before the work is done because the count is not
+ * known until then.
+ *
+ * So the filter is resolved to explicit ids here, once, and those ids are what
+ * gets reviewed, approved, applied and audited. The count the user sees is the
+ * count that moves.
+ *
+ * Scoped like every other read: `clientFilter` carries the caller's own client
+ * scope, so this can only ever return accounts they can already see.
+ */
+router.get('/ids', requirePermission('client.reassign'), (req, res) => {
+  const { clause, params } = clientFilter(req);
+
+  const total = one(`SELECT COUNT(*) n FROM clients c WHERE ${clause}`, params).n;
+  const rows = all(
+    `SELECT c.id FROM clients c WHERE ${clause} ORDER BY c.id LIMIT ?`,
+    [...params, BULK_CAP],
+  );
+
+  res.json({
+    ids: rows.map((r) => r.id),
+    total,
+    cap: BULK_CAP,
+    // Said plainly rather than silently truncating: "I selected everything" and
+    // "I selected the first five hundred of everything" are different actions.
+    capped: total > BULK_CAP,
+  });
+});
+
+/**
+ * Move accounts to a new owner.
+ *
+ * Takes explicit ids, never a filter. Above the threshold it becomes a request
+ * rather than a change -- the same second pair of eyes the firm already applies
+ * to partner elevation and fee waivers, and the decision recorded in round 2
+ * that bulk actions and reassignment are an approval scope.
+ */
+router.post('/bulk/reassign', requirePermission('client.reassign'), (req, res) => {
+  const ids = [...new Set((req.body?.client_ids ?? []).map(Number).filter(Number.isInteger))];
+  const ownerId = Number(req.body?.owner_id);
+
+  if (!ids.length) return res.status(400).json({ error: 'Choose some accounts to move' });
+  if (ids.length > BULK_CAP) {
+    return res.status(400).json({
+      error: `One operation moves at most ${BULK_CAP} accounts. Narrow the filter and do it in batches.`,
+      cap: BULK_CAP,
+      requested: ids.length,
+    });
+  }
+
+  const owner = one('SELECT id, name, sales_org FROM users WHERE id = ? AND active = 1', [ownerId]);
+  if (!owner) return res.status(400).json({ error: 'Choose an active user' });
+
+  /* Only accounts this person can already see. Sending ids they cannot read
+     would otherwise let a filter they are not entitled to run be smuggled in as
+     a list, which is exactly the hole the explicit-list rule is meant to close. */
+  const scope = reqClientScope(req, 'c');
+  const placeholders = ids.map(() => '?').join(',');
+  const visible = all(
+    `SELECT c.id, c.owner_id, c.sales_org FROM clients c
+      WHERE c.id IN (${placeholders}) AND c.deleted_at IS NULL AND ${scope.sql}`,
+    [...ids, ...scope.params],
+  );
+
+  // And never into a book the new owner does not work in.
+  const movable = visible.filter((c) => c.sales_org === owner.sales_org);
+  if (!movable.length) {
+    return res.status(400).json({
+      error: 'None of those accounts can be moved to that owner',
+      reason: visible.length
+        ? `${owner.name} does not work in that business`
+        : 'Those accounts are not yours to move',
+    });
+  }
+
+  if (movable.length >= BULK_THRESHOLD) {
+    const out = requestApproval({
+      scope: 'bulk_client_reassign',
+      entityId: owner.id,
+      subjectName: owner.name,
+      payload: { client_ids: movable.map((c) => c.id), owner_id: owner.id },
+      reason: req.body?.reason,
+      requestedBy: req.user.id,
+    });
+    if (!out.ok) return res.status(400).json(out);
+
+    return res.status(202).json({
+      ok: true,
+      approval_required: true,
+      request_id: out.request.id,
+      requested: movable.length,
+      threshold: BULK_THRESHOLD,
+      message: `${movable.length} accounts is over the ${BULK_THRESHOLD} that one person may move alone. `
+        + 'It is waiting for approval.',
+    });
+  }
+
+  let moved = 0;
+  for (const c of movable) {
+    run("UPDATE clients SET owner_id = ?, updated_at = datetime('now') WHERE id = ?", [ownerId, c.id]);
+    // One row per account: "who was moved, by whom, from whom" must stay answerable.
+    audit(req.user.id, 'client.reassign', 'client', c.id, { from: c.owner_id, to: ownerId, bulk: true });
+    moved += 1;
+  }
+
+  notify(ownerId, 'Accounts assigned to you', `${moved} account${moved === 1 ? '' : 's'}`, '/clients');
+  return res.json({
+    ok: true,
+    moved,
+    requested: ids.length,
+    skipped: ids.length - moved,
+  });
+});
+
 router.get('/summary', (req, res) => {
   const scope = reqClientScope(req, 'c');
   const base = `FROM clients c WHERE c.deleted_at IS NULL AND ${scope.sql}`;
@@ -308,6 +443,24 @@ router.get('/meta', (req, res) =>
        a control that answers 403. */
     may_export: can(req.user.role, 'data.export'),
     may_unmask: can(req.user.role, 'pii.unmask'),
+
+    /* Bulk reassignment, and who it may move accounts to.
+
+       The owner list is scoped to the book being viewed rather than offered in
+       full: an account cannot move to somebody who does not work in its
+       business, so listing them would be offering a choice the route refuses.
+       Empty for anybody without the capability, so the interface never shows a
+       control that answers 403. */
+    may_reassign: can(req.user.role, 'client.reassign'),
+    bulk_threshold: BULK_THRESHOLD,
+    bulk_cap: BULK_CAP,
+    owners: can(req.user.role, 'client.reassign')
+      ? all(
+        `SELECT id, name, role FROM users
+          WHERE active = 1 AND sales_org = ? ORDER BY name`,
+        [activeOrg(req) ?? req.user.sales_org],
+      )
+      : [],
   }));
 
 /* ------------------------------------------------------------- detail */

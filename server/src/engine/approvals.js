@@ -69,6 +69,18 @@ export const APPROVAL_SCOPES = {
     describe: (r) => `Move ${r.payload?.lead_ids?.length ?? 0} leads to ${r.subject_name}`,
     why: 'Moves a book between people — attribution, incentives and coverage all follow it.',
   },
+
+  /* Accounts rather than prospects, and the heavier of the two: a client is
+     revenue already won, and moving one moves the relationship, the brokerage
+     it books and whoever the client rings when something goes wrong. */
+  bulk_client_reassign: {
+    label: 'Bulk account reassignment',
+    entity: 'client',
+    approver: 'client.reassign',
+    describe: (r) => `Move ${r.payload?.client_ids?.length ?? 0} accounts to ${r.subject_name}`,
+    why: 'Moves live accounts between people — the relationship, the brokerage they book, '
+      + 'and who the client rings all follow the owner.',
+  },
 };
 
 /** How many records a bulk action may touch before it needs a second pair of eyes. */

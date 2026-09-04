@@ -7826,6 +7826,207 @@ await check('a per-channel withdrawal closes only that channel', async () => {
   });
 
   /* ------------------------------------------------------------- report */
+  /* ------------------------------------------------ 58. bulk actions */
+  suite('58 bulk actions: a filter selects, a list acts');
+
+  await check('a filter resolves to explicit ids, and says when it is capped', async () => {
+    /* The whole design in one assertion. A bulk action never takes a filter,
+       because a filter is evaluated when it runs -- between somebody reading a
+       count and the action executing, the set can change. So the filter is
+       resolved once, here, and those ids are what gets reviewed and applied. */
+    const { data } = await req('/api/clients/ids', { token: T.admin, expect: 200 });
+
+    assert(Array.isArray(data.ids), 'no ids came back');
+    assert(typeof data.total === 'number', 'no total');
+    assert(data.ids.length <= data.cap, `${data.ids.length} ids exceeds the cap of ${data.cap}`);
+    eq(data.capped, data.total > data.cap, 'capped does not agree with the total');
+  });
+
+  await check('the id list honours the filter it was given', async () => {
+    const { data: all } = await req('/api/clients/ids', { token: T.admin, expect: 200 });
+    const { data: dormant } = await req('/api/clients/ids?dormant=true', { token: T.admin, expect: 200 });
+
+    assert(dormant.total <= all.total,
+      `a filter returned more than no filter: ${dormant.total} vs ${all.total}`);
+    for (const id of dormant.ids) {
+      assert(all.ids.includes(id) || all.capped, 'a filtered id is not in the unfiltered set');
+    }
+  });
+
+  await check('the id list only returns accounts the caller can already see', async () => {
+    /* Otherwise a filter somebody is not entitled to run could be smuggled in
+       as a list, which is the hole the explicit-id rule exists to close. */
+    /* A supervisor, not an RM: `client.reassign` is held by superadmin, admin
+       and sales_supervisor, so an RM gets a 403 here and proves nothing about
+       scope. The narrower role that can actually call this is the supervisor. */
+    const { data: mine } = await req('/api/clients/ids', { token: T.sales_supervisor, expect: 200 });
+    const { data: theirs } = await req('/api/clients/ids', { token: T.admin, expect: 200 });
+
+    assert(mine.total <= theirs.total,
+      'a supervisor can materialise more accounts than an admin, which cannot be right');
+  });
+
+  await check('a small move applies immediately', async () => {
+    const { data: pool } = await req('/api/clients/ids', { token: T.admin, expect: 200 });
+    const ids = pool.ids.slice(0, 2);
+    assert(ids.length === 2, 'not enough accounts seeded to test a bulk move');
+
+    const before = await req(`/api/clients/${ids[0]}`, { token: T.admin, expect: 200 });
+    const org = before.data.sales_org ?? 'BONANZA';
+    const owner = need(
+      await req('/api/admin/users', { token: T.admin, expect: 200 })
+        .then((r) => r.data.find((u) => u.active && u.sales_org === org && u.role === 'sales_rm')),
+      'an active Sales RM in the same book',
+    );
+
+    const { data } = await req('/api/clients/bulk/reassign', {
+      method: 'POST', token: T.admin, expect: 200,
+      body: { client_ids: ids, owner_id: owner.id },
+    });
+
+    eq(data.approval_required, undefined, 'a two-account move asked for approval');
+    assert(data.moved >= 1, `nothing moved: ${JSON.stringify(data)}`);
+
+    const after = await req(`/api/clients/${ids[0]}`, { token: T.admin, expect: 200 });
+    eq(after.data.owner_id, owner.id, 'the account did not actually move');
+  });
+
+  await check('a small move does not ask for approval', async () => {
+    /* The other side of the threshold, asserted rather than left implied.
+       It also guards the test below: if the seed ever grows past the
+       threshold, this fails and says to add the 202 case for accounts too. */
+    const { data: caps } = await req('/api/approvals', { token: T.admin, expect: 200 });
+    const { data: pool } = await req('/api/clients/ids', { token: T.admin, expect: 200 });
+    assert(pool.total < caps.bulk_threshold,
+      `the seed now holds ${pool.total} accounts, over the ${caps.bulk_threshold} threshold — `
+      + 'the account threshold path is testable end to end now, so add that case here');
+  });
+
+  await check('a bulk move at the threshold becomes a request, and nothing moves yet', async () => {
+    /* The control that makes bulk safe, tested on leads because only leads are
+       seeded past the threshold: 42 in Bonanza against 4 accounts.
+
+       It exercises the route in lists.js, which until now moved any number of
+       leads without asking anybody. `bulk_reassign` has been an approval scope
+       since round 2 and engine/approvals.js has always carried a handler for
+       it; nothing ever requested one, so BULK_THRESHOLD decided nothing. */
+    const { data: caps } = await req('/api/approvals', { token: T.admin, expect: 200 });
+    const threshold = caps.bulk_threshold;
+    assert(threshold > 0, 'no bulk threshold reported');
+
+    const { data: leads } = await req(`/api/leads?limit=${threshold + 5}`, { token: T.admin, expect: 200 });
+    const ids = leads.map((l) => l.id).slice(0, threshold);
+    assert(ids.length === threshold, `only ${ids.length} leads available, need ${threshold}`);
+
+    const { data: list } = await req('/api/lists', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: {
+        name: `E2E bulk threshold ${RUN}`, kind: 'static',
+        snapshot_reason: 'Threshold check for the end-to-end run',
+        expires_at: '2030-01-01',
+      },
+    });
+    await req(`/api/lists/${list.id}/members`, {
+      method: 'POST', token: T.admin, expect: 200, body: { lead_ids: ids },
+    });
+
+    const owner = need(
+      await req('/api/admin/users', { token: T.admin, expect: 200 })
+        .then((r) => r.data.find((u) => u.active && u.sales_org === 'BONANZA' && u.role === 'sales_rm')),
+      'an active Bonanza Sales RM',
+    );
+    const before = await req(`/api/leads/${ids[0]}`, { token: T.admin, expect: 200 });
+
+    const { data } = await req(`/api/lists/${list.id}/bulk/reassign`, {
+      method: 'POST', token: T.admin, expect: 202,
+      body: { owner_id: owner.id, reason: 'e2e threshold check' },
+    });
+
+    eq(data.approval_required, true, 'a move at the threshold applied without approval');
+    assert(data.request_id, 'no approval request was created');
+
+    const after = await req(`/api/leads/${ids[0]}`, { token: T.admin, expect: 200 });
+    eq(after.data.owner_id, before.data.owner_id,
+      'the lead moved before the approval was decided');
+  });
+
+  await check('a bulk request without a reason is refused', async () => {
+    /* An approver deciding without one is rubber-stamping, so the engine
+       refuses it, and the route must surface that rather than swallow it. */
+    const { data: caps } = await req('/api/approvals', { token: T.admin, expect: 200 });
+    const { data: leads } = await req(`/api/leads?limit=${caps.bulk_threshold + 5}`,
+      { token: T.admin, expect: 200 });
+    const ids = leads.map((l) => l.id).slice(0, caps.bulk_threshold);
+
+    const { data: list } = await req('/api/lists', {
+      method: 'POST', token: T.admin, expect: 201,
+      body: {
+        name: `E2E bulk no-reason ${RUN}`, kind: 'static',
+        snapshot_reason: 'Threshold check for the end-to-end run',
+        expires_at: '2030-01-01',
+      },
+    });
+    await req(`/api/lists/${list.id}/members`, {
+      method: 'POST', token: T.admin, expect: 200, body: { lead_ids: ids },
+    });
+
+    const owner = await req('/api/admin/users', { token: T.admin, expect: 200 })
+      .then((r) => r.data.find((u) => u.active && u.sales_org === 'BONANZA' && u.role === 'sales_rm'));
+
+    const { data } = await req(`/api/lists/${list.id}/bulk/reassign`, {
+      method: 'POST', token: T.admin, expect: 400,
+      body: { owner_id: owner.id },
+    });
+    includes(data.error, 'Say why', 'a bulk request was accepted with no reason');
+  });
+
+  await check('accounts cannot be moved into the other book', async () => {
+    const { data: pool } = await req('/api/clients/ids', { token: T.admin, expect: 200 });
+    const first = await req(`/api/clients/${pool.ids[0]}`, { token: T.admin, expect: 200 });
+    const org = first.data.sales_org ?? 'BONANZA';
+    const other = org === 'BONANZA' ? 'BIGUL' : 'BONANZA';
+
+    const wrongBook = await req('/api/admin/users', { token: T.admin, expect: 200 })
+      .then((r) => r.data.find((u) => u.active && u.sales_org === other));
+    if (!wrongBook) { assert(true, 'no user in the other book to test with'); return; }
+
+    const { data } = await req('/api/clients/bulk/reassign', {
+      method: 'POST', token: T.admin, expect: 400,
+      body: { client_ids: [pool.ids[0]], owner_id: wrongBook.id },
+    });
+    assert(/None of those accounts/i.test(data.error ?? ''),
+      `expected a refusal, got: ${data.error}`);
+    assert(/does not work in that business/i.test(data.reason ?? ''),
+      `the refusal does not name the book as the cause: ${data.reason}`);
+  });
+
+  await check('ids the caller cannot see are not moved', async () => {
+    /* Smuggling. An RM sending an id belonging to somebody else's book must not
+       move it just because they knew the number. */
+    const { data: theirs } = await req('/api/clients/ids', { token: T.admin, expect: 200 });
+    const { data: mine } = await req('/api/clients/ids', { token: T.sales_supervisor, expect: 200 });
+
+    const notMine = theirs.ids.find((id) => !mine.ids.includes(id));
+    if (!notMine) { assert(true, 'the supervisor can see everything, nothing to smuggle'); return; }
+
+    const { status } = await req('/api/clients/bulk/reassign', {
+      method: 'POST', token: T.sales_supervisor,
+      body: { client_ids: [notMine], owner_id: 1 },
+    });
+    assert(status === 400 || status === 403,
+      `a supervisor moved an account outside their scope (HTTP ${status})`);
+  });
+
+  await check('one operation is capped', async () => {
+    const fake = Array.from({ length: 501 }, (_, i) => i + 1);
+    const { data } = await req('/api/clients/bulk/reassign', {
+      method: 'POST', token: T.admin, expect: 400,
+      body: { client_ids: fake, owner_id: 1 },
+    });
+    includes(data.error, 'at most', 'an oversized bulk operation was accepted');
+  });
+
+
   await report();
 }
 
@@ -7898,5 +8099,6 @@ async function report() {
 
 run().catch(async (err) => {
   console.error('\nSuite aborted:', err.message);
+
   await report();
 });

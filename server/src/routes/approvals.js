@@ -54,6 +54,34 @@ const APPLY = {
     return { commission_pct: pct };
   },
 
+  /* Accounts. Shaped like bulk_reassign next door but kept separate rather than
+     parameterised: the two write different tables, and folding them into one
+     handler with a switch is how a lead update ends up pointed at clients. */
+  bulk_client_reassign: (req) => {
+    const ids = req.payload?.client_ids ?? [];
+    const owner = Number(req.payload?.owner_id);
+    if (!ids.length || !owner) throw new Error('Nothing to move, or nobody to move it to');
+
+    const to = one('SELECT id, sales_org FROM users WHERE id = ? AND active = 1', [owner]);
+    if (!to) throw new Error('That owner is no longer active');
+
+    let moved = 0;
+    for (const id of ids) {
+      /* The book boundary, checked at apply time rather than only at request
+         time. An approval can sit for a day, and a client moved between books
+         in the meantime must not be carried across by a decision made before
+         it moved. */
+      const c = one('SELECT id, sales_org FROM clients WHERE id = ?', [id]);
+      if (!c || c.sales_org !== to.sales_org) continue;
+      const r = run(
+        "UPDATE clients SET owner_id = ?, updated_at = datetime('now') WHERE id = ?",
+        [owner, id],
+      );
+      moved += r.changes;
+    }
+    return { moved, requested: ids.length, skipped: ids.length - moved };
+  },
+
   bulk_reassign: (req) => {
     const ids = req.payload?.lead_ids ?? [];
     const owner = Number(req.payload?.owner_id);
@@ -122,6 +150,7 @@ router.post('/', (req, res) => {
     partner_closure: 'partner.view',
     commission_change: 'partner.view',
     bulk_reassign: 'lead.reassign',
+    bulk_client_reassign: 'client.reassign',
   };
   const needed = REQUEST_CAP[scope];
   if (needed && !req.caps.has(needed)) {

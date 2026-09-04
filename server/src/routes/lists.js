@@ -25,6 +25,7 @@ import {
   mayReadList, mayWriteList, isSnapshot, validateGovernance, defaultExpiry,
   DEFAULT_SNAPSHOT_DAYS, DEFAULT_KIND,
 } from '../engine/leadlists.js';
+import { request as requestApproval, BULK_THRESHOLD } from '../engine/approvals.js';
 import { checkConsent } from '../engine/consent.js';
 import { send, pushToAutodialler } from '../integrations.js';
 
@@ -839,6 +840,41 @@ router.post('/:id/bulk/reassign', requirePermission('lead.reassign'), (req, res)
   if (!owner) return res.status(400).json({ error: 'Choose an active user' });
 
   const ids = memberIds(list, req);
+
+  /* Above the threshold this becomes a request rather than a change.
+
+     It always should have been. `bulk_reassign` has been an approval scope
+     since round 2 -- "bulk actions & lead reassignment" is one of the four the
+     firm signed off -- and engine/approvals.js has carried a handler that
+     applies it. Nothing ever asked for one, so a route could move any number of
+     leads alone and BULK_THRESHOLD decided nothing. */
+  const movable = ids.filter((id) => {
+    const lead = one('SELECT sales_org FROM leads WHERE id = ?', [id]);
+    return lead && lead.sales_org === owner.sales_org;
+  });
+
+  if (movable.length >= BULK_THRESHOLD) {
+    const out = requestApproval({
+      scope: 'bulk_reassign',
+      entityId: owner.id,
+      subjectName: owner.name,
+      payload: { lead_ids: movable, owner_id: owner.id },
+      reason: req.body?.reason,
+      requestedBy: req.user.id,
+    });
+    if (!out.ok) return res.status(400).json(out);
+
+    return res.status(202).json({
+      ok: true,
+      approval_required: true,
+      request_id: out.request.id,
+      requested: movable.length,
+      threshold: BULK_THRESHOLD,
+      message: `${movable.length} leads is over the ${BULK_THRESHOLD} that one person may move alone. `
+        + 'It is waiting for approval.',
+    });
+  }
+
   let moved = 0;
   for (const id of ids) {
     const lead = one('SELECT id, owner_id, sales_org FROM leads WHERE id = ?', [id]);

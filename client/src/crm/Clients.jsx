@@ -252,6 +252,40 @@ export default function Clients({ session }) {
     ? COLUMNS.filter((c) => columns.find((r) => r.key === c.key)?.visible !== false)
     : COLUMNS;
 
+  /* Bulk selection.
+   *
+   * Held as a Set of explicit ids, never as "the current filter". A filter is
+   * evaluated when the action runs, so between reading a count and pressing the
+   * button the set can change -- and an approver cannot be shown what they are
+   * agreeing to. Select all matching resolves the filter to ids once, and those
+   * ids are what moves. */
+  const [picked, setPicked] = useState(() => new Set());
+  const [reassigning, setReassigning] = useState(false);
+  const [selectingAll, setSelectingAll] = useState(false);
+  const [allMatching, setAllMatching] = useState(null);
+
+  // A changed filter invalidates a selection made against the previous one.
+  useEffect(() => { setPicked(new Set()); setAllMatching(null); }, [query]);
+
+  const togglePick = (id) => setPicked((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  const selectAllMatching = async () => {
+    setSelectingAll(true);
+    try {
+      const out = await api.get(`/clients/ids?${query}`);
+      setPicked(new Set(out.ids));
+      setAllMatching(out);
+    } catch {
+      setAllMatching(null);
+    } finally {
+      setSelectingAll(false);
+    }
+  };
+
   const toggleColumn = (key, next) => {
     // Optimistic: the list redraws immediately, and the save follows.
     setColOverride(columns.map((c) => (c.key === key ? { ...c, visible: next, source: 'user' } : c)));
@@ -422,10 +456,71 @@ export default function Clients({ session }) {
               </button>
             )}
           </div>
+          {/* The selection bar. It exists to make two things impossible to miss:
+              how many accounts are actually selected, and that "everything
+              matching" is a real, counted set rather than a filter that will be
+              re-evaluated later. */}
+          {meta?.may_reassign && picked.size > 0 && (
+            <div
+              className="row wrap"
+              style={{
+                gap: 10, alignItems: 'center', padding: '10px 14px',
+                borderTop: '1px solid var(--line)', background: 'var(--surface-2, transparent)',
+              }}
+            >
+              <strong>{picked.size.toLocaleString('en-IN')} selected</strong>
+
+              {!searching && picked.size < count && (
+                <button type="button" className="btn-ghost btn-sm"
+                  disabled={selectingAll} onClick={selectAllMatching}>
+                  {selectingAll ? 'Selecting…' : `Select all ${count.toLocaleString('en-IN')} matching`}
+                </button>
+              )}
+
+              {allMatching?.capped && (
+                <span className="tiny muted">
+                  Capped at {allMatching.cap.toLocaleString('en-IN')} of{' '}
+                  {allMatching.total.toLocaleString('en-IN')} — narrow the filter to move the rest.
+                </span>
+              )}
+
+              {picked.size >= (meta?.bulk_threshold ?? 25) && (
+                <span className="badge badge-amber">
+                  Needs approval over {meta.bulk_threshold}
+                </span>
+              )}
+
+              <span style={{ flex: 1 }} />
+
+              <button type="button" className="btn btn-primary btn-sm"
+                onClick={() => setReassigning(true)}>
+                <Icon name="swap_horiz" size={15} /> Reassign
+              </button>
+              <button type="button" className="btn-ghost btn-sm"
+                onClick={() => { setPicked(new Set()); setAllMatching(null); }}>
+                Clear
+              </button>
+            </div>
+          )}
+
           <div className="table-scroll">
             <table className="table">
               <thead>
                 <tr>
+                  {meta?.may_reassign && (
+                    <th style={{ width: 34 }}>
+                      <input
+                        type="checkbox"
+                        aria-label="Select every account on this page"
+                        checked={shown.length > 0 && shown.every((c) => picked.has(c.id))}
+                        onChange={(e) => setPicked((prev) => {
+                          const next = new Set(prev);
+                          shown.forEach((c) => (e.target.checked ? next.add(c.id) : next.delete(c.id)));
+                          return next;
+                        })}
+                      />
+                    </th>
+                  )}
                   {visible.map((col) => (
                     <th key={col.key} className={col.num ? 'num' : undefined}
                       aria-sort={sort === col.key ? (dir === 'asc' ? 'ascending' : 'descending') : undefined}>
@@ -450,6 +545,17 @@ export default function Clients({ session }) {
               <tbody>
                 {shown.map((c) => (
                   <tr key={c.id} className="row-link" onClick={() => navigate(`/clients/${c.id}`)}>
+                    {meta?.may_reassign && (
+                      // stopPropagation, or ticking a row opens it.
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${c.name}`}
+                          checked={picked.has(c.id)}
+                          onChange={() => togglePick(c.id)}
+                        />
+                      </td>
+                    )}
                     {/* Body and header walk the same filtered list, so a
                         hidden column cannot leave the two out of step -- which
                         is what positional cells would have done the first time
@@ -494,11 +600,125 @@ export default function Clients({ session }) {
         </div>
       )}
 
+      {reassigning && (
+        <ReassignDialog
+          meta={meta}
+          ids={[...picked]}
+          onClose={() => setReassigning(false)}
+          onDone={(result) => {
+            setReassigning(false);
+            setPicked(new Set());
+            setAllMatching(null);
+            if (!result?.approval_required) window.location.reload();
+          }}
+        />
+      )}
       {exporting && (
         <ExportDialog meta={meta} count={count} query={query}
           onClose={() => setExporting(false)} />
       )}
     </div>
+  );
+}
+
+/**
+ * Move a set of accounts to a new owner.
+ *
+ * Takes the ids it was handed and shows the count back, because the number that
+ * moves must be the number the person read. Over the threshold this stops being
+ * a change and becomes a request -- so the dialog asks for a reason, which is
+ * what an approver needs and what the route refuses to proceed without.
+ */
+function ReassignDialog({ meta, ids, onClose, onDone }) {
+  const [ownerId, setOwnerId] = useState('');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [sent, setSent] = useState(null);
+
+  const threshold = meta?.bulk_threshold ?? 25;
+  const needsApproval = ids.length >= threshold;
+
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const out = await api.post('/clients/bulk/reassign', {
+        client_ids: ids,
+        owner_id: Number(ownerId),
+        reason: reason || undefined,
+      });
+      if (out.approval_required) { setSent(out); return; }
+      onDone(out);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (sent) {
+    return (
+      <Modal title="Waiting for approval" onClose={() => onDone(sent)}>
+        <p>{sent.message}</p>
+        <p className="tiny muted">
+          Nothing has moved yet. It is on the Approvals queue for somebody who can decide it.
+        </p>
+        <div className="row" style={{ justifyContent: 'flex-end', marginTop: 12 }}>
+          <button type="button" className="btn btn-primary" onClick={() => onDone(sent)}>Done</button>
+        </div>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal
+      title={`Reassign ${ids.length.toLocaleString('en-IN')} account${ids.length === 1 ? '' : 's'}`}
+      subtitle={needsApproval
+        ? `Over ${threshold}, so this will be sent for approval rather than applied`
+        : 'Applies immediately'}
+      onClose={onClose}
+    >
+      {error && <ErrorBanner error={error} onDismiss={() => setError(null)} />}
+
+      <label className="field">
+        <span>New owner</span>
+        <select value={ownerId} onChange={(e) => setOwnerId(e.target.value)}>
+          <option value="">Choose someone…</option>
+          {(meta?.owners ?? []).map((u) => (
+            <option key={u.id} value={u.id}>{u.name}</option>
+          ))}
+        </select>
+        {/* Only people in this book are listed: an account cannot move to
+            somebody who does not work in its business, so offering them would
+            be offering a choice the server refuses. */}
+        <span className="tiny muted">Only people in this business can own these accounts.</span>
+      </label>
+
+      {needsApproval && (
+        <label className="field">
+          <span>Why</span>
+          <textarea
+            rows={3}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="An approver deciding without a reason is rubber-stamping."
+          />
+        </label>
+      )}
+
+      <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+        <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={!ownerId || busy || (needsApproval && !reason.trim())}
+          onClick={submit}
+        >
+          {busy ? 'Working…' : needsApproval ? 'Send for approval' : 'Reassign'}
+        </button>
+      </div>
+    </Modal>
   );
 }
 

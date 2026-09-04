@@ -571,10 +571,32 @@ were already good; three things were missing and one was an outright absence.
       the custom `service_tier` from the value store, and the builder is mounted
       on the Clients tab. Two security defects were found on the way and are
       recorded below.
-- [ ] **No bulk actions.** Leads have eight. Clients have reassign on the record
-      only. A bulk action over a *filter* rather than an explicit list is a
-      different safety proposition to the lead-list ones and wants deciding
-      before building.
+- [x] **Bulk actions** — decided and built 4 Sep 2026. The question was whether
+      a bulk action may run over a *filter* rather than an explicit list. It may
+      not, for three reasons that are all in the code rather than in taste:
+
+      A filter is evaluated when the action runs, so between somebody reading
+      "1,240 accounts" and pressing the button, accounts arrive and owners
+      change — the set that moves is not the set that was read. The approvals
+      engine cannot express it either: `bulk_reassign` carries `lead_ids`, and
+      "approve everything matching this filter" is unapprovable because the
+      approver cannot be shown what they are agreeing to. And `BULK_THRESHOLD`
+      inverts: you cannot know the count before evaluating the filter, so you
+      cannot decide whether it needs a second pair of eyes *before* doing the
+      work.
+
+      So: **a filter selects, a list acts.** `GET /api/clients/ids` resolves the
+      current filter to explicit ids once, capped at 500, and says when it
+      capped. Those ids are what gets reviewed, approved, applied and audited,
+      and the count the user sees is the count that moves. The cap is a blast
+      radius rather than a performance limit — a mis-set filter stops at five
+      hundred and says so.
+
+      Found on the way: **the lead bulk reassign never asked for approval at
+      all.** `bulk_reassign` has been an approval scope since round 2 and
+      `engine/approvals.js` has always carried a handler for it, but nothing
+      ever requested one, so any number of leads could be moved by one person
+      and `BULK_THRESHOLD` decided nothing. Both routes now go through it.
 - [x] **Column chooser** — done 4 Sep 2026. The note below was right about the
       shape and wrong about the store: a lead list is an object that can own a
       column choice, the account book is a tab, so the choice belongs to the
