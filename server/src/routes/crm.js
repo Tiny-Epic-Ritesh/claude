@@ -137,6 +137,39 @@ export function generateCards(leadId) {
  * `LIMIT 500`, so asking for "Cold" returned however many of the first 500 rows
  * happened to be cold — a number that looked like an answer and was not.
  */
+/**
+ * What the lead list may be ordered by. P3-36.
+ *
+ * An allow-list rather than a column name off the query string: `sort` arrives
+ * from a URL anybody can edit, and the one thing that must never happen is a
+ * value from there reaching the ORDER BY. A key that is not in this table is
+ * ignored and the default stands.
+ *
+ * `age` is the age of the lead, so it sorts on `created_at` inverted -- oldest
+ * lead is the largest age. Sorting it by the raw date would put the labels and
+ * the arrow in disagreement, which is the sort of thing nobody reports and
+ * everybody distrusts.
+ */
+export const LEAD_SORTS = {
+  name: 'l.name',
+  mobile: 'l.mobile',
+  email: 'l.email',
+  stage: 'l.stage',
+  source: 'l.source',
+  city: 'l.city',
+  owner: 'u.name',
+  partner: 'p.name',
+  kyc_status: 'kyc_status',
+  created_at: 'l.created_at',
+  updated_at: 'l.updated_at',
+  callback_at: 'l.callback_at',
+  age: 'l.created_at',
+};
+
+/* Age counts the other way round: ascending age is the newest lead first, which
+   is descending created_at. */
+const INVERTED = new Set(['age']);
+
 router.get('/leads', (req, res) => {
   const scope = reqScope(req, 'l');
   const where = ['l.deleted_at IS NULL', scope.sql];
@@ -231,6 +264,15 @@ router.get('/leads', (req, res) => {
 
   const total = one(`SELECT COUNT(*) n FROM leads l WHERE ${clause}`, params).n;
 
+  /* Order. Unknown keys fall back to the default rather than erroring: a stale
+     bookmark carrying a column that has since been renamed should still open
+     the list. `l.id` breaks ties so a row cannot appear on two pages, or on
+     none -- the bug that makes a paged list quietly lose records. */
+  const sortSql = LEAD_SORTS[req.query.sort];
+  const asc = String(req.query.dir).toLowerCase() === 'asc';
+  const dir = (INVERTED.has(req.query.sort) ? !asc : asc) ? 'ASC' : 'DESC';
+  const orderBy = sortSql ? `${sortSql} ${dir}, l.id ASC` : 'l.updated_at DESC, l.id ASC';
+
   const rows = all(
     `SELECT l.id, l.name, l.mobile, l.email, l.city, l.state, l.source, l.stage,
             l.language, l.risk_profile, l.sales_org, l.owner_id, l.partner_id,
@@ -244,7 +286,7 @@ router.get('/leads', (req, res) => {
      LEFT JOIN users u ON u.id = l.owner_id
      LEFT JOIN partners p ON p.id = l.partner_id
      WHERE ${clause}
-     ORDER BY l.updated_at DESC
+     ORDER BY ${orderBy}
      LIMIT ? OFFSET ?`,
     [...params, limit, offset],
   );

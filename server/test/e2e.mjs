@@ -8210,6 +8210,103 @@ await check('a per-channel withdrawal closes only that channel', async () => {
   });
 
 
+  /* ------------------------------------------- 60. lead list order & paging */
+  suite('60 lead list ordering and paging');
+
+  await check('the list orders by a named column, both ways', async () => {
+    const names = async (dir) => {
+      const { data } = await req(`/api/leads?sort=name&dir=${dir}&limit=25`,
+        { token: T.admin, expect: 200 });
+      return data.map((l) => l.name);
+    };
+
+    const asc = await names('asc');
+    const desc = await names('desc');
+    assert(asc.length > 1, 'not enough leads to order');
+
+    const sorted = [...asc].sort((a, b) => a.localeCompare(b));
+    assert(asc.join('|') === sorted.join('|'),
+      `ascending order is not actually ascending: ${asc.slice(0, 3).join(', ')}`);
+    assert(asc.join('|') !== desc.join('|'), 'both directions returned the same order');
+  });
+
+  await check('age sorts by age, not by the date underneath it', async () => {
+    /* Age counts the other way round from created_at, and getting that wrong
+       puts the arrow and the numbers in disagreement -- which nobody reports
+       and everybody stops trusting. */
+    const { data } = await req('/api/leads?sort=age&dir=asc&limit=10',
+      { token: T.admin, expect: 200 });
+    const ages = data.map((l) => l.age_days);
+    for (let i = 1; i < ages.length; i += 1) {
+      assert(ages[i] >= ages[i - 1], `ascending age went ${ages[i - 1]} then ${ages[i]}`);
+    }
+  });
+
+  await check('an unknown sort key is ignored, never run', async () => {
+    /* `sort` arrives from a URL anybody can edit. The one thing that must not
+       happen is a value from there reaching the ORDER BY. */
+    const inject = encodeURIComponent('l.name; DROP TABLE leads--');
+    const { data } = await req(`/api/leads?sort=${inject}&limit=5`,
+      { token: T.admin, expect: 200 });
+    assert(Array.isArray(data), 'an injected sort key did not fall back to the default');
+
+    // And the table is still there.
+    const { data: after } = await req('/api/leads?limit=1', { token: T.admin, expect: 200 });
+    assert(after.length >= 0, 'leads are gone, which would be quite the finding');
+  });
+
+  await check('paging returns every lead exactly once', async () => {
+    /* The bug a missing tie-breaker causes: rows sharing a sort value drift
+       between pages, so one record appears twice and another never appears at
+       all. Silent, and impossible to spot from any single page. */
+    const size = 7;
+    const first = await req(`/api/leads?sort=stage&dir=asc&limit=${size}&offset=0`,
+      { token: T.admin, expect: 200 });
+    const total = Number(first.res.headers.get('X-Total-Count'));
+    assert(total > size, `only ${total} leads; paging is untested at this size`);
+
+    const seen = [];
+    for (let offset = 0; offset < total; offset += size) {
+      // eslint-disable-next-line no-await-in-loop
+      const { data } = await req(`/api/leads?sort=stage&dir=asc&limit=${size}&offset=${offset}`,
+        { token: T.admin, expect: 200 });
+      seen.push(...data.map((l) => l.id));
+    }
+
+    eq(seen.length, total, 'rows walked across the pages versus the reported total');
+    eq(new Set(seen).size, total, 'distinct ids across the pages — a repeat means a lost record');
+  });
+
+  await check('the total counts the book, not the page', async () => {
+    const { data, res } = await req('/api/leads?limit=5', { token: T.admin, expect: 200 });
+    const total = Number(res.headers.get('X-Total-Count'));
+    assert(data.length <= 5, 'the page ignored its limit');
+    assert(total >= data.length, `total ${total} is smaller than the page it described`);
+  });
+
+  await check('order and paging respect an applied filter', async () => {
+    const { data: filtered, res } = await req('/api/leads?stage=New&sort=name&dir=asc&limit=5',
+      { token: T.admin, expect: 200 });
+    const total = Number(res.headers.get('X-Total-Count'));
+
+    for (const l of filtered) eq(l.stage, 'New', 'the filter was dropped when sorting');
+
+    const { res: unfiltered } = await req('/api/leads?limit=1', { token: T.admin, expect: 200 });
+    assert(total <= Number(unfiltered.headers.get('X-Total-Count')),
+      'the filtered total is larger than the unfiltered one');
+  });
+
+  await check('paging never crosses the book boundary', async () => {
+    /* Ordering and paging are new query paths, and a new query path is a new
+       chance to lose the org clause. */
+    const { data } = await req('/api/leads?sort=name&dir=asc&limit=500',
+      { token: T.sales_rm, expect: 200 });
+    for (const l of data) {
+      eq(l.sales_org, 'BONANZA', `a Bonanza RM was paged into ${l.sales_org}`);
+    }
+  });
+
+
   await report();
 }
 

@@ -9,6 +9,65 @@ import AdvancedSearch from '../components/AdvancedSearch.jsx';
 
 const BANDS = ['Fresh', 'Active', 'Ageing', 'At Risk', 'Cold'];
 
+/**
+ * Which page numbers to show. P3-37.
+ *
+ * A window around the current page with the first and last always reachable,
+ * and `null` where a gap belongs. 1,500 leads at 25 a page is sixty buttons,
+ * which is not navigation.
+ */
+function pageWindow(page, pages) {
+  if (pages <= 7) return Array.from({ length: pages }, (_, i) => i + 1);
+
+  const out = [1];
+  const from = Math.max(2, page - 1);
+  const to = Math.min(pages - 1, page + 1);
+
+  if (from > 2) out.push(null);
+  for (let n = from; n <= to; n += 1) out.push(n);
+  if (to < pages - 1) out.push(null);
+
+  out.push(pages);
+  return out;
+}
+
+/**
+ * A column header that orders the list. P3-36.
+ *
+ * The arrow states the current order rather than the one a click would apply --
+ * a control that shows its own destination reads as a promise, and every table
+ * in this product shows its state instead.
+ */
+function SortTh({ col, sort, dir, onSort }) {
+  const active = sort === col.key;
+  return (
+    <th aria-sort={active ? (dir === 'asc' ? 'ascending' : 'descending') : undefined}>
+      <button type="button" className="th-sort" onClick={() => onSort(col.key)}
+        aria-label={`Sort by ${col.label}`}>
+        {col.label}
+        <Icon
+          name={!active ? 'unfold_more' : dir === 'asc' ? 'arrow_upward' : 'arrow_downward'}
+          size={13} />
+      </button>
+    </th>
+  );
+}
+
+/* The sizes the ticket asked for. 50 is the default: enough to work a morning
+   from without paging, small enough that the first paint is quick at 495k. */
+const PAGE_SIZES = [25, 50, 100, 200];
+
+/* Which columns can be ordered, and how each is read. Mirrors LEAD_SORTS on the
+   server, which is the authority -- a key not in that table is ignored there,
+   so offering one here would be a header that silently does nothing. */
+const SORTABLE = [
+  { key: 'name', label: 'Lead' },
+  { key: 'stage', label: 'Stage' },
+  { key: 'age', label: 'Age' },
+  { key: 'owner', label: 'Owner' },
+  { key: 'partner', label: 'Partner' },
+];
+
 export default function Leads({ session }) {
   /**
    * Filters seed from the URL, so a drill-through lands filtered.
@@ -18,7 +77,7 @@ export default function Leads({ session }) {
    * also means the filtered view is a real URL: shareable, bookmarkable, and
    * survives a refresh.
    */
-  const [search] = useSearchParams();
+  const [search, setSearch] = useSearchParams();
   const [filters, setFilters] = useState(() => ({
     q: search.get('q') ?? '',
     stage: search.get('stage') ?? '',
@@ -26,6 +85,25 @@ export default function Leads({ session }) {
     card_state: search.get('card_state') ?? '',
     product_id: search.get('product_id') ?? '',
   }));
+
+  /* Order and position. P3-36, P3-37.
+   *
+   * In the URL beside the filters, for the reason the filters are there: a
+   * colleague sent "the oldest unworked leads" should open on the oldest
+   * unworked leads, and a refresh should not lose the reader's place. */
+  const sort = search.get('sort') ?? '';
+  const dir = search.get('dir') === 'asc' ? 'asc' : 'desc';
+  const offset = Math.max(Number(search.get('offset')) || 0, 0);
+
+  /* Page size is a preference rather than a view: it says how this person likes
+     to read a list, not which list they are reading, so it follows them between
+     screens instead of riding in a link they might send to somebody else. */
+  const [pageSize, setPageSize] = useState(() => {
+    try {
+      const saved = Number(localStorage.getItem('bnz_lead_page_size'));
+      return PAGE_SIZES.includes(saved) ? saved : 50;
+    } catch { return 50; }
+  });
 
   // A second drill-through while already on this page changes the query but
   // not the component, so the filters have to follow the URL.
@@ -41,10 +119,42 @@ export default function Leads({ session }) {
   const query = useMemo(() => {
     const params = new URLSearchParams();
     for (const [k, v] of Object.entries(filters)) if (v) params.set(k, v);
+    if (sort) { params.set('sort', sort); params.set('dir', dir); }
+    params.set('limit', String(pageSize));
+    params.set('offset', String(offset));
     return params.toString();
-  }, [filters]);
+  }, [filters, sort, dir, offset, pageSize]);
 
-  const [leads, { loading, error, reload }] = useApi(`/leads${query ? `?${query}` : ''}`);
+  const [leads, { loading, error, reload, total }] = useApi(`/leads${query ? `?${query}` : ''}`);
+
+  /* The unpaged count the route has always sent. Without it the header could
+     only describe the page, and a list that says "50 leads" when there are
+     1,500 is two numbers on one screen that disagree. */
+  const count = total ?? leads?.length ?? 0;
+  const pages = Math.max(1, Math.ceil(count / pageSize));
+  const page = Math.floor(offset / pageSize) + 1;
+
+  const goto = (next) => {
+    const p = new URLSearchParams(search);
+    for (const [k, v] of Object.entries(next)) {
+      if (v === null || v === '') p.delete(k); else p.set(k, String(v));
+    }
+    setSearch(p, { replace: false });
+  };
+
+  /* A new sort starts at the first page. Staying on page 7 of a list that has
+     just been reordered shows a slice of records nobody asked for. */
+  const setSort = (key) => goto({
+    sort: key,
+    dir: sort === key && dir === 'desc' ? 'asc' : 'desc',
+    offset: 0,
+  });
+
+  const choosePageSize = (n) => {
+    setPageSize(n);
+    try { localStorage.setItem('bnz_lead_page_size', String(n)); } catch { /* ignore */ }
+    goto({ offset: 0 });
+  };
   const [meta] = useApi('/meta');
   const [creating, setCreating] = useState(false);
   const [advanced, setAdvanced] = useState(false);
@@ -179,7 +289,13 @@ export default function Leads({ session }) {
                 {/* P2-07: display label only. The API name stays `card_state`
                     and the table stays `product_cards`, per the ENH-10 rule
                     that a rename is a label change and never a schema one. */}
-                <th>Lead</th><th>Stage</th><th>Products</th><th>Age</th><th>Owner</th><th>Partner</th>
+                {/* Sortable where the server can order it, plain where it
+                    cannot. Products, AUM and Score are assembled per page after
+                    the query, so offering a header that only reordered the
+                    fifty rows in front of you would be a sort that lies. */}
+                {SORTABLE.slice(0, 2).map((c) => <SortTh key={c.key} col={c} sort={sort} dir={dir} onSort={setSort} />)}
+                <th>Products</th>
+                {SORTABLE.slice(2).map((c) => <SortTh key={c.key} col={c} sort={sort} dir={dir} onSort={setSort} />)}
                 <th className="num">AUM</th><th className="num">Score</th><th className="col-actions" />
               </tr>
             </thead>
@@ -234,6 +350,58 @@ export default function Leads({ session }) {
               ))}
             </tbody>
           </table>
+        )}
+
+        {/* Where you are in the book, and how to leave. P3-37.
+            Hidden during an advanced search, which returns its own fixed result
+            set rather than a page of one. */}
+        {!found && !loading && (count > pageSize || offset > 0) && (
+          <div className="card-foot row wrap" style={{ gap: 10, justifyContent: 'space-between' }}>
+            <span className="tiny muted">
+              {(offset + 1).toLocaleString('en-IN')}–{Math.min(offset + pageSize, count).toLocaleString('en-IN')}
+              {' of '}{count.toLocaleString('en-IN')}
+            </span>
+
+            <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+              <label className="tiny muted" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                Per page
+                <select
+                  value={pageSize}
+                  onChange={(e) => choosePageSize(Number(e.target.value))}
+                  aria-label="Leads per page"
+                >
+                  {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </label>
+
+              <button type="button" className="btn-ghost btn-sm" disabled={offset === 0}
+                onClick={() => goto({ offset: Math.max(offset - pageSize, 0) })}>
+                Previous
+              </button>
+
+              {/* Numbered, so page 7 of 34 is one click rather than six. A
+                  window around the current page: thirty-four buttons is not
+                  navigation, it is a wall. */}
+              {pageWindow(page, pages).map((n, i) => (n === null
+                ? <span key={`gap-${i}`} className="tiny muted">…</span>
+                : (
+                  <button
+                    key={n}
+                    type="button"
+                    className={`btn-ghost btn-sm ${n === page ? 'is-active' : ''}`}
+                    aria-current={n === page ? 'page' : undefined}
+                    onClick={() => goto({ offset: (n - 1) * pageSize })}
+                  >
+                    {n}
+                  </button>
+                )))}
+
+              <button type="button" className="btn-ghost btn-sm" disabled={page >= pages}
+                onClick={() => goto({ offset: offset + pageSize })}>
+                Next
+              </button>
+            </div>
+          </div>
         )}
       </section>
 
