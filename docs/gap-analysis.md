@@ -1,6 +1,6 @@
 # Gap Analysis — current build vs. the LeadSquared audit
 
-**Date:** 21 Aug 2026 · **Scorecard re-checked against the code:** 3 Sep 2026
+**Date:** 21 Aug 2026 · **Scorecard re-checked against the code:** 4 Sep 2026
 **Audit basis:** `docs/legacy-leadsquared/LEADSQUARED-CRM-REFERENCE.md`, Parts 1 and 7
 **Subject:** the CRM in this repo (`server/`, `client/`) as built to date
 
@@ -16,8 +16,11 @@ matter.
 I have tried to be blunt, as asked. Where I think Part 7 is wrong for our case I
 say so in `docs/data-model.md` rather than here.
 
-**Current state, for context:** Node + Express + SQLite (`node:sqlite`) + React.
-253 passing tests. **No production data** — the database is seeded fixtures only.
+**State on 21 Aug 2026, when Part 1 was written:** Node + Express + SQLite
+(`node:sqlite`) + React. 253 passing tests. **No production data** — the database
+is seeded fixtures only. (Part 2 below carries the current figure; this one is
+left as it stood so the judgements in this part can be read against what was
+actually true when they were made.)
 That last fact is the single most important input to every "now vs. later"
 judgement below: schema changes are nearly free today and get permanently more
 expensive the moment 495,118 leads land on them.
@@ -397,7 +400,8 @@ data, which is generic ("Bertha Boxer", "Farmers Coop. of Florida").
 ## Filling in the two placeholders the brief left blank
 
 **Stack:** Node 24 · Express 5 · `node:sqlite` (Postgres at pilot) · React 19 +
-Vite. 1,153 passing tests. **No production data** — seeded fixtures only.
+Vite. **1,161 passing tests** — 620 end-to-end against the real HTTP API, and 541
+across 39 unit suites. **No production data** — seeded fixtures only.
 
 **Scope and timeline:** phased cutover, Digital Onboarding Team first, per the
 decisions recorded above. Correct me if either is wrong; both shape everything
@@ -433,7 +437,7 @@ metadata layer — and building that one thing closed all four: label versus API
 name, uniform per-object configuration, field-change history, and the polymorphic
 owner that needed a place to declare itself.
 
-Three things were left. The first is now closed; the other two remain choices:
+Three things were left. The first is now closed and the second is unchanged; only the third is a choice rather than a gap:
 
 - **7 · OWD floor — closed 4 Sep 2026, with one part deliberately left open.**
   The floor was always there; it was just never *declared*. It lived inside
@@ -576,12 +580,16 @@ follows:
 3. **Field history + stage entry/exit**, which the metadata layer makes generic
    rather than per-table.
 4. **Polymorphic owner + Queue entity.**
-5. **OWD floor** beneath the existing grant-only model, with internal/external
-   split for partners.
+5. ~~**OWD floor** beneath the existing grant-only model, with internal/external
+   split for partners.~~ **Done 4 Sep 2026** — see the build log below. The
+   internal/external split exists as a declaration; external is pinned to
+   Private, for a reason recorded there.
 6. **Config audit log**, automation failure queue, static conflict detection.
 7. **Party + roles + Account** — unchanged in intent, but far cheaper once
    entities are metadata.
-8. Approvals — scope to be decided (see questions).
+8. Approvals — ~~scope to be decided~~ **all four scopes decided 22 Aug**, and
+   the engine now carries six: the four plus `bulk_client_reassign` and
+   `owd_change`, both added 4 Sep.
 
 **Cost of delay is now sharper.** Every additional hand-written entity and route
 increases the cost of the metadata migration. The `Party` work in particular
@@ -598,10 +606,23 @@ should wait until the metadata layer exists, or it will be written twice.
 
 ### What this changes about the OWD decision specifically
 
-Today `lead.view.all` is held by seven of eleven roles, so most people see the
-whole org. A Private floor inverts that: visibility must be granted. Before this
-ships, sharing rules need to exist for the supervisor and product-RM cases, or
-those roles go blind. That ordering is a build constraint, not a detail.
+**Written 22 Aug:** `lead.view.all` is held by seven of eleven roles, so most
+people see the whole org. A Private floor inverts that: visibility must be
+granted. Before this ships, sharing rules need to exist for the supervisor and
+product-RM cases, or those roles go blind. That ordering is a build constraint,
+not a detail.
+
+**Discharged, 4 Sep.** The ordering held. `engine/sharing.js` came first and
+built the grant layer — the management chain resolved recursively, so a regional
+head above two desk supervisors reaches both desks — and `lead.view.all` was
+narrowed to the roles that also declare `org` scope, so the capability and the
+declared scope can no longer disagree. Only then was the floor declared.
+
+The fear in that paragraph did not materialise, and the reason is worth keeping:
+by the time the floor was written down it was already what the code did, so
+declaring it moved nobody. **603 end-to-end tests passed unchanged on the day it
+shipped.** A Private floor was never going to blind anyone, because the grants
+beneath it had been built two weeks earlier.
 
 ---
 
@@ -696,3 +717,97 @@ visible(user, lead) =
 Superadmin and Admin keep `data_scope = 'org'` and are unaffected. Supervisors
 gain their reports' books without needing `lead.view.all`. A Product RM keeps
 product scope wherever the lead sits. Nothing needs a special case.
+
+---
+
+## Build log — item 5, and the two constraints that were not what they looked like
+
+**4 Sep 2026.** Detail in [CHECKLIST.md](CHECKLIST.md) under the dated sections
+for that day.
+
+| # | Constraint | Before | Now |
+|---|---|---|---|
+| 7 | OWD floor, then grants only | half met | **met for the three scoped objects** — declared per object, enforced for lead, client and case |
+| 10 | Versioning with diff and rollback | partly closed | **closed** — all seven configurable artefacts |
+
+### Both entries were wrong about what was missing
+
+That is the part worth recording, because it changes how the rest of this
+scorecard should be read.
+
+**Constraint 7 said there was no floor.** There was one. It lived inside
+`leadScope`, `clientScope` and `ticketScope`, each starting from "your own
+records" and ORing grants on top. What did not exist was the floor being
+*declared* — so an administrator could not see the default, could not change it,
+nothing held the six objects to one shape, and there was no way to say anything
+at all about external viewers. The work was to write down what the code already
+did, in the place the reference model puts it.
+
+**Constraint 10 said three artefacts carried "active/effective flags only".**
+They carried more than that: `config_audit` recorded a before and an after for
+every edit. What they lacked was rollback. A log answers *what changed* and
+cannot answer *put it back*, and dispositions, KRA metrics and incentive plans
+are exactly where that distinction costs money — a slab table edited wrongly pays
+the wrong amount to a whole desk, and the fix on the day is last week's version
+restored, not a diff to read.
+
+Two entries on a scorecard, both describing the shape of a gap rather than the
+gap. Worth assuming the others may do the same.
+
+### What the floor can and cannot do
+
+`entity_def.owd_internal` / `owd_external`, read by `engine/owd.js` and ORed into
+the same grant list as the management chain and queues. That placement is the
+whole safety argument: an OWD grant can only add sight-lines, and every scope
+function ANDs the grant list with `orgScope`, so widening a default shows an
+internal user everything in the books they are already entitled to and nothing
+outside them. **A Bonanza user made org-wide still sees no Bigul record**, and
+there is a test for exactly that — because "make leads public" is the setting
+somebody reaches for at five o'clock, and the cross-book exposure we are holding
+an incident report about must not be one checkbox away.
+
+Everything defaults to Private, which is what the code already did: 603
+end-to-end tests passed unchanged on the day it shipped.
+
+Two limits, stated rather than hidden. **Only `private` and `read`** — Public
+Read/Write is not offered, because writes are gated by capabilities rather than
+by this floor, and a setting that says read/write while granting only read is
+worse than one not offered. And **the external default is pinned to Private**:
+partner sessions never reach a scope function at all, since `requireUser` puts
+them on `req.partner` and the portal filters on `partner_id` in code.
+
+### Changing it needs two people
+
+`owd_change` in the approvals engine: a superadmin asks, somebody holding
+`audit.read` agrees. The two capabilities are deliberately different — only one
+role holds `admin.system`, and the engine refuses self-approval, so making both
+the same meant a request could be raised and **never decided by anyone**. A
+control that looks present and does nothing.
+
+Wiring that surfaced two latent bugs in the approvals engine, both of which would
+have bitten silently. `orgOf` had no entry for `client`, and `inReach` fails
+closed on a null org — so every bulk account reassignment would have been
+undecidable: raised, then refused to every possible approver. And configuration
+entities genuinely have no book, so `entity_def` hit the same wall. They are now
+explicitly exempt, because "could not determine the book" and "never had one" are
+different answers.
+
+### Approvals now cover what was decided
+
+The 22 Aug decision was four scopes, one of them "bulk actions & lead
+reassignment". The engine has carried a `bulk_reassign` handler since then and
+**nothing ever requested one** — the lead bulk route moved any number of leads
+without asking anybody, so `BULK_THRESHOLD` decided nothing. Both the lead and
+the new account routes go through it now.
+
+Account bulk actions arrived with the rule that a bulk action never takes a
+filter: a filter is evaluated when it runs, an approver cannot be shown what
+"everything matching this" means, and the threshold inverts because the count is
+unknown until the work is done. A filter selects; a list acts.
+
+### Still outstanding on this item
+
+The floor is enforced for lead, client and case — the three with scope functions.
+`interaction`, `task`, `partner` and `product_interest` carry the columns and
+nothing reads them, which is honest but incomplete. And the external pin lifts
+only when partner reads move under the same floor as staff reads.
