@@ -211,5 +211,118 @@ if (product) {
   run("DELETE FROM artefact_versions WHERE kind = 'kyc_journey' AND logical_id = ?", [String(product.id)]);
 }
 
+/* ==================================================================
+   The other half of finding 10, closed 4 Sep 2026.
+
+   Dispositions, KRA metrics and incentive plans had a change log and no
+   rollback. `config_audit` answers "what changed"; only a version answers
+   "put it back". These three are where that distinction costs money.
+   ================================================================== */
+
+test('a call outcome versions, diffs and rolls back', () => {
+  const row = one('SELECT * FROM dispositions WHERE active = 1 ORDER BY id LIMIT 1');
+  assert(row, 'no disposition to test with');
+
+  const before = snapshot('disposition', row.id, { note: 'test baseline' });
+  const originalHint = row.hint;
+
+  run('UPDATE dispositions SET hint = ? WHERE id = ?', ['CHANGED BY TEST', row.id]);
+  const after = snapshot('disposition', row.id, { note: 'test change' });
+
+  assert.equal(after.version, before.version + 1, 'the version did not advance');
+  assert.equal(currentOf('disposition', row.id).id, after.id, 'the current pointer did not move');
+
+  const d = diff(before.id, after.id);
+  const hint = d.changes.find((c) => c.field === 'hint');
+  assert(hint, 'the diff did not name the changed field');
+  assert.equal(hint.to, 'CHANGED BY TEST');
+
+  const out = restore(before.id);
+  assert(out.ok, 'restore failed');
+  assert.equal(one('SELECT hint FROM dispositions WHERE id = ?', [row.id]).hint, originalHint,
+    'the rollback did not put the old value back');
+
+  run("DELETE FROM artefact_versions WHERE kind = 'disposition' AND logical_id = ?", [String(row.id)]);
+});
+
+test('a rollback does not rename an outcome that activities reference', () => {
+  /* `code` is identity, not content. Restoring an old one would rename an
+     outcome that logged activities point at by code, and could collide with a
+     row created since -- so restore must leave it alone. */
+  const row = one('SELECT * FROM dispositions WHERE active = 1 ORDER BY id LIMIT 1');
+  const moved = row.code + '_MOVED';
+  const v = snapshot('disposition', row.id, { note: 'code guard' });
+
+  run('UPDATE dispositions SET code = ? WHERE id = ?', [moved, row.id]);
+  restore(v.id);
+
+  assert.equal(one('SELECT code FROM dispositions WHERE id = ?', [row.id]).code, moved,
+    'the rollback rewrote the code, which activities reference');
+
+  run('UPDATE dispositions SET code = ? WHERE id = ?', [row.code, row.id]);
+  run("DELETE FROM artefact_versions WHERE kind = 'disposition' AND logical_id = ?", [String(row.id)]);
+});
+
+test('a KRA metric versions and rolls back its target', () => {
+  const row = one('SELECT * FROM kra_metrics ORDER BY id LIMIT 1');
+  assert(row, 'no KRA metric to test with');
+
+  const before = snapshot('kra_metric', row.id, { note: 'test baseline' });
+  run('UPDATE kra_metrics SET target = ? WHERE id = ?', [row.target + 999, row.id]);
+  const after = snapshot('kra_metric', row.id, { note: 'test change' });
+
+  const d = diff(before.id, after.id);
+  assert(d.changes.some((c) => c.field === 'target'), 'the target change was not in the diff');
+
+  restore(before.id);
+  assert.equal(one('SELECT target FROM kra_metrics WHERE id = ?', [row.id]).target, row.target,
+    'the target was not restored');
+
+  run("DELETE FROM artefact_versions WHERE kind = 'kra_metric' AND logical_id = ?", [String(row.id)]);
+});
+
+test('an incentive plan carries its slabs into the version', () => {
+  /* The plan row alone would record a clawback window changing and miss the
+     rate bands changing underneath it -- which is the edit that decides what
+     people are actually paid. */
+  const plan = one('SELECT * FROM incentive_plans ORDER BY id LIMIT 1');
+  assert(plan, 'no incentive plan to test with');
+
+  const slabsBefore = all(
+    'SELECT basis, from_value, rate FROM incentive_slabs WHERE plan_id = ? ORDER BY basis, from_value',
+    [plan.id],
+  );
+  assert(slabsBefore.length > 0, 'the plan has no slabs, so this proves nothing');
+
+  const before = snapshot('incentive_plan', plan.id, { note: 'test baseline' });
+  assert(Array.isArray(before.payload.slabs) && before.payload.slabs.length === slabsBefore.length,
+    'the version did not capture the slabs');
+
+  // Pay everyone double, then put it back.
+  run('UPDATE incentive_slabs SET rate = rate * 2 WHERE plan_id = ?', [plan.id]);
+  const after = snapshot('incentive_plan', plan.id, { note: 'test change' });
+  assert(diff(before.id, after.id).changes.some((c) => c.field === 'slabs'),
+    'doubling every rate did not show as a change');
+
+  restore(before.id);
+  const slabsAfter = all(
+    'SELECT basis, from_value, rate FROM incentive_slabs WHERE plan_id = ? ORDER BY basis, from_value',
+    [plan.id],
+  );
+  assert.deepEqual(slabsAfter, slabsBefore, 'the slab table was not restored');
+
+  run("DELETE FROM artefact_versions WHERE kind = 'incentive_plan' AND logical_id = ?", [String(plan.id)]);
+});
+
+test('every artefact kind can load and restore', () => {
+  /* A kind registered without both halves is a version history you can look at
+     and not act on, which is the failure this whole engine exists to prevent. */
+  for (const [kind, spec] of Object.entries(ARTEFACTS)) {
+    assert(typeof spec.load === 'function', kind + ' has no load');
+    assert(typeof spec.restore === 'function', kind + ' cannot be restored');
+    assert(spec.label, kind + ' has no label to show a person');
+  }
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exitCode = failed ? 1 : 0;

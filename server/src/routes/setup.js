@@ -29,6 +29,7 @@ import {
   invalidate, explainAccess, dataScope, CAPABILITY_CATALOGUE,
 } from '../engine/access.js';
 import { vendorStatus } from '../vendors/config.js';
+import { snapshot } from '../engine/versioning.js';
 import { syncDispositionPicklists } from '../engine/metadata.js';
 import {
   validateRule, operatorCatalogue, wouldRefuseExisting,
@@ -1685,7 +1686,11 @@ router.patch('/dispositions/:id', requirePermission('admin.rules'), (req, res) =
   const after = one('SELECT * FROM dispositions WHERE id = ?', [row.id]);
 
   auditConfig('dispositions', row.code, 'updated', row, after, req.user.id);
-  res.json(after);
+  /* Snapshotted after the write, so the version holds what was saved rather
+     than what was asked for. The config audit above says what changed; this is
+     what lets somebody put it back. */
+  const version = snapshot('disposition', row.id, { note: req.body.note ?? null, userId: req.user.id });
+  res.json({ ...after, version: version?.version ?? null });
 });
 
 router.post('/dispositions', requirePermission('admin.rules'), (req, res) => {
@@ -1715,6 +1720,7 @@ router.post('/dispositions', requirePermission('admin.rules'), (req, res) => {
   // The outcome picklists are a projection of this table, so they move with it.
   syncDispositionPicklists();
   auditConfig('dispositions', code, 'created', null, created, req.user.id);
+  snapshot('disposition', created.id, { note: 'Created', userId: req.user.id });
   res.status(201).json(created);
 });
 
@@ -1735,6 +1741,9 @@ router.delete('/dispositions/:id', requirePermission('admin.rules'), (req, res) 
   // The outcome picklists are a projection of this table, so they move with it.
   syncDispositionPicklists();
   auditConfig('dispositions', row.code, 'retired', row, { ...row, active: 0 }, req.user.id);
+  // Retiring is an edit like any other, and is the one most likely to want
+  // undoing: it takes an outcome out of every picker in the product.
+  snapshot('disposition', row.id, { note: 'Retired', userId: req.user.id });
 
   res.json({
     ok: true,

@@ -37,7 +37,7 @@ expensive the moment 495,118 leads land on them.
 | 7 | Shared login accounts | ✅ Avoided | one identity per human, scrypt, sessions |
 | 8 | Static lists / flat query power | ✅ **Closed** | nested AND/OR trees in `engine/conditions.js`; static / refreshable / dynamic lists |
 | 9 | No cascading picklist validation | ✅ Avoided | `dispositions` enforced server-side |
-| 10 | No versioning | ⚠️ **Partly closed** | rules, templates, KYC journeys, SLA policies versioned with diff and rollback (`engine/versioning.js`); dispositions, KRA and incentives still carry active/effective flags only |
+| 10 | No versioning | ✅ **Closed** | all seven configurable artefacts version with diff and rollback (`engine/versioning.js`): rules, templates, KYC journeys, SLA policies, and — added 4 Sep 2026 — dispositions, KRA metrics and incentive plans. The last three had `config_audit`, which answers "what changed" and cannot answer "put it back" |
 
 Plus the explicit checklist from the brief:
 

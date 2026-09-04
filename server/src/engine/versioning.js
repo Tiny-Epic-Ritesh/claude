@@ -67,6 +67,87 @@ export const ARTEFACTS = {
       ));
     },
   },
+  /* The three below close the other half of finding 10. They already had a
+     change log -- `config_audit` records a before and an after for each edit --
+     which answers "what changed" and cannot answer "put it back". A log is
+     evidence; a version is something you can act on. These are the artefacts
+     where that distinction costs money: an incentive slab table edited wrongly
+     pays the wrong amount to a whole desk, and the fix needed on the day is
+     last week's version restored, not a diff to read.
+
+     `restore` covers exactly the fields the editing route will write, and no
+     others. Identity columns -- a disposition's `code`, a metric's
+     `role_code`/`code`, a plan's `role_code` and `sales_org` -- are not
+     editable in the UI and are not restored here: putting back an old `code`
+     could collide with a row created since, and would rename an artefact that
+     activities already reference by that code. */
+  disposition: {
+    label: 'Call outcome',
+    load: (id) => one('SELECT * FROM dispositions WHERE id = ?', [id]),
+    restore: (id, p) => run(
+      `UPDATE dispositions SET label = ?, outcome = ?, next_step = ?, follow_up_hours = ?,
+                               requires_datetime = ?, requires_reason = ?, sets_card_state = ?,
+                               flags_mobile_invalid = ?, suppress_marketing = ?, score_delta = ?,
+                               hint = ?, sort_order = ?, active = ? WHERE id = ?`,
+      [p.label, p.outcome, p.next_step ?? null, p.follow_up_hours ?? null,
+        p.requires_datetime ?? 0, p.requires_reason ?? 0, p.sets_card_state ?? null,
+        p.flags_mobile_invalid ?? 0, p.suppress_marketing ?? 0, p.score_delta ?? 0,
+        p.hint ?? null, p.sort_order ?? 0, p.active ?? 1, id],
+    ),
+  },
+
+  kra_metric: {
+    label: 'KRA metric',
+    load: (id) => one('SELECT * FROM kra_metrics WHERE id = ?', [id]),
+    restore: (id, p) => run(
+      `UPDATE kra_metrics SET label = ?, description = ?, source = ?, unit = ?,
+                              target = ?, weight = ?, direction = ?, active = ?,
+                              sort_order = ? WHERE id = ?`,
+      [p.label, p.description ?? null, p.source ?? null, p.unit ?? 'count',
+        p.target ?? 0, p.weight ?? 1, p.direction ?? 'higher', p.active ?? 1,
+        p.sort_order ?? 0, id],
+    ),
+  },
+
+  incentive_plan: {
+    label: 'Incentive plan',
+    /* A plan is its slabs. Versioning the parent row alone would record a
+       clawback window changing and miss the rate bands changing underneath it,
+       which is the edit that actually decides what people are paid -- so the
+       slabs travel inside the payload, the way a KYC journey carries its
+       steps. */
+    load: (id) => {
+      const plan = one('SELECT * FROM incentive_plans WHERE id = ?', [id]);
+      if (!plan) return null;
+      return {
+        ...plan,
+        slabs: all(
+          `SELECT basis, from_value, to_value, rate, rate_kind, sort_order
+             FROM incentive_slabs WHERE plan_id = ? ORDER BY basis, from_value`,
+          [id],
+        ),
+      };
+    },
+    restore: (id, p) => {
+      run(
+        `UPDATE incentive_plans SET name = ?, description = ?, clawback_months = ?,
+                                    active = ?, effective_from = ?, effective_to = ?
+         WHERE id = ?`,
+        [p.name, p.description ?? null, p.clawback_months ?? 6, p.active ?? 1,
+          p.effective_from, p.effective_to ?? null, id],
+      );
+      // Replaced wholesale, as the editing route does: a half-restored slab set
+      // would pay on bands that never existed in any version.
+      run('DELETE FROM incentive_slabs WHERE plan_id = ?', [id]);
+      (p.slabs ?? []).forEach((s, i) => run(
+        `INSERT INTO incentive_slabs (plan_id, basis, from_value, to_value, rate, rate_kind, sort_order)
+         VALUES (?,?,?,?,?,?,?)`,
+        [id, s.basis, s.from_value ?? 0, s.to_value ?? null, s.rate ?? 0,
+          s.rate_kind ?? 'percent', s.sort_order ?? i],
+      ));
+    },
+  },
+
   sla_policy: {
     label: 'SLA policy',
     // Keyed "productId:priority", because that pair is what the table is unique on.

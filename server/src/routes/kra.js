@@ -16,6 +16,7 @@ import { requireUser, requirePermission, clientScope, leadScope, can, activeOrg 
 import { resolveRange, inRange, RANGES, DEFAULT_RANGE } from '../engine/daterange.js';
 import { actualFor, scoreOf, applySlabs } from '../engine/kra.js';
 import { auditConfig } from '../engine/metadata.js';
+import { snapshot } from '../engine/versioning.js';
 
 const router = Router();
 router.use(requireUser);
@@ -293,7 +294,11 @@ router.patch('/config/metrics/:id', requirePermission('admin.rules'), (req, res)
   run(`UPDATE kra_metrics SET ${sets.join(', ')} WHERE id = ?`, [...params, row.id]);
   const after = one('SELECT * FROM kra_metrics WHERE id = ?', [row.id]);
   auditConfig('kra', `${row.role_code}.${row.code}`, 'updated', row, after, req.user.id);
-  res.json(after);
+  /* A target or a weight moving changes what a whole role is measured on, and
+     the question afterwards is always "what was it before" -- which the config
+     audit answers, and "put it back", which only a version does. */
+  const version = snapshot('kra_metric', row.id, { note: req.body.note ?? null, userId: req.user.id });
+  res.json({ ...after, version: version?.version ?? null });
 });
 
 router.post('/config/metrics', requirePermission('admin.rules'), (req, res) => {
@@ -318,6 +323,7 @@ router.post('/config/metrics', requirePermission('admin.rules'), (req, res) => {
   );
   const created = one('SELECT * FROM kra_metrics WHERE id = ?', [Number(r.lastInsertRowid)]);
   auditConfig('kra', `${role}.${code}`, 'created', null, created, req.user.id);
+  snapshot('kra_metric', created.id, { note: 'Created', userId: req.user.id });
   res.status(201).json(created);
 });
 
@@ -333,6 +339,7 @@ router.delete('/config/metrics/:id', requirePermission('admin.rules'), (req, res
   run("UPDATE kra_metrics SET active = 0, edited_at = datetime('now'), edited_by = ? WHERE id = ?",
     [req.user.id, row.id]);
   auditConfig('kra', `${row.role_code}.${row.code}`, 'retired', row, { ...row, active: 0 }, req.user.id);
+  snapshot('kra_metric', row.id, { note: 'Retired', userId: req.user.id });
   res.json({ ok: true, retired: true });
 });
 
@@ -382,9 +389,15 @@ router.patch('/config/plans/:id', requirePermission('admin.rules'), (req, res) =
 
   const after = one('SELECT * FROM incentive_plans WHERE id = ?', [plan.id]);
   auditConfig('incentives', plan.name, 'updated', plan, after, req.user.id);
+  /* Taken after the slabs are rewritten, so the version holds the bands as well
+     as the plan row. This is the artefact where rollback earns its keep: a slab
+     table edited wrongly pays the wrong amount to an entire desk, and the fix
+     on the day is last week's version restored. */
+  const version = snapshot('incentive_plan', plan.id, { note: req.body.note ?? null, userId: req.user.id });
   res.json({
     ...after,
     slabs: all('SELECT * FROM incentive_slabs WHERE plan_id = ? ORDER BY basis, from_value', [plan.id]),
+    version: version?.version ?? null,
   });
 });
 
@@ -400,6 +413,7 @@ router.post('/config/plans', requirePermission('admin.rules'), (req, res) => {
   );
   const created = one('SELECT * FROM incentive_plans WHERE id = ?', [Number(r.lastInsertRowid)]);
   auditConfig('incentives', name, 'created', null, created, req.user.id);
+  snapshot('incentive_plan', created.id, { note: 'Created', userId: req.user.id });
   res.status(201).json({ ...created, slabs: [] });
 });
 
