@@ -462,6 +462,23 @@ router.post('/lead/to-list', requirePermission('list.create'), (req, res) => {
 });
 
 /**
+ * The capability for the object being exported (P3-35).
+ *
+ * This route exports whichever entity the URL names, so one blanket permission
+ * meant that allowing a supervisor to export leads through advanced search also
+ * let them export clients through the same route -- around the per-object
+ * control rather than through it.
+ */
+const EXPORT_CAPABILITY = {
+  lead: 'export.lead',
+  client: 'export.client',
+  case: 'export.case',
+  ticket: 'export.case',
+  partner: 'export.partner',
+  user: 'export.user',
+};
+
+/**
  * CSV export.
  *
  * Gated behind its own capability and audited with the row count and the exact
@@ -475,7 +492,16 @@ router.post('/lead/to-list', requirePermission('list.create'), (req, res) => {
  * object. Unmasking is a second permission and a deliberate act — `?unmask=true`
  * with pii.unmask — and it writes its own audit row when used.
  */
-router.post('/:entity/export', requireSearchable, requirePermission('data.export'), (req, res) => {
+router.post('/:entity/export', requireSearchable, (req, res, next) => {
+  const capability = EXPORT_CAPABILITY[req.params.entity];
+  /* An entity with no export capability named is refused rather than allowed.
+     A new searchable object should not become exportable by everyone simply
+     because nobody remembered to add it here. */
+  if (!capability) {
+    return res.status(403).json({ error: `Exporting ${req.params.entity} is not permitted`, required: 'export.<object>' });
+  }
+  return requirePermission(capability)(req, res, next);
+}, (req, res) => {
   const { entity } = req.params;
   const registry = registryFor(entity, req.user, req.caps);
   if (!registry) return res.status(404).json({ error: 'Not searchable' });

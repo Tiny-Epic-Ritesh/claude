@@ -243,7 +243,7 @@ router.get('/meta', requirePermission('partner.view'), (req, res) => res.json({
   groups: PARTNER_GROUPS,
   columns: PARTNER_COLUMNS.map(({ key, label, pii }) => ({ key, label, pii: Boolean(pii) })),
   export_cap: PARTNER_EXPORT_CAP,
-  may_export: can(req.user.role, 'data.export'),
+  may_export: can(req.user.role, 'export.partner'),
   may_unmask: can(req.user.role, 'pii.unmask'),
 }));
 
@@ -254,7 +254,7 @@ router.get('/meta', requirePermission('partner.view'), (req, res) => res.json({
  * acts, and the export inherits the same book and ownership rules the list
  * applies because both read the one filter above.
  */
-router.post('/export', requirePermission('partner.view'), requirePermission('data.export'), (req, res) => {
+router.post('/export', requirePermission('partner.view'), requirePermission('export.partner'), (req, res) => {
   const chosen = (Array.isArray(req.body?.columns) && req.body.columns.length
     ? req.body.columns.filter((k) => partnerColumn(k))
     : ['partner_code', 'name', 'business_name', 'partner_model', 'state_code', 'city', 'created_at']);

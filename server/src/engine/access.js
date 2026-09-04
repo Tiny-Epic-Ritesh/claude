@@ -54,7 +54,7 @@ export const CAPABILITY_CATALOGUE = [
   ['client.view.own', 'View own clients', 'Clients', 'See only clients they own', 0],
   ['client.edit', 'Edit clients', 'Clients', 'Change servicing detail on an account', 0],
   ['client.reassign', 'Reassign clients', 'Clients', 'Move an account to a different owner', 0],
-  ['client.export', 'Export clients', 'Clients', 'Bulk export of client records. The main exfiltration path in a broking CRM.', 1],
+
 
   // Product cards
   ['card.mark.exploring', 'Mark card Exploring', 'Products', null, 0],
@@ -104,8 +104,18 @@ export const CAPABILITY_CATALOGUE = [
 
   // Sensitive
   ['pii.unmask', 'Unmask client identifiers', 'Compliance', 'Reveal full mobile, email and PAN. Every use is audited.', 1],
-  ['data.export', 'Export data to CSV', 'Compliance',
-    'Take client records out of the CRM as a file. Every export is logged with its row count and filter.', 1],
+  /* P3-35. One capability per object, because "may export" is not one
+     question. Letting a supervisor take their team's leads out is a normal
+     day; letting the same person take every client record out is the
+     exfiltration path this product has to be able to close separately.
+
+     Marked sensitive: an export is the one action whose damage cannot be
+     undone by revoking the permission afterwards. The file has gone. */
+  ['export.lead', 'Export leads', 'Export', 'Download leads as a file. Masked fields stay masked.', 1],
+  ['export.client', 'Export clients', 'Export', 'Download client records. The main exfiltration path in a broking CRM.', 1],
+  ['export.case', 'Export cases', 'Export', 'Download service cases.', 1],
+  ['export.partner', 'Export partners', 'Export', 'Download partner records and their commissions.', 1],
+  ['export.user', 'Export users', 'Export', 'Download the staff list.', 1],
   ['audit.read', 'Read the audit log', 'Compliance', null, 1],
 
   // Reporting
@@ -141,6 +151,18 @@ export const SEED_ROLES = [
  * two cannot drift apart during the transition. Idempotent: safe on every boot,
  * and it never removes a capability an administrator has granted by hand.
  */
+/**
+ * Capabilities the product has withdrawn, named one by one.
+ *
+ * Deliberately a list rather than "anything not in the catalogue". Removing a
+ * capability takes grants with it, and inferring the set would mean a typo in
+ * the catalogue silently revoking access across every role.
+ */
+const WITHDRAWN = new Set([
+  'data.export',    // P3-35, replaced by export.<object>
+  'client.export',  // never enforced anywhere; replaced by export.client
+]);
+
 export function seedAccessModel(matrix) {
   CAPABILITY_CATALOGUE.forEach(([code, label, category, description, sensitive], i) => {
     run(
@@ -207,8 +229,33 @@ export function seedAccessModel(matrix) {
     console.log(`[access] revoked ${revoked.length} grant(s) withdrawn from shipped roles: ${revoked.join(', ')}`);
   }
 
+  /**
+   * Forget capabilities the product no longer defines.
+   *
+   * The revocation above takes the grants away but leaves the capability in the
+   * catalogue, so it goes on appearing in the Roles screen as something an
+   * administrator can tick -- a switch wired to nothing, which is worse than no
+   * switch, because ticking it looks like it did something.
+   *
+   * Only ever removes what the catalogue has stopped listing. A capability an
+   * administrator invented is not in the catalogue either, so this is
+   * deliberately limited to codes the product itself once shipped and has
+   * since withdrawn.
+   */
+  const defined = new Set(CAPABILITY_CATALOGUE.map(([code]) => code));
+  const stale = all('SELECT code FROM capabilities')
+    .map((r) => r.code)
+    .filter((code) => !defined.has(code) && WITHDRAWN.has(code));
+
+  for (const code of stale) {
+    run('DELETE FROM role_capabilities WHERE capability = ?', [code]);
+    run('DELETE FROM permission_set_capabilities WHERE capability = ?', [code]);
+    run('DELETE FROM capabilities WHERE code = ?', [code]);
+  }
+  if (stale.length) console.log(`[access] retired withdrawn capabilities: ${stale.join(', ')}`);
+
   invalidate();
-  return { capabilities: CAPABILITY_CATALOGUE.length, roles: SEED_ROLES.length, revoked };
+  return { capabilities: CAPABILITY_CATALOGUE.length, roles: SEED_ROLES.length, revoked, retired: stale };
 }
 
 /* -------------------------------------------------------------- cache */

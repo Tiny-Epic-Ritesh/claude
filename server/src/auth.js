@@ -63,7 +63,7 @@ export const PERMISSIONS = {
   'client.view.own':      ['sales_rm', 'sales_supervisor', 'dealer', 'product_rm'],
   'client.edit':          ['superadmin', 'admin', 'sales_rm', 'dealer', 'customer_care'],
   'client.reassign':      ['superadmin', 'admin', 'sales_supervisor'],
-  'client.export':        ['superadmin', 'admin'],
+
 
   // Product cards
   'card.mark.exploring':  ['caller', 'dealer', 'sales_rm', 'superadmin', 'admin'],
@@ -121,7 +121,14 @@ export const PERMISSIONS = {
   // Schema configuration is a distinct power from managing users or rules:
   // a field added here changes what every screen and every integration sees.
   // Export takes client data out of the system, so it is deliberately narrow.
-  'data.export':          ['superadmin', 'admin', 'sales_supervisor'],
+  /* P3-35, per object. These are exactly who could export each of these
+     yesterday through `data.export`, so nobody gains or loses access today --
+     what changes is that the four can now be decided separately. */
+  'export.lead':          ['superadmin', 'admin', 'sales_supervisor'],
+  'export.client':        ['superadmin', 'admin', 'sales_supervisor'],
+  'export.case':          ['superadmin', 'admin', 'sales_supervisor'],
+  'export.partner':       ['superadmin', 'admin', 'sales_supervisor'],
+  'export.user':          ['superadmin', 'admin'],
   'admin.objects':        ['superadmin', 'admin'],
   'admin.system':         ['superadmin'],
 

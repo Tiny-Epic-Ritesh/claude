@@ -524,7 +524,10 @@ const csvCell = (v) => {
  * such — an export is the highest-volume way client data leaves, and it should
  * not be the one path where masking is skipped by omission.
  */
-router.post('/:id/export', (req, res) => {
+/* P3-35. This had no permission gate at all: anybody who could open a list
+   could take it out as a file. Masked, but a file of five thousand masked leads
+   is still five thousand names, cities and stages leaving the building. */
+router.post('/:id/export', requirePermission('export.lead'), (req, res) => {
   const list = loadList(req);
   if (!list || !mayReadList(list, req.user)) return res.status(404).json({ error: 'List not found' });
 

@@ -171,7 +171,18 @@ export const LEAD_SORTS = {
    is descending created_at. */
 const INVERTED = new Set(['age']);
 
-router.get('/leads', (req, res) => {
+/**
+ * The filter behind the lead list, as a clause and its parameters (P3-35).
+ *
+ * Lifted out of the list handler so the export can ask the same question. Two
+ * copies of sixty lines of filtering would agree on the day they were written
+ * and disagree by the end of the month, and the report of that would be
+ * "the export is missing leads" -- which is the hardest kind of bug to believe.
+ *
+ * The scope is included, not bolted on afterwards, so there is no version of
+ * this that a caller can build without it.
+ */
+function leadFilter(req) {
   const scope = reqScope(req, 'l');
   const where = ['l.deleted_at IS NULL', scope.sql];
   const params = [...scope.params];
@@ -256,7 +267,11 @@ router.get('/leads', (req, res) => {
     if (Number.isFinite(bandDef.max)) params.push(bandDef.max);
   }
 
-  const clause = where.join(' AND ');
+  return { clause: where.join(' AND '), params };
+}
+
+router.get('/leads', (req, res) => {
+  const { clause, params } = leadFilter(req);
 
   // Bounded whatever the caller asks for: an unbounded list over 495k rows is
   // a denial of service someone reaches by typing a big number into a URL.
@@ -668,6 +683,90 @@ router.post('/leads/:id/restore', requirePermission('lead.delete'), (req, res) =
   run('UPDATE leads SET deleted_at = NULL WHERE id = ?', [gone.id]);
   audit(req.user.id, 'lead_restored', 'lead', gone.id, {});
   res.json({ restored: true });
+});
+
+/**
+ * Export the leads the screen is currently showing (P3-35).
+ *
+ * The same filter, the same scope and the same masking as the list, so the file
+ * is the screen rather than a second opinion about it.
+ *
+ * MASKING
+ * -------
+ * Through maskRecords, exactly as the list does. The ticket's words are "actual
+ * values must never appear in the export", and the way to be sure of that is
+ * not to write a careful export -- it is to make the export unable to see more
+ * than the screen. So the rows go through the same call, and somebody who wants
+ * the real numbers uses the unmask capability, which is a separate permission
+ * and writes its own audit row.
+ *
+ * The cap is the same 5,000 the bulk actions use. An export is the one place
+ * where "it worked in testing with forty rows" is not evidence of anything.
+ */
+router.post('/leads/export', requirePermission('export.lead'), (req, res) => {
+  const { clause, params } = leadFilter(req);
+
+  const chosen = Array.isArray(req.body?.columns) && req.body.columns.length
+    ? LEAD_EXPORT_COLUMNS.filter((c) => req.body.columns.includes(c.key))
+    : LEAD_EXPORT_COLUMNS.filter((c) => c.default !== false);
+  if (!chosen.length) return res.status(400).json({ error: 'Choose at least one column' });
+
+  const rows = all(
+    `SELECT l.*,
+            u.name AS owner_name,
+            p.name AS partner_name,
+            CAST(julianday('now') - julianday(l.created_at) AS INTEGER) AS age_days
+       FROM leads l
+       LEFT JOIN users u ON u.id = l.owner_id
+       LEFT JOIN partners p ON p.id = l.partner_id
+      WHERE ${clause}
+      ORDER BY l.id
+      LIMIT 5000`,
+    params,
+  );
+
+  /* The same masking the list applies to the same rows. An export is not a way
+     around field-level security -- and this is the direction that cannot be
+     undone afterwards, because the file has left. */
+  const visible = maskRecords(rows, maskFor(req, 'lead_export'));
+
+  audit(req.user.id, 'leads_exported', 'lead', null, {
+    rows: visible.length,
+    columns: chosen.map((c) => c.key),
+    filter: clause,
+    truncated: rows.length >= 5000,
+  });
+
+  return sendCsv(res, 'leads', visible, chosen);
+});
+
+/** What a lead export may contain, and what it contains by default. */
+export const LEAD_EXPORT_COLUMNS = [
+  { key: 'name', label: 'Name' },
+  { key: 'mobile', label: 'Mobile' },
+  { key: 'email', label: 'Email' },
+  { key: 'stage', label: 'Stage' },
+  { key: 'source', label: 'Source' },
+  { key: 'city', label: 'City' },
+  { key: 'owner_name', label: 'Owner' },
+  { key: 'partner_name', label: 'Partner', default: false },
+  { key: 'age_days', label: 'Age (days)' },
+  { key: 'client_code', label: 'Client code', default: false },
+  { key: 'sales_org', label: 'Business', default: false },
+  { key: 'state', label: 'State', default: false },
+  { key: 'language', label: 'Language', default: false },
+  { key: 'risk_profile', label: 'Risk profile', default: false },
+  { key: 'created_at', label: 'Created' },
+  { key: 'updated_at', label: 'Last modified', default: false },
+];
+
+/** The columns the picker offers. */
+router.get('/leads/export-columns', requirePermission('export.lead'), (_req, res) => {
+  res.json({
+    columns: LEAD_EXPORT_COLUMNS,
+    default: LEAD_EXPORT_COLUMNS.filter((c) => c.default !== false).map((c) => c.key),
+    note: 'Fields masked for you on screen are masked in the file.',
+  });
 });
 
 /* --------------------------------------------------------- import/export */

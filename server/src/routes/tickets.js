@@ -195,7 +195,7 @@ router.get('/meta', (req, res) => res.json({
      fragment and no business of the browser's. */
   columns: TICKET_COLUMNS.map(({ key, label, pii }) => ({ key, label, pii: Boolean(pii) })),
   export_cap: EXPORT_CAP,
-  may_export: can(req.user.role, 'data.export'),
+  may_export: can(req.user.role, 'export.case'),
   may_unmask: can(req.user.role, 'pii.unmask'),
 }));
 
@@ -489,7 +489,7 @@ router.post('/:id/csat', (req, res) => {
  * name and mobile in, so it carries identifiers even though a case is not a
  * person.
  */
-router.post('/export', requirePermission('data.export'), (req, res) => {
+router.post('/export', requirePermission('export.case'), (req, res) => {
   const chosen = (Array.isArray(req.body?.columns) && req.body.columns.length
     ? req.body.columns.filter((k) => ticketColumn(k))
     : ['ref', 'subject', 'status', 'priority', 'assignee_name', 'created_at', 'resolution_due', 'breached']);

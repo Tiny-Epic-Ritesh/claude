@@ -206,7 +206,7 @@ const csvCell = (v) => (v === null || v === undefined ? '""' : `"${String(v).rep
  * taking identifiers out in the clear is a decision somebody made rather than
  * a default nobody noticed.
  */
-router.post('/export', requirePermission('data.export'), (req, res) => {
+router.post('/export', requirePermission('export.client'), (req, res) => {
   const chosen = (Array.isArray(req.body?.columns) && req.body.columns.length
     ? req.body.columns.filter((k) => columnBy(k))
     : ['name', 'client_code', 'status', 'holding_value', 'brokerage_ytd', 'last_traded_at', 'owner_name']);
@@ -441,7 +441,7 @@ router.get('/meta', (req, res) =>
     /* Whether this person may take identifiers out in the clear, so the export
        dialog offers the choice only to somebody who has it rather than showing
        a control that answers 403. */
-    may_export: can(req.user.role, 'data.export'),
+    may_export: can(req.user.role, 'export.client'),
     may_unmask: can(req.user.role, 'pii.unmask'),
 
     /* Bulk reassignment, and who it may move accounts to.

@@ -426,7 +426,7 @@ router.get('/users/export-columns', requirePermission('admin.users'), (_req, res
   });
 });
 
-router.get('/users/export', requirePermission('admin.users'), (req, res) => {
+router.get('/users/export', requirePermission('export.user'), (req, res) => {
   const asked = String(req.query.columns ?? '').split(',').map((c) => c.trim()).filter(Boolean);
   const chosen = asked.length
     ? USER_EXPORT_COLUMNS.filter((c) => asked.includes(c.key))

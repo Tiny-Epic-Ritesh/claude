@@ -23,6 +23,21 @@ import {
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
 
+/* One sign-in for the file. Ten a minute per account is the limit, and several
+   test files sharing one admin account reach it easily. */
+let adminToken = null;
+const adminLogin = async () => {
+  if (adminToken) return adminToken;
+  const res = await fetch(`${BASE}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'admin@bonanza.test', password: 'bonanza' }),
+  });
+  if (!res.ok) throw new Error(`could not sign in: HTTP ${res.status}`);
+  adminToken = (await res.json()).token;
+  return adminToken;
+};
+
 let passed = 0;
 let failed = 0;
 const test = async (name, fn) => {
@@ -138,13 +153,7 @@ await test('an added field is masked in an export, not just on screen', async ()
      maskable in Setup would have been dotted on every screen and then written
      to a spreadsheet in the clear -- the one direction where it matters, since
      the file leaves the building. */
-  const login = await fetch(`${BASE}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'admin@bonanza.test', password: 'bonanza' }),
-  });
-  assert.equal(login.status, 200, 'could not sign in to check the export');
-  const { token } = await login.json();
+  const token = await adminLogin();
 
   // `city` is a real column on a lead and ships unmasked, so it can be observed
   // changing. Added as "hide" so a partial value cannot be mistaken for a pass.
@@ -156,8 +165,12 @@ await test('an added field is masked in an export, not just on screen', async ()
     headers: { Authorization: `Bearer ${token}` },
   });
   refreshMaskable();
-  const list = one('SELECT id FROM lead_lists LIMIT 1');
-  assert(list, 'no lead list seeded, so the export cannot be checked');
+  /* A list with members. An empty one exports a header and nothing else, and
+     every assertion below would then be about a row that does not exist. */
+  const list = one(`SELECT l.id FROM lead_lists l
+                     WHERE EXISTS (SELECT 1 FROM lead_list_members m WHERE m.list_id = l.id)
+                     LIMIT 1`);
+  assert(list, 'no lead list with members, so the export cannot be checked');
 
   const exportIt = async () => {
     const res = await fetch(`${BASE}/api/lists/${list.id}/export`, {
@@ -239,13 +252,11 @@ await test('the server notices the table changing underneath it', async () => {
 
      So: change the table behind the server's back, the way a reseed, a restore
      or a migration does, and it must catch up on its own. */
-  const login = await fetch(`${BASE}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'admin@bonanza.test', password: 'bonanza' }),
-  });
-  const { token } = await login.json();
-  const list = one('SELECT id FROM lead_lists LIMIT 1');
+  const token = await adminLogin();
+  const list = one(`SELECT l.id FROM lead_lists l
+                     WHERE EXISTS (SELECT 1 FROM lead_list_members m WHERE m.list_id = l.id)
+                     LIMIT 1`);
+  assert(list, 'no lead list with members, so the export cannot be checked');
 
   const cityInExport = async () => {
     const res = await fetch(`${BASE}/api/lists/${list.id}/export`, {
@@ -257,12 +268,16 @@ await test('the server notices the table changing underneath it', async () => {
   };
 
   // Added properly, so the server knows about it.
-  await fetch(`${BASE}/api/setup/field-masking/fields`, {
+  const added = await fetch(`${BASE}/api/setup/field-masking/fields`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ field: 'city', label: 'City', strategy: 'hide' }),
   });
-  assert((await cityInExport()).includes('*'), 'the field was not masked even when added properly');
+  assert.equal(added.status, 200, `could not add the field: HTTP ${added.status}`);
+
+  const baseline = await cityInExport();
+  assert(baseline.trim(), 'the export came back empty, so there is nothing to mask');
+  assert(baseline.includes('*'), `the field was not masked even when added properly: ${baseline}`);
 
   try {
     /* Now taken away without telling it, which is what a reseed does. Retried
