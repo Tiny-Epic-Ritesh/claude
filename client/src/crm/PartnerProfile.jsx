@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, money, rupees, shortDate, dateTime } from '../api.js';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Progress, Tabs } from '../components/ui.jsx';
+import BackLink from '../components/BackLink.jsx';
 
 /** Partner Profile View (BRD §12) — replaces the lead detail view for partners. */
 export default function PartnerProfile({ session }) {
@@ -40,7 +41,7 @@ export default function PartnerProfile({ session }) {
     <>
       <div className="page-head">
         <div>
-          <Link to="/partners" className="small muted">← Partners</Link>
+          <BackLink to="/partners" label="Partners" />
           <h1 style={{ marginTop: 5 }}>{partner.name}</h1>
           <div className="row wrap small muted" style={{ marginTop: 5 }}>
             {partner.business_name && <span>{partner.business_name} ·</span>}

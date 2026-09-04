@@ -35,6 +35,17 @@ export const BUILT_IN = Object.keys(MASKERS);
  * paying a query per record to avoid.
  */
 let custom = [];
+let cachedAt = 0;
+let maskerMap = {};
+
+/**
+ * How long the cache and the table may disagree.
+ *
+ * Small enough that nobody watches a field they just added stay in the clear,
+ * large enough that a page of five hundred leads is one query rather than five
+ * hundred. The list changes a few times a year.
+ */
+const TTL_MS = 5000;
 
 /**
  * Re-read the table and hand security.js the maskers it should apply.
@@ -60,9 +71,20 @@ export function refreshMaskable() {
     // by the wrong shape is how a value leaks while looking obscured.
     if (mask) map[row.field] = mask;
   }
-  registerMaskers(map);
+  maskerMap = map;
+  cachedAt = Date.now();
   return custom;
 }
+
+/** The maskers, re-read if this copy has gone stale. */
+function currentMaskers() {
+  if (Date.now() - cachedAt > TTL_MS) refreshMaskable();
+  return maskerMap;
+}
+
+/* security.js asks through this, so it can never hold a copy that has gone out
+   of date without anything being able to tell it. */
+registerMaskers(currentMaskers);
 
 /** Every maskable field, shipped and configured, for the Setup screen. */
 export function maskableFields() {
@@ -205,6 +227,7 @@ export function addMaskable(field, label, strategy, userId) {
     return { error: `"${strategy}" is not a masking strategy` };
   }
   if (one('SELECT field FROM maskable_field WHERE field = ?', [field])) {
+    refreshMaskable();
     return { error: `"${field}" is already in the list` };
   }
 
@@ -222,6 +245,10 @@ export function removeMaskable(field) {
     return { error: `"${field}" is masked as standard and cannot be removed` };
   }
   if (!one('SELECT field FROM maskable_field WHERE field = ?', [field])) {
+    /* Refreshed even though nothing is being removed. Being asked to remove a
+       field the table does not have is the strongest hint available that this
+       process is holding a list the database does not agree with. */
+    refreshMaskable();
     return { error: `"${field}" is not in the list` };
   }
 

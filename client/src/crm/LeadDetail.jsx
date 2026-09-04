@@ -12,6 +12,7 @@ import ActionMenu from '../components/ActionMenu.jsx';
 import ActionModal from './ActionModals.jsx';
 import { LeadMarketContext } from '../components/Market.jsx';
 import { useLeadActions, CallNumber, EmailLink } from './leadActions.jsx';
+import BackLink from '../components/BackLink.jsx';
 
 /**
  * The lead record. Sections and the action bar vary by role (BRD §11) — the
@@ -65,7 +66,7 @@ export default function LeadDetail({ session }) {
       {/* Header strip — identical for every role */}
       <div className="page-head">
         <div>
-          <Link to="/leads" className="small muted">← Leads</Link>
+          <BackLink to="/leads" label="Leads" />
           <h1 style={{ marginTop: 5 }}>{lead.name}</h1>
           <div className="row wrap small muted" style={{ marginTop: 5 }}>
             {/* Click to dial. Goes through CUBE, not a tel: link, so the call is

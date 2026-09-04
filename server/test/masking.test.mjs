@@ -148,7 +148,13 @@ await test('an added field is masked in an export, not just on screen', async ()
 
   // `city` is a real column on a lead and ships unmasked, so it can be observed
   // changing. Added as "hide" so a partial value cannot be mistaken for a pass.
-  run("DELETE FROM maskable_field WHERE field = 'city'");
+  /* Cleared through the route, not the table. Deleting the row here would
+     leave the SERVER still holding city in its cache, so the "before" export
+     would come back masked and the test would fail on its own setup. */
+  await fetch(`${BASE}/api/setup/field-masking/fields/city`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
   refreshMaskable();
   const list = one('SELECT id FROM lead_lists LIMIT 1');
   assert(list, 'no lead list seeded, so the export cannot be checked');
@@ -218,6 +224,73 @@ await test('every strategy actually obscures something', () => {
     const out = fn('ABCDE1234F');
     assert.notEqual(out, 'ABCDE1234F', `strategy "${name}" returns the value unchanged`);
     assert(out.includes('•'), `strategy "${name}" does not obscure anything`);
+  }
+});
+
+await test('the server notices the table changing underneath it', async () => {
+  /* How this went wrong for real. A field was added through the screen, then a
+     reseed emptied the table while the server kept running -- and it went on
+     masking a field that no longer existed, because the cache was only ever
+     filled by this process making the change itself.
+
+     Harmless in that direction. The same drift the other way round is a field
+     somebody just added NOT being masked, which is not harmless, and it lasted
+     until a restart either way.
+
+     So: change the table behind the server's back, the way a reseed, a restore
+     or a migration does, and it must catch up on its own. */
+  const login = await fetch(`${BASE}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'admin@bonanza.test', password: 'bonanza' }),
+  });
+  const { token } = await login.json();
+  const list = one('SELECT id FROM lead_lists LIMIT 1');
+
+  const cityInExport = async () => {
+    const res = await fetch(`${BASE}/api/lists/${list.id}/export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ columns: ['name', 'city'] }),
+    });
+    return ((await res.json()).csv ?? '').split('\n')[1] ?? '';
+  };
+
+  // Added properly, so the server knows about it.
+  await fetch(`${BASE}/api/setup/field-masking/fields`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ field: 'city', label: 'City', strategy: 'hide' }),
+  });
+  assert((await cityInExport()).includes('*'), 'the field was not masked even when added properly');
+
+  try {
+    /* Now taken away without telling it, which is what a reseed does. Retried
+       because the server is mid-export on the same file and SQLite will refuse
+       a writer while a reader holds the lock. */
+    for (let i = 0; i < 20; i += 1) {
+      try { run("DELETE FROM maskable_field WHERE field = 'city'"); break; }
+      catch (err) {
+        if (!/locked|busy/i.test(err.message) || i === 19) throw err;
+        await new Promise((r) => setTimeout(r, 100));   // eslint-disable-line no-await-in-loop
+      }
+    }
+
+    // Within the TTL it must stop, without a restart and without being asked.
+    const deadline = Date.now() + 9000;
+    let row = await cityInExport();
+    while (row.includes('*') && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 750));
+      row = await cityInExport();               // eslint-disable-line no-await-in-loop
+    }
+    assert(!row.includes('*'),
+      `the server is still masking a field the table no longer has: ${row}`);
+  } finally {
+    try { run("DELETE FROM maskable_field WHERE field = 'city'"); } catch { /* the route below is the real cleanup */ }
+    await fetch(`${BASE}/api/setup/field-masking/fields/city`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
   }
 });
 

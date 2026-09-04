@@ -4,6 +4,7 @@ import { api, dateTime, shortDate } from '../api.js';
 import {
   useApi, Icon, Loading, ErrorBanner, Empty, Spinner, PriorityBadge, Tabs, Modal,
 } from '../components/ui.jsx';
+import BackLink from '../components/BackLink.jsx';
 
 const STATUSES = ['Open', 'Pending', 'Waiting on Client', 'Resolved', 'Closed'];
 
@@ -352,7 +353,7 @@ function TicketDetail({ id, session }) {
     <>
       <div className="page-head">
         <div>
-          <Link to="/tickets" className="small muted">← Tickets</Link>
+          <BackLink to="/tickets" label="Tickets" />
           <h1 style={{ marginTop: 5 }}>{ticket.ref} · {ticket.subject}</h1>
           <div className="row wrap small muted" style={{ marginTop: 5 }}>
             <PriorityBadge priority={ticket.priority} />

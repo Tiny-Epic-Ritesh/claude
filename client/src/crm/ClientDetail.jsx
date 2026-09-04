@@ -12,9 +12,10 @@
  * which one they are looking at.
  */
 
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { rupees, rupeesCompact, shortDate, dateTime } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty } from '../components/ui.jsx';
+import BackLink from '../components/BackLink.jsx';
 
 const SEGMENT_BADGE = {
   Equity: 'badge-blue',
@@ -34,7 +35,6 @@ const STATUS_BADGE = {
 
 export default function ClientDetail() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const [client, { loading, error }] = useApi(`/clients/${id}`, [id]);
 
   if (loading) return <Loading label="Loading account…" />;
@@ -47,9 +47,12 @@ export default function ClientDetail() {
     <div>
       <div className="page-head">
         <div>
-          <button className="btn-ghost btn-sm" onClick={() => navigate('/clients')}>
-            <Icon name="arrow_back" size={15} /> Clients
-          </button>
+          <BackLink
+            to="/clients"
+            label="Clients"
+            className="btn-ghost btn-sm"
+            icon={<Icon name="arrow_back" size={15} />}
+          />
           <h1 style={{ marginTop: 6 }}>{client.name}</h1>
           <div className="row wrap" style={{ gap: 8 }}>
             <span className="mono">{client.client_code}</span>

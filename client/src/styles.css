@@ -6143,3 +6143,18 @@ tr.row-inactive .user-cell strong { color: var(--ink-3); }
   .cond-leaf select:nth-child(3),
   .cond-leaf input { flex: 1 1 100%; }
 }
+
+/* A back control is a button rather than a link, because where it goes depends
+   on whether there is anything behind it (P3-26). This makes it read as the
+   text link it replaced on the screens that used one. */
+.backlink {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.backlink:hover { text-decoration: underline; }
+/* Except where it replaced a real button, which brings its own chrome. */
+.backlink.btn-ghost { padding: revert; border: revert; background: revert; }

@@ -16,9 +16,10 @@
  */
 
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { api, dateTime, shortDate } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty, Modal } from '../components/ui.jsx';
+import BackLink from '../components/BackLink.jsx';
 
 const KIND_BADGE = { static: 'badge-blue', refreshable: 'badge-green', dynamic: 'badge-amber' };
 
@@ -132,9 +133,12 @@ export default function ListDetail({ session }) {
     <div>
       <div className="page-head">
         <div>
-          <button className="btn-ghost btn-sm" onClick={() => navigate('/lists')}>
-            <Icon name="arrow_back" size={15} /> Lead Lists
-          </button>
+          <BackLink
+            to="/lists"
+            label="Lead Lists"
+            className="btn-ghost btn-sm"
+            icon={<Icon name="arrow_back" size={15} />}
+          />
           <h1 style={{ marginTop: 6 }}>{list.name}</h1>
           <div className="row wrap" style={{ gap: 8 }}>
             <span className={`badge ${KIND_BADGE[list.kind] || ''}`}>{list.kind_label}</span>

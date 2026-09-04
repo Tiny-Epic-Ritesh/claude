@@ -312,11 +312,18 @@ export const MASKERS = {
  * file would be a cycle. Empty until registerMaskers() is called, which means
  * the built-ins work normally even if the table is unreadable.
  */
-let customMaskers = {};
+let customSource = () => ({});
 
-/** Replace the configured set. Called on boot and after any change. */
-export function registerMaskers(map) {
-  customMaskers = map ?? {};
+/**
+ * Tell this module where the configured maskers come from.
+ *
+ * A function rather than a snapshot. masking.js owns the freshness question --
+ * it is the half that can read the table -- and handing over a value here would
+ * mean this module held a copy that nothing could invalidate.
+ */
+export function registerMaskers(source) {
+  if (typeof source === 'function') customSource = source;
+  else customSource = () => source ?? {};
 }
 
 /**
@@ -326,7 +333,7 @@ export function registerMaskers(map) {
  * `pan` or `mobile` is obscured -- a configuration mistake should be unable to
  * make an existing field LESS masked than it shipped.
  */
-export const activeMaskers = () => ({ ...customMaskers, ...MASKERS });
+export const activeMaskers = () => ({ ...customSource(), ...MASKERS });
 
 /**
  * Mask PII on an outbound record unless the caller may unmask.
