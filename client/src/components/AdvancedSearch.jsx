@@ -23,6 +23,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import FieldPicker from './FieldPicker.jsx';
 import { api } from '../api.js';
 import { useApi, Icon, Spinner, Empty, ErrorBanner, Modal } from './ui.jsx';
 
@@ -137,6 +138,85 @@ function Group({ node, fields, onChange, onRemove, depth = 0 }) {
 
 /* ------------------------------------------------------------ one row */
 
+/**
+ * The saved filters, in a list somebody can work with. P3-05.
+ *
+ * They were rendered all at once as a row of chips, and on a tenant that has
+ * been used for a while that row is the screen -- you scroll past every filter
+ * anybody has ever saved to reach the query builder underneath, which is what
+ * you actually came for.
+ *
+ * So: a handful shown, the rest behind a count, and a search box once there are
+ * enough to make searching quicker than looking. Both, as the ticket asked,
+ * rather than choosing -- they answer different situations. Somebody who saved
+ * a filter this morning wants it in the first few; somebody looking for one a
+ * colleague made last quarter wants to type its name.
+ */
+function SavedFilters({ saved, onPick }) {
+  const [expanded, setExpanded] = useState(false);
+  const [q, setQ] = useState('');
+
+  /* The threshold below which none of this is worth it. Six chips is a row, not
+     a problem, and a search box over six things is furniture. */
+  const SHOWN = 6;
+  const SEARCHABLE_FROM = 10;
+
+  const term = q.trim().toLowerCase();
+  const matched = term
+    ? saved.filter((s) => `${s.name} ${s.described ?? ''}`.toLowerCase().includes(term))
+    : saved;
+
+  // A search shows everything it matched: hiding results behind More when
+  // somebody has just narrowed the list would be the same problem again.
+  const visible = term || expanded ? matched : matched.slice(0, SHOWN);
+  const hidden = matched.length - visible.length;
+
+  return (
+    <div className="saved-row">
+      <span className="tiny muted">Saved:</span>
+
+      {saved.length >= SEARCHABLE_FROM && (
+        <input
+          type="search"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder={`Search ${saved.length} filters…`}
+          aria-label="Search saved filters"
+          className="saved-search"
+        />
+      )}
+
+      {visible.map((s) => (
+        <button
+          key={s.id}
+          type="button"
+          className="chip"
+          title={s.described}
+          onClick={() => onPick(s)}
+        >
+          {s.name}
+        </button>
+      ))}
+
+      {hidden > 0 && (
+        <button type="button" className="chip chip-more" onClick={() => setExpanded(true)}>
+          {`${hidden} more`}
+        </button>
+      )}
+
+      {expanded && !term && matched.length > SHOWN && (
+        <button type="button" className="chip chip-more" onClick={() => setExpanded(false)}>
+          Show fewer
+        </button>
+      )}
+
+      {term && matched.length === 0 && (
+        <span className="tiny muted">No saved filter matches “{q}”.</span>
+      )}
+    </div>
+  );
+}
+
 function Row({ row, fields, onChange, onRemove }) {
   const field = fields.find((f) => f.api_name === row.field);
   const op = field?.operators.find((o) => o.key === row.operator);
@@ -151,19 +231,10 @@ function Row({ row, fields, onChange, onRemove }) {
 
   return (
     <div className="qrow">
-      <select value={row.field} onChange={(e) => pickField(e.target.value)} className="qfield">
-        <option value="">Choose a field…</option>
-        {fields.filter((f) => !f.custom).map((f) => (
-          <option key={f.api_name} value={f.api_name}>{f.label}</option>
-        ))}
-        {fields.some((f) => f.custom) && (
-          <optgroup label="Added in Setup">
-            {fields.filter((f) => f.custom).map((f) => (
-              <option key={f.api_name} value={f.api_name}>{f.label}</option>
-            ))}
-          </optgroup>
-        )}
-      </select>
+      {/* A searchable picker rather than a native select. P3-04: the real
+          tenant carries 338 lead fields, and a select cannot hold a search
+          box. */}
+      <FieldPicker fields={fields} value={row.field} onChange={pickField} />
 
       <select
         value={row.operator}
@@ -299,20 +370,10 @@ export default function AdvancedSearch({ entity = 'lead', session, onResults, on
       )}
 
       {saved?.length > 0 && (
-        <div className="saved-row">
-          <span className="tiny muted">Saved:</span>
-          {saved.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              className="chip"
-              title={s.described}
-              onClick={() => { try { setTree(JSON.parse(s.tree)); } catch { /* ignore */ } }}
-            >
-              {s.name}
-            </button>
-          ))}
-        </div>
+        <SavedFilters
+          saved={saved}
+          onPick={(s) => { try { setTree(JSON.parse(s.tree)); } catch { /* ignore */ } }}
+        />
       )}
 
       <ErrorBanner error={error} onDismiss={() => setError(null)} />

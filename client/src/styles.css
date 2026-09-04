@@ -1445,6 +1445,67 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
 :root[data-theme='dark'] .popover-item[aria-selected='true'] { color: var(--accent); }
 
 /* Click-catcher so the menu closes when you click anywhere else. */
+/* P3-05: the saved-filter row wraps, carries its own search once it is long
+   enough to need one, and keeps the rest behind a count. */
+.saved-search { max-width: 12rem; }
+
+.chip-more {
+  border-style: dashed;
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------ field picker */
+
+/**
+ * The searchable field selector in Advanced Search. P3-04.
+ *
+ * Shaped to read like the `<select>` it replaced, so a row of query controls
+ * still lines up: same height, same border, caret on the right.
+ */
+.fieldpicker { position: relative; }
+
+.fieldpicker-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+  text-align: start;
+  cursor: pointer;
+}
+
+.fieldpicker-panel {
+  top: calc(100% + 4px);
+  inset-inline-start: 0;
+  min-width: 17rem;
+  max-width: 22rem;
+  padding: 4px;
+}
+
+/* Bounded, or a 338-field list becomes the page. */
+.fieldpicker-list { max-height: 17rem; overflow-y: auto; }
+
+.fieldpicker-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 9px;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: start;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+/* One highlight, driven by the keyboard cursor -- the mouse moves it too, so
+   hover and arrow keys cannot disagree about which row is next. */
+.fieldpicker-item.is-cursor { background: var(--hairline-2); color: var(--ink); }
+.fieldpicker-item.is-chosen { background: var(--accent-soft); color: var(--accent-dark); font-weight: 600; }
+:root[data-theme='dark'] .fieldpicker-item.is-chosen { color: var(--accent); }
+
 /* ------------------------------------------------------- filter bars */
 
 /**
