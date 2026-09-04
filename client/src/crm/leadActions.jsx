@@ -65,6 +65,48 @@ export function useLeadActions({ session, reload, onError, onNotice }) {
     }
   }
 
+  /**
+   * Do what the lead's next-step advice says, on the card it is about. P3-29.
+   *
+   * The advice used to route to the add-a-product-interest picker, which lists
+   * the products the lead is NOT engaged on -- so the one product the advice
+   * concerned was the one the dropdown could never show. It also hardcoded
+   * EXPLORING, ignoring the state the advice actually asked for.
+   *
+   * The directive now carries its card, so this acts on that card directly and
+   * no picker is involved. That is also what makes it produce the same result
+   * as pressing the button on the product card itself, rather than something
+   * adjacent to it.
+   */
+  async function nextStep(lead, step) {
+    const action = step?.action;
+    if (!action) return;
+
+    if (action.kind === 'state' && step.card_id) {
+      try {
+        await api.post(`/cards/${step.card_id}/state`, {
+          state: action.to,
+          note: 'From the next-step advice on the lead',
+        });
+        onNotice?.(`${step.product} moved to ${action.to.toLowerCase()}.`);
+        reload?.();
+      } catch (err) { onError?.(err.message); }
+      return;
+    }
+
+    if (action.kind === 'rm' && step.card_id) {
+      try {
+        await api.post(`/cards/${step.card_id}/request-product-rm`, {});
+        onNotice?.(`A Product RM has been requested for ${step.product}.`);
+        reload?.();
+      } catch (err) { onError?.(err.message); }
+      return;
+    }
+
+    // Everything else is a screen to open rather than a record to change.
+    run(action.kind, lead);
+  }
+
   function run(key, lead, extra = null) {
     switch (key) {
       case 'call': return call(lead, extra?.product_type_id ?? null);
@@ -175,7 +217,7 @@ export function useLeadActions({ session, reload, onError, onNotice }) {
     } catch (err) { onError?.(err.message); }
   }
 
-  return { run, runBulk, saveAsList, exportCsv, modal, setModal, dialling };
+  return { run, runBulk, nextStep, saveAsList, exportCsv, modal, setModal, dialling };
 }
 
 /**

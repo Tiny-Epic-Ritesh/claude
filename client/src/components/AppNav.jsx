@@ -15,13 +15,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { api, ROLE_LABEL } from '../api.js';
-import { Icon, Avatar } from './ui.jsx';
+import { Icon, Avatar, useDismiss } from './ui.jsx';
 
 /* ------------------------------------------------------- app launcher */
 
 export function AppLauncher({ apps = [], activeApp, onPick }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
+  const wrap = useDismiss(open, () => setOpen(false));
 
   const term = q.trim().toLowerCase();
   const matches = (t) => !term || t.label.toLowerCase().includes(term);
@@ -30,7 +31,7 @@ export function AppLauncher({ apps = [], activeApp, onPick }) {
   const allTabs = [...new Map(apps.flatMap((a) => a.tabs).map((t) => [t.id, t])).values()].filter(matches);
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div style={{ position: 'relative' }} ref={wrap}>
       <button
         className="waffle"
         onClick={() => setOpen((o) => !o)}
@@ -43,7 +44,6 @@ export function AppLauncher({ apps = [], activeApp, onPick }) {
 
       {open && (
         <>
-          <div className="popover-scrim" onClick={() => setOpen(false)} />
           <div className="popover launcher" role="dialog" aria-label="App Launcher">
             <div style={{ padding: '4px 6px 10px' }}>
               <input
@@ -140,6 +140,7 @@ export function GlobalSearch() {
   const [results, setResults] = useState(null);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
+  const wrap = useDismiss(open, () => setOpen(false));
   const timer = useRef(null);
   const navigate = useNavigate();
 
@@ -167,7 +168,7 @@ export function GlobalSearch() {
   const groups = results ? Object.entries(results.groups || {}).filter(([, rows]) => rows.length) : [];
 
   return (
-    <div className="globalsearch">
+    <div className="globalsearch" ref={wrap}>
       <Icon name="search" size={17} style={{ color: 'var(--ink-4)' }} />
       <input
         type="search"
@@ -181,7 +182,6 @@ export function GlobalSearch() {
 
       {open && results && (
         <>
-          <div className="popover-scrim" onClick={() => setOpen(false)} />
           <div className="popover searchresults" role="listbox">
             {!groups.length && <div className="tiny muted" style={{ padding: '10px 12px' }}>Nothing matched “{q}”.</div>}
             {groups.map(([kind, rows]) => (
@@ -216,9 +216,10 @@ export function GlobalSearch() {
  */
 export function UserMenu({ session, orgName, onSignOut }) {
   const [open, setOpen] = useState(false);
+  const wrap = useDismiss(open, () => setOpen(false));
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div style={{ position: 'relative' }} ref={wrap}>
       <button className="usermenu-trigger" onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}>
         <Avatar name={session.name} size={30} seed={session.email} />
         <Icon name="expand_more" size={16} style={{ color: 'var(--ink-4)' }} />
@@ -226,7 +227,6 @@ export function UserMenu({ session, orgName, onSignOut }) {
 
       {open && (
         <>
-          <div className="popover-scrim" onClick={() => setOpen(false)} />
           <div className="popover usermenu" role="menu">
             <div className="usermenu-head">
               <Avatar name={session.name} size={40} seed={session.email} />

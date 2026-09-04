@@ -208,6 +208,19 @@ export function nextStepForLead(cards = [], caps = new Set()) {
   }
 
   return {
+    /* The card this advice is about. P3-29.
+     *
+     * It used to say only which product, so the client could not act on it --
+     * "Mark as Warm" fell through to the add-a-product-interest picker, which
+     * by design lists the products the lead is NOT engaged on. The one product
+     * the advice was about was therefore the one product the dropdown could
+     * never offer.
+     *
+     * With the id here the button does the thing directly, and the picker is
+     * not involved at all -- which is also what makes it produce the same
+     * result as the product card, rather than something adjacent to it. */
+    card_id: card.id ?? null,
+    product_type_id: card.product_type_id ?? null,
     product: card.product_name ?? card.product_code,
     state: card.state,
     state_label: step.state_label,
@@ -217,7 +230,12 @@ export function nextStepForLead(cards = [], caps = new Set()) {
     days_in_state: days,
     // What the button would do, so the header can offer it rather than
     // describe it. Null when this role may not.
-    action: step.primary?.allowed ? step.primary : null,
+    /* `none` means there is nothing to chase, so it gets no button. A control
+       that is rendered and does nothing is worse than no control -- it is the
+       defect P3-28 was raised for, and shipping one deliberately would be an
+       odd way to close that ticket. The headline still says the record is
+       finished; it just does not offer an action it does not have. */
+    action: step.primary?.allowed && step.primary.kind !== 'none' ? step.primary : null,
     blocked_reason: step.primary && !step.primary.allowed ? step.primary.blocked_reason : null,
   };
 }

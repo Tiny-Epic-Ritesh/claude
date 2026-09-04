@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { api, STATE_LABEL } from '../api.js';
@@ -34,6 +34,47 @@ export function useDropUp(open, triggerRef, menuRef, deps = []) {
   }, [open, ...deps]);
 
   return dropUp;
+}
+
+/**
+ * Close a popover on an outside click or Escape. P3-31.
+ *
+ * WHY A LISTENER AND NOT A SCRIM
+ * ------------------------------
+ * There was a scrim -- `.popover-scrim`, `position: fixed; inset: 0` -- behind
+ * all four header popovers, and it had never worked. The header sets
+ * `backdrop-filter`, and a filtered ancestor becomes the containing block for
+ * any `position: fixed` descendant, so `inset: 0` resolved to the header's own
+ * box rather than to the viewport. The scrim covered the strip it sat in and
+ * nothing below it, which is exactly what a user sees: clicking the page leaves
+ * the launcher open, clicking the header closes it.
+ *
+ * A document listener has no containing block to be trapped by, and it brings
+ * the Escape key with it, which the scrim never offered.
+ *
+ * Returns a ref for the wrapper that should count as "inside".
+ */
+export function useDismiss(open, close) {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+
+    /* mousedown rather than click: a click fires after the trigger that opened
+       the popover has been released, so on a toggling trigger the same gesture
+       would close it and immediately reopen it. */
+    const onDown = (e) => { if (!ref.current?.contains(e.target)) close(); };
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open, close]);
+
+  return ref;
 }
 
 /** Data-loading hook: const [data, { loading, error, reload }] = useApi('/leads'). */
@@ -308,6 +349,7 @@ export function Avatar({ name, size = 32, seed }) {
  */
 export function OrgSwitcher({ orgs = [], value, onChange }) {
   const [open, setOpen] = useState(false);
+  const wrap = useDismiss(open, () => setOpen(false));
 
   // A user who holds one book has nothing to switch, so the control is not
   // rendered at all — an inert dropdown would only invite the question
@@ -317,7 +359,7 @@ export function OrgSwitcher({ orgs = [], value, onChange }) {
   const active = orgs.find((o) => o.code === value);
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div style={{ position: 'relative' }} ref={wrap}>
       <button className="org-switch" onClick={() => setOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={open}>
         <span className="org-swatch" />
         {active ? active.name : 'All businesses'}
@@ -327,7 +369,6 @@ export function OrgSwitcher({ orgs = [], value, onChange }) {
       {open && (
         <>
           {/* Catches the next click anywhere else so the menu closes. */}
-          <div className="popover-scrim" onClick={() => setOpen(false)} />
 
           <div className="popover" role="listbox" style={{ top: 'calc(100% + 6px)', right: 0, minWidth: 246 }}>
             <button

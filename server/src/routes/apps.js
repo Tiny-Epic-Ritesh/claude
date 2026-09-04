@@ -175,7 +175,19 @@ export function appsFor(user, orgs) {
         .map((id) => TABS[id])
         .filter(Boolean)
         .filter((t) => permitted(user, t.needs) && inOrg(t, orgs) && visible.has(t.id));
-      return { ...app, tabs, primary: tabs[0]?.to ?? '/' };
+      /* The tab the launcher opens. P3-32.
+
+         It used to be `tabs[0]`, and every app lists `home` first -- so every
+         console's primary was `/`, and switching consoles navigated to the page
+         you were already on. React Router did nothing, the body did not change,
+         and the switch looked broken. It was only ever visible when you
+         happened to be somewhere other than Home.
+
+         A console opens on the work it is for: Service on Cases, Sales on
+         Leads, Partner on Partners. Home is a tab every console shares, which
+         makes it the one tab that cannot identify any of them. */
+      const landing = tabs.find((t) => t.id !== 'home') ?? tabs[0];
+      return { ...app, tabs, primary: landing?.to ?? '/' };
     })
     // An app whose every tab was filtered away is not an app — showing it would
     // hand the user a door that opens onto nothing.

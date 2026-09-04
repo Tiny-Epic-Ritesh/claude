@@ -1445,7 +1445,67 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
 :root[data-theme='dark'] .popover-item[aria-selected='true'] { color: var(--accent); }
 
 /* Click-catcher so the menu closes when you click anywhere else. */
-.popover-scrim { position: fixed; inset: 0; z-index: 190; }
+/* ------------------------------------------------- console switching */
+
+/**
+ * The beat between consoles. P3-32.
+ *
+ * Switching used to be silent: every app's primary route was Home, so moving
+ * between consoles navigated to the page you were already on and only the tab
+ * strip changed. The route is fixed; this makes the change of context
+ * unmistakable rather than a repaint.
+ *
+ * A thin band under the tab strip rather than a full overlay -- the switch is
+ * quick, and blanking the page for it would cost more than it explains.
+ */
+.console-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2, var(--surface));
+  animation: console-switch-in 220ms ease-out;
+}
+
+.console-switch::before {
+  content: '';
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--accent);
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: console-switch-spin 620ms linear infinite;
+}
+
+.console-switch-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink-2, inherit);
+}
+
+@keyframes console-switch-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes console-switch-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* The words carry the message; the movement is decoration. */
+@media (prefers-reduced-motion: reduce) {
+  .console-switch { animation: none; }
+  .console-switch::before { animation: none; border-right-color: var(--accent); opacity: 0.4; }
+}
+
+/* The popover scrim is gone. It never worked: the header sets backdrop-filter,
+   and a filtered ancestor becomes the containing block for a position:fixed
+   descendant -- so inset:0 resolved to the header's own box, and the scrim
+   covered the strip it sat in and nothing below it. Dismissal is a document
+   listener now (useDismiss in components/ui.jsx), which no containing block can
+   trap and which brings Escape with it. P3-31. */
 
 /* ----------------------------------------------------------- timeline */
 

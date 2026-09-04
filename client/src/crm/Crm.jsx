@@ -153,6 +153,7 @@ export default function Crm() {
   const [orgs, setOrgs] = useState([]);
   const [apps, setApps] = useState([]);
   const [features, setFeatures] = useState({});
+  const [switching, setSwitching] = useState(null);   // console name, mid-switch
   const [appId, setAppId] = useState(() => {
     try { return localStorage.getItem('bnz_app') || null; } catch { return null; }
   });
@@ -220,11 +221,34 @@ export default function Crm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, activeOrg]);
 
+  /* Switching console. P3-32.
+   *
+   * The switch has to be visible, and until now it often was not: every app's
+   * primary route was Home, so moving between consoles navigated to the page
+   * you were already on and nothing changed but the tab strip. The server now
+   * lands each console on its own work, and this puts a short, named beat in
+   * front of it so the change of context is unmistakable rather than a repaint.
+   *
+   * Named, not a spinner: "Service Console" tells you the switch you asked for
+   * is the switch you are getting, which a bare spinner does not. */
   const pickApp = (app) => {
+    if (app.id === appId) { navigate(app.primary); return; }
+
+    setSwitching(app.label);
     setAppId(app.id);
     try { localStorage.setItem('bnz_app', app.id); } catch { /* ignore */ }
     navigate(app.primary);
   };
+
+  /* Clear the beat once the new console has had a frame to render. Time-based
+     rather than tied to a load event, because the destination chunk is usually
+     already warm and there is nothing to wait for -- the pause exists for the
+     reader, not for the network. */
+  useEffect(() => {
+    if (!switching) return undefined;
+    const t = setTimeout(() => setSwitching(null), 420);
+    return () => clearTimeout(t);
+  }, [switching]);
 
   const switchOrg = (code) => {
     setActiveOrg(code);
@@ -348,6 +372,15 @@ export default function Crm() {
         </header>
 
         <TabBar app={apps.find((a) => a.id === appId)} />
+
+        {/* The switch, made visible. P3-32. Announced politely so a screen
+            reader hears the change of context too, and reduced-motion viewers
+            get the words without the movement. */}
+        {switching && (
+          <div className="console-switch" role="status" aria-live="polite">
+            <span className="console-switch-name">{switching}</span>
+          </div>
+        )}
 
         {/* ENH-03 / ENH-04: on every page rather than the cockpit alone, and
             only for roles and people configured to see it. */}

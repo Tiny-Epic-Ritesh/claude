@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, money, rupees, shortDate, dateTime, mins, STATE_LABEL, ROLE_LABEL, appUrl } from '../api.js';
+import { checkField, checkAll, fieldErrorsFrom } from '../fieldRules.js';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, AgeBadge, PriorityBadge, Progress, CardDot, Icon } from '../components/ui.jsx';
 import ActivityComposer from './ActivityComposer.jsx';
 import InCall from './InCall.jsx';
@@ -113,10 +114,13 @@ export default function LeadDetail({ session }) {
               {lead.next_step.action && (
                 <button
                   className="btn btn-sm btn-accent"
-                  onClick={() => actions.run(
-                    lead.next_step.action.kind === 'state' ? 'card' : lead.next_step.action.kind,
-                    lead,
-                  )}
+                  onClick={() => {
+                    /* "Open the KYC journey" means the one on this record, so it
+                       switches to the tab that already shows it rather than
+                       leaving the lead or starting a second journey. */
+                    if (lead.next_step.action.kind === 'kyc_view') { setTab('kyc'); return; }
+                    actions.nextStep(lead, lead.next_step);
+                  }}
                 >
                   {lead.next_step.action.label}
                 </button>
@@ -856,17 +860,74 @@ function EditLead({ lead, session, onClose, onSaved }) {
       }
       if (customFields.length) body.custom = custom;
 
-      if (!Object.keys(body).length) { onClose(); return; }
+      /* Check the formats before asking the server to. It would refuse these
+         anyway and say the same thing -- this only means hearing it without a
+         round trip, and hearing all of them at once rather than the first. */
+      const problems = checkAll(editable.filter((f) => !gate(f.api_name)), form);
+      if (Object.keys(problems).length) {
+        setFieldErrors(problems);
+        setError(Object.keys(problems).length === 1
+          ? Object.values(problems)[0]
+          : `${Object.keys(problems).length} fields need correcting before this can be saved.`);
+        setBusy(false);
+        return;
+      }
+
+      /* Nothing to send is not the same as saved.
+
+         This used to close the form, which is how an edit that changed only a
+         field the role may not write disappeared without a word -- the record
+         did not save and nothing said why, which is exactly what P3-30
+         reported. */
+      if (!Object.keys(body).length) {
+        const blocked = editable.filter((f) => gate(f.api_name)
+          && String(form[f.api_name] ?? '') !== String(record[f.api_name] ?? ''));
+        setError(blocked.length
+          ? `Nothing was saved. ${blocked.map((f) => f.label ?? f.api_name).join(', ')} `
+            + `${blocked.length === 1 ? 'is' : 'are'} not yours to change: ${gate(blocked[0].api_name)}.`
+          : 'Nothing has changed, so there is nothing to save.');
+        setBusy(false);
+        return;
+      }
+
       await api.patch(`/leads/${lead.id}`, body);
       onSaved();
     } catch (err) {
       setError(err.message);
-      if (err.payload?.fields) setFieldErrors(err.payload.fields);
+      // The API answers `{ error, errors: [{ field, message }] }`. This used to
+      // read `payload.fields`, a key it has never sent, so every field-level
+      // message was dropped and only the banner survived.
+      setFieldErrors(fieldErrorsFrom(err));
       setBusy(false);
     }
   }
 
-  const set = (name, v) => setForm((f) => ({ ...f, [name]: v }));
+  /* Clear a field's complaint as soon as it stops being true, and raise it
+     again on the way out of the field rather than on every keystroke -- telling
+     somebody their PAN is malformed after they have typed one character is
+     technically correct and useless. */
+  const set = (name, v) => {
+    setForm((f) => ({ ...f, [name]: v }));
+    setFieldErrors((prev) => {
+      if (!prev[name]) return prev;
+      const field = editable.find((f) => f.api_name === name);
+      if (checkField(field, v)) return prev;
+      const { [name]: _cleared, ...rest } = prev;
+      return rest;
+    });
+  };
+
+  const checkOnBlur = (field) => {
+    const message = checkField(field, form[field.api_name]);
+    setFieldErrors((prev) => {
+      if (!message) {
+        if (!prev[field.api_name]) return prev;
+        const { [field.api_name]: _ok, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [field.api_name]: message };
+    });
+  };
 
   const renderInput = (f, value, onChange, disabled) => {
     const opts = options(f);
@@ -941,7 +1002,13 @@ function EditLead({ lead, session, onClose, onSaved }) {
           const blocked = gate(f.api_name);
           const wide = ['name', 'email'].includes(f.api_name) || f.type === 'textarea';
           return (
-            <label key={f.api_name} className={wide ? 'span-2' : ''}>
+            /* onBlur on the label: React's blur bubbles, so one handler covers
+               whatever renderInput produced -- input, select or checkbox. */
+            <label
+              key={f.api_name}
+              className={wide ? 'span-2' : ''}
+              onBlur={() => !blocked && checkOnBlur(f)}
+            >
               <span>
                 {f.label}
                 {f.required && <span className="req"> *</span>}
@@ -949,7 +1016,16 @@ function EditLead({ lead, session, onClose, onSaved }) {
               </span>
               {renderInput(f, form[f.api_name], (v) => set(f.api_name, v), Boolean(blocked))}
               {blocked && <small className="muted">{blocked}</small>}
-              {!blocked && f.help_text && <small className="muted">{f.help_text}</small>}
+              {/* The format complaint outranks the help text: a field that is
+                  wrong should say so where it would otherwise say what it is
+                  for. Until now only custom fields could show one of these, so
+                  a malformed PAN had nowhere on screen to be reported. */}
+              {!blocked && fieldErrors[f.api_name] && (
+                <small className="err-text">{fieldErrors[f.api_name]}</small>
+              )}
+              {!blocked && !fieldErrors[f.api_name] && f.help_text && (
+                <small className="muted">{f.help_text}</small>
+              )}
             </label>
           );
         })}
