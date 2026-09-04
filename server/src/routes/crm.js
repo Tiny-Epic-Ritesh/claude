@@ -5,6 +5,7 @@
 import { Router } from 'express';
 import { all, one, run, audit, notify, daysSince, ageBand, AGE_BANDS, CARD_COLOUR, LEAD_STAGES, CARD_STATES } from '../db.js';
 import { can, requireUser, requirePermission, reqScope, isReadOnlyOnLeads, unmaskRequested, maskFor, orgsFor, activeOrg, mayUseOrg } from '../auth.js';
+import { owdGrant } from '../engine/owd.js';
 import { encryptField, decryptField, maskRecord, maskRecords, validate, blindIndex } from '../security.js';
 import { applyScore } from '../engine/rules.js';
 import { click2call, pushToAutodialler, send, logCall } from '../integrations.js';
@@ -1077,8 +1078,18 @@ function taskBase(req) {
   params.push(...scope.params);
 
   if (!(req.query.all === 'true' && can(req.user.role, 'report.team'))) {
-    where.push('t.assignee_id = ?');
-    params.push(req.user.id);
+    /* The floor: your own tasks. The organisation-wide default joins it as a
+       grant rather than replacing it, the same shape as leads and clients --
+       so Private adds nothing and leaves this exactly as it was, and Public
+       Read widens it without ever reaching past the lead-book clause above,
+       which is ANDed separately. */
+    const grants = [{ sql: 't.assignee_id = ?', params: [req.user.id] }];
+
+    const owd = owdGrant('task', req.user);
+    if (owd) grants.push(owd);
+
+    where.push(`(${grants.map((g) => `(${g.sql})`).join(' OR ')})`);
+    params.push(...grants.flatMap((g) => g.params));
   }
 
   return { where, params };

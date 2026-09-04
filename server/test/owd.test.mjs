@@ -25,7 +25,9 @@ import {
   OWD_LEVELS, OWD_ENTITIES, defaultsFor, allDefaults, setDefaults,
   owdGrant, isExternal, isLevel, EXTERNAL_PINNED,
   OWD_APPROVAL_KEY, approvalKeyFor,
+  DERIVED_ENTITIES, isDerived,
 } from '../src/engine/owd.js';
+import { partnerScope, can } from '../src/auth.js';
 import { APPROVAL_SCOPES } from '../src/engine/approvals.js';
 
 let passed = 0;
@@ -231,6 +233,122 @@ test('every enforced object is one the scope functions actually consult', () => 
   assert(allDefaults().some((e) => e.enforced), 'nothing reports itself as enforced');
 });
 
+/* ------------------------------------- the last four objects, 4 Sep 2026 */
+
+test('two objects are derived, and must never get a floor', () => {
+  /* An interaction is visible exactly when its lead is; a product card the
+     same. Public Read on `interaction` would show somebody the calls logged
+     against leads they cannot see -- a worse leak than the one the floor exists
+     to prevent, because an interaction carries what was said. */
+  for (const entity of ['interaction', 'product_interest']) {
+    assert(isDerived(entity), `${entity} is no longer marked derived`);
+    assert(!OWD_ENTITIES.includes(entity),
+      `${entity} was given a row-level floor, which would break the lead's`);
+    assert.equal(owdGrant(entity, { id: 1, role: 'admin' }), null,
+      `${entity} produced a grant`);
+    assert(DERIVED_ENTITIES[entity], `${entity} has no note explaining what it follows`);
+  }
+});
+
+test('the Setup screen can tell derived from unenforced', () => {
+  // "Not read" and "follows the lead" look the same on a screen and are not the
+  // same thing; one is an omission, the other is the design.
+  const rows = allDefaults();
+  const interaction = rows.find((r) => r.api_name === 'interaction');
+  assert(interaction, 'interaction is not a configured object');
+  assert.equal(interaction.derived, true);
+  assert(/follows the lead/i.test(interaction.derived_note ?? ''), interaction.derived_note);
+
+  const lead = rows.find((r) => r.api_name === 'lead');
+  assert.equal(lead.derived, false, 'lead was marked derived');
+  assert.equal(lead.enforced, true);
+});
+
+test('tasks and partners now carry a floor', () => {
+  for (const entity of ['task', 'partner']) {
+    assert(OWD_ENTITIES.includes(entity), `${entity} is not enforced`);
+    assert(approvalKeyFor(entity), `${entity} has no approval key, so it cannot be changed`);
+  }
+});
+
+test('the task floor is private by default and adds nothing', () => {
+  resetAll();
+  const user = userIn('BONANZA', 'sales_rm');
+  assert.equal(owdGrant('task', user), null, 'private produced a grant on tasks');
+
+  setDefaults('task', { internal: 'read' });
+  assert(owdGrant('task', user), 'read produced no grant on tasks');
+  resetAll();
+});
+
+/* ------------------------------------------------------- partners */
+
+/** Partners this person may read, through the scope rather than a route. */
+const visiblePartners = (user) => {
+  const sc = partnerScope(user, 'p');
+  return all(`SELECT p.id FROM partners p WHERE ${sc.sql}`, sc.params).map((r) => r.id);
+};
+
+test('the partner refactor changed nobody: an RM still sees only their own', () => {
+  /* The behaviour that used to be `req.user.role === 'partner_rm'` written into
+     partnerFilter. It is now the absence of `partner.view.all`, and it has to
+     resolve to exactly the same set or the refactor moved somebody. */
+  const rm = userIn('BONANZA', 'partner_rm');
+  assert(rm, 'no Bonanza partner RM seeded');
+  assert(!can(rm.role, 'partner.view.all'), 'a Partner RM was given the wide grant');
+
+  resetAll();
+  const seen = visiblePartners(rm);
+  const owned = all('SELECT id FROM partners WHERE owner_id = ?', [rm.id]).map((r) => r.id);
+
+  for (const id of seen) {
+    assert(owned.includes(id), `the RM sees partner ${id}, which they do not own`);
+  }
+});
+
+test('the three roles that could see the whole book still can', () => {
+  for (const role of ['superadmin', 'admin', 'sales_supervisor']) {
+    const user = userIn('BONANZA', role);
+    if (!user) continue;
+    assert(can(role, 'partner.view.all'), `${role} lost its reach across the partner book`);
+
+    const seen = visiblePartners(user);
+    const inBook = all("SELECT id FROM partners WHERE sales_org = 'BONANZA'").map((r) => r.id);
+    for (const id of inBook) {
+      assert(seen.includes(id), `${role} lost sight of partner ${id}`);
+    }
+  }
+});
+
+test('widening the partner default cannot cross the book boundary', () => {
+  const rm = userIn('BONANZA', 'partner_rm');
+  const bigul = all("SELECT id FROM partners WHERE sales_org = 'BIGUL'").map((r) => r.id);
+  if (!bigul.length) { assert(true, 'no Bigul partners seeded'); return; }
+
+  setDefaults('partner', { internal: 'read' });
+  const seen = visiblePartners(rm);
+  const crossed = seen.filter((id) => bigul.includes(id));
+
+  assert.equal(crossed.length, 0,
+    `a Bonanza RM saw ${crossed.length} Bigul partners once the default was widened`);
+  resetAll();
+});
+
+test('widening the partner default is grant-only', () => {
+  const rm = userIn('BONANZA', 'partner_rm');
+  resetAll();
+  const atPrivate = visiblePartners(rm);
+
+  setDefaults('partner', { internal: 'read' });
+  const atRead = visiblePartners(rm);
+
+  for (const id of atPrivate) {
+    assert(atRead.includes(id), `the RM lost sight of partner ${id} when the default widened`);
+  }
+  assert(atRead.length >= atPrivate.length, 'read narrowed the set');
+  resetAll();
+});
+
 /* ------------------------------------------------ the approval gate */
 
 test('the approval numbering is fixed, and covers every enforced object', () => {
@@ -238,8 +356,16 @@ test('the approval numbering is fixed, and covers every enforced object', () => 
      fixed number bridges the two. Renumbering would attach a pending request to
      a different object than the one it was raised against -- silently, because
      the payload would still read correctly. Add to these; never move them. */
-  assert.deepEqual(OWD_APPROVAL_KEY, { lead: 1, client: 2, case: 3 },
-    'the approval numbering moved. A pending request would now point at the wrong object.');
+  /* Written as "these numbers never move" rather than "this is the whole map",
+     so adding an object is allowed and renumbering one is not. The first three
+     are spelled out because they are the ones with history: a pending request
+     raised against lead 1 must still mean lead after any later edit here. */
+  const FIXED = { lead: 1, client: 2, case: 3, task: 4, partner: 5 };
+  for (const [entity, key] of Object.entries(FIXED)) {
+    assert.equal(OWD_APPROVAL_KEY[entity], key,
+      `${entity} was renumbered from ${key} to ${OWD_APPROVAL_KEY[entity]}. `
+      + 'A pending request would now point at the wrong object.');
+  }
 
   for (const entity of OWD_ENTITIES) {
     assert(approvalKeyFor(entity), `${entity} is enforced but has no approval key`);

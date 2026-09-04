@@ -8,7 +8,10 @@
 
 import { Router } from 'express';
 import { all, one, run, audit, notify, daysSince, PARTNER_STATES } from '../db.js';
-import { requireUser, requirePermission, can, unmaskRequested, maskFor, orgsFor, mayUseOrg } from '../auth.js';
+import {
+  requireUser, requirePermission, can, unmaskRequested, maskFor, orgsFor, mayUseOrg,
+  reqPartnerScope,
+} from '../auth.js';
 import { encryptField, decryptField, maskRecord, maskRecords, validate } from '../security.js';
 import { send, lmsSync } from '../integrations.js';
 import { hashPassword } from '../security.js';
@@ -129,9 +132,13 @@ const csvCell = (v) => (v === null || v === undefined ? '""' : `"${String(v).rep
  * one and missed by the other.
  */
 function partnerFilter(req) {
-  const orgs = orgsFor(req.user);
-  const where = [`sales_org IN (${orgs.map(() => '?').join(',') || "''"})`];
-  const params = [...orgs];
+  /* Book and reach in one clause now, from `partnerScope`. It carries the same
+     three roles that could always see the whole book, the Partner RM's own-book
+     floor that used to be a role name written into this function, the
+     management chain, and the organisation-wide default. */
+  const scope = reqPartnerScope(req, 'partners');
+  const where = [scope.sql];
+  const params = [...scope.params];
 
   if (req.query.state) { where.push('state_code = ?'); params.push(req.query.state); }
 
@@ -145,7 +152,12 @@ function partnerFilter(req) {
     params.push(...group);
   }
 
-  if (req.query.mine === 'true' || req.user.role === 'partner_rm') {
+  /* An explicit "show me mine" filter, which is a different thing from the
+     scope: a Partner RM is already floored to their own book by `partnerScope`,
+     and somebody with wider reach may still want to narrow to theirs. The role
+     name that used to sit in this condition has moved into the scope, where it
+     is a declared capability rather than a special case. */
+  if (req.query.mine === 'true') {
     where.push('owner_id = ?');
     params.push(req.user.id);
   }
@@ -192,7 +204,17 @@ router.get('/', requirePermission('partner.view'), (req, res) => {
  * somebody turns one.
  */
 router.get('/summary', requirePermission('partner.view'), (req, res) => {
-  const base = { query: { ...req.query, group: undefined, state: undefined, q: undefined }, user: req.user };
+  /* A stand-in request that varies the query and nothing else -- the tiles count
+     the whole book, so the group, state and search filters are dropped.
+
+     It has to carry `get` as well as `user` now: the scope reads the active-org
+     header through it, and an object that answers for the identity but not for
+     the book is a request only half stood in for. */
+  const base = {
+    query: { ...req.query, group: undefined, state: undefined, q: undefined },
+    user: req.user,
+    get: (name) => req.get(name),
+  };
   const { clause, params } = partnerFilter(base);
   const count = (extra, extraParams = []) => one(
     `SELECT COUNT(*) n FROM partners WHERE ${clause}${extra ? ` AND ${extra}` : ''}`,

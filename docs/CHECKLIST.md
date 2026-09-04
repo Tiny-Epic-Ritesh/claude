@@ -2652,3 +2652,62 @@ FAIL  all 11 roles can sign in
 
 Verified by doing it: the suite run against a watching server, touched mid-run,
 now reports exactly that against the check that failed.
+
+---
+
+## The floor on the remaining four objects - 4 Sep 2026
+
+The build log said `interaction`, `task`, `partner` and `product_interest`
+carried the columns and nothing read them - honest but incomplete. They were not
+four of a kind, which is why they were left, and finding that out was most of the
+work.
+
+**`task`** already had a real floor: inherit the lead's book, then
+`assignee_id = me`. The grant slotted in beside it, exactly as on leads and
+clients. Private adds nothing, so nothing moved.
+
+**`partner` needed a grant layer built before a floor could be written down at
+all** - the same prerequisite leads had on 22 August. Its rule lived in
+`partnerFilter` as `req.user.role === 'partner_rm'`: name that one role in a
+route and it sees its own book, and everyone else holding `partner.view` saw
+every partner by omission rather than by decision. That is precisely the shape
+non-negotiable 7 exists to invert.
+
+So the reach became a capability - `partner.view.all`, held by the same three
+roles that always had it - and the floor is what remains without it.
+`partnerScope` now carries floor, reach, management chain and default, ANDed with
+the book like every other scope. Nobody's sight-lines moved, and that is
+asserted rather than assumed: a test checks a Partner RM still sees exactly the
+partners they own, and another checks the three wide roles still see the whole
+book.
+
+**`interaction` and `product_interest` must not have a floor.** An interaction is
+visible exactly when its lead is; a product card the same. A row-level default
+there would break the lead's floor rather than add to it - Public Read on
+`interaction` would show somebody the calls logged against leads they cannot see,
+which is a worse leak than the one the floor prevents, because an interaction
+carries what was said.
+
+They are declared **derived** rather than left out. "Not read" and "follows the
+lead" look identical on a screen and are not the same thing: one is an omission,
+the other is the design, and only one of them should invite somebody to close it.
+The Setup panel now says which.
+
+### What it cost
+
+Two things broke on the way, both mine and both caught by the guards that exist
+for it. Adding `partner.view.all` to the permission matrix without adding it to
+`CAPABILITY_CATALOGUE` failed a foreign key at boot - the access model is seeded
+against the catalogue, so a capability that is granted but not declared cannot
+exist. And `/partners/summary` builds a stand-in request carrying only `query`
+and `user`, which was enough until the scope started reading the active-org
+header through it; a request half stood in for answers for the identity and not
+for the book.
+
+The approval-key test also fired, correctly: it asserted the numbering was
+exactly `{lead: 1, client: 2, case: 3}`, and `task` and `partner` needed 4 and 5.
+Rewritten as "these numbers never move" rather than "this is the whole map", so
+adding an object is allowed and renumbering one is still caught.
+
+Five objects enforced, two derived, none unaccounted for. 620 e2e and all unit
+suites pass; the OWD suite is 24 checks.

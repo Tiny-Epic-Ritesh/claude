@@ -419,7 +419,7 @@ below.
 | 4 | Field-change history + stage entry/exit, queryable | ✅ **Met** — `field_history`, indexed by record and by field |
 | 5 | **Label ≠ API name** | ✅ **Met** — `field_def.api_name` is immutable, `field_def.label` renameable |
 | 6 | **Uniform per-object configuration** | ✅ **Met** — `entity_def` and `field_def` cover all seven objects: lead, client, case, partner, task, interaction, product_interest |
-| 7 | OWD floor, then grants only | ✅ **Met for the three scoped objects** — the floor is now declared per object (`entity_def.owd_internal` / `owd_external`, `engine/owd.js`) and enforced for lead, client and case, the three with scope functions. Grant-only ✅. The internal/external split exists as a declaration; external is **pinned to Private** because partner reads filter on `partner_id` in code without passing through a scope function, so a wider external default would not be enforced — see below |
+| 7 | OWD floor, then grants only | ✅ **Met** — the floor is declared per object (`entity_def.owd_internal` / `owd_external`, `engine/owd.js`): **five enforced** (lead, client, case, task, partner) and **two derived** (interaction and product_interest follow their lead, and must not have a floor of their own). Grant-only ✅. Changing one needs two people. The internal/external split exists as a declaration; external is **pinned to Private** because partner reads filter on `partner_id` in code without passing through a scope function, so a wider external default would not be enforced — see below |
 | 8 | **Owner is polymorphic (User or Queue)** | ✅ **Met** — `queues` table with `leads.owner_queue_id` beside `owner_id`, two nullable keys rather than a type-plus-ref pair |
 | 9 | Record types over pipeline sprawl | ⚠️ Sideways — per-product cards instead; see below |
 | 10 | Segments as live nested queries | ✅ Met — condition tree, nested to any depth |
@@ -727,7 +727,7 @@ for that day.
 
 | # | Constraint | Before | Now |
 |---|---|---|---|
-| 7 | OWD floor, then grants only | half met | **met for the three scoped objects** — declared per object, enforced for lead, client and case |
+| 7 | OWD floor, then grants only | half met | **met** — declared per object; five enforced, two derived |
 | 10 | Versioning with diff and rollback | partly closed | **closed** — all seven configurable artefacts |
 
 ### Both entries were wrong about what was missing
@@ -805,9 +805,34 @@ filter: a filter is evaluated when it runs, an approver cannot be shown what
 "everything matching this" means, and the threshold inverts because the count is
 unknown until the work is done. A filter selects; a list acts.
 
-### Still outstanding on this item
+### The remaining four, closed the same day
 
-The floor is enforced for lead, client and case — the three with scope functions.
-`interaction`, `task`, `partner` and `product_interest` carry the columns and
-nothing reads them, which is honest but incomplete. And the external pin lifts
-only when partner reads move under the same floor as staff reads.
+They were not four of a kind, which is why they were left.
+
+**`task`** had a real floor already — inherit the lead's book, then `assignee_id
+= me` — so the grant slotted in beside it unchanged.
+
+**`partner` needed the grant layer built first**, the same prerequisite leads had
+on 22 Aug. Its rule lived in `partnerFilter` as `req.user.role === 'partner_rm'`:
+name that one role in a route and it sees its own book, and everybody else
+holding `partner.view` saw everything by omission. That is the shape this
+constraint exists to invert, so the reach became a capability
+(`partner.view.all`, the same three roles) and the floor is what is left without
+it. `partnerScope` now carries floor, reach, management chain and default, ANDed
+with the book. Nobody's sight-lines moved: 620 tests pass, and there is a test
+asserting a Partner RM still sees exactly the partners they own.
+
+**`interaction` and `product_interest` must not have a floor at all.** An
+interaction is visible exactly when its lead is; a product card the same. A
+row-level default there would break the lead's floor rather than add to it —
+Public Read on `interaction` would show somebody the calls logged against leads
+they cannot see, which is a worse leak than the one the floor prevents, because
+an interaction carries what was said. They are declared **derived** rather than
+left out, so the Setup screen says "follows the lead" instead of showing a
+Private badge beside the word "no" — which reads like an omission and invites
+somebody to close it.
+
+Five objects enforced, two derived, none unaccounted for.
+
+**Still open:** the external pin lifts only when partner reads move under the
+same floor as staff reads.

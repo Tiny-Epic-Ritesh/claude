@@ -65,8 +65,29 @@ const LEVEL_VALUES = OWD_LEVELS.map((l) => l.value);
 
 export const isLevel = (value) => LEVEL_VALUES.includes(value);
 
-/** Objects whose floor is enforced. Others carry the columns but nothing reads them. */
-export const OWD_ENTITIES = ['lead', 'client', 'case'];
+/** Objects with a row-level floor of their own, enforced by a scope function. */
+export const OWD_ENTITIES = ['lead', 'client', 'case', 'task', 'partner'];
+
+/**
+ * Objects whose visibility is derived, and which must NOT have a floor.
+ *
+ * An interaction is visible if and only if its lead is; a product card the
+ * same. That is not a gap waiting to be closed, it is the correct rule, and
+ * giving either one a row-level default would break the lead's floor rather
+ * than add to it: Public Read on `interaction` would show somebody the calls
+ * logged against leads they cannot see, which is a worse leak than the one the
+ * floor exists to prevent, because an interaction carries what was said.
+ *
+ * They are named here rather than left out, so the Setup screen can say
+ * "follows the lead" instead of showing a Private badge beside the word "no" --
+ * which reads like an omission and invites somebody to fix it.
+ */
+export const DERIVED_ENTITIES = {
+  interaction: 'Follows the lead. An interaction is visible exactly when its lead is.',
+  product_interest: 'Follows the lead. A product card is visible exactly when its lead is.',
+};
+
+export const isDerived = (apiName) => Object.hasOwn(DERIVED_ENTITIES, apiName);
 
 /**
  * A fixed number per object, because `approvals.entity_id` is an INTEGER and
@@ -80,7 +101,7 @@ export const OWD_ENTITIES = ['lead', 'client', 'case'];
  *
  * These numbers are permanent. Add to them; never renumber. There is a test.
  */
-export const OWD_APPROVAL_KEY = { lead: 1, client: 2, case: 3 };
+export const OWD_APPROVAL_KEY = { lead: 1, client: 2, case: 3, task: 4, partner: 5 };
 
 export const approvalKeyFor = (apiName) => OWD_APPROVAL_KEY[apiName] ?? null;
 
@@ -110,6 +131,8 @@ export const allDefaults = () => all(
 ).map((r) => ({
   ...r,
   enforced: OWD_ENTITIES.includes(r.api_name),
+  derived: isDerived(r.api_name),
+  derived_note: DERIVED_ENTITIES[r.api_name] ?? null,
 }));
 
 /**

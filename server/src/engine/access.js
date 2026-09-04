@@ -80,6 +80,7 @@ export const CAPABILITY_CATALOGUE = [
 
   // Partners
   ['partner.view', 'View partners', 'Partners', null, 0],
+  ['partner.view.all', 'View all partners', 'Partners', 'See every partner in the sales org, not only their own book', 0],
   ['partner.create', 'Create partners', 'Partners', null, 0],
   ['partner.elevate', 'Approve partner elevation', 'Partners', 'Issue a partner code and portal credential', 1],
   ['partner.elevate.request', 'Request partner elevation', 'Partners', null, 0],

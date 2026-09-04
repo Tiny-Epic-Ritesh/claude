@@ -95,6 +95,15 @@ export const PERMISSIONS = {
 
   // Partners
   'partner.view':         ['superadmin', 'admin', 'partner_rm', 'sales_supervisor'],
+  /* Reach across the whole partner book, as opposed to your own.
+
+     This is not a new grant. It is the hardcoded `req.user.role === 'partner_rm'`
+     check that used to sit in partnerFilter, turned the right way round: the
+     Partner RM was floored to their own book by naming the role in a route, and
+     everybody else with partner.view saw everything by omission. Declaring the
+     grant instead means the floor beneath it can be declared too, which is what
+     non-negotiable 7 asks for. Same three roles, same reach. */
+  'partner.view.all':     ['superadmin', 'admin', 'sales_supervisor'],
   'partner.create':       ['superadmin', 'admin', 'partner_rm'],
   'partner.elevate':      ['superadmin', 'admin'],           // Partner RM initiates, Admin approves
   'partner.elevate.request': ['partner_rm'],
@@ -658,6 +667,53 @@ export function orgsFor(user) {
  * org they are currently looking at (the header switcher). The switcher is a
  * view filter and can only narrow — it can never widen entitlement.
  */
+/**
+ * What partners this person may read.
+ *
+ * The last of the four objects to get a declared floor, and the only one that
+ * needed a grant layer built before the floor could be written down at all.
+ *
+ * Until now the rule lived in `partnerFilter` as `req.user.role ===
+ * 'partner_rm'`: name that one role in a route and it sees its own book;
+ * everybody else holding `partner.view` saw every partner in their businesses,
+ * by omission rather than by decision. That is the shape non-negotiable 7 exists
+ * to invert -- so the reach is now a capability (`partner.view.all`) and the
+ * floor is what is left when you do not hold it.
+ *
+ * Same three roles, same reach, nothing widened or narrowed. What changed is
+ * that both halves are now declared, so an administrator can see why somebody
+ * sees a partner, and the organisation-wide default has somewhere to sit.
+ */
+export function partnerScope(user, alias = 'p', active = null) {
+  const org = orgScope(user, alias, active);
+
+  /* The floor: the partners you are the RM for. */
+  const grants = [{ sql: `${alias}.owner_id = ?`, params: [user.id] }];
+
+  // The reach that used to be an omission.
+  if (can(user.role, 'partner.view.all')) grants.push({ sql: '1=1', params: [] });
+
+  const owd = owdGrant('partner', user);
+  if (owd) grants.push(owd);
+
+  /* A supervisor reaches the partners of everyone beneath them, at any depth --
+     the same chain that carries leads and cases, keyed on the Partner RM. */
+  const manager = managerScopeSql(user, alias, 'owner_id');
+  if (manager) grants.push(manager);
+
+  const reach = {
+    sql: `(${grants.map((g) => `(${g.sql})`).join(' OR ')})`,
+    params: grants.flatMap((g) => g.params),
+  };
+
+  // Reach and book are ANDed, never substituted: widening the default cannot
+  // reach across Bonanza and Bigul.
+  return {
+    sql: `(${reach.sql}) AND (${org.sql})`,
+    params: [...reach.params, ...org.params],
+  };
+}
+
 export function orgScope(user, alias = 'l', activeOrg = null) {
   const allowed = orgsFor(user);
   const scoped = activeOrg && allowed.includes(activeOrg) ? [activeOrg] : allowed;
@@ -703,6 +759,8 @@ export const reqClientScope = (req, alias = 'c') => clientScope(req.user, alias,
  * left cases alone.
  */
 export const reqTicketScope = (req, alias = 't') => ticketScope(req.user, alias, activeOrg(req));
+
+export const reqPartnerScope = (req, alias = 'p') => partnerScope(req.user, alias, activeOrg(req));
 
 /** Product RMs never get write access to a lead record (BRD §3.2). */
 export const isReadOnlyOnLeads = (role) => ['product_rm', 'marketing_manager'].includes(role);

@@ -84,15 +84,26 @@ function SharingFloor({ owd }) {
             <tr key={e.api_name}>
               <td style={{ fontWeight: 545 }}>{e.label_plural ?? e.label}</td>
               <td>
-                <span className={`badge ${e.owd_internal === 'private' ? 'badge-green' : 'badge-amber'}`}>
-                  {owd.levels.find((l) => l.value === e.owd_internal)?.label ?? e.owd_internal}
-                </span>
+                {e.derived
+                  ? <span className="tiny muted">—</span>
+                  : (
+                    <span className={`badge ${e.owd_internal === 'private' ? 'badge-green' : 'badge-amber'}`}>
+                      {owd.levels.find((l) => l.value === e.owd_internal)?.label ?? e.owd_internal}
+                    </span>
+                  )}
               </td>
               <td>
                 <span className="badge badge-green">Private</span>
                 <span className="tiny muted"> · pinned</span>
               </td>
-              <td className="tiny muted">{e.enforced ? 'Yes' : 'Not read'}</td>
+              {/* "Not read" and "follows the lead" look the same on a screen
+                  and are not the same thing: one is an omission, the other is
+                  the design. An interaction is visible exactly when its lead
+                  is, and giving it a default of its own would break the lead's
+                  floor rather than add to it. */}
+              <td className="tiny muted" title={e.derived_note ?? undefined}>
+                {e.derived ? 'Follows the lead' : (e.enforced ? 'Yes' : 'Not read')}
+              </td>
             </tr>
           ))}
         </tbody>
