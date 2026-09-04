@@ -1479,7 +1479,30 @@ router.post('/tasks', (req, res) => {
     [title, description || null, lead_id || null, card_id || null, ticket_id || null, partner_id || null,
       assignee_id || req.user.id, req.user.id, due_at, priority],
   );
-  res.status(201).json(one('SELECT * FROM tasks WHERE id = ?', [Number(result.lastInsertRowid)]));
+  const taskId = Number(result.lastInsertRowid);
+
+  /* Tell the person it was given to (P3-42).
+   *
+   * Only when it is somebody else: a task you made for yourself is not news,
+   * and a notification for every one of them is how people learn to ignore the
+   * bell. The message names who assigned it and which lead, because "You have a
+   * new task" answers neither of the questions the assignee actually has.
+   *
+   * The link goes to the lead rather than the task list, which is the whole
+   * point of the ticket -- an RM who has missed a follow-up should arrive at
+   * the record, not at a list they have to search. */
+  const assignedToSomebodyElse = assignee_id && Number(assignee_id) !== req.user.id;
+  if (assignedToSomebodyElse) {
+    const lead = lead_id ? one('SELECT id, name FROM leads WHERE id = ?', [lead_id]) : null;
+    notify(
+      Number(assignee_id),
+      `${req.user.name} assigned you a task`,
+      lead ? `${title} — ${lead.name}` : title,
+      lead ? `/leads/${lead.id}` : '/tasks',
+    );
+  }
+
+  res.status(201).json(one('SELECT * FROM tasks WHERE id = ?', [taskId]));
 });
 
 router.patch('/tasks/:id', (req, res) => {

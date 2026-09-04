@@ -44,7 +44,18 @@ export const PERMISSIONS = {
    * this capability back restores the old behaviour if the business wants it.
    */
   'lead.view.all':        ['superadmin', 'admin', 'product_supervisor', 'marketing_manager', 'customer_care'],
-  'lead.view.own':        ['caller', 'dealer', 'sales_rm', 'partner_rm'],
+  /* Sales Supervisor holds this for navigation, not for reach (P3-42).
+   *
+   * The role was left with lead.create, lead.edit, lead.reassign and
+   * lead.stage.change and no view capability at all -- able to change a lead it
+   * was not allowed to open -- because `lead.view.all` was withdrawn when the
+   * role became `team` scope and nothing replaced it. The Sales Console app and
+   * the Leads tab both gate on the three view capabilities, so a supervisor saw
+   * neither.
+   *
+   * It widens nothing. leadScope reads `data_scope`, which is 'team' here, and
+   * only `lead.view.all` overrides that. */
+  'lead.view.own':        ['caller', 'dealer', 'sales_rm', 'partner_rm', 'sales_supervisor'],
   'lead.view.product':    ['product_rm'],            // read-only, filtered to their product
   'lead.create':          ['superadmin', 'admin', 'caller', 'dealer', 'sales_rm', 'sales_supervisor', 'partner_rm'],
   'lead.edit':            ['superadmin', 'admin', 'sales_rm', 'sales_supervisor', 'dealer'],

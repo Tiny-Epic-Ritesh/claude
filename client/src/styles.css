@@ -6272,3 +6272,8 @@ tr.row-inactive .user-cell strong { color: var(--ink-3); }
   font: inherit; color: var(--accent);
   cursor: pointer; text-decoration: underline;
 }
+
+/* A notification that goes somewhere should look like it does (P3-42). */
+.notif-live { cursor: pointer; border-radius: 6px; padding: 4px 6px; margin: -4px -6px; }
+.notif-live:hover { background: var(--surface-2, rgba(127, 127, 127, 0.08)); }
+.notif-live:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

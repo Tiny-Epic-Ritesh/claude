@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { money, rupees, shortDate, dateTime, mins, STATE_LABEL, ROLE_LABEL } from '../api.js';
+import { api, money, rupees, shortDate, dateTime, mins, STATE_LABEL, ROLE_LABEL } from '../api.js';
 import { useApi, Loading, ErrorBanner, Stat, Empty, CardStrip, AgeBadge, PriorityBadge, Progress, Tabs, Icon } from '../components/ui.jsx';
 import Dashboard from './Dashboard.jsx';
 
@@ -12,6 +12,19 @@ import Dashboard from './Dashboard.jsx';
  */
 export default function Cockpit({ session }) {
   const navigate = useNavigate();
+
+  /**
+   * Open what a notification is about.
+   *
+   * Marking it read is deliberately not awaited. The point of the click is to
+   * arrive at the lead; making somebody wait for a bookkeeping write before
+   * they get there would be the tail wagging the dog, and a failed mark is a
+   * notification that stays bold — which is the harmless direction.
+   */
+  const openNotification = (n) => {
+    api.post(`/notifications/${n.id}/read`, {}).catch(() => {});
+    navigate(n.link);
+  };
   const [data, { loading, error, reload }] = useApi('/cockpit');
   const [view, setView] = useState('primary');
 
@@ -100,7 +113,19 @@ export default function Cockpit({ session }) {
           <div className="card-head"><h2>Notifications</h2><span className="tiny muted">{data.notifications.length} unread</span></div>
           <div className="card-body stack">
             {data.notifications.slice(0, 5).map((n) => (
-              <div key={n.id} className="row-between">
+              /* Clickable when it has somewhere to go (P3-42). The link has
+                 always been on the record and was never rendered, so a task
+                 assigned by a supervisor named the lead and gave no way to
+                 reach it. Read on the way out: a notification you have acted on
+                 that is still unread is how the count stops meaning anything. */
+              <div
+                key={n.id}
+                className={`row-between ${n.link ? 'notif-live' : ''}`}
+                role={n.link ? 'link' : undefined}
+                tabIndex={n.link ? 0 : undefined}
+                onClick={n.link ? () => openNotification(n) : undefined}
+                onKeyDown={n.link ? (e) => { if (e.key === 'Enter') openNotification(n); } : undefined}
+              >
                 <div>
                   <div style={{ fontWeight: 570 }}>{n.title}</div>
                   <div className="tiny muted">{n.body}</div>
