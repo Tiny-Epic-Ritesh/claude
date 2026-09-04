@@ -6158,3 +6158,8 @@ tr.row-inactive .user-cell strong { color: var(--ink-3); }
 .backlink:hover { text-decoration: underline; }
 /* Except where it replaced a real button, which brings its own chrome. */
 .backlink.btn-ghost { padding: revert; border: revert; background: revert; }
+
+/* The mandatory marker on a form label. P3-03 asks for mandatory and optional
+   to be told apart on sight; which fields these are is configurable, so the
+   marker is driven by the server rather than written into each form. */
+.field label .req { color: var(--danger); font-weight: 700; }

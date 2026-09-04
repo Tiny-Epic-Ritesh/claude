@@ -199,7 +199,7 @@ app.post('/api/auth/reset/:token', async (req, res) => {
     return res.status(400).json({ error: 'That link is no longer valid. Ask for a new one.' });
   }
 
-  run('UPDATE users SET password = ? WHERE id = ?', [await hashPassword(password), user.id]);
+  run("UPDATE users SET password = ?, last_password_changed_at = datetime('now') WHERE id = ?", [await hashPassword(password), user.id]);
   run("UPDATE password_reset SET used_at = datetime('now') WHERE token = ?", [row.token]);
   /* Every existing session ends. Resetting a password because it may be known
      to somebody else and leaving their session alive achieves nothing. */

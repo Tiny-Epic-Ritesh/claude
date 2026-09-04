@@ -1180,6 +1180,17 @@ const COLUMNS = [
 
   // Reachability for reminders sent to staff.
   ['users', 'whatsapp', 'TEXT'],
+  ['users', 'updated_at', 'TEXT'],            // maintained by a trigger, see below
+
+  /* P3-02, benchmarked against the LeadSquared user grid and the Salesforce
+     User object, confirmed by Ritesh on 4 Sep. `last_login_at` cannot be
+     derived: sessions are deleted on sign-out, idle sweep, password reset and
+     role change, so the most recently active people would read as "never". */
+  ['users', 'last_login_at', 'TEXT'],
+  ['users', 'last_password_changed_at', 'TEXT'],
+  ['users', 'title', 'TEXT'],                 // job title, not the CRM role
+  ['users', 'date_of_joining', 'TEXT'],
+  ['users', 'date_of_exit', 'TEXT'],
 
   /* Who a template belongs to, and how far it reaches (P2-09).
    *
@@ -1981,6 +1992,38 @@ CREATE TABLE IF NOT EXISTS saved_searches (
 );
 CREATE INDEX IF NOT EXISTS idx_saved_entity ON saved_searches(entity, sales_org);
 `);
+
+/* ------------------------------------------------- last modified (P3-02/Q4)
+ *
+ * "If any change happens on the lead then last modified date field gets updated
+ * everytime" -- Ritesh, 4 Sep.
+ *
+ * The column existed on leads, clients and tickets and was maintained by hand,
+ * which meant it was maintained sometimes: 11 of 32 lead writes set it, 4 of 18
+ * on tickets. Everything it missed was a real change -- reassignment,
+ * automation, partner attribution, KYC progress arriving from the vendor.
+ *
+ * Done in the database because that is the only place that sees every write,
+ * including the ones added after this comment. The WHEN guard leaves an
+ * explicit `SET updated_at` alone, so the call sites that already did the right
+ * thing keep saying what they meant.
+ */
+for (const table of ['leads', 'clients', 'tickets', 'users']) {
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS ${table}_touch_updated_at
+    AFTER UPDATE ON ${table}
+    FOR EACH ROW
+    WHEN NEW.updated_at IS OLD.updated_at
+    BEGIN
+      UPDATE ${table} SET updated_at = datetime('now') WHERE id = NEW.id;
+    END;
+  `);
+}
+
+/* A user record that has never been edited reads as modified when it was
+   created, rather than as null -- "never" and "unknown" look the same in an
+   export and only one of them is true. */
+db.exec("UPDATE users SET updated_at = created_at WHERE updated_at IS NULL");
 
 /**
  * Drop the `kyc_status` mirror from databases created before it was derived.

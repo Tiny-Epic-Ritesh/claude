@@ -25,6 +25,7 @@ import {
   requireUser, requirePermission, orgsFor, mayUseOrg, can, permissionsFor,
 } from '../auth.js';
 import { hashPassword, validate, newSessionToken, STRATEGY_LABEL } from '../security.js';
+import { assertValid, requiredFields, setRequired } from '../engine/validation.js';
 import {
   invalidate, explainAccess, dataScope, CAPABILITY_CATALOGUE,
 } from '../engine/access.js';
@@ -315,6 +316,74 @@ router.get('/users', requirePermission('admin.users'), (req, res) => {
   res.json({ users: rows, total: rows.length, active: rows.filter((u) => u.active).length });
 });
 
+/* ------------------------------------------------ the user field set (P3-03)
+ *
+ * One list, so the create form, the edit form, the required-field control and
+ * the export cannot drift apart. Ritesh, 4 Sep: name, email, role and business
+ * are mandatory and that is not configurable -- a user without them cannot sign
+ * in or be placed in a book. Everything else is optional unless an
+ * administrator says otherwise.
+ */
+export const USER_FIELDS = [
+  { field: 'name', label: 'Name', always: true },
+  { field: 'email', label: 'Email', always: true },
+  { field: 'role', label: 'Role', always: true },
+  { field: 'sales_org', label: 'Business', always: true },
+  { field: 'title', label: 'Job title' },
+  { field: 'phone', label: 'Mobile' },
+  { field: 'whatsapp', label: 'WhatsApp' },
+  { field: 'employee_code', label: 'Employee code' },
+  { field: 'branch', label: 'Branch' },
+  { field: 'manager_id', label: 'Reports to' },
+  { field: 'product_type_id', label: 'Product' },
+  { field: 'date_of_joining', label: 'Date of joining' },
+  { field: 'date_of_exit', label: 'Date of exit' },
+  { field: 'phone_extension', label: 'Extension' },
+  { field: 'cti_agent_id', label: 'Agent ID' },
+  { field: 'cube_campaign_id', label: 'Dialler campaign' },
+];
+
+/** The four that cannot be made optional, and the ones an admin has chosen. */
+const userRequired = () => {
+  const chosen = requiredFields('user');
+  for (const f of USER_FIELDS) if (f.always) chosen.add(f.field);
+  return chosen;
+};
+
+/**
+ * Which fields are required, for the form to mark and the server to enforce.
+ *
+ * Gated on admin.users like the rest of this screen: whether a mobile number is
+ * mandatory is a people decision, not an object-configuration one, even though
+ * it is stored as a validation rule.
+ */
+router.get('/users/required-fields', requirePermission('admin.users'), (_req, res) => {
+  const chosen = requiredFields('user');
+  res.json({
+    fields: USER_FIELDS.map((f) => ({
+      ...f,
+      required: Boolean(f.always) || chosen.has(f.field),
+    })),
+    note: 'Name, email, role and business are always required — a user without them cannot sign in or be placed in a book.',
+  });
+});
+
+router.post('/users/required-fields', requirePermission('admin.users'), (req, res) => {
+  const { field, required } = req.body ?? {};
+  const known = USER_FIELDS.find((f) => f.field === field);
+  if (!known) return res.status(400).json({ error: `"${field}" is not a user field` });
+  if (known.always) {
+    return res.status(400).json({ error: `${known.label} is always required and cannot be made optional` });
+  }
+
+  const before = requiredFields('user').has(field);
+  setRequired('user', field, Boolean(required), known.label, req.user.id);
+  const after = requiredFields('user').has(field);
+
+  auditConfig('user_fields', field, 'required', { required: before }, { required: after }, req.user.id);
+  res.json({ ok: true, required: after });
+});
+
 router.post('/users', requirePermission('admin.users'), async (req, res) => {
   const {
     name, email, role, password, sales_org: org, org_access: orgAccess,
@@ -326,6 +395,17 @@ router.post('/users', requirePermission('admin.users'), async (req, res) => {
     name: ['required', 'max:120'], email: ['required', 'email'], role: ['required'],
   });
   if (invalid) return res.status(400).json(invalid);
+
+  /* Whatever an administrator has made mandatory (P3-03/Q3). Separate from the
+     four above, which are structural rather than configurable. */
+  const missing = [...userRequired()].filter(
+    (f) => !USER_FIELDS.find((u) => u.field === f)?.always
+      && (req.body[f] === undefined || req.body[f] === null || String(req.body[f]).trim() === ''),
+  );
+  if (missing.length) {
+    const first = USER_FIELDS.find((f) => f.field === missing[0]);
+    return res.status(400).json({ error: `${first?.label ?? missing[0]} is required`, field: missing[0] });
+  }
 
   if (one('SELECT id FROM users WHERE lower(email) = lower(?)', [email])) {
     return res.status(409).json({ error: 'That email already belongs to a user', field: 'email' });
@@ -432,7 +512,7 @@ router.patch('/users/:id', requirePermission('admin.users'), async (req, res) =>
     if (String(password).length < 8) {
       return res.status(400).json({ error: 'Password must be at least 8 characters', field: 'password' });
     }
-    run('UPDATE users SET password = ? WHERE id = ?', [await hashPassword(String(password)), user.id]);
+    run("UPDATE users SET password = ?, last_password_changed_at = datetime('now') WHERE id = ?", [await hashPassword(String(password)), user.id]);
     run("DELETE FROM sessions WHERE user_id = ?", [user.id]);   // force re-auth everywhere
     audit(req.user.id, 'user_password_reset', 'user', user.id, {});
   }

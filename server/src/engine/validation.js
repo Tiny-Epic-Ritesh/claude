@@ -31,7 +31,7 @@
  * routes and none of them render a form. Non-negotiable #11.
  */
 
-import { all, one } from '../db.js';
+import { all, one, run } from '../db.js';
 import { fieldsOf } from './metadata.js';
 
 /**
@@ -217,4 +217,67 @@ export function wouldRefuseExisting(entity, condition, limit = 500) {
 
   const hits = rows.filter((r) => matches(condition, r));
   return { checked: rows.length, failing: hits.length, capped: rows.length === limit };
+}
+
+/* ------------------------------------------------ required fields (P3-03/Q3)
+ *
+ * "Mandatory" is not a separate concept from validation, it is the simplest
+ * possible rule: refuse when the field is empty. Storing it as one means the
+ * toggle on the Users screen and the rules screen are showing the same thing,
+ * rather than two settings that can disagree about whether a mobile number is
+ * required.
+ */
+
+/** The shape a required rule has, so it can be recognised again later. */
+const REQUIRED_CONDITION = (field) => JSON.stringify({ all: [{ field, op: 'is_blank' }] });
+
+/** Is this rule one of the "field is required" ones, and for which field? */
+export function requiredFieldOf(rule) {
+  let condition = null;
+  try { condition = JSON.parse(rule.condition); } catch { return null; }
+
+  const clauses = condition?.all;
+  if (!Array.isArray(clauses) || clauses.length !== 1) return null;
+  if (clauses[0]?.op !== 'is_blank') return null;
+  return clauses[0].field ?? null;
+}
+
+/** Which fields on an entity are currently required. */
+export function requiredFields(entity) {
+  return new Set(
+    rulesFor(entity)
+      .map(requiredFieldOf)
+      .filter(Boolean),
+  );
+}
+
+/**
+ * Make a field required, or stop requiring it.
+ *
+ * Removing deletes the rule rather than deactivating it, so a field that is not
+ * required leaves nothing behind to be switched on by accident later.
+ */
+export function setRequired(entity, field, required, label, userId) {
+  const existing = rulesFor(entity).filter((r) => requiredFieldOf(r) === field);
+
+  if (!required) {
+    for (const r of existing) run('DELETE FROM validation_rule WHERE id = ?', [r.id]);
+    return { ok: true, required: false };
+  }
+
+  if (existing.length) return { ok: true, required: true };
+
+  run(
+    `INSERT INTO validation_rule (entity, name, description, condition, message, created_by)
+     VALUES (?,?,?,?,?,?)`,
+    [
+      entity,
+      `${label || field} is required`,
+      'Created from the required-fields control.',
+      REQUIRED_CONDITION(field),
+      `${label || field} is required`,
+      userId ?? null,
+    ],
+  );
+  return { ok: true, required: true };
 }

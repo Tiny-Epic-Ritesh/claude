@@ -217,7 +217,7 @@ export async function login(email, password) {
      verifies, so log it and carry on. */
   if (needsRehash) {
     try {
-      run('UPDATE users SET password = ? WHERE id = ?', [await hashPassword(password), user.id]);
+      run("UPDATE users SET password = ?, last_password_changed_at = datetime('now') WHERE id = ?", [await hashPassword(password), user.id]);
       audit(user.id, 'password_rehashed', 'user', user.id, {});
     } catch (err) {
       console.warn('[auth] could not upgrade a stored password:', err.message);
@@ -228,6 +228,18 @@ export async function login(email, password) {
   run(
     "INSERT INTO sessions (token, user_id, kind, expires_at, last_seen_at) VALUES (?,?,?,datetime('now', ?),datetime('now'))",
     [token, user.id, 'crm', `+${SESSION_TTL_HOURS} hours`],
+  );
+
+  /* P3-02. On the user, not derived from the session that was just made:
+     sessions do not survive a sign-out, so "when did they last sign in" has to
+     be recorded at the moment it happens or not at all.
+
+     Written straight rather than through a helper so the trigger on users does
+     not read this as an edit -- it names updated_at explicitly and keeps the
+     value it had, because signing in is not a change to the record. */
+  run(
+    'UPDATE users SET last_login_at = datetime(\'now\'), updated_at = updated_at WHERE id = ?',
+    [user.id],
   );
   audit(user.id, 'login', 'user', user.id, { role: user.role });
   return { token, user: publicUser(user), expires_in_hours: SESSION_TTL_HOURS };

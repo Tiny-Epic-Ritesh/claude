@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api, appUrl, token, ROLE_LABEL } from '../../api.js';
 import { useApi, ErrorBanner, Modal, Spinner, Icon } from '../../components/ui.jsx';
 import { stashParentToken } from '../GhostBar.jsx';
+import { checkField } from '../../fieldRules.js';
 
 /*
  * Lifted out of Admin.jsx, which held eleven Setup screens in one file and so
@@ -213,45 +214,181 @@ export function ResetLink({ issued, onClose }) {
   );
 }
 
+/**
+ * One labelled field on the user form.
+ *
+ * At module scope deliberately. Defined inside NewUser it would be a new
+ * component type on every render, and React would unmount and rebuild every
+ * input on each keystroke -- which looks fine in a screenshot and loses the
+ * caret the moment anybody types.
+ */
+function Field({ name, label, required, error, children }) {
+  const message = error(name);
+  return (
+    <div className="field">
+      <label>
+        {label}
+        {required(name) && <span className="req" aria-label="required"> *</span>}
+      </label>
+      {children}
+      {message && <p className="err-text">{message}</p>}
+    </div>
+  );
+}
+
 export function NewUser({ onClose, onCreated }) {
   const [meta] = useApi('/meta');
-  const [form, setForm] = useState({ name: '', email: '', role: 'sales_rm', product_type_id: '', password: 'bonanza' });
+  const [people] = useApi('/setup/users');
+  const [orgs] = useApi('/orgs');
+  const [config] = useApi('/setup/users/required-fields');
+
+  const [form, setForm] = useState({
+    name: '', email: '', role: 'sales_rm', sales_org: '', title: '',
+    phone: '', whatsapp: '', employee_code: '', branch: '',
+    manager_id: '', product_type_id: '', date_of_joining: '',
+    phone_extension: '', cti_agent_id: '', cube_campaign_id: '',
+    password: 'bonanza',
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [touched, setTouched] = useState({});
+
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+  const blur = (k) => () => setTouched({ ...touched, [k]: true });
+
+  /* Required comes from the server, so the asterisk on the form and the
+     refusal from the API are the same answer. Until it loads, the four
+     structural ones are known without asking. */
+  const required = new Set(
+    (config?.fields ?? [{ field: 'name' }, { field: 'email' }, { field: 'role' }, { field: 'sales_org' }])
+      .filter((f) => f.required !== false)
+      .map((f) => f.field),
+  );
+  const req = (k) => required.has(k);
+
+  /* Format, not presence -- an empty optional field is not an error, and
+     shouting about the mobile somebody has not typed yet is how a form teaches
+     people to fill it with 9999999999. */
+  const problem = (k) => (touched[k] ? checkField({ api_name: k }, form[k]) : null);
+
+  const missing = [...required].filter((k) => String(form[k] ?? '').trim() === '');
+  const malformed = ['phone', 'whatsapp', 'email'].some((k) => checkField({ api_name: k }, form[k]));
 
   return (
-    <Modal title="Create user" onClose={onClose}>
+    <Modal title="Create user" onClose={onClose} wide>
       <form onSubmit={async (e) => {
         e.preventDefault();
         setBusy(true);
-        try { await api.post('/admin/users', { ...form, product_type_id: form.product_type_id || undefined }); onCreated(); }
-        catch (err) { setError(err.message); setBusy(false); }
+        setError(null);
+        try {
+          /* /setup/users, not /admin/users. The other one never set the
+             business, so every user it made became a Bonanza user whoever
+             created them. */
+          await api.post('/setup/users', {
+            ...form,
+            manager_id: form.manager_id || undefined,
+            product_type_id: form.product_type_id || undefined,
+            sales_org: form.sales_org || undefined,
+          });
+          onCreated();
+        } catch (err) { setError(err.message); setBusy(false); }
       }}>
         <ErrorBanner error={error} />
-        <div className="field"><label>Name</label><input value={form.name} onChange={set('name')} required autoFocus /></div>
-        <div className="field"><label>Email</label><input type="email" value={form.email} onChange={set('email')} required /></div>
+
         <div className="field-row">
-          <div className="field">
-            <label>Role</label>
+          <Field required={req} error={problem} name="name" label="Name">
+            <input value={form.name} onChange={set('name')} onBlur={blur('name')} required autoFocus />
+          </Field>
+          <Field required={req} error={problem} name="email" label="Email">
+            <input type="email" value={form.email} onChange={set('email')} onBlur={blur('email')} required />
+          </Field>
+        </div>
+
+        <div className="field-row">
+          <Field required={req} error={problem} name="role" label="Role">
             <select value={form.role} onChange={set('role')}>
               {Object.entries(ROLE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
-          </div>
-          <div className="field">
-            <label>Product (Product RM only)</label>
+          </Field>
+          <Field required={req} error={problem} name="sales_org" label="Business">
+            <select value={form.sales_org} onChange={set('sales_org')}>
+              <option value="">{orgs?.active_default ?? 'Default'}</option>
+              {(orgs?.orgs ?? []).map((o) => <option key={o.code} value={o.code}>{o.name}</option>)}
+            </select>
+          </Field>
+        </div>
+
+        <div className="field-row">
+          <Field required={req} error={problem} name="title" label="Job title">
+            <input value={form.title} onChange={set('title')} placeholder="Senior Relationship Manager" />
+          </Field>
+          <Field required={req} error={problem} name="employee_code" label="Employee code">
+            <input value={form.employee_code} onChange={set('employee_code')} placeholder="MUM-0447" />
+          </Field>
+        </div>
+
+        <div className="field-row">
+          <Field required={req} error={problem} name="phone" label="Mobile">
+            <input value={form.phone} onChange={set('phone')} onBlur={blur('phone')} inputMode="numeric" />
+          </Field>
+          <Field required={req} error={problem} name="whatsapp" label="WhatsApp">
+            <input value={form.whatsapp} onChange={set('whatsapp')} onBlur={blur('whatsapp')} inputMode="numeric" />
+          </Field>
+        </div>
+
+        <div className="field-row">
+          <Field required={req} error={problem} name="branch" label="Branch">
+            <input value={form.branch} onChange={set('branch')} placeholder="Mumbai" />
+          </Field>
+          <Field required={req} error={problem} name="manager_id" label="Reports to">
+            <select value={form.manager_id} onChange={set('manager_id')}>
+              <option value="">—</option>
+              {(people?.users ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </Field>
+        </div>
+
+        <div className="field-row">
+          <Field required={req} error={problem} name="product_type_id" label="Product (Product RM only)">
             <select value={form.product_type_id} onChange={set('product_type_id')}>
               <option value="">—</option>
               {(meta?.products || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
-          </div>
+          </Field>
+          <Field required={req} error={problem} name="date_of_joining" label="Date of joining">
+            <input type="date" value={form.date_of_joining} onChange={set('date_of_joining')} />
+          </Field>
         </div>
-        <div className="field"><label>Password</label><input value={form.password} onChange={set('password')} /></div>
+
+        <h4 className="muted">Telephony</h4>
+        <div className="field-row">
+          <Field required={req} error={problem} name="phone_extension" label="Extension">
+            <input value={form.phone_extension} onChange={set('phone_extension')} />
+          </Field>
+          <Field required={req} error={problem} name="cti_agent_id" label="Agent ID">
+            <input value={form.cti_agent_id} onChange={set('cti_agent_id')} />
+          </Field>
+        </div>
+        <Field required={req} error={problem} name="cube_campaign_id" label="Dialler campaign">
+          <input
+            value={form.cube_campaign_id}
+            onChange={(e) => setForm({ ...form, cube_campaign_id: e.target.value })}
+            placeholder="Leave blank to use the team's"
+          />
+        </Field>
+
+        <Field required={req} error={problem} name="password" label="Initial password">
+          <input value={form.password} onChange={set('password')} />
+        </Field>
+
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button type="button" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" disabled={busy}>{busy ? <Spinner /> : 'Create'}</button>
+          <button className="btn-primary" disabled={busy || missing.length > 0 || malformed}>
+            {busy ? <Spinner /> : 'Create'}
+          </button>
         </div>
       </form>
     </Modal>
   );
 }
+
