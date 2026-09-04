@@ -49,14 +49,29 @@ router.get('/users', requirePermission('admin.users'), (_req, res) => {
 });
 
 router.post('/users', requirePermission('admin.users'), async (req, res) => {
-  const { name, email, password, role, product_type_id, manager_id, phone } = req.body;
+  const { name, email, password, role, product_type_id, manager_id, phone, sales_org: org } = req.body;
   if (!name?.trim() || !email?.trim()) return res.status(400).json({ error: 'Name and email are required' });
   if (!ROLES.includes(role)) return res.status(400).json({ error: `Role must be one of: ${ROLES.join(', ')}` });
   if (one('SELECT id FROM users WHERE lower(email) = lower(?)', [email])) return res.status(409).json({ error: 'That email already exists' });
 
+  /* The book, which this route never set.
+   *
+   * The INSERT below did not name sales_org, so every user created here got the
+   * column default and landed in Bonanza -- including the ones a Bigul
+   * administrator created. That user then saw the wrong records and disappeared
+   * from the list of the person who created them, because that list is scoped.
+   *
+   * Taken from the creator, and checked when given explicitly, the way
+   * `/setup/users` has always done it.
+   */
+  const targetOrg = org || req.user.sales_org || 'BONANZA';
+  if (!mayUseOrg(req.user, targetOrg)) {
+    return res.status(403).json({ error: `You cannot create users in ${targetOrg}`, field: 'sales_org' });
+  }
+
   const result = run(
-    'INSERT INTO users (name, email, password, role, product_type_id, manager_id, phone) VALUES (?,?,?,?,?,?,?)',
-    [name, email, await hashPassword(password || 'demo1234'), role, product_type_id || null, manager_id || null, phone || null],
+    'INSERT INTO users (name, email, password, role, product_type_id, manager_id, phone, sales_org) VALUES (?,?,?,?,?,?,?,?)',
+    [name, email, await hashPassword(password || 'demo1234'), role, product_type_id || null, manager_id || null, phone || null, targetOrg],
   );
   audit(req.user.id, 'user_created', 'user', Number(result.lastInsertRowid), { role });
   res.status(201).json({ id: Number(result.lastInsertRowid) });

@@ -459,6 +459,37 @@ await test('a write cannot cross the book boundary', async () => {
   }
 });
 
+await test('a new user is created in the creator\'s own book', async () => {
+  /* The same twin-endpoint problem as the write above, in the create path.
+     POST /admin/users never named sales_org in its INSERT, so the column
+     default applied and every user created anywhere became a Bonanza user --
+     including the ones a Bigul administrator created, who then read the wrong
+     book and vanished from their creator's own list. */
+  const seeded = one("SELECT password FROM users WHERE email = 'admin@bonanza.test'");
+  const admin = 'bookscope-creator@bigul.test';
+  const made = 'bookscope-created@bigul.test';
+  run('DELETE FROM users WHERE email IN (?,?)', [admin, made]);
+  run(`INSERT INTO users (name, email, password, role, sales_org, active)
+       VALUES ('Bookscope Creator', ?, ?, 'admin', 'BIGUL', 1)`, [admin, seeded.password]);
+
+  try {
+    const token = await login(admin);
+    const res = await fetch(`${BASE}/api/admin/users`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ name: 'Bookscope Created', email: made, role: 'sales_rm', password: 'bonanza' }),
+    });
+    assert.equal(res.status, 201, `creating a user returned HTTP ${res.status}`);
+
+    const row = one('SELECT sales_org FROM users WHERE email = ?', [made]);
+    assert(row, 'the user was not created');
+    assert.equal(row.sales_org, 'BIGUL',
+      `a Bigul administrator created a ${row.sales_org} user`);
+  } finally {
+    run('DELETE FROM users WHERE email IN (?,?)', [admin, made]);
+  }
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 
 // exitCode rather than process.exit(): calling exit() straight after the live
