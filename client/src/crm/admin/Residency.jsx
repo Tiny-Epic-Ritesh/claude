@@ -1,5 +1,7 @@
-import { dateTime } from '../../api.js';
+import { useMemo, useState } from 'react';
+import { api, dateTime } from '../../api.js';
 import { useApi, Loading, ErrorBanner, Empty } from '../../components/ui.jsx';
+import FilterBar from '../../components/FilterBar.jsx';
 
 /*
  * Lifted out of Admin.jsx, which held eleven Setup screens in one file and so
@@ -8,7 +10,36 @@ import { useApi, Loading, ErrorBanner, Empty } from '../../components/ui.jsx';
  */
 
 export function Residency({ session }) {
-  const [data, { loading, error }] = useApi('/ai/residency');
+  /* P3-25. The screen showed every capability with no way to narrow to the
+     ones being asked about -- and the question put to this screen is almost
+     always the narrow one: which capabilities send anything outside India. */
+  const [filters, setFilters] = useState({ q: '', data_class: '', leaves_india: '' });
+  const [exporting, setExporting] = useState(false);
+  const [problem, setProblem] = useState(null);
+
+  const query = useMemo(() => {
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries(filters)) if (v) p.set(k, v);
+    return p.toString();
+  }, [filters]);
+
+  const [data, { loading, error }] = useApi(`/ai/residency${query ? `?${query}` : ''}`, [query]);
+
+  const download = async () => {
+    setExporting(true);
+    setProblem(null);
+    try {
+      const blob = await api.blob(`/ai/residency/export${query ? `?${query}` : ''}`);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `data-residency-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) { setProblem(err.message); } finally { setExporting(false); }
+  };
   const canAudit = session.permissions.includes('audit.read');
   const [log] = useApi(canAudit ? '/ai/residency/log?limit=25' : null);
 
@@ -24,11 +55,40 @@ export function Residency({ session }) {
         <strong>Mode: {data.mode}</strong> — {data.effective_note}
       </div>
 
+      {problem && <ErrorBanner error={problem} onDismiss={() => setProblem(null)} />}
+
       <section className="card">
         <div className="card-head">
           <h2>Where each AI capability is processed</h2>
-          <span className="tiny muted">{leaving.length} of {data.capabilities.length} route outside India, de-identified</span>
+          <span className="tiny muted">
+            {leaving.length} of {data.capabilities.length} shown route outside India, de-identified
+            {data.capabilities_total !== data.capabilities.length
+              && ` · ${data.capabilities.length} of ${data.capabilities_total} capabilities shown`}
+          </span>
         </div>
+
+        <FilterBar
+          fields={[
+            { name: 'q', label: 'Capability', type: 'text', placeholder: 'Name or reason' },
+            {
+              name: 'data_class',
+              label: 'Data class',
+              type: 'select',
+              options: (data.data_classes ?? []).map((c) => ({ value: c, label: c.replace('CLASS_', '') })),
+            },
+            {
+              name: 'leaves_india',
+              label: 'Leaves India',
+              type: 'select',
+              blank: 'Either',
+              options: [{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }],
+            },
+          ]}
+          values={filters}
+          onChange={setFilters}
+          onExport={session?.permissions?.includes('report.system') ? download : null}
+          busy={exporting}
+        />
         <table>
           <thead>
             <tr><th>Capability</th><th>Data class</th><th>Processed</th><th>Why</th></tr>

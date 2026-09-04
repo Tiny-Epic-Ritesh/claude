@@ -176,7 +176,26 @@ export function purge() {
  * called — the boundary does not stop being the boundary because the data is
  * shaped like a log.
  */
-export function readLog(kind, { orgs = [], limit = 200, offset = 0, status = null, q = null } = {}) {
+/**
+ * A date range, inclusive at both ends. P3-23.
+ *
+ * On the column each source calls its timestamp, because they disagree:
+ * `request_log.at`, `audit_log.created_at`, `config_audit.at`. Inclusive of the
+ * whole day, since a range of "the 3rd to the 3rd" returning nothing because
+ * the rows carry a time is a filter people conclude is broken.
+ */
+const dateRange = (col, from, to) => {
+  const where = [];
+  const params = [];
+  if (from) { where.push(`date(${col}) >= date(?)`); params.push(from); }
+  if (to) { where.push(`date(${col}) <= date(?)`); params.push(to); }
+  return { where, params };
+};
+
+export function readLog(kind, {
+  orgs = [], limit = 200, offset = 0, status = null, q = null,
+  user = null, from = null, to = null,
+} = {}) {
   const def = LOG_KINDS.find((k) => k.kind === kind);
   if (!def) return null;
 
@@ -187,6 +206,14 @@ export function readLog(kind, { orgs = [], limit = 200, offset = 0, status = nul
     const params = [...orgs];
     if (status) { where.push('r.status = ?'); params.push(Number(status)); }
     if (q) { where.push('r.path LIKE ?'); params.push(`%${q}%`); }
+
+    /* By name, which is what somebody debugging a request actually has. The
+       ticket asks for this one specifically. */
+    if (user) { where.push('u.name LIKE ?'); params.push(`%${user}%`); }
+
+    const range = dateRange('r.at', from, to);
+    where.push(...range.where);
+    params.push(...range.params);
     return {
       source: def.source,
       rows: all(
@@ -197,33 +224,58 @@ export function readLog(kind, { orgs = [], limit = 200, offset = 0, status = nul
          ORDER BY r.at DESC, r.id DESC LIMIT ? OFFSET ?`,
         [...params, Number(limit), Number(offset)],
       ),
-      total: one(`SELECT COUNT(*) n FROM request_log r WHERE ${where.join(' AND ')}`, params).n,
+      /* The same join as the page above it. Without the users join a name
+         filter counts against a table that has no name column, and the total
+         and the rows stop agreeing. */
+      total: one(
+        `SELECT COUNT(*) n FROM request_log r LEFT JOIN users u ON u.id = r.user_id
+          WHERE ${where.join(' AND ')}`,
+        params,
+      ).n,
     };
   }
 
   if (def.source === 'config_audit') {
+    const where = ['1=1'];
+    const params = [];
+    if (q) { where.push('(c.area LIKE ? OR c.target LIKE ? OR c.action LIKE ?)'); params.push(`%${q}%`, `%${q}%`, `%${q}%`); }
+    if (user) { where.push('u.name LIKE ?'); params.push(`%${user}%`); }
+    const range = dateRange('c.at', from, to);
+    where.push(...range.where);
+    params.push(...range.params);
+
+    const joined = 'FROM config_audit c LEFT JOIN users u ON u.id = c.actor_id';
     return {
       source: def.source,
       rows: all(
         `SELECT c.id, c.at, c.area, c.target, c.action, u.name AS user_name
-         FROM config_audit c LEFT JOIN users u ON u.id = c.actor_id
+         ${joined} WHERE ${where.join(' AND ')}
          ORDER BY c.at DESC, c.id DESC LIMIT ? OFFSET ?`,
-        [Number(limit), Number(offset)],
+        [...params, Number(limit), Number(offset)],
       ),
-      total: one('SELECT COUNT(*) n FROM config_audit').n,
+      total: one(`SELECT COUNT(*) n ${joined} WHERE ${where.join(' AND ')}`, params).n,
     };
   }
 
   if (def.source === 'audit_log') {
+    const where = ['1=1'];
+    const params = [];
+    if (q) { where.push('(a.action LIKE ? OR a.entity LIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
+    if (user) { where.push('u.name LIKE ?'); params.push(`%${user}%`); }
+    const range = dateRange('a.created_at', from, to);
+    where.push(...range.where);
+    params.push(...range.params);
+
+    const joined = 'FROM audit_log a LEFT JOIN users u ON u.id = a.user_id';
     return {
       source: def.source,
       rows: all(
         `SELECT a.id, a.created_at AS at, a.action, a.entity, a.entity_id, a.actor, u.name AS user_name
-         FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
+         ${joined} WHERE ${where.join(' AND ')}
          ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?`,
-        [Number(limit), Number(offset)],
+        [...params, Number(limit), Number(offset)],
       ),
-      total: one('SELECT COUNT(*) n FROM audit_log').n,
+      total: one(`SELECT COUNT(*) n ${joined} WHERE ${where.join(' AND ')}`, params).n,
     };
   }
 
@@ -240,6 +292,10 @@ export function readLog(kind, { orgs = [], limit = 200, offset = 0, status = nul
 
   if (status) { where.push('l.status = ?'); params.push(status); }
   if (q) { where.push('(l.summary LIKE ? OR l.reference LIKE ? OR l.vendor LIKE ?)'); params.push(`%${q}%`, `%${q}%`, `%${q}%`); }
+
+  const range = dateRange('l.at', from, to);
+  where.push(...range.where);
+  params.push(...range.params);
 
   return {
     source: def.source,

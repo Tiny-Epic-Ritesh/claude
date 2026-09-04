@@ -20,6 +20,8 @@
  * up.
  */
 
+import { useState } from 'react';
+import { api } from '../api.js';
 import { useApi, Loading, ErrorBanner, Icon } from '../components/ui.jsx';
 
 const mb = (b) => {
@@ -32,6 +34,30 @@ const mb = (b) => {
 
 export default function Database() {
   const [data, { loading, error }] = useApi('/setup/database');
+
+  /* P3-24. The footprint goes to the management team to decide on, and a
+     screenshot is not something anybody can put in a paper. No filter bar here:
+     there is nothing to narrow -- the screen is one summary, so an export is
+     the only thing it was missing. */
+  const [exporting, setExporting] = useState(false);
+  const [problem, setProblem] = useState(null);
+
+  const download = async () => {
+    setExporting(true);
+    setProblem(null);
+    try {
+      const blob = await api.blob('/setup/database/export');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `database-footprint-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) { setProblem(err.message); } finally { setExporting(false); }
+  };
+
   if (loading || !data) return <Loading />;
   if (error) return <ErrorBanner error={error} />;
 
@@ -49,7 +75,12 @@ export default function Database() {
               {data.total.pages.toLocaleString('en-IN')} pages of {data.total.page_size} bytes
             </span>
           </div>
+          <button type="button" className="btn btn-sm" onClick={download} disabled={exporting}>
+            <Icon name="download" size={15} /> {exporting ? 'Preparing…' : 'Export CSV'}
+          </button>
         </div>
+
+        {problem && <ErrorBanner error={problem} onDismiss={() => setProblem(null)} />}
 
         <dl className="setup-facts">
           <div><dt>Objects</dt><dd>{mb(objectBytes)}</dd></div>

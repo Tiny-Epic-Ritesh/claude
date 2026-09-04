@@ -30,6 +30,7 @@ import {
 } from '../engine/access.js';
 import { vendorStatus } from '../vendors/config.js';
 import { snapshot } from '../engine/versioning.js';
+import { sendCsv } from '../engine/csv.js';
 import {
   LIST_COLUMNS, isList, resolveColumns, setUserColumns, setRoleColumns,
   clearUserColumns, roleDefaultsFor, hasUserChoice,
@@ -1158,6 +1159,78 @@ router.get('/database', requirePermission('report.system'), (req, res) => {
   });
 });
 
+/**
+ * The database footprint as a file. P3-24.
+ *
+ * The ticket's reason is worth keeping: this goes to the management team to
+ * decide on, and a screenshot of a screen is not something anybody can put in a
+ * paper. So the file carries what the screen shows -- object, rows, bytes and a
+ * readable size -- with the estimate caveat as its own row rather than a
+ * footnote somebody drops when they paste it into a deck.
+ */
+router.get('/database/export', requirePermission('report.system'), (req, res) => {
+  const orgs = orgsFor(req.user);
+  const objects = breakdown(orgs);
+  const total = totalBytes();
+
+  const readable = (n) => {
+    const b = Number(n) || 0;
+    if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(2)} GB`;
+    if (b >= 1024 ** 2) return `${(b / 1024 ** 2).toFixed(2)} MB`;
+    if (b >= 1024) return `${(b / 1024).toFixed(1)} KB`;
+    return `${b} B`;
+  };
+
+  const rows = objects.map((o) => ({
+    object: o.label ?? o.entity ?? o.name,
+    rows: o.rows ?? o.count ?? 0,
+    bytes: o.bytes ?? 0,
+    size: readable(o.bytes ?? 0),
+  }));
+
+  /* Totals belong in the file. Whoever receives it will otherwise add the
+     column up by hand and get a different number, because the object rows do
+     not account for indexes and free pages. */
+  const objectRows = rows.reduce((n, r) => n + (Number(r.rows) || 0), 0);
+  const objectBytes = rows.reduce((n, r) => n + (Number(r.bytes) || 0), 0);
+
+  /* `nonObjectBytes()` is a list of tables, not a number, and `totalBytes()` is
+     a summary object rather than a count of bytes. Reading either as a scalar
+     writes "[object Object]" into a file somebody is about to show the
+     management team. */
+  const otherTables = nonObjectBytes();
+  const otherBytes = otherTables.reduce((n, t) => n + (Number(t.bytes) || 0), 0);
+
+  for (const t of otherTables) {
+    rows.push({ object: `${t.table} (supporting)`, rows: '', bytes: t.bytes, size: readable(t.bytes) });
+  }
+
+  rows.push({ object: 'Objects, total', rows: objectRows, bytes: objectBytes, size: readable(objectBytes) });
+  rows.push({ object: 'Supporting tables, total', rows: '', bytes: otherBytes, size: readable(otherBytes) });
+  rows.push({ object: 'Database file, total', rows: '', bytes: total.total, size: readable(total.total) });
+  rows.push({
+    object: 'Of which reclaimable by VACUUM',
+    rows: '',
+    bytes: total.reclaimable,
+    size: readable(total.reclaimable),
+  });
+  rows.push({
+    object: 'Note',
+    rows: '',
+    bytes: '',
+    size: 'Per-business figures are estimated from row share: one database holds both books.',
+  });
+
+  audit(req.user.id, 'database_report_exported', 'database', null, { objects: objects.length });
+
+  return sendCsv(res, 'database-footprint', rows, [
+    { key: 'object', label: 'Object' },
+    { key: 'rows', label: 'Rows' },
+    { key: 'bytes', label: 'Bytes' },
+    { key: 'size', label: 'Size' },
+  ]);
+});
+
 /* ----------------------------------------------------------------- logs
  *
  * P2-15a: one place for webhook, telephony, API, payment and portal logs.
@@ -1183,6 +1256,9 @@ router.get('/logs/:kind', requirePermission('report.system'), (req, res) => {
     offset: Number(req.query.offset) || 0,
     status: req.query.status || null,
     q: req.query.q || null,
+    user: req.query.user || null,
+    from: req.query.from || null,
+    to: req.query.to || null,
   });
   if (!page) return res.status(404).json({ error: 'No such log' });
   return res.json(page);

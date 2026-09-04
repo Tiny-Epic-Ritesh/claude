@@ -4,10 +4,11 @@
 
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
-import { requireUser, can, leadScope, activeOrg } from '../auth.js';
+import { requireUser, requirePermission, can, leadScope, activeOrg } from '../auth.js';
 import { loadInBook } from '../engine/bookscope.js';
 import { applyScore } from '../engine/rules.js';
 import * as ai from '../ai/index.js';
+import { sendCsv } from '../engine/csv.js';
 
 const router = Router();
 router.use(requireUser);
@@ -35,7 +36,89 @@ router.get('/status', (_req, res) => {
  * Deliberately readable by any authenticated user: an RM about to paste a
  * transcript into the disposition box is entitled to know where it goes.
  */
-router.get('/residency', (_req, res) => res.json(ai.residency()));
+/**
+ * The residency policy, narrowable and exportable. P3-25.
+ *
+ * Filtered server-side even though the report is small and the screen could do
+ * it in the browser -- because the export has to carry exactly what the screen
+ * shows, and the only way to guarantee that is for both to ask the same
+ * question of the same code.
+ */
+function residencyFilter(req) {
+  const report = ai.residency();
+  const q = String(req.query.q ?? '').trim().toLowerCase();
+  const cls = req.query.data_class || '';
+  const leaves = req.query.leaves_india || '';
+
+  const capabilities = report.capabilities.filter((c) => {
+    if (q && !`${c.capability} ${c.classification_reason}`.toLowerCase().includes(q)) return false;
+    if (cls && c.data_class !== cls) return false;
+    /* Explicit strings rather than a truthy test: "no" is a filter somebody
+       chose, and treating it as absent would silently show them everything. */
+    if (leaves === 'yes' && !c.leaves_india) return false;
+    if (leaves === 'no' && c.leaves_india) return false;
+    return true;
+  });
+
+  return { report, capabilities };
+}
+
+router.get('/residency', (req, res) => {
+  const { report, capabilities } = residencyFilter(req);
+  res.json({
+    ...report,
+    capabilities,
+    /* The unfiltered count, so the screen can say "6 of 14" rather than
+       leaving somebody to wonder whether a filter hid something. */
+    capabilities_total: report.capabilities.length,
+    /* The values present, so a filter cannot be set to something that returns
+       nothing. */
+    data_classes: [...new Set(report.capabilities.map((c) => c.data_class))].sort(),
+  });
+});
+
+/**
+ * The same report as a file, for compliance.
+ *
+ * This is the artefact somebody hands to an auditor asking which capabilities
+ * send data outside India, so the note travels with it as a row rather than as
+ * a caption on a screen nobody exported.
+ */
+router.get('/residency/export', requirePermission('report.system'), (req, res) => {
+  const { report, capabilities } = residencyFilter(req);
+
+  const rows = capabilities.map((c) => ({
+    capability: c.capability,
+    data_class: c.data_class,
+    routed_to: c.routed_to,
+    leaves_india: c.leaves_india ? 'Yes' : 'No',
+    deidentified: c.deidentified ? 'Yes' : 'No',
+    classification_reason: c.classification_reason,
+  }));
+
+  rows.push({
+    capability: `Mode: ${report.mode}`,
+    data_class: '',
+    routed_to: '',
+    leaves_india: '',
+    deidentified: '',
+    classification_reason: report.note,
+  });
+
+  audit(req.user.id, 'residency_report_exported', 'residency', null, {
+    rows: capabilities.length,
+    of_total: report.capabilities.length,
+  });
+
+  return sendCsv(res, 'data-residency', rows, [
+    { key: 'capability', label: 'Capability' },
+    { key: 'data_class', label: 'Data class' },
+    { key: 'routed_to', label: 'Processed by' },
+    { key: 'leaves_india', label: 'Leaves India' },
+    { key: 'deidentified', label: 'De-identified' },
+    { key: 'classification_reason', label: 'Why' },
+  ]);
+});
 
 /**
  * Egress evidence — the audit trail of every AI call, showing what was removed

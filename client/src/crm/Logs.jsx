@@ -22,6 +22,7 @@
 import { useState } from 'react';
 import { api } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty, Spinner } from '../components/ui.jsx';
+import FilterBar from '../components/FilterBar.jsx';
 import ApiAccess from './ApiAccess.jsx';
 
 /**
@@ -53,11 +54,16 @@ export default function ApiAndLogs() {
 function Logs() {
   const [meta, { loading, error, reload }] = useApi('/setup/logs');
   const [kind, setKind] = useState('api');
-  const [q, setQ] = useState('');
+  /* P3-23. It offered one box that matched the path and nothing else, so
+     "which requests did Priya make on Tuesday" -- the actual question somebody
+     brings to a log -- could not be asked at all. */
+  const [filters, setFilters] = useState({ user: '', q: '', status: '', from: '', to: '' });
   const [notice, setNotice] = useState(null);
   const [problem, setProblem] = useState(null);
 
-  const query = `/setup/logs/${kind}?limit=100${q ? `&q=${encodeURIComponent(q)}` : ''}`;
+  const params = new URLSearchParams({ limit: '100' });
+  for (const [k, v] of Object.entries(filters)) if (v) params.set(k, v);
+  const query = `/setup/logs/${kind}?${params.toString()}`;
   const [page, { loading: loadingRows }] = useApi(query);
 
   if (loading || !meta) return <Loading />;
@@ -90,13 +96,36 @@ function Logs() {
               {' '}no message bodies, numbers or payloads are stored
             </span>
           </div>
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Filter…"
-            style={{ width: 200 }}
-          />
         </div>
+
+        <FilterBar
+          fields={[
+            { name: 'user', label: 'Who', type: 'text', placeholder: 'Name' },
+            { name: 'q', label: 'Endpoint or detail', type: 'text', placeholder: '/api/leads' },
+            {
+              name: 'status',
+              label: 'Result',
+              type: 'select',
+              blank: 'Any result',
+              /* The status values a reader is actually hunting: a 500 they were
+                 told about, a 403 somebody reported, a 401 during a login
+                 problem. Free text here would mean typing 404 to find nothing
+                 because the column is an integer. */
+              options: [
+                { value: '200', label: '200 · OK' },
+                { value: '400', label: '400 · Bad request' },
+                { value: '401', label: '401 · Not signed in' },
+                { value: '403', label: '403 · Refused' },
+                { value: '404', label: '404 · Not found' },
+                { value: '500', label: '500 · Server error' },
+              ],
+            },
+            { name: 'from', label: 'From', type: 'date' },
+            { name: 'to', label: 'To', type: 'date' },
+          ]}
+          values={filters}
+          onChange={setFilters}
+        />
 
         <div className="tabs tabs-sub">
           {meta.kinds.map((k) => (
