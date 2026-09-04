@@ -112,6 +112,7 @@ function AdminRedirect() {
   return <Navigate to={`/setup${tab ? `/${tab}` : ''}`} replace />;
 }
 const DataTools = lazy(() => import('./DataTools.jsx'));
+const LeadImport = lazy(() => import('./LeadImport.jsx'));
 
 /**
  * Navigation is Salesforce-shaped: an App Launcher switches working surfaces
@@ -426,6 +427,12 @@ export default function Crm() {
             <Route
               path="/data"
               element={<Suspense fallback={<Loading />}><DataTools session={session} /></Suspense>}
+            />
+            {/* P3-33. Its own page under Leads rather than a panel inside the
+                list, because it is a task somebody sits down to do. */}
+            <Route
+              path="/leads/import"
+              element={<Suspense fallback={<Loading />}><LeadImport session={session} /></Suspense>}
             />
             {/* Where Setup used to live. Kept as a redirect rather than
                 removed: bookmarks exist, and `?tab=` links were only just made

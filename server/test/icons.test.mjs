@@ -118,7 +118,14 @@ function usedIcons(vocabulary) {
        ordinary way -- `typeof window.requestIdleCallback === 'function'` --
        reported `function` as a missing glyph. The same false positive as the
        four strips above, arriving from a fifth direction. */
-    .replace(/typeof\s+[^=!]+[=!]==?\s*(['"`])(?:function|string|number|object|boolean|undefined|symbol|bigint)\1/g, ' ');
+    .replace(/typeof\s+[^=!]+[=!]==?\s*(['"`])(?:function|string|number|object|boolean|undefined|symbol|bigint)\1/g, ' ')
+    /* The value of an inline CSS property is a CSS keyword, not an icon. A
+       great many of them are both -- start, center, block, grid, table, menu,
+       fixed -- so `style={{ alignItems: 'start' }}` reported `start` as a
+       missing glyph. The properties are named explicitly rather than matching
+       any `word: 'word'`, because that shape is also how icons are declared in
+       config objects, and blanking those would hide the real thing. */
+    .replace(/\b(?:alignItems|alignSelf|alignContent|justifyContent|justifyItems|justifySelf|textAlign|flexDirection|flexWrap|position|display|overflow|overflowX|overflowY|whiteSpace|objectFit|textTransform|visibility|cursor|float|clear|resize|wordBreak|verticalAlign):\s*(['"`])[a-z-]+\1/g, ' ');
 
   for (const file of walk(CLIENT)) {
     const src = strip(readFileSync(file, 'utf8').replace(CRLF, '\n'));

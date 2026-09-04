@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { api, money, shortDate, STATE_LABEL } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty, Modal, Spinner, CardStrip, AgeBadge } from '../components/ui.jsx';
 import ColumnChooser from '../components/ColumnChooser.jsx';
@@ -353,6 +353,11 @@ export default function Leads({ session }) {
               onToggle={toggleColumn}
               onReset={resetColumns}
             />
+            {canCreate && (
+              <Link className="btn-sm" to="/leads/import">
+                <Icon name="upload" size={15} /> Import
+              </Link>
+            )}
             {session.permissions.includes('export.lead') && (
               <button className="btn-sm" onClick={() => setExporting(true)}>
                 <Icon name="download" size={15} /> Export

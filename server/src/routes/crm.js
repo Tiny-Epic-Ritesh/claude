@@ -8,6 +8,9 @@ import { can, requireUser, requirePermission, reqScope, isReadOnlyOnLeads, unmas
 import { owdGrant } from '../engine/owd.js';
 import { encryptField, decryptField, maskRecord, maskRecords, validate, blindIndex } from '../security.js';
 import { sendCsv } from '../engine/csv.js';
+import {
+  IMPORT_FIELDS, MODES, IMPORT_CAP, checkMapping, runImport, recordRun, readRun, listRuns,
+} from '../engine/leadimport.js';
 import { applyScore } from '../engine/rules.js';
 import { click2call, pushToAutodialler, send, logCall } from '../integrations.js';
 import { checkConsent, contactability } from '../engine/consent.js';
@@ -359,6 +362,114 @@ router.get('/leads', (req, res) => {
 
   res.set('X-Total-Count', String(total));
   return res.json(maskRecords(leads, maskFor(req, 'lead_list')));
+});
+
+/* ------------------------------------------------- guided lead import
+ *
+ * P3-33 asks for a step-by-step import rather than a paste box: choose a file,
+ * map its columns, decide what to do with rows that already exist, and see what
+ * happened afterwards. These are the four steps, in order.
+ *
+ * Above `/leads/:id`, like everything else literal under /leads.
+ */
+
+/** Step 2's vocabulary: what a column can be mapped onto, and the modes. */
+router.get('/leads/import/fields', requirePermission('lead.create'), (_req, res) => {
+  res.json({
+    fields: IMPORT_FIELDS,
+    modes: MODES,
+    max_rows: IMPORT_CAP,
+    accepts: ['.csv'],
+    match_on: 'mobile',
+    note: 'Columns you do not map are ignored. Rows are matched to existing leads on mobile number, within your business only.',
+  });
+});
+
+/**
+ * Step 2 and 3's safety net: what would happen, without anything happening.
+ *
+ * The same code path as the real run, so the preview cannot be kinder than the
+ * import. A preview built from separate, more forgiving logic is worse than no
+ * preview, because it is believed.
+ */
+router.post('/leads/import/preview', requirePermission('lead.create'), (req, res) => {
+  const { header = [], rows = [], mapping = {}, mode = 'create' } = req.body ?? {};
+
+  const check = checkMapping(header, mapping);
+  if (check.problems.length) return res.status(400).json({ error: check.problems[0], problems: check.problems });
+  if (!rows.length) return res.status(400).json({ error: 'The file has a header but no rows.' });
+  if (rows.length > IMPORT_CAP) {
+    return res.status(400).json({ error: `That is ${rows.length} rows — the most one import may carry is ${IMPORT_CAP}.` });
+  }
+
+  const importOrg = req.body.sales_org || activeOrg(req) || req.user.sales_org || 'BONANZA';
+  if (!mayUseOrg(req.user, importOrg)) {
+    return res.status(403).json({ error: `You cannot import leads into ${importOrg}.` });
+  }
+
+  return res.json({
+    ...runImport({
+      header, rows, mapping, mode, salesOrg: importOrg, ownerId: req.user.id, commit: false,
+    }),
+    unmapped: check.unmapped,
+  });
+});
+
+/**
+ * Step 4: do it, and keep the result.
+ *
+ * The list is created before the rows so that a run which fails halfway leaves
+ * a named, empty list rather than leads with nowhere to be.
+ */
+router.post('/leads/import/run', requirePermission('lead.create'), (req, res) => {
+  const {
+    header = [], rows = [], mapping = {}, mode = 'create', filename = null,
+    list_id: listId = null, list_name: listName = null,
+  } = req.body ?? {};
+
+  const check = checkMapping(header, mapping);
+  if (check.problems.length) return res.status(400).json({ error: check.problems[0], problems: check.problems });
+  if (!rows.length) return res.status(400).json({ error: 'The file has a header but no rows.' });
+  if (rows.length > IMPORT_CAP) {
+    return res.status(400).json({ error: `That is ${rows.length} rows — the most one import may carry is ${IMPORT_CAP}.` });
+  }
+
+  const importOrg = req.body.sales_org || activeOrg(req) || req.user.sales_org || 'BONANZA';
+  if (!mayUseOrg(req.user, importOrg)) {
+    return res.status(403).json({ error: `You cannot import leads into ${importOrg}.` });
+  }
+
+  let targetList = listId ? Number(listId) : null;
+  if (!targetList && listName?.trim()) {
+    const made = run(
+      `INSERT INTO lead_lists (name, kind, sales_org, created_by, description)
+       VALUES (?, 'static', ?, ?, ?)`,
+      [listName.trim(), importOrg, req.user.id, `Created by an import on ${new Date().toISOString().slice(0, 10)}`],
+    );
+    targetList = Number(made.lastInsertRowid);
+  }
+
+  const report = runImport({
+    header, rows, mapping, mode, salesOrg: importOrg, ownerId: req.user.id,
+    listId: targetList, commit: true, generateCards,
+  });
+
+  const runId = recordRun({
+    userId: req.user.id, salesOrg: importOrg, filename, mode, mapping, listId: targetList, report,
+  });
+
+  return res.status(201).json({ ...report, run_id: runId, list_id: targetList });
+});
+
+/** P3-34: the summary, after the fact. */
+router.get('/leads/import/runs', requirePermission('lead.create'), (req, res) => {
+  res.json({ runs: listRuns(orgsFor(req.user), Number(req.query.limit) || 25) });
+});
+
+router.get('/leads/import/runs/:id', requirePermission('lead.create'), (req, res) => {
+  const found = readRun(Number(req.params.id), orgsFor(req.user));
+  if (!found) return res.status(404).json({ error: 'Import not found' });
+  return res.json(found);
 });
 
 /* ------------------------------------------------- lead export columns

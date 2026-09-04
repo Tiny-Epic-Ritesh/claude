@@ -1402,6 +1402,39 @@ CREATE INDEX IF NOT EXISTS idx_slabs_plan ON incentive_slabs(plan_id, basis, fro
    a built-in cannot be deleted by removing a row. The strategy column names one of
    MASK_STRATEGIES: how to obscure the value, which cannot be guessed from the
    field name. */
+/* One lead import, kept so its result can be looked at again (P3-34). */
+CREATE TABLE IF NOT EXISTS import_run (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  sales_org   TEXT NOT NULL,
+  filename    TEXT,
+  mode        TEXT NOT NULL DEFAULT 'create',   -- create | update | upsert
+  mapping     TEXT,                             -- JSON: file column -> CRM field
+  list_id     INTEGER REFERENCES lead_lists(id) ON DELETE SET NULL,
+  total       INTEGER NOT NULL DEFAULT 0,
+  created     INTEGER NOT NULL DEFAULT 0,
+  updated     INTEGER NOT NULL DEFAULT 0,
+  skipped     INTEGER NOT NULL DEFAULT 0,
+  failed      INTEGER NOT NULL DEFAULT 0,
+  truncated   INTEGER NOT NULL DEFAULT 0,       -- failures past the cap
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_import_run_user ON import_run(user_id, created_at DESC);
+
+/* Why a row did not import. A table rather than a blob on the run: "which rows
+   failed and why" is a query -- grouped by reason, exported to be fixed and
+   re-imported -- and a blob makes every one of those a parse in application
+   code. */
+CREATE TABLE IF NOT EXISTS import_failure (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id   INTEGER NOT NULL REFERENCES import_run(id) ON DELETE CASCADE,
+  row_no   INTEGER NOT NULL,                    -- 1-based, as the file numbers it
+  reason   TEXT NOT NULL,
+  detail   TEXT,                                -- the row as read, for context
+  UNIQUE (run_id, row_no)
+);
+CREATE INDEX IF NOT EXISTS idx_import_failure_run ON import_failure(run_id);
+
 CREATE TABLE IF NOT EXISTS maskable_field (
   field      TEXT PRIMARY KEY,
   label      TEXT NOT NULL,
