@@ -2292,3 +2292,363 @@ point out of the source, and that entry point had moved. Repointed at
 `admin/users.jsx` with a note saying why.
 
 `Admin.jsx` is gone. 600/600, build silent.
+
+---
+
+## Cube: the published UAT host does not exist - 3 Sep 2026
+
+Ritesh logged into the live QuickCall agent popup and asked whether it helped.
+It did, by disproving two assumptions rather than by answering the question.
+
+The popup runs on **cubehosted.net** (164.52.198.147), not raphsody.in
+(203.95.216.59), and the `uat-raphsody.in` in our servers table - taken from the
+vendor's own Swagger portal - has no DNS record at all.
+
+More usefully, **the popup is not the integration API**. Its bundle contains
+zero occurrences of `AuthClick2Call`, `AuthFreeMe`, `AuthDisposition` or
+`Click2Call`, and drives the agent over socket.io at `/cubeqcsv3/`. So an
+authenticated agent session cannot say where the REST API lives, and its cookie
+would not have reached our server regardless. The settings file is encrypted and
+the decrypted config is not left on any reachable global, so the base URL is not
+readable from the client either.
+
+### Corrected the same day: the endpoints were never missing
+
+An earlier revision of this claimed `AuthClick2Call` was 404 everywhere and the
+REST API could not be located. That was wrong, and wrong in an embarrassing
+direction: it was probed against the **server root**, while section 2 of
+`docs/integrations/CUBE-QUICKCALL-API.md` had recorded the path prefix on
+31 August - seventeen times - and `src/vendors/quickcall.js` had been building
+the correct paths all along.
+
+Read from the Swagger portal (Google SSO) and verified live against production
+with a bodyless `POST`, which cannot place a call:
+
+| Endpoint | |
+|---|---|
+| `raphsody.in/QuickCall61AuthToken/AuthToken/` | **411 Length Required** |
+| `.../AuthLogin/` | 411 |
+| `.../AuthClick2Call/` | 411 |
+| `.../AuthFreeMe/` | 411 |
+
+411 is the server asking for a request body: they exist and are reachable from
+us. UAT is still listed in the portal and still does not resolve, which sharpens
+the ask to Cube from "what is the URL" to *your published UAT server has no DNS
+record; give us a reachable one or tell us it is retired*.
+
+### api_test1 is an agent credential, and the tenant slot is not where it goes
+
+Confirmed by Ritesh. `CUBE_QUICKCALL_USER` and `CUBE_QUICKCALL_PASSWORD` are the
+**tenant** credential for `AuthToken` - `config.js` has always said so in as many
+words - and an agent login in that slot fails at `AuthToken` with a 401 that, as
+the adapter's own comment warns, reads like a bad password rather than the wrong
+species of account.
+
+The note in `server/.env` said to uncomment those two lines once Cube confirmed a
+reachable endpoint. Following it would have produced exactly that hour of
+debugging, so it now says the opposite and says why.
+
+The consequence is larger than a config note: **this closes off click-to-call
+too**. `AuthClick2Call` carries `CampaignID` per call and takes no `AuthId`, but
+it is listed under *Call Control (Secure)*, so it goes through `request()` with
+`authenticated = true`, through `token()`, through `AuthToken`. Without a tenant
+credential nothing dials at all. The agent credential and the test campaign
+together unblock none of the calling path.
+
+Outstanding from Cube, in unblocking order: tenant `UserID`/`Password`; a
+reachable UAT; an `Extension` for `api_test1` if agent session control is wanted.
+Ours: rotate that password, it was sent over chat.
+
+---
+
+## The suite refuses to run against a live vendor - 3 Sep 2026
+
+The only thing standing between this suite and a real dialler was that nobody had
+sent us a password. That is not a safeguard, it is an accident of configuration,
+and it expires the day Cube issues a tenant login - silently, on a green run.
+
+It was worse than the Cube document said. The suite does not merely *read* from a
+vendor in three places: e2e POSTs to `/api/leads/:id/call`, and
+`test/quickcall.test.mjs` calls `makeCall()` directly with `9899978503` in the
+arguments. Against a configured switch those are real phone calls to the seeded
+numbers, which are plausible real Indian mobiles. `quickcall.test.mjs` asserted
+`res.simulated` - but **after** the call had already gone out.
+
+Closed three ways:
+
+- `test/e2e.mjs` asks the server what it is pointed at and **exits the process**
+  if any vendor reports live. It exits rather than failing a check, because
+  `check()` records a failure and carries on by design - and carrying on is
+  precisely what must not happen when the calls come afterwards.
+- `quickcall.test.mjs` and `emailsend.test.mjs` refuse to load against a
+  configured vendor.
+- `npm run start:simulated` wraps the server in `CRM_SIMULATE_INTEGRATIONS=1`,
+  which is the supported way to run any of this on a machine that has real
+  credentials in its `.env`.
+
+Verified both directions: against a live-configured server the suite stops before
+the first calling test with exit 1; against that same server started simulated,
+all 603 pass. The live server used the discard port as its endpoint, so the
+verification could not have reached Cube even had the guard failed.
+
+---
+
+## Configuration promotion between environments - 4 Sep 2026
+
+P2-03, answered by Ritesh as **configuration, not code**. Code promotion is CI/CD
+and belongs to whoever runs the pipeline; this is the other half, and it is a
+product feature, because the people who build a rule in UAT and want it in
+Production are not engineers and should not file a deployment ticket to move a
+template.
+
+`engine/promotion.js`, with package / inspect / apply under
+`/api/admin/promotions`, a history endpoint, and a Setup screen under Monitoring.
+Rules, templates, KYC journeys and SLA policies travel. The last ten promotions
+are kept, counted across both directions, because "what went to Production and
+who signed it" is answered half at each end.
+
+### The envelope was the easy half
+
+`versioning.js` keys an artefact by `logical_id`, which for a rule or template is
+its primary key - assigned by whichever environment inserted the row first. Rule
+4 in UAT and rule 4 in Production are different rules sharing a number. A bundle
+carrying ids would apply cleanly, report success, and write one environment's
+rule over an unrelated rule in the other: an UPDATE that matches a row and
+corrupts the target, invisible at every layer because it looks exactly like a
+rule being saved.
+
+So a bundle carries an **identity**. A rule is its name, a template its name and
+channel, journeys and policies travel by the product's `code` - the one column
+in this schema that is both unique and assigned by us rather than by the
+database. Applying resolves that locally and creates what is absent, which is
+what makes a first promotion into empty Production infrastructure work at all.
+The test that matters promotes one rule while a second sits at a different id and
+has to come through untouched.
+
+### Three deliberate limits
+
+- **No data.** No leads, clients or users. An environment sync that quietly
+  carried client records is the incident we are already holding a report about.
+- **No deletes.** A bundle says what should exist, never what should not.
+- **All or nothing.** Configuration is interdependent, so a part-applied bundle
+  is a combination nobody tested. Anything the target cannot identify blocks the
+  whole apply, and `inspect` shows what would change before anything does.
+
+`CRM_ENVIRONMENT` names the environment, deliberately not `NODE_ENV`, which reads
+`production` on a UAT box and a Production box alike.
+
+The screen is two halves that do not talk to each other, because in real use they
+are on two machines. Apply is gated on a successful inspection: the button stays
+disabled until you have been shown what it would do.
+
+**Still blocked on Production infrastructure existing.** The mechanism is built
+and tested; there is nowhere to promote to yet.
+
+---
+
+## LogMeeting used `api` without importing it - 4 Sep 2026
+
+Found in the Expo log rather than by reading the file, which is the point worth
+recording. `ReferenceError: api is not defined`, thrown from the `useEffect` that
+loads `GET /api/activities/meta`, so the whole screen died on mount and took its
+error boundary message with it. Every sibling screen imports the same thing the
+same way; this one did not.
+
+It hides well: `LogMeeting` only renders once a lead is opened, so a sign-in and
+the Today list both pass before it fires. Verified after the fix by reaching the
+screen in the running app - the modes and the outcomes both populate from the
+server, which is exactly the call that was throwing.
+
+A sweep of the other mobile files for the same class of missing import found only
+definition files matching their own exports.
+
+---
+
+## Dispositions, KRA metrics and incentive plans version and roll back - 4 Sep 2026
+
+Closes the other half of finding 10. These three already had change tracking -
+`config_audit` records a before and an after for every edit - which answers *what
+changed* and cannot answer *put it back*. A log is evidence; a version is
+something you can act on.
+
+They are the artefacts where that distinction costs money. An incentive slab
+table edited wrongly pays the wrong amount to a whole desk, and the fix needed on
+the day is last week's version restored, not a diff to read.
+
+An incentive plan **is** its slabs, so they travel inside the payload the way a
+KYC journey carries its steps. Versioning the parent row alone would record a
+clawback window changing and miss the rate bands changing underneath it, which is
+the edit that actually decides what people are paid.
+
+`restore()` covers exactly the fields the editing routes write, and no others.
+Identity columns are deliberately excluded: a disposition's `code` is what logged
+activities reference, so restoring an old one would rename an outcome out from
+under its own history and could collide with a row created since. There is a test
+holding that, because it is the kind of thing a later refactor tidies up.
+
+Snapshots are taken at all eight write paths, after the write. Retiring is
+included - it is the edit most likely to want undoing, since it removes an
+outcome from every picker in the product.
+
+Not made promotable. Dispositions arguably should be; KRA metrics and incentive
+plans carry `sales_org` and decide pay, and moving those between environments is
+a separate decision rather than a side effect of this one.
+
+Verified live as well as in tests: a PATCH through the route reports version 1,
+and restoring it writes forward as version 3 with the history intact.
+
+---
+
+## The OWD floor, declared per object - 4 Sep 2026
+
+Non-negotiable 7 is "one restrictive floor, then grant-only layers". The
+scorecard said there was no floor. That was not quite right, and the real gap was
+more interesting: **the floor existed but was never declared**. It lived inside
+`leadScope`, `clientScope` and `ticketScope`, so an administrator could not see
+the default, could not change it, nothing held the objects to one shape, and
+there was no way to say anything at all about external viewers.
+
+`entity_def.owd_internal` / `owd_external`, read by `engine/owd.js`, ORed into the
+same grant list as the management chain and queues. That placement is the whole
+safety argument: an OWD grant can only add sight-lines, and every scope function
+ANDs the grant list with org scope, so widening a default shows an internal user
+everything in the books they are already entitled to and nothing outside them. A
+Bonanza user made org-wide still sees no Bigul record, and there is a test for
+exactly that - because "make leads public" is the setting somebody reaches for at
+five o'clock.
+
+Everything defaults to Private, which is exactly what the code already did. **603
+e2e passed unchanged**, which is the point: turning a hardcoded floor into a
+declared one must not move a single sight-line on the day it ships.
+
+Two limits, stated rather than hidden. Only `private` and `read` - Public
+Read/Write is not offered, because writes are gated by capabilities rather than
+by this floor, and a setting that says read/write while granting only read is
+worse than one that is not offered. And the external default is **pinned to
+Private**: partner sessions never reach a scope function at all, since
+`requireUser` puts them on `req.partner` and the portal filters on `partner_id`
+in code, so a wider external default would silently do nothing - or worse, be
+wired up later by somebody who had not read why.
+
+Corrupt or missing values read as private, never as open.
+
+---
+
+## The two account-book gaps closed - 4 Sep 2026
+
+Both were open items in the Clients section above rather than sections of their
+own, and both are written up there in full. Recorded here so the day reads
+straight through:
+
+**Column chooser.** The note said the account book needed "a preference store
+this system does not yet have". It already had one - `tab_visibility`, keyed
+`(scope_type, scope_key, tab_id)`, which *is* a visibility decision per scope and
+already resolves user-beats-role-beats-shipped. `engine/columns.js` rides it
+behind a `cols:` prefix rather than adding a second store to drift against the
+first, and no Client List object was invented to hang six booleans on. Hiding a
+column is tidying, never security: two tests assert the column engine never reads
+client data and that masking never consults the chooser.
+
+**Bulk actions.** The open question was whether one may run over a *filter*
+rather than an explicit list. It may not - a filter is evaluated when the action
+runs, the approvals engine cannot express "everything matching this", and the
+threshold inverts because the count is unknown until the work is done. So a
+filter selects and a list acts: `GET /api/clients/ids` resolves the filter to
+explicit ids once, capped at 500, and says when it capped.
+
+The find there was worth more than the feature: **the lead bulk reassign never
+asked for approval at all**. `bulk_reassign` has been an approval scope since
+round 2 and `engine/approvals.js` has always carried a handler for it - nothing
+ever requested one, so any number of leads could be moved by one person and
+`BULK_THRESHOLD` decided nothing. Both routes go through it now.
+
+---
+
+## Changing a sharing default needs two people - 4 Sep 2026
+
+The open question was whether the floor belongs in the Setup UI at all. It does:
+hiding it reproduces the problem the floor was built to fix, since an
+undocumented endpoint is the same blindness with a different reader, and settings
+that live only in curl get changed by whoever has curl. The risk was never that
+people see it. It is that one person changes it alone, in a hurry.
+
+So the floor is shown **read-only** on Roles & permissions - it is what the rest
+of the access model sits on, and a permission grid read without it tells half the
+story - and changing it goes through the approvals engine as `owd_change`. A
+superadmin asks; somebody holding `audit.read` agrees. A dropdown would put a
+two-person decision behind one click, and a confirm dialog stops slips rather
+than judgement.
+
+### Why the two capabilities differ, which is the useful part
+
+Only `superadmin` holds `admin.system`, and the engine refuses self-approval - so
+an approver capability of `admin.system` meant a request could be raised and
+**never decided by anyone**. A control that looks present and does nothing.
+`audit.read` is held by superadmin and admin, and is right on its own terms:
+whoever is accountable for the record of who saw what should agree to a change in
+who can see it. Reading the floor moved to `audit.read` too, because an approver
+has to see what they are agreeing to.
+
+### Two latent bugs surfaced on the way
+
+Both in the approvals engine. `orgOf` had no entry for `client`, and `inReach`
+fails closed on a null org - so **every bulk account reassignment added the same
+day would have been undecidable**: raised, then refused to every possible
+approver. And configuration entities genuinely have no book, so `entity_def` hit
+the same wall; they are now explicitly exempt, since "could not determine the
+book" and "never had one" are different answers.
+
+The approval numbering is written out rather than derived. `approvals.entity_id`
+is an INTEGER, these objects are keyed by name, and an index would shift the
+moment somebody reorders the list - attaching a pending request to a different
+object while its payload still read correctly. A test fails if the numbers move.
+
+Narrowing needs approval too. Taking sight-lines away is its own kind of Monday
+morning.
+
+The read-only panel was verified by build and by the endpoint it reads rather
+than by eye: the preview pane kept dropping the session.
+
+---
+
+## The intermittent ECONNRESET was the file watcher - 4 Sep 2026
+
+Carried for a while as an unexplained intermittent failure. It is neither
+intermittent nor a fault in the suite: `npm run dev` runs the server under
+`node --watch-path=./src`, so any change under `src/` kills the process. Requests
+in flight come back ECONNRESET, the next few come back ECONNREFUSED while nothing
+is listening, and then it recovers. That is why it never landed on the same check
+twice and never reproduced on demand - it needed somebody to be editing, or git
+to touch those files on a branch switch, stash or pull.
+
+Measured rather than argued. `scripts/soak-reset.mjs` walks idle gaps either side
+of the five-second keep-alive, in read and write mode, because the first
+hypothesis was the classic keep-alive race: a server closing an idle socket at
+the moment the client reuses it. Writes matter there, since undici retries an
+idempotent request transparently and cannot retry a POST - so a GET soak can hit
+that race and never show it.
+
+| Server | Traffic | Resets |
+|---|---|---|
+| `npm start` | 560 reads and writes, every gap | **0** |
+| `npm run dev` | 4,000 POSTs, one `touch src/index.js` | **363** |
+
+Every one of the 363 sat at the touch, with the cause chain the suite reported
+verbatim: `fetch failed <- ECONNRESET read read ECONNRESET`. Keep-alive
+disproved, watcher proved.
+
+The fix is to the diagnostic rather than to any code, because nothing is broken.
+The NOTE at the top of a run already said this; nobody connected the two, because
+the explanation sat sixty lines from the failure. A dropped connection now says
+so where it happened, and says it differently depending on whether the server it
+is talking to actually watches:
+
+```
+FAIL  all 11 roles can sign in
+  -> fetch failed <- ECONNRESET read read ECONNRESET <- the server restarted
+     mid-run: it is running under `npm run dev`, which watches src/ - git touches
+     those files on a branch switch, stash or pull. Re-run against `npm start`.
+```
+
+Verified by doing it: the suite run against a watching server, touched mid-run,
+now reports exactly that against the check that failed.
