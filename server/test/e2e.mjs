@@ -20,6 +20,10 @@ let BOOT = null;
 
 const suite = (name) => { currentSuite = name; };
 
+/* Whether the server restarts itself when src/ changes. Read from /api/health
+   in the first check, and used by detail() to explain a dropped connection. */
+let WATCHING = false;
+
 /**
  * Unwrap an error onto one line, causes included.
  *
@@ -30,9 +34,40 @@ const suite = (name) => { currentSuite = name; };
  */
 function detail(err) {
   const parts = [err.message];
+  const codes = [];
   for (let c = err.cause, depth = 0; c && depth < 4; c = c.cause, depth += 1) {
+    if (c.code) codes.push(c.code);
     parts.push([c.code, c.syscall, c.message].filter(Boolean).join(' '));
   }
+
+  /* Say what a dropped connection means, where it happened.
+   *
+   * Root-caused 4 Sep 2026, after this had been carried for a while as an
+   * "intermittent failure". It is not intermittent and it is not this suite:
+   * `npm run dev` runs the server under `node --watch-path=./src`, so any
+   * change under src/ kills the process. Requests in flight come back
+   * ECONNRESET, the next few come back ECONNREFUSED while nothing is
+   * listening, and then it recovers -- which is why it never landed on the
+   * same check twice and never reproduced on its own.
+   *
+   * Measured: 560 requests against `npm start`, reads and writes, with idle
+   * gaps either side of the five-second keep-alive, produced no resets at all.
+   * 4,000 against a watching server with a single `touch src/index.js`
+   * produced 363, every one of them at the touch. scripts/soak-reset.mjs.
+   *
+   * The NOTE at the top of the run said this already. Nobody connected the two,
+   * because the explanation was sixty lines from the failure -- so it is said
+   * here now, attached to the thing that went wrong.
+   */
+  const dropped = codes.some((c) => ['ECONNRESET', 'ECONNREFUSED', 'UND_ERR_SOCKET'].includes(c));
+  if (dropped) {
+    parts.push(WATCHING
+      ? 'the server restarted mid-run: it is running under `npm run dev`, which watches src/ — '
+        + 'git touches those files on a branch switch, stash or pull. Re-run against `npm start`.'
+      : 'the connection dropped. If the server is under `npm run dev` it restarts on any change '
+        + 'under src/; otherwise check its output for a crash.');
+  }
+
   return parts.join(' <- ');
 }
 
@@ -136,6 +171,8 @@ async function run() {
     // src/, including the ones git makes on a branch switch, stash or pull, and
     // a restart mid-run arrives here as an unexplained transport error.
     BOOT = data.boot ?? null;
+
+    WATCHING = Boolean(data.watching);
 
     if (data.watching) {
       console.log('\n  NOTE  this server restarts itself when anything under src/ changes, and git');
