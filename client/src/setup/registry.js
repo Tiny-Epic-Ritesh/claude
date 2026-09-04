@@ -30,6 +30,7 @@ const TabVisibility = lazy(() => import('../crm/TabVisibility.jsx'));
 const Dispositions = lazy(() => import('../crm/Dispositions.jsx'));
 const KraSetup = lazy(() => import('../crm/KraSetup.jsx'));
 const FieldMasking = lazy(() => import('../crm/FieldMasking.jsx'));
+const GroupsSetup = lazy(() => import('../crm/GroupsSetup.jsx'));
 const ObjectManager = lazy(() => import('../crm/ObjectManager.jsx'));
 const RolesSetup = lazy(() => import('../crm/RolesSetup.jsx'));
 const UsersSetup = lazy(() => import('../crm/UsersSetup.jsx'));
@@ -102,6 +103,16 @@ export const SECTIONS = [
     blurb: 'Which tabs and apps each role sees',
     keywords: ['tab', 'menu', 'nav', 'app', 'hide', 'show', 'launcher', 'sidebar'],
     Component: TabVisibility,
+  },
+  {
+    key: 'groups',
+    label: 'Sales groups',
+    group: 'people',
+    icon: 'groups',
+    needs: ['admin.users'],
+    blurb: 'Which RMs work to which supervisor',
+    keywords: ['group', 'team', 'desk', 'supervisor', 'manager', 'rm', 'mapping', 'assign'],
+    Component: GroupsSetup,
   },
   {
     key: 'masking',

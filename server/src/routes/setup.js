@@ -22,7 +22,7 @@
 import { Router } from 'express';
 import { all, one, run, audit, transact, SALES_ORGS, CARD_STATES, ROLES } from '../db.js';
 import {
-  requireUser, requirePermission, orgsFor, mayUseOrg, can, permissionsFor,
+  requireUser, requirePermission, orgsFor, mayUseOrg, can, permissionsFor, activeOrg,
 } from '../auth.js';
 import { hashPassword, validate, newSessionToken, STRATEGY_LABEL } from '../security.js';
 import { assertValid, requiredFields, setRequired } from '../engine/validation.js';
@@ -314,6 +314,155 @@ router.get('/users', requirePermission('admin.users'), (req, res) => {
   // Licensing note: there is deliberately no seat cap. The legacy tenant is
   // capped at 132 and running 83; the brief asked for no user limit.
   res.json({ users: rows, total: rows.length, active: rows.filter((u) => u.active).length });
+});
+
+/* =============================================== sales groups (P3-08)
+ *
+ * Gated on admin.users: a group says who works to whom, which is a people
+ * decision and belongs beside the screen that manages people.
+ */
+
+const groupRow = (id) => {
+  const team = one(
+    `SELECT t.*, m.name AS manager_name
+       FROM teams t LEFT JOIN users m ON m.id = t.manager_id
+      WHERE t.id = ?`,
+    [id],
+  );
+  if (!team) return null;
+  return {
+    ...team,
+    members: all(
+      `SELECT u.id, u.name, u.role, u.email, tm.accepting
+         FROM team_members tm JOIN users u ON u.id = tm.user_id
+        WHERE tm.team_id = ?
+        ORDER BY u.name`,
+      [id],
+    ),
+  };
+};
+
+/** Every group in the books this administrator can see. */
+router.get('/groups', requirePermission('admin.users'), (req, res) => {
+  const orgs = orgsFor(req.user);
+  const rows = all(
+    `SELECT t.id FROM teams t WHERE t.sales_org IN (${orgs.map(() => '?').join(',') || "''"})
+      ORDER BY t.active DESC, t.name`,
+    orgs,
+  );
+  res.json({
+    groups: rows.map((r) => groupRow(r.id)),
+    note: 'A group routes work and says who runs a desk. It does not grant sight of records — that follows the reporting line.',
+  });
+});
+
+router.post('/groups', requirePermission('admin.users'), (req, res) => {
+  const { name, description, manager_id: managerId, sales_org: org } = req.body ?? {};
+  if (!name?.trim()) return res.status(400).json({ error: 'Give the group a name', field: 'name' });
+
+  const targetOrg = org || activeOrg(req) || req.user.sales_org || 'BONANZA';
+  if (!mayUseOrg(req.user, targetOrg)) {
+    return res.status(403).json({ error: `You cannot create groups in ${targetOrg}`, field: 'sales_org' });
+  }
+
+  /* A manager from the other book would be a group whose own manager cannot
+     see it, which is a state nothing else in the product can produce. */
+  if (managerId) {
+    const manager = one('SELECT id, sales_org FROM users WHERE id = ? AND active = 1', [managerId]);
+    if (!manager) return res.status(400).json({ error: 'That manager does not exist', field: 'manager_id' });
+    if (manager.sales_org !== targetOrg) {
+      return res.status(400).json({ error: 'The manager belongs to a different business', field: 'manager_id' });
+    }
+  }
+
+  const made = run(
+    'INSERT INTO teams (name, description, manager_id, sales_org) VALUES (?,?,?,?)',
+    [name.trim(), description?.trim() || null, managerId || null, targetOrg],
+  );
+  const id = Number(made.lastInsertRowid);
+  auditConfig('group', String(id), 'create', null, { name: name.trim(), manager_id: managerId ?? null }, req.user.id);
+  res.status(201).json(groupRow(id));
+});
+
+const loadGroup = (req) => {
+  const team = one('SELECT * FROM teams WHERE id = ?', [req.params.id]);
+  if (!team) return { error: 'Group not found', status: 404 };
+  if (!mayUseOrg(req.user, team.sales_org)) return { error: 'That group is outside your business', status: 403 };
+  return { team };
+};
+
+router.patch('/groups/:id', requirePermission('admin.users'), (req, res) => {
+  const found = loadGroup(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+
+  const { name, description, manager_id: managerId, active } = req.body ?? {};
+  if (managerId) {
+    const manager = one('SELECT id, sales_org FROM users WHERE id = ? AND active = 1', [managerId]);
+    if (!manager) return res.status(400).json({ error: 'That manager does not exist', field: 'manager_id' });
+    if (manager.sales_org !== found.team.sales_org) {
+      return res.status(400).json({ error: 'The manager belongs to a different business', field: 'manager_id' });
+    }
+  }
+
+  run(
+    `UPDATE teams SET name = COALESCE(?, name), description = COALESCE(?, description),
+                      manager_id = ?, active = COALESCE(?, active)
+      WHERE id = ?`,
+    [
+      name?.trim() || null,
+      description?.trim() ?? null,
+      // Explicit null clears the manager; undefined leaves it alone.
+      managerId === undefined ? found.team.manager_id : (managerId || null),
+      active === undefined ? null : (active ? 1 : 0),
+      found.team.id,
+    ],
+  );
+  auditConfig('group', String(found.team.id), 'update', found.team, req.body, req.user.id);
+  return res.json(groupRow(found.team.id));
+});
+
+/**
+ * Deleting a group.
+ *
+ * A real delete, not a soft one, because a group is configuration rather than a
+ * record: nothing is attributed to it and nothing points at it once its members
+ * are gone. The rows in team_members go with it by cascade, and the people
+ * themselves are untouched -- removing somebody from a desk is not removing
+ * them from the CRM.
+ */
+router.delete('/groups/:id', requirePermission('admin.users'), (req, res) => {
+  const found = loadGroup(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+
+  run('DELETE FROM teams WHERE id = ?', [found.team.id]);
+  auditConfig('group', String(found.team.id), 'delete', found.team, null, req.user.id);
+  return res.json({ ok: true });
+});
+
+/** Put somebody on a desk, or take them off it. */
+router.post('/groups/:id/members', requirePermission('admin.users'), (req, res) => {
+  const found = loadGroup(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+
+  const userId = Number(req.body?.user_id);
+  const user = one('SELECT id, sales_org, active FROM users WHERE id = ?', [userId]);
+  if (!user) return res.status(400).json({ error: 'That user does not exist', field: 'user_id' });
+  if (user.sales_org !== found.team.sales_org) {
+    return res.status(400).json({ error: 'That user belongs to a different business', field: 'user_id' });
+  }
+
+  run('INSERT OR IGNORE INTO team_members (team_id, user_id) VALUES (?,?)', [found.team.id, userId]);
+  auditConfig('group', String(found.team.id), 'member_add', null, { user_id: userId }, req.user.id);
+  return res.json(groupRow(found.team.id));
+});
+
+router.delete('/groups/:id/members/:userId', requirePermission('admin.users'), (req, res) => {
+  const found = loadGroup(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+
+  run('DELETE FROM team_members WHERE team_id = ? AND user_id = ?', [found.team.id, req.params.userId]);
+  auditConfig('group', String(found.team.id), 'member_remove', { user_id: Number(req.params.userId) }, null, req.user.id);
+  return res.json(groupRow(found.team.id));
 });
 
 /* ------------------------------------------------ the user field set (P3-03)
