@@ -8101,7 +8101,8 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     for (const e of data.entities) {
       eq(e.owd_internal, 'private', `${e.api_name} is not private`);
     }
-    eq(data.external_pinned_to, 'private', 'the external default is not pinned');
+    assert(/never exceed the internal/i.test(data.external_note ?? ''),
+      'the screen does not state the invariant that replaced the external pin');
     assert(data.enforced_on.includes('lead'), 'leads are not enforced');
   });
 
@@ -8180,13 +8181,24 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     }).then(({ data }) => includes(data.error, 'already', 'a no-op change raised a request'));
   });
 
-  await check('the external default cannot be widened at all', async () => {
+  await check('the external default cannot exceed the internal one', async () => {
+    /* The invariant that replaced the pin. Leads are Private internally, so a
+       partner cannot be given Public Read: an outside party with more reach
+       than the firm's own staff. */
     const { data } = await req('/api/setup/owd/lead', {
       method: 'PATCH', token: T.superadmin, expect: 400,
       body: { external: 'read', reason: 'e2e' },
     });
-    assert(/partner/i.test(data.error ?? ''),
-      `the refusal does not explain the partner reason: ${data.error}`);
+    assert(/more reach than staff/i.test(data.error ?? ''),
+      `the refusal does not explain the invariant: ${data.error}`);
+  });
+
+  await check('one side at a time, so an approver sees one decision', async () => {
+    const { data } = await req('/api/setup/owd/lead', {
+      method: 'PATCH', token: T.superadmin, expect: 400,
+      body: { internal: 'read', external: 'read', reason: 'e2e' },
+    });
+    includes(data.error, 'not both at once', `expected a both-sides refusal, got: ${data.error}`);
   });
 
   await check('setting a sharing default needs admin.system', async () => {

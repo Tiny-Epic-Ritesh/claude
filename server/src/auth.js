@@ -714,6 +714,49 @@ export function partnerScope(user, alias = 'p', active = null) {
   };
 }
 
+/**
+ * What leads a partner may read through the portal.
+ *
+ * The last hardcoded floor in the product, and the reason `owd_external` was
+ * pinned to Private until now: a partner session never reached a scope function
+ * at all. `requireUser` puts staff on `req.user` and partners on `req.partner`,
+ * and the portal filtered on `partner_id` inside each query — so the external
+ * column described behaviour instead of governing it, and a setting that cannot
+ * be enforced is worse than one not offered.
+ *
+ * Shaped like every other scope so it cannot drift from them: the floor is the
+ * leads you sourced, grants OR on top, and the book is ANDed around the
+ * outside.
+ *
+ * THE BOOK CLAUSE IS NOT OPTIONAL HERE
+ * ------------------------------------
+ * On the staff side, `orgScope` carries it. A partner has no `orgsFor`, so it is
+ * written explicitly against the partner's own `sales_org`. Without it, an
+ * external default of Public Read would resolve to `1=1` and hand a Bigul
+ * partner the Bonanza book — an outside party crossing the boundary we are
+ * already holding an incident report about. It is the single most important
+ * clause in this file.
+ */
+export function portalLeadScope(partner, alias = 'l') {
+  /* The floor: leads this partner sourced. */
+  const grants = [{ sql: `${alias}.partner_id = ?`, params: [partner.id] }];
+
+  /* The external organisation-wide default. Private adds nothing, which is what
+     keeps this identical to the hardcoded filter it replaced. */
+  const owd = owdGrant('lead', { partner_id: partner.id });
+  if (owd) grants.push(owd);
+
+  const reach = {
+    sql: `(${grants.map((g) => `(${g.sql})`).join(' OR ')})`,
+    params: grants.flatMap((g) => g.params),
+  };
+
+  return {
+    sql: `(${reach.sql}) AND (${alias}.sales_org = ?) AND ${alias}.deleted_at IS NULL`,
+    params: [...reach.params, partner.sales_org],
+  };
+}
+
 export function orgScope(user, alias = 'l', activeOrg = null) {
   const allowed = orgsFor(user);
   const scoped = activeOrg && allowed.includes(activeOrg) ? [activeOrg] : allowed;

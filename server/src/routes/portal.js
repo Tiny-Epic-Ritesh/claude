@@ -9,6 +9,7 @@
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
 import { requirePartner } from '../auth.js';
+import { portalLeadScope } from '../auth.js';
 import { applySla } from '../engine/sla.js';
 import { LMS_MODULES } from './partners.js';
 import { generateCards } from './crm.js';
@@ -23,6 +24,11 @@ const month = () => new Date().toISOString().slice(0, 7);
 
 router.get('/dashboard', (req, res) => {
   const id = req.partner.id;
+  /* Through a scope rather than a `partner_id = ?` written into the query, so
+     the external sharing default governs what a partner sees instead of
+     describing it. Private -- the default -- resolves to exactly the clause
+     this replaced. */
+  const scope = portalLeadScope(req.partner, 'l');
 
   const sourced = all(
     `SELECT l.id, l.name, l.stage, l.city, l.created_at, ${kycStatusSql('l')} AS kyc_status,
@@ -30,8 +36,8 @@ router.get('/dashboard', (req, res) => {
              FROM product_cards pc JOIN product_types pt ON pt.id = pc.product_type_id
              WHERE pc.lead_id = l.id AND pc.state != 'INACTIVE') AS cards,
             (SELECT COALESCE(SUM(value),0) FROM product_cards WHERE lead_id = l.id AND state = 'ACTIVE') AS aum
-     FROM leads l WHERE l.partner_id = ? AND l.deleted_at IS NULL ORDER BY l.created_at DESC`,
-    [id],
+     FROM leads l WHERE ${scope.sql} ORDER BY l.created_at DESC`,
+    scope.params,
   );
 
   const converted = sourced.filter((l) => (l.cards || '').includes(':ACTIVE')).length;
@@ -231,13 +237,14 @@ for (const m of LMS_MODULES) {
  * every question they legitimately have.
  */
 router.get('/clients/:leadId', (req, res) => {
+  const scope = portalLeadScope(req.partner, 'l');
   const lead = one(
     `SELECT l.id, l.name, l.city, l.state, l.stage, l.source, l.created_at,
             COALESCE(lm.aum, 0) AS aum
        FROM leads l
        LEFT JOIN lead_metrics lm ON lm.lead_id = l.id
-      WHERE l.id = ? AND l.partner_id = ? AND l.deleted_at IS NULL`,
-    [req.params.leadId, req.partner.id],
+      WHERE l.id = ? AND ${scope.sql}`,
+    [req.params.leadId, ...scope.params],
   );
   if (!lead) return res.status(404).json({ error: 'That client is not one of yours' });
 

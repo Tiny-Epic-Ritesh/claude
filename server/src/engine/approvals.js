@@ -98,8 +98,12 @@ export const APPROVAL_SCOPES = {
        record of who saw what is the person who should agree to a change in who
        can see it. */
     approver: 'audit.read',
-    describe: (r) => `Set ${r.subject_name} sharing to "${r.payload?.internal}" `
-      + `(from "${r.payload?.from_internal}")`,
+    describe: (r) => {
+      const side = r.payload?.side ?? 'internal';
+      const where = side === 'external' ? 'partner-portal' : 'internal';
+      return `Set ${r.subject_name} ${where} sharing to "${r.payload?.[side]}" `
+        + `(from "${r.payload?.[`from_${side}`]}")`;
+    },
     why: 'Decides who can read every record of an object, for everyone in that business.',
   },
 

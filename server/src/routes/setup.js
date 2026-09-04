@@ -36,7 +36,7 @@ import {
 } from '../engine/columns.js';
 import {
   OWD_LEVELS, allDefaults as owdDefaults, setDefaults as setOwd,
-  defaultsFor as owdFor, EXTERNAL_PINNED, EXTERNAL_PIN_REASON, OWD_ENTITIES,
+  defaultsFor as owdFor, OWD_ENTITIES, exceedsInternal,
   isLevel as isOwdLevel, approvalKeyFor,
 } from '../engine/owd.js';
 import { request as requestApproval } from '../engine/approvals.js';
@@ -1752,11 +1752,12 @@ router.get('/owd', requirePermission('audit.read'), (_req, res) => {
     levels: OWD_LEVELS,
     entities: owdDefaults(),
     enforced_on: OWD_ENTITIES,
-    external_pinned_to: EXTERNAL_PINNED,
-    external_pin_reason: EXTERNAL_PIN_REASON,
     note: 'Private is the default and matches how the product has always behaved. '
       + 'Widening a default grants reading rights inside the same book only -- it can never '
-      + 'reach across Bonanza and Bigul, because org scope is applied separately.',
+      + 'reach across Bonanza and Bigul, because the book is applied separately.',
+    external_note: 'The partner portal reads leads through portalLeadScope, so this column '
+      + 'governs what a partner sees rather than describing it. It may never exceed the '
+      + 'internal default: an outside party cannot be given more reach than staff.',
   });
 });
 
@@ -1781,15 +1782,41 @@ router.patch('/owd/:entity', requirePermission('admin.system'), (req, res) => {
   const entity = req.params.entity;
   const before = owdFor(entity);
 
-  if (req.body?.external !== undefined && req.body.external !== EXTERNAL_PINNED) {
-    return res.status(400).json({ ok: false, error: EXTERNAL_PIN_REASON });
+  /* Either side may be changed, and at most one at a time so an approver is
+     never shown two decisions wearing one reason. */
+  const wantsExternal = req.body?.external !== undefined;
+  const wantsInternal = req.body?.internal !== undefined;
+  if (wantsExternal && wantsInternal) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Change the internal default or the external one, not both at once. '
+        + 'They are different decisions and an approver should see them separately.',
+    });
+  }
+  if (!wantsExternal && !wantsInternal) {
+    return res.status(400).json({ ok: false, error: 'Nothing to change' });
   }
 
-  const next = req.body?.internal;
+  const side = wantsExternal ? 'external' : 'internal';
+  const next = wantsExternal ? req.body.external : req.body.internal;
+
   if (!isOwdLevel(next)) {
     return res.status(400).json({
       ok: false,
       error: `"${next}" is not a sharing default. Use one of: ${OWD_LEVELS.map((l) => l.value).join(', ')}`,
+    });
+  }
+
+  /* The invariant that replaced the pin: an outside party cannot be given more
+     reach than the firm's own staff. Refused here as well as in the engine, so
+     the request is never raised rather than raised and then failing on apply --
+     an approver should not be asked to agree to something that cannot happen. */
+  const proposed = { ...before, [side]: next };
+  if (exceedsInternal(proposed.external, proposed.internal)) {
+    return res.status(400).json({
+      ok: false,
+      error: `The partner portal cannot be given more reach than staff: `
+        + `external "${proposed.external}" is wider than internal "${proposed.internal}".`,
     });
   }
 
@@ -1802,15 +1829,20 @@ router.patch('/owd/:entity', requirePermission('admin.system'), (req, res) => {
     });
   }
 
-  if (next === before.internal) {
-    return res.status(400).json({ ok: false, error: `${entity} sharing is already "${next}"` });
+  if (next === before[side]) {
+    return res.status(400).json({
+      ok: false,
+      error: `${entity} ${side} sharing is already "${next}"`,
+    });
   }
 
   const out = requestApproval({
     scope: 'owd_change',
     entityId: key,
     subjectName: entity,
-    payload: { api_name: entity, internal: next, from_internal: before.internal },
+    payload: {
+      api_name: entity, side, [side]: next, [`from_${side}`]: before[side],
+    },
     reason: req.body?.reason,
     requestedBy: req.user.id,
   });
@@ -1819,15 +1851,15 @@ router.patch('/owd/:entity', requirePermission('admin.system'), (req, res) => {
   /* The request is audited as configuration in its own right, separately from
      the approval trail: "who asked" and "who agreed" are two questions, and the
      answer to the first must survive the request being rejected. */
-  auditConfig('sharing', entity, 'owd_change_requested', before,
-    { internal: next, external: before.external }, req.user.id);
+  auditConfig('sharing', entity, 'owd_change_requested', before, proposed, req.user.id);
 
   return res.status(202).json({
     ok: true,
     approval_required: true,
     request_id: out.request.id,
     entity,
-    from: before.internal,
+    side,
+    from: before[side],
     to: next,
     message: 'Nothing has changed yet. A sharing default is not something one person sets alone.',
   });

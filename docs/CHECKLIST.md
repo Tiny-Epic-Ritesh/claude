@@ -2711,3 +2711,53 @@ adding an object is allowed and renumbering one is still caught.
 
 Five objects enforced, two derived, none unaccounted for. 620 e2e and all unit
 suites pass; the OWD suite is 24 checks.
+
+---
+
+## The external pin, lifted - 4 Sep 2026
+
+`owd_external` was fixed at Private, and the reason was honest rather than
+cautious: a partner session never reached a scope function. `requireUser` puts
+staff on `req.user` and partners on `req.partner`, and the portal filtered on
+`partner_id` inside each query - so the column described behaviour instead of
+governing it. A setting that cannot be enforced is worse than one not offered,
+so `setDefaults` refused to move it and said why.
+
+Portal lead reads now go through `portalLeadScope`, shaped like every other
+scope so it cannot drift from them: the floor is the leads you sourced, grants
+OR on top, the partner's own book ANDed around the outside.
+
+### The book clause is the most important line in that function
+
+On the staff side `orgScope` carries it. A partner has no `orgsFor`, so it is
+written explicitly against the partner's own `sales_org`. Without it, an external
+default of Public Read resolves to `1=1` and hands a Bigul partner the Bonanza
+book - the cross-book exposure we are already holding an incident report about,
+with a third party on the far side of it this time. There is a test for exactly
+that, and another asserting the scope returns precisely the set the hardcoded
+filter returned, so declaring it moved nobody.
+
+### One invariant replaced the pin
+
+**External may never exceed internal.** Without it, leads Private internally and
+Public Read externally would show a partner every lead in the book while an RM
+still saw only their own - an outside party with more reach than the firm's own
+staff, one careless PATCH away. It reads like a smaller setting than it is, which
+is why it wants a rule rather than a convention.
+
+Checked at the route, so the request is never raised; and again on apply, because
+the other side may have moved while the request sat waiting for a decision.
+
+It cuts both ways, and the refusal has to say so or it reads like a bug: internal
+cannot be narrowed below an external that is already wider. The message names the
+ordering - narrow the portal first. That was found by the test helper tripping
+over it, which is the right place to find it.
+
+### One side at a time
+
+The route refuses a call carrying both. They are different decisions, and an
+approver should not be shown two of them wearing one reason. The approval
+description says which side it changes.
+
+29 checks in the OWD suite, 621 e2e, all unit suites pass. Constraint 7 has
+nothing outstanding.

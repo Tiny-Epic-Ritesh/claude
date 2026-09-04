@@ -93,8 +93,13 @@ function SharingFloor({ owd }) {
                   )}
               </td>
               <td>
-                <span className="badge badge-green">Private</span>
-                <span className="tiny muted"> · pinned</span>
+                {e.derived
+                  ? <span className="tiny muted">—</span>
+                  : (
+                    <span className={`badge ${e.owd_external === 'private' ? 'badge-green' : 'badge-amber'}`}>
+                      {owd.levels.find((l) => l.value === e.owd_external)?.label ?? e.owd_external}
+                    </span>
+                  )}
               </td>
               {/* "Not read" and "follows the lead" look the same on a screen
                   and are not the same thing: one is an omission, the other is
@@ -112,7 +117,8 @@ function SharingFloor({ owd }) {
       <p className="tiny muted" style={{ padding: '10px 14px', margin: 0 }}>
         Widening a default grants reading rights <strong>inside the same business only</strong> —
         it can never reach across Bonanza and Bigul, because the book boundary is applied
-        separately. The partner portal is pinned to Private: {owd.external_pin_reason}
+        separately, on the partner portal as well as inside the firm.{' '}
+        {owd.external_note}
       </p>
     </div>
   );

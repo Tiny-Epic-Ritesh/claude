@@ -56,17 +56,24 @@ const APPLY = {
   },
 
   owd_change: (req) => {
-    const level = req.payload?.internal;
     const apiName = req.payload?.api_name;
+    /* Older requests carried only an internal change and no `side`. Defaulting
+       keeps any that were pending across the deploy decidable rather than
+       throwing on a payload that was valid when it was raised. */
+    const side = req.payload?.side ?? 'internal';
+    const level = req.payload?.[side];
     if (!apiName || !isLevel(level)) throw new Error('That is not a sharing default this CRM knows');
+    if (side !== 'internal' && side !== 'external') throw new Error(`Unknown sharing side "${side}"`);
 
     /* Applied through the engine rather than by writing the column here, so the
-       external pin and the level validation are enforced on the way in exactly
-       as they are on a direct call. An apply path that writes the table itself
-       is how a guard gets bypassed a year later. */
-    const out = setOwd(apiName, { internal: level });
+       level validation and the external-never-exceeds-internal invariant are
+       enforced on the way in exactly as on a direct call -- and re-checked now
+       rather than only when the request was raised, because the other side may
+       have moved while this sat waiting. An apply path that writes the table
+       itself is how a guard gets bypassed a year later. */
+    const out = setOwd(apiName, { [side]: level });
     if (!out.ok) throw new Error(out.error);
-    return { api_name: apiName, internal: out.internal };
+    return { api_name: apiName, side, [side]: out[side] };
   },
 
   /* Accounts. Shaped like bulk_reassign next door but kept separate rather than

@@ -136,34 +136,38 @@ export const allDefaults = () => all(
 }));
 
 /**
- * Why the external default is pinned to Private.
+ * The external default, and why it is no longer pinned.
  *
- * A partner session never reaches `leadScope` at all. `requireUser` puts staff
- * on `req.user` and partners on `req.partner`, and the partner portal reads its
- * records through a hard `partner_id = ?` filter — a partner sees the leads
- * they sourced and nothing else, in code, with no scope function in the path.
+ * It used to be fixed at Private, because a partner session never reached a
+ * scope function: `requireUser` puts staff on `req.user` and partners on
+ * `req.partner`, and the portal filtered on `partner_id` in code. A setting
+ * that cannot be enforced is worse than one not offered, so it was refused.
  *
- * That is already the strictest possible floor, so the external column records
- * it rather than controlling it. Making it settable would be worse than leaving
- * it out: the setting would either do nothing, or — if someone later wired it
- * up without reading this — let one partner see another partner's book, or the
- * firm's.
+ * Portal lead reads now go through `portalLeadScope`, which is shaped like
+ * every other scope: the floor is the leads you sourced, grants OR on top, and
+ * the partner's own book is ANDed around the outside. So the column governs
+ * behaviour rather than describing it, and the pin is gone.
  *
- * The pin lifts when partner reads go through a scope function like everything
- * else. Until then this is a declaration, and `setDefaults` refuses to move it.
+ * ONE INVARIANT REPLACES IT
+ * -------------------------
+ * **External may never exceed internal.** An outside party cannot be given more
+ * reach than the firm's own staff, and without this rule that is one careless
+ * PATCH away: leads Private internally and Public Read externally would show a
+ * partner every lead in the book while an RM still saw only their own. It reads
+ * like a smaller setting than it is, which is exactly why it needs a rule rather
+ * than a convention.
  */
-export const EXTERNAL_PINNED = 'private';
+export const LEVEL_RANK = { private: 0, read: 1 };
 
-export const EXTERNAL_PIN_REASON = 'Partner portal reads are filtered to the partner\'s own '
-  + 'sourced records in code, without passing through a scope function, so an external default '
-  + 'above Private would not be enforced. It stays Private until partner reads move under the '
-  + 'same floor as staff reads.';
+export const exceedsInternal = (external, internal) =>
+  (LEVEL_RANK[external] ?? 0) > (LEVEL_RANK[internal] ?? 0);
 
 /**
  * A partner-portal session is external; a staff session is internal.
  *
- * Kept because the distinction is real and the column records it — but note
- * that nothing reaching `owdGrant` today is external, for the reason above.
+ * Read from the session shape rather than from a role, because a partner has no
+ * role in the staff sense at all -- `partnerLogin` issues a session carrying
+ * `partner_id`, and that is the only thing telling the two apart.
  */
 export const isExternal = (user) => Boolean(user?.partner_id || user?.kind === 'partner');
 
@@ -178,11 +182,11 @@ export const isExternal = (user) => Boolean(user?.partner_id || user?.kind === '
 export function owdGrant(apiName, user) {
   if (!OWD_ENTITIES.includes(apiName)) return null;
 
-  /* External callers do not arrive here (see EXTERNAL_PIN_REASON), but if one
-     ever does, it must not pick up the internal default by omission. */
-  if (isExternal(user)) return null;
-
-  const level = defaultsFor(apiName).internal;
+  /* Which default applies depends on which side of the firm the caller is on,
+     and the two are never mixed: an external caller reads the external default
+     or nothing, never the internal one by omission. */
+  const defaults = defaultsFor(apiName);
+  const level = isExternal(user) ? defaults.external : defaults.internal;
 
   /* `1=1` widens to everything the surrounding query already reaches, which is
      one book, because the caller ANDs org scope around this. */
@@ -200,8 +204,27 @@ export function setDefaults(apiName, { internal, external } = {}) {
   const def = one('SELECT api_name FROM entity_def WHERE api_name = ?', [apiName]);
   if (!def) return { ok: false, error: `There is no object called "${apiName}"` };
 
-  if (external !== undefined && external !== EXTERNAL_PINNED) {
-    return { ok: false, error: EXTERNAL_PIN_REASON };
+  /* External may never exceed internal. Checked against what internal will be
+     after this call, not what it is now, so setting both at once cannot slip
+     an inversion through on ordering. */
+  const current = defaultsFor(apiName);
+  const nextInternal = internal ?? current.internal;
+  const nextExternal = external ?? current.external;
+  if (exceedsInternal(nextExternal, nextInternal)) {
+    /* Two different mistakes reach here and they want different advice. Widening
+       external past internal is the one the invariant exists for. Narrowing
+       internal below an external that is already wider is the same inversion
+       arrived at from the other side, and the fix is an ordering rather than a
+       refusal -- so say which. */
+    const narrowing = internal !== undefined;
+    return {
+      ok: false,
+      error: narrowing
+        ? `Narrow the partner-portal default first: it is "${nextExternal}", and internal `
+          + `cannot go below it. An outside party would be left with more reach than staff.`
+        : `The partner portal cannot be given more reach than staff: `
+          + `external "${nextExternal}" is wider than internal "${nextInternal}".`,
+    };
   }
 
   const sets = [];

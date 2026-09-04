@@ -23,11 +23,11 @@ import { all, one, run } from '../src/db.js';
 import { leadScope, clientScope, ticketScope } from '../src/auth.js';
 import {
   OWD_LEVELS, OWD_ENTITIES, defaultsFor, allDefaults, setDefaults,
-  owdGrant, isExternal, isLevel, EXTERNAL_PINNED,
+  owdGrant, isExternal, isLevel, exceedsInternal,
   OWD_APPROVAL_KEY, approvalKeyFor,
   DERIVED_ENTITIES, isDerived,
 } from '../src/engine/owd.js';
-import { partnerScope, can } from '../src/auth.js';
+import { partnerScope, portalLeadScope, can } from '../src/auth.js';
 import { APPROVAL_SCOPES } from '../src/engine/approvals.js';
 
 let passed = 0;
@@ -51,9 +51,19 @@ const userIn = (org, role) => one(
   [org, role],
 );
 
-/** Put every object back to private, whatever a test left behind. */
+/**
+ * Put every object back to private, whatever a test left behind.
+ *
+ * External first. Internal cannot be narrowed below an external that is still
+ * wider -- the invariant refuses it, correctly -- so resetting in the other
+ * order silently leaves an object open and every later assertion reads a state
+ * nobody set.
+ */
 const resetAll = () => {
-  for (const e of OWD_ENTITIES) setDefaults(e, { internal: 'private' });
+  for (const e of OWD_ENTITIES) {
+    setDefaults(e, { external: 'private' });
+    setDefaults(e, { internal: 'private' });
+  }
 };
 
 resetAll();
@@ -202,24 +212,50 @@ test('the same boundary holds for clients and cases', () => {
 
 /* --------------------------------------------------------- external users */
 
-test('the external default is pinned to private and refuses to move', () => {
-  /* Partner reads never pass through a scope function -- the portal filters on
-     partner_id in code -- so an external default above private would not be
-     enforced. A setting that silently does nothing is worse than one that is
-     not offered, and this one would be dangerous. */
+test('external may never exceed internal', () => {
+  /* The invariant that replaced the pin. Without it, leads Private internally
+     and Public Read externally would show a partner every lead in the book
+     while an RM still saw only their own -- an outside party with more reach
+     than the firm's own staff, one careless PATCH away. */
+  resetAll();
   const out = setDefaults('lead', { external: 'read' });
-  assert(!out.ok, 'the external default was widened');
-  assert(/partner/i.test(out.error), `the refusal does not explain why: ${out.error}`);
-  assert.equal(defaultsFor('lead').external, EXTERNAL_PINNED, 'the column moved anyway');
+  assert(!out.ok, 'external was widened past internal');
+  assert(/more reach than staff/i.test(out.error), `unclear refusal: ${out.error}`);
+  assert.equal(defaultsFor('lead').external, 'private', 'the column moved anyway');
+
+  assert(exceedsInternal('read', 'private'), 'read over private was not caught');
+  assert(!exceedsInternal('private', 'read'), 'narrower external was wrongly refused');
+  assert(!exceedsInternal('read', 'read'), 'equal levels were refused');
 });
 
-test('an external caller picks up no internal grant', () => {
-  // Belt and braces: if a partner session ever does reach a scope function, it
-  // must not inherit whatever staff have been given.
+test('external can be widened once internal allows it', () => {
+  resetAll();
+  setDefaults('lead', { internal: 'read' });
+  const out = setDefaults('lead', { external: 'read' });
+  assert(out.ok, `external was refused even at parity: ${out.error}`);
+  assert.equal(defaultsFor('lead').external, 'read');
+  /* And internal cannot then be narrowed underneath it -- the same inversion
+     from the other side, which the engine refuses with the ordering to fix it. */
+  const blocked = setDefaults('lead', { internal: 'private' });
+  assert(!blocked.ok, 'internal was narrowed below a wider external');
+  assert(/Narrow the partner-portal default first/i.test(blocked.error), blocked.error);
+
+  resetAll();
+  assert.equal(defaultsFor('lead').external, 'private', 'external did not reset');
+  assert.equal(defaultsFor('lead').internal, 'private', 'internal did not reset');
+});
+
+test('an external caller reads the external default, never the internal one', () => {
+  /* The two are never mixed. A partner must not inherit what staff were given,
+     which is what would happen if the grant fell back by omission. */
+  resetAll();
   setDefaults('lead', { internal: 'read' });
   assert(isExternal({ partner_id: 7 }), 'a partner session was not recognised as external');
   assert.equal(owdGrant('lead', { partner_id: 7 }), null,
     'an external caller inherited the internal default');
+
+  // Staff do get it, so the fixture is doing something.
+  assert(owdGrant('lead', userIn('BONANZA', 'sales_rm')), 'internal read produced no grant');
   resetAll();
 });
 
@@ -346,6 +382,94 @@ test('widening the partner default is grant-only', () => {
     assert(atRead.includes(id), `the RM lost sight of partner ${id} when the default widened`);
   }
   assert(atRead.length >= atPrivate.length, 'read narrowed the set');
+  resetAll();
+});
+
+/* ---------------------------------------- the portal, and the lifted pin */
+
+const partnerIn = (org) => one(
+  'SELECT * FROM partners WHERE sales_org = ? ORDER BY id LIMIT 1', [org],
+);
+
+/** Leads this partner may read, through the scope the portal now uses. */
+const portalLeads = (partner) => {
+  const sc = portalLeadScope(partner, 'l');
+  return all(`SELECT l.id FROM leads l WHERE ${sc.sql}`, sc.params).map((r) => r.id);
+};
+
+test('a partner sees only what they sourced, by default', () => {
+  /* The behaviour the hardcoded `partner_id = ?` filter had. Declaring it must
+     not have moved anybody, which is the same property the internal floor had
+     to have on the day it shipped. */
+  resetAll();
+  const partner = partnerIn('BONANZA');
+  assert(partner, 'no Bonanza partner seeded');
+
+  const seen = portalLeads(partner);
+  const sourced = all(
+    'SELECT id FROM leads WHERE partner_id = ? AND deleted_at IS NULL', [partner.id],
+  ).map((r) => r.id);
+
+  assert.deepEqual([...seen].sort(), [...sourced].sort(),
+    'the scope does not match the filter it replaced');
+});
+
+test('the external default now governs the portal rather than describing it', () => {
+  /* The pin is lifted: this is the assertion that could not have been written
+     before, because the column did not reach the query. */
+  resetAll();
+  const partner = partnerIn('BONANZA');
+  const before = portalLeads(partner);
+
+  setDefaults('lead', { internal: 'read' });
+  setDefaults('lead', { external: 'read' });
+  const after = portalLeads(partner);
+
+  assert(after.length > before.length,
+    `the external default did not reach the portal: ${before.length} then ${after.length}`);
+  for (const id of before) {
+    assert(after.includes(id), 'widening took a lead away, so it is not grant-only');
+  }
+  resetAll();
+});
+
+test('a widened portal cannot cross the book boundary', () => {
+  /* The clause that matters most in portalLeadScope. A partner is an outside
+     party; handing a Bigul partner the Bonanza book would be the cross-book
+     exposure we hold an incident report about, with a third party on the far
+     side of it. */
+  const partner = partnerIn('BIGUL');
+  assert(partner, 'no Bigul partner seeded, so this proves nothing');
+
+  const bonanza = all(
+    "SELECT id FROM leads WHERE sales_org = 'BONANZA' AND deleted_at IS NULL",
+  ).map((r) => r.id);
+  assert(bonanza.length > 0, 'no Bonanza leads seeded');
+
+  setDefaults('lead', { internal: 'read' });
+  setDefaults('lead', { external: 'read' });
+
+  const seen = portalLeads(partner);
+  const crossed = seen.filter((id) => bonanza.includes(id));
+  assert.equal(crossed.length, 0,
+    `a Bigul partner saw ${crossed.length} Bonanza leads once the portal was widened`);
+
+  resetAll();
+});
+
+test('a deleted lead stays invisible however wide the default', () => {
+  const partner = partnerIn('BONANZA');
+  setDefaults('lead', { internal: 'read' });
+  setDefaults('lead', { external: 'read' });
+
+  const sc = portalLeadScope(partner, 'l');
+  assert(/deleted_at IS NULL/.test(sc.sql), 'the portal scope dropped its deleted-at clause');
+
+  const deleted = all('SELECT id FROM leads WHERE deleted_at IS NOT NULL').map((r) => r.id);
+  const seen = portalLeads(partner);
+  for (const id of deleted) {
+    assert(!seen.includes(id), `a deleted lead ${id} was visible in the portal`);
+  }
   resetAll();
 });
 

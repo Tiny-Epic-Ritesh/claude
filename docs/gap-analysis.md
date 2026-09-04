@@ -419,7 +419,7 @@ below.
 | 4 | Field-change history + stage entry/exit, queryable | ✅ **Met** — `field_history`, indexed by record and by field |
 | 5 | **Label ≠ API name** | ✅ **Met** — `field_def.api_name` is immutable, `field_def.label` renameable |
 | 6 | **Uniform per-object configuration** | ✅ **Met** — `entity_def` and `field_def` cover all seven objects: lead, client, case, partner, task, interaction, product_interest |
-| 7 | OWD floor, then grants only | ✅ **Met** — the floor is declared per object (`entity_def.owd_internal` / `owd_external`, `engine/owd.js`): **five enforced** (lead, client, case, task, partner) and **two derived** (interaction and product_interest follow their lead, and must not have a floor of their own). Grant-only ✅. Changing one needs two people. The internal/external split exists as a declaration; external is **pinned to Private** because partner reads filter on `partner_id` in code without passing through a scope function, so a wider external default would not be enforced — see below |
+| 7 | OWD floor, then grants only | ✅ **Met** — the floor is declared per object (`entity_def.owd_internal` / `owd_external`, `engine/owd.js`): **five enforced** (lead, client, case, task, partner) and **two derived** (interaction and product_interest follow their lead, and must not have a floor of their own). Grant-only ✅. Changing one needs two people. The internal/external split exists as a declaration **and is enforced**: portal lead reads go through `portalLeadScope`, and external may never exceed internal — an outside party cannot be given more reach than staff |
 | 8 | **Owner is polymorphic (User or Queue)** | ✅ **Met** — `queues` table with `leads.owner_queue_id` beside `owner_id`, two nullable keys rather than a type-plus-ref pair |
 | 9 | Record types over pipeline sprawl | ⚠️ Sideways — per-product cards instead; see below |
 | 10 | Segments as live nested queries | ✅ Met — condition tree, nested to any depth |
@@ -470,14 +470,16 @@ Three things were left. The first is now closed and the second is unchanged; onl
   org, so the request could be raised and then refused to everyone); and
   configuration entities, which genuinely have no book, hit the same wall.
 
-  Two limits, both stated rather than hidden. **Only `read` and `private`**;
-  Public Read/Write is not offered because writes are gated by capabilities,
-  not by this floor, so the setting would not be enforced. And **the external
-  default is pinned to Private**: partner sessions never reach a scope function
-  at all — `requireUser` puts them on `req.partner` and the portal filters on
-  `partner_id` in code — so a wider external default would silently do nothing,
-  or worse, would be wired up later by someone who had not read why. The pin
-  lifts when partner reads move under the same floor as staff reads.
+  One limit remains, stated rather than hidden: **only `read` and `private`**.
+  Public Read/Write is not offered because writes are gated by capabilities, not
+  by this floor, so the setting would not be enforced.
+
+  The external default **was** pinned to Private, because partner sessions never
+  reached a scope function — `requireUser` puts them on `req.partner` and the
+  portal filtered on `partner_id` in code, so a wider external default would have
+  silently done nothing. **The pin was lifted on 4 Sep**, once portal lead reads
+  moved under `portalLeadScope`. In its place: external may never exceed
+  internal, so an outside party cannot be given more reach than staff.
 - **15 · two vendor columns on the core record.** `activities.external_id` and
   `activities.recording_url` belong in a vendor-reference table. Small, known,
   and not yet worth a migration.
@@ -772,9 +774,10 @@ end-to-end tests passed unchanged on the day it shipped.
 Two limits, stated rather than hidden. **Only `private` and `read`** — Public
 Read/Write is not offered, because writes are gated by capabilities rather than
 by this floor, and a setting that says read/write while granting only read is
-worse than one not offered. And **the external default is pinned to Private**:
-partner sessions never reach a scope function at all, since `requireUser` puts
-them on `req.partner` and the portal filters on `partner_id` in code.
+worse than one not offered. The external default **was** pinned to Private
+because partner sessions never reached a scope function; that pin was lifted the
+same day, once portal lead reads moved under `portalLeadScope`, and replaced by
+the rule that external may never exceed internal.
 
 ### Changing it needs two people
 
@@ -834,5 +837,35 @@ somebody to close it.
 
 Five objects enforced, two derived, none unaccounted for.
 
-**Still open:** the external pin lifts only when partner reads move under the
-same floor as staff reads.
+### The external pin, lifted the same day
+
+It was fixed at Private because a partner session never reached a scope function:
+`requireUser` puts staff on `req.user` and partners on `req.partner`, and the
+portal filtered on `partner_id` inside each query. A setting that cannot be
+enforced is worse than one not offered, so it was refused rather than accepted
+and ignored.
+
+Portal lead reads now go through `portalLeadScope`, shaped like every other
+scope: the floor is the leads you sourced, grants OR on top, the partner's own
+book is ANDed around the outside. **That book clause is the single most
+important line in the file** — a partner is an outside party, so without it an
+external default of Public Read would resolve to `1=1` and hand a Bigul partner
+the Bonanza book. There is a test for exactly that, and another asserting the
+scope returns precisely the set the hardcoded filter did, so declaring it moved
+nobody.
+
+**One invariant replaced the pin: external may never exceed internal.** Without
+it, leads Private internally and Public Read externally would show a partner
+every lead in the book while an RM still saw only their own — an outside party
+with more reach than the firm's own staff, one careless PATCH away. It is checked
+at the route so the request is never raised, and again on apply, because the
+other side may have moved while the request sat waiting.
+
+It cuts both ways, which is worth knowing before somebody meets it: internal
+cannot be narrowed below an external that is already wider. The refusal says so
+and names the ordering — narrow the portal first.
+
+The route also refuses both sides in one call. They are different decisions and
+an approver should not be shown two of them wearing one reason.
+
+**Nothing else on constraint 7 is outstanding.**
