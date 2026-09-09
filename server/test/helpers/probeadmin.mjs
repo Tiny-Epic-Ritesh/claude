@@ -28,11 +28,18 @@ import { one, run } from '../../src/db.js';
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
 
 /**
- * @param slug  a name unique to the calling test file, so two files running
- *              back to back never share an account or race each other's cleanup
- * @param role  the role the probe should hold; 'admin' unless a test needs more
+ * @param slug     a name unique to the calling test file, so two files running
+ *                 back to back never share an account or race each other's
+ *                 cleanup
+ * @param options  the role the probe should hold, and the book it holds it in.
+ *                 A bare string is still read as the role, which is how every
+ *                 existing caller passes it.
  */
-export async function probeAdmin(slug, role = 'admin') {
+export async function probeAdmin(slug, options = {}) {
+  const { role = 'admin', sales_org: salesOrg = 'BONANZA' } = typeof options === 'string'
+    ? { role: options }
+    : options;
+
   const email = `probe-${slug}@bonanza.test`;
 
   const seeded = one("SELECT password FROM users WHERE email = 'admin@bonanza.test'");
@@ -43,8 +50,8 @@ export async function probeAdmin(slug, role = 'admin') {
   run('DELETE FROM users WHERE email = ?', [email]);
   run(
     `INSERT INTO users (name, email, password, role, sales_org, active)
-     VALUES (?,?,?,?,'BONANZA',1)`,
-    [`Probe ${slug}`, email, seeded.password, role],
+     VALUES (?,?,?,?,?,1)`,
+    [`Probe ${slug}`, email, seeded.password, role, salesOrg],
   );
 
   const res = await fetch(`${BASE}/api/auth/login`, {

@@ -187,6 +187,18 @@ function TemplateBuilder({ template, spec, onClose, onSaved, onError }) {
 
   const intentNote = (rules.intents ?? []).find((i) => i.key === draft.components.intent)?.note;
 
+  /* Only the senders this user may send under. Bigul and Bonanza are separate
+     Principal Entities, so the list is already the book boundary. */
+  const [headers, setHeaders] = useState([]);
+  useEffect(() => {
+    if (channel !== 'sms') return;
+    api.get('/admin/dlt-headers').then(setHeaders).catch(() => setHeaders([]));
+  }, [channel]);
+
+  const dlt = draft.components.dlt ?? {};
+  const setDlt = (patch) => setPart({ dlt: { ...dlt, ...patch } });
+  const dltNote = (rules.dlt?.categories ?? []).find((c) => c.key === dlt.category)?.note;
+
   const set = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }));
   /* A patch object rather than a (key, value) pair. The keys are then keys
      rather than quoted strings, which also keeps `language` from being read as
@@ -417,6 +429,93 @@ function TemplateBuilder({ template, spec, onClose, onSaved, onError }) {
               {' '}of {preview.sms.per_segment}
               {preview.sms.unicode && ' · unicode, which halves what fits'}
             </p>
+          )}
+
+          {channel === 'sms' && (
+            <>
+              <h4 className="muted">DLT registration</h4>
+              <p className="hint">
+                An Indian operator delivers a commercial SMS only when the sender, the
+                template id and the text are all registered together. Everything below is
+                checked against what you have written before it can be saved.
+              </p>
+
+              <div className="field-row">
+                <Field problems={problemsFor('header')} label="Sender">
+                  <select value={dlt.header ?? ''} onChange={(e) => setDlt({ header: e.target.value })}>
+                    <option value="">Choose…</option>
+                    {headers.map((h) => (
+                      <option key={h.header} value={h.header}>{h.header} · {h.org_name ?? h.sales_org}</option>
+                    ))}
+                  </select>
+                </Field>
+
+                <Field problems={problemsFor('category')} label="DLT category">
+                  <select value={dlt.category ?? ''} onChange={(e) => setDlt({ category: e.target.value })}>
+                    <option value="">Choose…</option>
+                    {(rules.dlt?.categories ?? []).map((c) => (
+                      <option key={c.key} value={c.key}>{c.label}</option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              {dltNote && <p className="hint">{dltNote}</p>}
+
+              <div className="field-row">
+                <Field
+                  problems={problemsFor('template_id')}
+                  label="DLT template id"
+                  hint="The long number the portal gives you once it approves the text."
+                >
+                  <input
+                    value={dlt.template_id ?? ''}
+                    onChange={(e) => setDlt({ template_id: e.target.value })}
+                    placeholder="1107160000000000000"
+                  />
+                </Field>
+
+                <Field problems={problemsFor('status')} label="Registration">
+                  <select value={dlt.status ?? 'draft'} onChange={(e) => setDlt({ status: e.target.value })}>
+                    <option value="draft">Not registered yet</option>
+                    <option value="submitted">Submitted for approval</option>
+                    <option value="approved">Approved</option>
+                    <option value="rejected">Rejected</option>
+                  </select>
+                </Field>
+              </div>
+
+              {/* The text to register, ready to copy. Retyping it on the portal
+                  is exactly how the registered text and the sent text come to
+                  differ, which is the failure everything here exists to catch. */}
+              {preview?.dlt && (
+                <Field problems={[]} label="Register this exact text">
+                  <div className="dlt-text">
+                    <code>{preview.dlt.text || 'Write the message first.'}</code>
+                    <button
+                      type="button"
+                      className="btn-sm"
+                      onClick={() => navigator.clipboard?.writeText(preview.dlt.text ?? '')}
+                    >
+                      <Icon name="content_copy" size={14} /> Copy
+                    </button>
+                  </div>
+                </Field>
+              )}
+
+              <Field
+                problems={problemsFor('registered_text')}
+                label="What the portal approved"
+                hint="Paste it back once approved and it is compared with yours, character for character."
+              >
+                <textarea
+                  value={dlt.registered_text ?? ''}
+                  onChange={(e) => setDlt({ registered_text: e.target.value })}
+                  rows={3}
+                  style={{ width: '100%' }}
+                  placeholder="Paste the approved text from the DLT portal"
+                />
+              </Field>
+            </>
           )}
 
           {channel === 'email' && (

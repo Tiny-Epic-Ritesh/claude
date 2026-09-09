@@ -73,6 +73,25 @@ export const CHANNELS = {
     /* One GSM-7 segment. Past this a message is billed as two. */
     segment: 160,
     segment_unicode: 70,
+    /*
+     * TRAI's DLT regime, which is most of what an SMS template is.
+     *
+     * A commercial SMS reaches an Indian handset only if the Principal Entity,
+     * the header and the template id are all registered, and the text sent
+     * matches the registered text character for character apart from the
+     * variable slots. An operator that disagrees drops the message without
+     * telling us, so every one of these is checked here instead.
+     */
+    dlt: {
+      /* The portal's variable marker. Ours are named; these are not. */
+      placeholder: '{#var#}',
+      categories: [
+        { key: 'transactional', label: 'Transactional', note: 'OTPs and alerts on an account the person holds. Reaches a DND number.' },
+        { key: 'service_implicit', label: 'Service (implicit)', note: 'Follows something they just did — an order, an enquiry.' },
+        { key: 'service_explicit', label: 'Service (explicit)', note: 'Needs recorded consent. Promotional content to an existing client.' },
+        { key: 'promotional', label: 'Promotional', note: 'Offers and pitches. Never reaches a DND-registered number.' },
+      ],
+    },
   },
   email: {
     label: 'Email',
@@ -142,8 +161,98 @@ export function checkTemplate({ channel, name, subject, body, components = {} })
 
   if (channel === 'whatsapp') problems.push(...checkWhatsApp(components, spec));
   if (channel === 'email') problems.push(...checkEmail(components, spec, body));
+  if (channel === 'sms') problems.push(...checkSms(components, spec, body));
   return problems;
 }
+
+/**
+ * What DLT requires, checked while the template is still editable.
+ *
+ * The expensive failure this avoids: a template written here, registered on
+ * the portal in slightly different words, and then dropped by every operator
+ * at send time with nothing in our logs to say why. Comparing the two strings
+ * costs nothing and is the only way to know before sending.
+ */
+function checkSms(c, spec, body) {
+  const problems = [];
+  const dlt = c.dlt ?? {};
+
+  if (!dlt.header) {
+    problems.push({ field: 'header', message: 'Choose the registered sender this goes out from' });
+  }
+
+  if (!dlt.category) {
+    problems.push({ field: 'category', message: 'Say which DLT category this template was registered under' });
+  } else if (!spec.dlt.categories.some((k) => k.key === dlt.category)) {
+    problems.push({ field: 'category', message: `"${dlt.category}" is not a DLT category` });
+  }
+
+  /* A template id is only demanded once somebody says it is approved. Drafting
+     before registering is the normal order of work, and refusing to save a
+     draft would push people to register text they have not finished writing. */
+  if (dlt.status === 'approved' && !String(dlt.template_id ?? '').trim()) {
+    problems.push({ field: 'template_id', message: 'An approved template has a DLT template id. Paste it from the portal.' });
+  }
+  if (dlt.template_id && !/^[0-9]{10,25}$/.test(String(dlt.template_id).trim())) {
+    problems.push({ field: 'template_id', message: 'A DLT template id is the long number from the portal, digits only' });
+  }
+
+  /* The comparison the whole feature exists for. */
+  if (dlt.registered_text) {
+    const ours = toDltText(body);
+    if (ours !== dlt.registered_text) {
+      problems.push({
+        field: 'registered_text',
+        message: `What you have written does not match what was registered${describeDiff(ours, dlt.registered_text)}. `
+          + 'Operators compare these character for character.',
+      });
+    }
+  }
+
+  return problems;
+}
+
+/** Where two strings first part company, said in a way somebody can act on. */
+function describeDiff(ours, theirs) {
+  let i = 0;
+  while (i < ours.length && i < theirs.length && ours[i] === theirs[i]) i += 1;
+
+  if (i >= ours.length && i >= theirs.length) return '';
+  const at = Math.max(0, i - 12);
+  const show = (str) => JSON.stringify(str.slice(at, i + 14));
+  return ` — from character ${i + 1}: yours reads ${show(ours)}, registered reads ${show(theirs)}`;
+}
+
+/**
+ * The message as DLT holds it: our named merge fields as the portal's marker.
+ *
+ * Every variable becomes the same {#var#}, because DLT does not number or name
+ * them -- it counts them and matches them by position at send time. That is
+ * also why the order is returned separately: it is the only record of which of
+ * our fields fills which slot.
+ */
+export const toDltText = (body) => String(body ?? '').replace(MERGE, '{#var#}');
+
+export function toDltTemplate({ body, components = {} }) {
+  const dlt = components.dlt ?? {};
+  return {
+    header: dlt.header ?? null,
+    template_id: dlt.template_id ?? null,
+    category: dlt.category ?? null,
+    text: toDltText(body),
+    variable_order: fieldsIn(body),
+  };
+}
+
+/**
+ * Which consent question a DLT category asks.
+ *
+ * Not a second field. A template carrying both a DLT category and an intent
+ * could hold two answers that disagree, and the one that decides whether a
+ * message is sent would then depend on which code path asked. The category is
+ * the registered fact, so the intent is read from it.
+ */
+export const intentForCategory = (category) => (category === 'promotional' ? 'marketing' : 'service');
 
 /**
  * An email address, to the only standard worth applying here.

@@ -15,10 +15,11 @@
  */
 
 import { strict as assert } from 'node:assert';
-import { one, run } from '../src/db.js';
+import { all, one, run } from '../src/db.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
 import {
-  checkTemplate, checkAttachments, toMetaTemplate, smsSegments, withExamples, CHANNELS,
+  checkTemplate, checkAttachments, toMetaTemplate, toDltTemplate, intentForCategory,
+  smsSegments, withExamples, CHANNELS,
 } from '../src/engine/templates.js';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
@@ -323,6 +324,147 @@ await test('the preview shows what would be sent, not what was typed', async () 
     body: '<p>Hi {{name}}</p><script>alert(1)</script>',
   });
   assert(!/script/i.test(res.body.rendered.body), `the script survived: ${res.body.rendered.body}`);
+});
+
+/* --------------------------------------------------------- the DLT rules */
+
+const SMS = {
+  channel: 'sms',
+  name: 'templates_probe_sms',
+  body: 'Hi {{name}}, your {{product}} SIP is due. - Bonanza',
+  components: { dlt: { header: 'BONANZ', category: 'transactional', status: 'draft' } },
+};
+
+await test('a valid SMS draft has nothing wrong with it', () => {
+  assert.deepEqual(checkTemplate(SMS), [], JSON.stringify(checkTemplate(SMS)));
+});
+
+await test('merge fields become the portal marker, all of them the same', () => {
+  /* DLT neither names nor numbers its variables -- it counts them and matches
+     by position at send time, so every one is the same marker and the order is
+     the only record of which of our fields fills which slot. */
+  const dlt = toDltTemplate(SMS);
+  assert.equal(dlt.text, 'Hi {#var#}, your {#var#} SIP is due. - Bonanza', dlt.text);
+  assert.deepEqual(dlt.variable_order, ['name', 'product']);
+});
+
+await test('a sender and a category are both required', () => {
+  const none = checkTemplate({ ...SMS, components: { dlt: {} } });
+  assert(none.some((p) => p.field === 'header'), 'a template with no sender was accepted');
+  assert(none.some((p) => p.field === 'category'), 'a template with no DLT category was accepted');
+});
+
+await test('a template id is demanded when it is called approved, not before', () => {
+  /* Drafting before registering is the normal order of work. Refusing to save
+     a draft would push people to register text they have not finished. */
+  assert.deepEqual(checkTemplate(SMS), [], 'a draft was made to carry a template id');
+
+  const approved = checkTemplate({
+    ...SMS,
+    components: { dlt: { ...SMS.components.dlt, status: 'approved' } },
+  });
+  assert(approved.some((p) => p.field === 'template_id'), 'approved with no template id was accepted');
+
+  const wrong = checkTemplate({
+    ...SMS,
+    components: { dlt: { ...SMS.components.dlt, status: 'approved', template_id: '11071X' } },
+  });
+  assert(wrong.some((p) => p.field === 'template_id'), 'a non-numeric template id was accepted');
+});
+
+await test('text that does not match what was registered is refused, and the difference is named', () => {
+  /* The failure this exists for: registered in slightly different words, then
+     dropped by every operator at send time with nothing in our logs to say so. */
+  const problems = checkTemplate({
+    ...SMS,
+    components: {
+      dlt: { ...SMS.components.dlt, registered_text: 'Hi {#var#}, your {#var#} SIP is overdue. - Bonanza' },
+    },
+  });
+
+  const mismatch = problems.find((p) => p.field === 'registered_text');
+  assert(mismatch, 'a mismatch against the registered text was accepted');
+  assert(/character 33/.test(mismatch.message), `the difference was not located: ${mismatch.message}`);
+  assert(/overdue/.test(mismatch.message), `the message does not show what differs: ${mismatch.message}`);
+});
+
+await test('matching text passes, including the variable markers', () => {
+  const problems = checkTemplate({
+    ...SMS,
+    components: {
+      dlt: { ...SMS.components.dlt, registered_text: 'Hi {#var#}, your {#var#} SIP is due. - Bonanza' },
+    },
+  });
+  assert.deepEqual(problems, [], JSON.stringify(problems));
+});
+
+await test('the consent question comes from the DLT category, not a second field', () => {
+  /* Two fields that can disagree would mean whether a message sends depends on
+     which code path asked. The category is the registered fact. */
+  assert.equal(intentForCategory('promotional'), 'marketing');
+  for (const c of ['transactional', 'service_implicit', 'service_explicit']) {
+    assert.equal(intentForCategory(c), 'service', `${c} was treated as marketing`);
+  }
+});
+
+/* ----------------------------------------------- the two Principal Entities */
+
+await test('the registered senders are the ones the business actually holds', () => {
+  const headers = all('SELECT header, sales_org FROM dlt_header ORDER BY header');
+  assert.deepEqual(headers.map((h) => `${h.header}:${h.sales_org}`), ['BIGULX:BIGUL', 'BONANZ:BONANZA'],
+    `registered senders are ${JSON.stringify(headers)}`);
+});
+
+await test('a sender that is not registered is refused', async () => {
+  const res = await call('POST', '/admin/templates', {
+    ...SMS,
+    components: { dlt: { ...SMS.components.dlt, header: 'BONANZA' } },
+  });
+  assert.equal(res.status, 400, `an unregistered sender was accepted: HTTP ${res.status}`);
+  assert(/not a registered sender/.test(res.body.error), res.body.error);
+});
+
+await test("a template cannot go out under the other entity's sender", async () => {
+  /* Bigul and Bonanza are separate Principal Entities. Sending a Bonanza
+     message under BIGULX is not a labelling mistake -- it is an unregistered
+     combination, and the operator drops it. This is the book boundary and the
+     DLT rule turning out to be the same rule. */
+  const bigul = await probeAdmin('templates_bigul', { sales_org: 'BIGUL' });
+
+  const asBigul = async (header) => {
+    const res = await fetch(`${BASE}/api/admin/templates/preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bigul.token}` },
+      body: JSON.stringify({ ...SMS, components: { dlt: { ...SMS.components.dlt, header } } }),
+    });
+    return res.json();
+  };
+
+  const own = await asBigul('BIGULX');
+  assert.equal(own.ok, true, `a Bigul admin was refused their own sender: ${JSON.stringify(own.problems)}`);
+
+  const theirs = await asBigul('BONANZ');
+  assert.equal(theirs.ok, false, 'a Bigul admin was allowed to send under BONANZ');
+  assert(theirs.problems.some((p) => /BONANZA/.test(p.message)), JSON.stringify(theirs.problems));
+});
+
+await test('the picker only offers senders the user may send under', async () => {
+  const bigul = await probeAdmin('templates_bigul2', { sales_org: 'BIGUL' });
+  const res = await fetch(`${BASE}/api/admin/dlt-headers`, {
+    headers: { Authorization: `Bearer ${bigul.token}` },
+  });
+  const offered = (await res.json()).map((h) => h.header);
+  assert(!offered.includes('BONANZ'), `a Bigul admin was offered ${offered.join(', ')}`);
+  assert(offered.includes('BIGULX'), `a Bigul admin was not offered their own sender: ${offered.join(', ')}`);
+});
+
+await test('the exact text to register comes back with the preview', async () => {
+  /* Shown so it can be copied rather than retyped. Retyping is how the
+     registered text and the sent text come to differ. */
+  const res = await call('POST', '/admin/templates/preview', SMS);
+  assert.equal(res.body.dlt.text, 'Hi {#var#}, your {#var#} SIP is due. - Bonanza');
+  assert.equal(res.body.dlt.header, 'BONANZ');
+  assert(res.body.sms.segments >= 1, 'no segment count came back with an SMS preview');
 });
 
 /* ------------------------------------------------------------ the routes */

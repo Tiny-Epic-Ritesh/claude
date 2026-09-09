@@ -130,6 +130,19 @@ CREATE TABLE IF NOT EXISTS templates (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS dlt_header (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  -- The six-character sender ID as registered. Unique across both entities:
+  -- a header is registered once, to one Principal Entity, nationally.
+  header     TEXT NOT NULL UNIQUE,
+  sales_org  TEXT NOT NULL,
+  -- The Principal Entity that registered it. Bigul's differs from Bonanza's,
+  -- which is why this is here and not in a single company-wide setting.
+  entity_id  TEXT,
+  active     INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS content_items (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   name        TEXT NOT NULL,
@@ -2339,6 +2352,19 @@ CREATE TABLE IF NOT EXISTS rule_failures (
 );
 CREATE INDEX IF NOT EXISTS idx_rule_failures ON rule_failures(resolved_at, created_at DESC);
 `);
+
+/* The registered senders. The entity ids are filled in from the DLT portal --
+   left null rather than guessed, because a wrong Principal Entity id is a
+   campaign that is accepted here and dropped by every operator. */
+for (const h of [
+  { header: 'BONANZ', sales_org: 'BONANZA' },
+  { header: 'BIGULX', sales_org: 'BIGUL' },
+]) {
+  db.prepare(
+    `INSERT INTO dlt_header (header, sales_org) VALUES (@header, @sales_org)
+     ON CONFLICT(header) DO UPDATE SET sales_org = excluded.sales_org`,
+  ).run(h);
+}
 
 export const SALES_ORGS = SEED_ORGS.map((o) => o.code);
 export const DEFAULT_ORG = 'BONANZA';

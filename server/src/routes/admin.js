@@ -12,6 +12,7 @@ import { MASTER_STEPS } from '../engine/kyc.js';
 import { integrationRegistry, getOutbox, syncTradingDb, vendorStatus } from '../integrations.js';
 import {
   CHANNELS, MERGE_FIELDS, checkTemplate, checkAttachments, withExamples, smsSegments, toMetaTemplate,
+  toDltTemplate,
 } from '../engine/templates.js';
 import { sanitizeHtml, htmlToText } from '../engine/sanitize.js';
 import { DEFAULT_SLA } from '../engine/sla.js';
@@ -305,6 +306,27 @@ router.get('/templates', (_req, res) => res.json(all('SELECT * FROM templates OR
  * that accepts a 90-character header collects work and loses it a day later to
  * a rejection nobody can read.
  */
+/**
+ * The registered senders this user may send under.
+ *
+ * Filtered by the books they hold, so a Bigul marketing manager is not offered
+ * BONANZ at all -- the boundary is enforced on the write regardless, but a
+ * picker that offers a choice which is then refused is a worse screen than one
+ * that never offered it.
+ */
+router.get('/dlt-headers', requirePermission('admin.templates'), (req, res) => {
+  const orgs = orgsFor(req.user);
+  if (!orgs.length) return res.json([]);
+
+  return res.json(all(
+    `SELECT h.header, h.sales_org, h.entity_id, h.active, o.name AS org_name
+       FROM dlt_header h LEFT JOIN sales_orgs o ON o.code = h.sales_org
+      WHERE h.active = 1 AND h.sales_org IN (${orgs.map(() => '?').join(',')})
+      ORDER BY o.sort_order, h.header`,
+    orgs,
+  ));
+});
+
 router.get('/templates/spec', requirePermission('admin.templates'), (_req, res) => {
   res.json({ channels: CHANNELS, merge_fields: MERGE_FIELDS });
 });
@@ -326,8 +348,29 @@ router.get('/templates/spec', requirePermission('admin.templates'), (_req, res) 
  * folded in, and the preview and the write both call this rather than each
  * having their own idea of what is wrong.
  */
-function templateProblems(draft) {
+function templateProblems(draft, user) {
   const problems = checkTemplate(draft);
+
+  /*
+   * The header has to be one this user could legitimately send under.
+   *
+   * Bigul and Bonanza are separate Principal Entities on the DLT portal, so a
+   * header belongs to exactly one of them. Sending Bonanza's message under
+   * BIGULX is not a labelling mistake -- it is an unregistered combination,
+   * and the operator drops it. Checked here rather than trusted from the
+   * screen, because the screen is not the only thing that can post.
+   */
+  const wanted = draft.components?.dlt?.header;
+  if (wanted) {
+    const header = one('SELECT * FROM dlt_header WHERE header = ?', [wanted]);
+    if (!header) {
+      problems.push({ field: 'header', message: `${wanted} is not a registered sender` });
+    } else if (!header.active) {
+      problems.push({ field: 'header', message: `${wanted} is no longer registered` });
+    } else if (user && !mayUseOrg(user, header.sales_org)) {
+      problems.push({ field: 'header', message: `${wanted} belongs to ${header.sales_org}, which you cannot send for` });
+    }
+  }
 
   const ids = (draft.components?.attachments ?? []).map((a) => Number(a.content_id ?? a));
   if (ids.length) {
@@ -346,7 +389,7 @@ function templateProblems(draft) {
 
 router.post('/templates/preview', requirePermission('admin.templates'), (req, res) => {
   const draft = req.body ?? {};
-  const problems = templateProblems(draft);
+  const problems = templateProblems(draft, req.user);
 
   /* Sanitised before it is shown, because the preview's job is to be what
      goes out. Showing the raw markup would make the preview a nicer email
@@ -370,6 +413,11 @@ router.post('/templates/preview', requirePermission('admin.templates'), (req, re
       text: draft.channel === 'email' ? htmlToText(html) : null,
     },
     sms: draft.channel === 'sms' ? smsSegments(draft.body) : null,
+    /* The exact text to register on the DLT portal. Shown so it can be copied
+       rather than retyped -- retyping it is how the registered text and the
+       sent text come to differ, which is the failure this whole section
+       exists to prevent. */
+    dlt: draft.channel === 'sms' ? toDltTemplate(draft) : null,
     meta: draft.channel === 'whatsapp' ? toMetaTemplate(draft) : null,
   });
 });
@@ -377,7 +425,7 @@ router.post('/templates/preview', requirePermission('admin.templates'), (req, re
 router.post('/templates', requirePermission('admin.templates'), (req, res) => {
   const { name, channel, subject, body, product_type_id, approved = 0, components } = req.body;
 
-  const problems = templateProblems({ channel: channel || 'whatsapp', name, subject, body, components });
+  const problems = templateProblems({ channel: channel || 'whatsapp', name, subject, body, components }, req.user);
   if (problems.length) {
     return res.status(400).json({ error: problems[0].message, field: problems[0].field, problems });
   }
@@ -410,7 +458,7 @@ router.patch('/templates/:id', requirePermission('admin.templates'), (req, res) 
       body: req.body.body ?? current.body,
       components: req.body.components ?? JSON.parse(current.components || '{}'),
     };
-    const problems = templateProblems(merged);
+    const problems = templateProblems(merged, req.user);
     if (problems.length) {
       return res.status(400).json({ error: problems[0].message, field: problems[0].field, problems });
     }
