@@ -1,0 +1,191 @@
+# Outstanding — what is not done, across all three feedback rounds
+
+**Compiled:** 9 September 2026, from the three source documents now in this folder.
+**Method:** every ticket ID cross-referenced against git history and the code. Where
+the evidence is a commit message rather than a re-test, that is said.
+
+The three source documents are checked in beside this one:
+
+| Round | Source | Items |
+|---|---|---|
+| 1 | `ROUND-1-source.md` | 43 |
+| 2 | `ROUND-2-source.md` | 25 |
+| 3 | `ROUND-3-source.md` | 44 |
+
+---
+
+## 0 · One ticket is mislabelled, and it is mine
+
+**`P3-19` in the source document is *LAPPS — scriptable custom app framework*.**
+
+Commit `56de104` is titled *"P3-19: hand a book over when somebody leaves"*. That
+work — bulk reassignment of a departing RM's book — appears in **none** of the
+three feedback documents. It was asked for in conversation and given the label
+P3-19, and I built it under that label without checking the number against the
+document.
+
+So:
+
+- the handover feature is **built and working**, but it is not P3-19
+- **the real P3-19 (LAPPS) is not started**
+
+Nothing is lost, but the ticket numbering is wrong in one commit and in the
+checklist. See question **N-1** at the foot of this file.
+
+---
+
+## 1 · Round 1 — nothing outstanding
+
+All 43 items are recorded Done in `docs/FEEDBACK-ROUND-1.md`. That is a status
+document maintained as the work was done, not an independent re-test.
+
+---
+
+## 2 · Round 2 — four outstanding, all waiting on someone else
+
+| ID | Title | Status | Waiting on |
+|---|---|---|---|
+| P2-03 | UAT and Production with promote/rollback | **Not started** | Production does not exist. Standing it up is infrastructure work that comes first (your decision, A-5) |
+| P2-14 | Connectors screen (Facebook, Google, CUBE, Smartping) | **Not started** | A-4 — which vendor accounts and credentials are available |
+| P2-23 | Adapters and vendor endpoints | **Not started** | Same as P2-14 |
+| P2-25 | Outlook configuration from Setup | **Not started** | A-3 — SMTP was chosen first; per-user Outlook waits on Compliance ruling on Graph |
+
+**These four are one piece of work, not four.** P2-14, P2-23, P2-25 and the
+Round 3 ticket P3-20 all describe the same connectors surface from different
+angles. Building them separately would produce four screens for one job.
+
+---
+
+## 3 · Round 3 — eight outstanding
+
+### 3a · Blocked on the CUBE credential
+
+| ID | Title | Blocked by |
+|---|---|---|
+| P3-44 | CUBE telephony end-to-end verification (`Bonanza_APITest`) | The tenant UserID and password |
+| P3-13 | Phone call form (configurable disposition form) | P3-44 |
+| P3-14 | Call recording, transcription and AI call summary | P3-44, P3-13 |
+
+P3-44 is the verification that the pipeline works at all. Until a call can be
+placed through CUBE and a recording come back, P3-13 and P3-14 cannot be
+honestly built or tested.
+
+### 3b · The five large builds — none started, each gated on your approval
+
+Every one of these has a "present the design before implementation" clause, and
+each has an unanswered open question against it. That is why none is started.
+
+| ID | Title | Gate | Open question |
+|---|---|---|---|
+| P3-06 | Reports module — predefined library + custom builder | Module design and the predefined report list approved before build | **Q9** |
+| P3-16 | Advanced automation builder | Builder design presented before implementation | **Q10** |
+| P3-19 | LAPPS — scriptable custom app framework | Feasibility assessment — value, security model, sandbox — before *any* build | **Q11** |
+| P3-20 | Apps marketplace / connectors | Feasibility assessment naming which connectors are viable this phase | **Q12** |
+| P3-21 | Internal communication module | Module design reviewed before implementation | none stated |
+
+These are the largest items in the document. P3-06 and P3-16 in particular are
+each comparable in size to everything delivered in Round 1.
+
+### 3c · Built, awaiting your sign-off
+
+| ID | Title | State |
+|---|---|---|
+| P3-40 | Lead Details layout and UI rework | Built and committed (`5642968`). The design preview its acceptance clause requires was shared with you and has not been signed off. |
+
+---
+
+## 4 · Acceptance clauses I cannot confirm I met
+
+These tickets have working code and a commit, **and** an acceptance bullet
+requiring something to be sent to you. My earlier context was compacted, so I
+cannot tell from the repo whether the deliverable actually reached you. Each is
+a one-message deliverable, not a rebuild.
+
+| ID | The clause | Sent? |
+|---|---|---|
+| P3-28 | "A list of every AI summary button and the action it now performs is shared with me for review" | Unverified |
+| P3-29 | "Every other action button on the Lead Details page has been retested for the same class of defect, and the results are reported back to me" | Unverified |
+| P3-02 | "The field set has been benchmarked against LeadSquared and Salesforce, and the proposed list has been shared with me before implementation" | Unverified |
+| P3-03 | "The proposed field list has been shared with me for confirmation before it is built" | Commit `102d42d` is titled *"P3-03 + your four answers"*, so something was agreed — but not what |
+| P3-26 | "A list of screens audited and fixed is shared with me" | Unverified |
+| P3-27 | "Propose what should occupy the reclaimed space before building it" | Unverified |
+| P3-07 | "The proposed hierarchy model is reviewed with me before implementation" | Partly — you corrected the example roles and asked for a configurable tree; whether a model was formally reviewed is unclear |
+| P3-38 | "Confirm the mandatory list with me before building" | Unverified |
+| P3-17 | "The proposed structure for the Email and SMS builders is shared with me before implementation" | **Yes** — shared, and you replied "start with WhatsApp and share the email/sms structure" |
+| P3-40 | "A design preview is shared with me before the change is finalised" | **Yes** — shared, awaiting sign-off |
+
+If you have these, say so and they close. If not, I will send each one.
+
+---
+
+## 5 · Open questions still unanswered
+
+From `ROUND-3-source.md`, the twelve questions that were to be answered before
+the affected tickets are built.
+
+**Definitely outstanding — these gate the five large builds:**
+
+| # | Ticket | Question |
+|---|---|---|
+| Q9 | P3-06 | Approve the predefined report list and the module design before build |
+| Q10 | P3-16 | Approve the automation builder design before build |
+| Q11 | P3-19 | Present the LAPPS feasibility assessment — value, security model, execution sandbox — before any build |
+| Q12 | P3-20 | Confirm which connectors are in scope for this phase |
+
+**Answered during the work:**
+
+| # | Ticket | Answer given |
+|---|---|---|
+| Q3 | P3-07 | The example roles do not exist at Bonanza; build a configurable tree with branches under Bonanza and Bigul |
+| Q4 | P3-09 | Close an abandoned session at last recorded activity |
+
+**Status unknown to me — my context was compacted:**
+
+| # | Ticket | Question |
+|---|---|---|
+| Q1 | P3-01 / P3-22 | Confirm these are delivered as a single piece of work |
+| Q2 | P3-02 / P3-03 | The proposed user-field list, for sign-off |
+| Q5 | P3-10 | Behaviour when the user denies location permission |
+| Q6 | P3-28 | The exact action each AI summary button should perform |
+| Q7 | P3-38 | Which columns are mandatory and must not be deselectable |
+| Q8 | P3-27 | What should occupy the homepage space freed by shortening the activity log |
+
+The code for all six shipped, so a decision was taken at the time. I cannot show
+that it was yours rather than mine, which is the problem worth naming.
+
+---
+
+## 6 · The whole outstanding list, in one place
+
+| # | ID | Title | Round | Why not done |
+|---|---|---|---|---|
+| 1 | P3-44 | CUBE end-to-end verification | 3 | Credential |
+| 2 | P3-13 | Phone call form | 3 | Blocked by P3-44 |
+| 3 | P3-14 | Recording, transcription, AI summary | 3 | Blocked by P3-44 |
+| 4 | P3-06 | Reports module | 3 | Design approval — Q9 |
+| 5 | P3-16 | Automation builder | 3 | Design approval — Q10 |
+| 6 | P3-19 | LAPPS | 3 | Feasibility approval — Q11 |
+| 7 | P3-20 | Connectors marketplace | 3 | Scope confirmation — Q12 |
+| 8 | P3-21 | Internal communication | 3 | Design review |
+| 9 | P2-03 | UAT / Production | 2 | Production does not exist |
+| 10 | P2-14 | Connectors screen | 2 | Vendor accounts — A-4. Same work as #7 |
+| 11 | P2-23 | Adapters and vendor endpoints | 2 | Same work as #7 |
+| 12 | P2-25 | Outlook configuration | 2 | A-3 / Compliance |
+
+Plus **P3-40** awaiting sign-off, and the ten acceptance clauses in section 4.
+
+**Deduplicated, that is nine distinct pieces of work**, because #7, #10 and #11
+are one connectors build and #12 sits beside them.
+
+---
+
+## 7 · Questions I need answered
+
+| # | Question |
+|---|---|
+| **N-1** | The handover feature is committed as P3-19, which is really LAPPS. Do you want the commit and checklist relabelled — and if so, under what ID should the handover work sit? |
+| **N-2** | Of the ten acceptance clauses in section 4, which did you actually receive? I will re-send any you did not. |
+| **N-3** | Q1, Q2, Q5, Q6, Q7, Q8 — did you answer these at the time? The code shipped either way; I want to know whether it shipped on your decision or mine. |
+| **N-4** | Which of the five large builds do you want first? They are not parallelisable at any sensible quality. |
+| **N-5** | P2-14, P2-23, P2-25 and P3-20 are one connectors surface. Confirm I should build them as one thing rather than four. |
+| **N-6** | Are the CUBE tenant credentials available yet? Three tickets sit behind them. |
