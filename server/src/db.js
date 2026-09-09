@@ -130,6 +130,37 @@ CREATE TABLE IF NOT EXISTS templates (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS handover_batch (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  from_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  sales_org    TEXT NOT NULL,
+  -- single / round_robin. Kept because "why did I get 340 leads" is answered
+  -- by the strategy as much as by the count.
+  strategy     TEXT NOT NULL,
+  reason       TEXT,
+  moved        INTEGER NOT NULL DEFAULT 0,
+  run_by       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  undone_at    TEXT,
+  undone_by    INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS handover_move (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_id     INTEGER NOT NULL REFERENCES handover_batch(id) ON DELETE CASCADE,
+  -- Which registry entry moved it, so undo knows the table and the column
+  -- without having to guess from the entity name.
+  object_key   TEXT NOT NULL,
+  row_id       INTEGER NOT NULL,
+  -- The owner before the move. Undo restores this rather than assuming the
+  -- batch's from_user_id, and refuses any row whose owner has changed since --
+  -- otherwise undo silently overwrites whatever the new owner decided.
+  from_user_id INTEGER,
+  to_user_id   INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_handover_move_batch ON handover_move(batch_id);
+
 CREATE TABLE IF NOT EXISTS meta_ad_campaign (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   meta_id      TEXT NOT NULL UNIQUE,

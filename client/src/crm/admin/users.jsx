@@ -3,6 +3,7 @@ import { api, appUrl, token, ROLE_LABEL } from '../../api.js';
 import { useApi, ErrorBanner, Modal, Spinner, Icon } from '../../components/ui.jsx';
 import { stashParentToken } from '../GhostBar.jsx';
 import { checkField } from '../../fieldRules.js';
+import { Handover } from './Handover.jsx';
 
 /*
  * Lifted out of Admin.jsx, which held eleven Setup screens in one file and so
@@ -15,6 +16,7 @@ import { checkField } from '../../fieldRules.js';
 export function UserActions({ user, reload, onLink, onError }) {
   const [busy, setBusy] = useState(null);
   const [editing, setEditing] = useState(false);
+  const [handing, setHanding] = useState(false);
 
   const ghost = async () => {
     setBusy('ghost');
@@ -54,6 +56,12 @@ export function UserActions({ user, reload, onLink, onError }) {
           </button>
         </>
       )}
+      {/* Before Disable, deliberately. Disabling first is what orphans a book,
+          and the button that fixes it should be the one the eye reaches
+          first. */}
+      <button className="btn-sm" onClick={() => setHanding(true)} title={`Hand ${user.name}'s book to somebody else`}>
+        Hand over
+      </button>
       <button className="btn-sm" onClick={() => setEditing(true)}>Edit</button>
       <button className="btn-sm" onClick={async () => { await api.patch(`/admin/users/${user.id}`, { active: user.active ? 0 : 1 }); reload(); }}>
         {user.active ? 'Disable' : 'Enable'}
@@ -63,6 +71,13 @@ export function UserActions({ user, reload, onLink, onError }) {
           user={user}
           onClose={() => setEditing(false)}
           onSaved={() => { setEditing(false); reload(); }}
+        />
+      )}
+      {handing && (
+        <Handover
+          user={user}
+          onClose={() => setHanding(false)}
+          onDone={() => { setHanding(false); reload(); }}
         />
       )}
     </span>

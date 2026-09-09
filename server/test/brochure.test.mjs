@@ -121,20 +121,24 @@ await test('a caller can read one without being an administrator', async () => {
   /* The requirement is that the person on the phone can open it. Gating it
      behind admin.products would mean exactly the one role that needs it cannot
      have it. It is marketing material written to be handed to strangers. */
-  const caller = one("SELECT email FROM users WHERE role = 'caller' AND active = 1 LIMIT 1");
-  if (!caller) return;
+  /* Its own caller, not the seeded one.
+   *
+   * This used to sign in as `caller@bonanza.test`, which the e2e suite also
+   * uses — so the two together spend that account's ten-a-minute login budget
+   * and the failure lands here as "a caller cannot open the brochure: 401",
+   * which reads as the brochure being unreadable rather than as the sign-in
+   * being refused. That is the whole reason probeAdmin exists; this was the
+   * one place still going round it. */
+  const caller = await probeAdmin('brochure_caller', { role: 'caller' });
 
-  const login = await fetch(`${BASE}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: caller.email, password: 'bonanza' }),
-  });
-  const { token } = await login.json();
-
-  const res = await fetch(`${BASE}/api/products/${product.id}/brochure`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  assert.equal(res.status, 200, `a caller cannot open the brochure: HTTP ${res.status}`);
+  try {
+    const res = await fetch(`${BASE}/api/products/${product.id}/brochure`, {
+      headers: { Authorization: `Bearer ${caller.token}` },
+    });
+    assert.equal(res.status, 200, `a caller cannot open the brochure: HTTP ${res.status}`);
+  } finally {
+    caller.cleanup();
+  }
 });
 
 await test('signing out does not leave it readable', async () => {

@@ -33,6 +33,9 @@ import { vendorStatus } from '../vendors/config.js';
 import { snapshot } from '../engine/versioning.js';
 import { sendCsv } from '../engine/csv.js';
 import {
+  OBJECTS, bookOf, planHandover, runHandover, undoHandover, listBatches,
+} from '../engine/handover.js';
+import {
   LIST_COLUMNS, isList, resolveColumns, setUserColumns, setRoleColumns,
   clearUserColumns, roleDefaultsFor, hasUserChoice,
 } from '../engine/columns.js';
@@ -892,9 +895,35 @@ router.post('/users/:id/active', requirePermission('admin.users'), (req, res) =>
       if (target.sales_org !== user.sales_org) {
         return res.status(400).json({ error: 'Cannot hand a book to a different sales org', field: 'reassign_to' });
       }
-      run("UPDATE leads SET owner_id = ? WHERE owner_id = ? AND deleted_at IS NULL AND stage NOT IN ('Won','Lost')", [target.id, user.id]);
-      run("UPDATE tasks SET assignee_id = ? WHERE assignee_id = ? AND status = 'Open'", [target.id, user.id]);
-      audit(req.user.id, 'book_reassigned', 'user', user.id, { to: target.id, leads: openLeads, tasks: openTasks });
+
+      /* Through the handover engine rather than two UPDATEs of its own (P3-19).
+       *
+       * This route used to move open leads and open tasks and nothing else,
+       * which left won leads, clients, tickets, product cards, partners and
+       * direct reports owned by somebody who could no longer sign in. Two
+       * implementations of "hand the book over" would drift, and only one of
+       * them would be undoable — so there is one, and this is the shorthand
+       * that calls it with everything selected. */
+      const plan = planHandover({
+        from: user.id,
+        targets: [target.id],
+        /* The live work this route has always moved, and no more. Handing over
+           clients, tickets, partners and direct reports as a side effect of a
+           deactivate call would change what an existing API does — that is a
+           deliberate act with a preview in front of it, on the handover screen.
+           What this route gains is one implementation and an undo. */
+        include: ['leads_open', 'tasks'],
+        strategy: 'single',
+      });
+      const { batch_id: batchId } = runHandover(plan, {
+        runBy: req.user.id,
+        reason: `${user.name} deactivated`,
+        salesOrg: user.sales_org,
+      });
+
+      audit(req.user.id, 'book_reassigned', 'user', user.id, {
+        to: target.id, moved: plan.total, handover: batchId,
+      });
     }
 
     // Sessions die immediately; a deactivated user must not keep working.
@@ -910,6 +939,150 @@ router.post('/users/:id/active', requirePermission('admin.users'), (req, res) =>
   });
 
   return res.json(one('SELECT id, name, email, role, active FROM users WHERE id = ?', [user.id]));
+});
+
+/* --------------------------------------------------- handover (P3-19) */
+
+/**
+ * What this person holds.
+ *
+ * Read before anything moves, because the decision somebody is making is "is
+ * this a five-minute job or does it need the whole team", and until now the
+ * only way to find out was to deactivate them and read the refusal.
+ */
+router.get('/users/:id/book', requirePermission('admin.users'), (req, res) => {
+  const user = one('SELECT id, name, sales_org, active, date_of_exit FROM users WHERE id = ?', [req.params.id]);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (!mayUseOrg(req.user, user.sales_org)) {
+    return res.status(403).json({ error: 'That user is outside your sales org' });
+  }
+
+  return res.json({
+    user,
+    ...bookOf(user.id),
+    /* Only colleagues in the same book. A handover across the boundary would
+       hand a Bigul RM Bonanza's clients, which is the one thing this system is
+       built not to do. */
+    candidates: all(
+      `SELECT id, name, role,
+              (SELECT COUNT(*) FROM leads l WHERE l.owner_id = users.id AND l.deleted_at IS NULL) AS leads
+         FROM users
+        WHERE active = 1 AND sales_org = ? AND id != ? AND role != 'superadmin'
+        ORDER BY name`,
+      [user.sales_org, user.id],
+    ),
+  });
+});
+
+/**
+ * What would happen.
+ *
+ * Separate from doing it, and returning the same plan the run consumes, so the
+ * numbers on the confirmation screen are the numbers that execute. A preview
+ * computed differently from its own execution is worse than none, because it
+ * is believed.
+ */
+router.post('/users/:id/handover/preview', requirePermission('admin.users'), (req, res) => {
+  const check = handoverInput(req, res);
+  if (!check) return undefined;
+
+  const plan = planHandover(check.plan);
+  return res.json({ ...plan, moves: undefined, total: plan.total });
+});
+
+/**
+ * Move it.
+ *
+ * The whole book at once is the point — the alternative is somebody clicking
+ * through several thousand leads on a colleague's last afternoon — so the
+ * safeguards are the preview before and the undo after rather than a
+ * confirmation dialog nobody reads.
+ */
+router.post('/users/:id/handover', requirePermission('admin.users'), (req, res) => {
+  const check = handoverInput(req, res);
+  if (!check) return undefined;
+
+  const plan = planHandover(check.plan);
+  if (!plan.total) return res.status(400).json({ error: 'Nothing selected would move' });
+
+  const out = runHandover(plan, {
+    runBy: req.user.id,
+    reason: req.body.reason,
+    salesOrg: check.user.sales_org,
+  });
+
+  audit(req.user.id, 'book_handed_over', 'user', check.user.id, {
+    to: plan.targets, strategy: plan.strategy, moved: out.moved, handover: out.batch_id,
+  });
+  return res.status(201).json({ ...out, objects: plan.objects });
+});
+
+/**
+ * Validate a handover request, once, for both the preview and the run.
+ *
+ * Returns null having already answered the request when something is wrong, so
+ * the two routes cannot disagree about what is allowed.
+ */
+function handoverInput(req, res) {
+  const user = one('SELECT * FROM users WHERE id = ?', [req.params.id]);
+  if (!user) { res.status(404).json({ error: 'User not found' }); return null; }
+  if (!mayUseOrg(req.user, user.sales_org)) {
+    res.status(403).json({ error: 'That user is outside your sales org' }); return null;
+  }
+
+  const targets = (req.body?.targets ?? []).map(Number).filter(Boolean);
+  if (!targets.length) { res.status(400).json({ error: 'Choose who the book goes to', field: 'targets' }); return null; }
+  if (targets.includes(user.id)) {
+    res.status(400).json({ error: 'A book cannot be handed to the person leaving it', field: 'targets' }); return null;
+  }
+
+  for (const id of targets) {
+    const t = one('SELECT id, name, sales_org, active FROM users WHERE id = ?', [id]);
+    if (!t || !t.active) {
+      res.status(400).json({ error: 'One of the people chosen is not active', field: 'targets' }); return null;
+    }
+    if (t.sales_org !== user.sales_org) {
+      res.status(400).json({
+        error: `${t.name} is in ${t.sales_org} and could not see a ${user.sales_org} book`,
+        field: 'targets',
+      });
+      return null;
+    }
+  }
+
+  const include = (req.body?.include ?? []).filter((k) => OBJECTS.some((o) => o.key === k));
+  if (!include.length) { res.status(400).json({ error: 'Choose what to hand over', field: 'include' }); return null; }
+
+  const strategy = req.body?.strategy === 'round_robin' ? 'round_robin' : 'single';
+  return { user, plan: { from: user.id, targets, include, strategy } };
+}
+
+/** The handovers that have happened. */
+router.get('/handovers', requirePermission('admin.users'), (req, res) => {
+  res.json(listBatches(orgsFor(req.user)));
+});
+
+/**
+ * Put one back.
+ *
+ * Rows somebody has since moved on are left where they are and counted, so the
+ * answer distinguishes "undone" from "undone except the fourteen your
+ * colleague has already worked".
+ */
+router.post('/handovers/:id/undo', requirePermission('admin.users'), (req, res) => {
+  const batch = one('SELECT * FROM handover_batch WHERE id = ?', [req.params.id]);
+  if (!batch) return res.status(404).json({ error: 'No such handover' });
+  if (!mayUseOrg(req.user, batch.sales_org)) {
+    return res.status(403).json({ error: 'That handover belongs to another book' });
+  }
+
+  const out = undoHandover(batch.id, req.user.id);
+  if (out.error) return res.status(409).json(out);
+
+  audit(req.user.id, 'handover_undone', 'user', batch.from_user_id, {
+    handover: batch.id, restored: out.restored, skipped: out.skipped,
+  });
+  return res.json(out);
 });
 
 /* -------------------------------------------------- access simulation */

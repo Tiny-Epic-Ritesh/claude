@@ -114,6 +114,15 @@ const RECORD = {
   '/api/cards/:id/audit': 'card',
   '/api/kyc/journeys/:id': 'journey',
   '/api/kyc/journeys/:id/coach': 'journey',
+  /* A person's book: their leads, clients, tickets and reports, and the
+     colleagues it could be handed to. Plainly book-sensitive.
+
+     The generic probe below signs in as a Bigul RM, who is refused this for
+     lacking admin.users rather than for the book — so it proves the route is
+     closed without proving which rule closed it. The book rule itself is
+     tested in handover.test.mjs, where the caller is an administrator who
+     holds admin.users and is still refused. */
+  '/api/setup/users/:id/book': 'user',
 };
 
 /** Routes that take a parameter but do not load a business record. */
@@ -243,6 +252,7 @@ const bonanzaId = {
   partner: () => one("SELECT id FROM partners WHERE sales_org='BONANZA' ORDER BY id LIMIT 1")?.id,
   card: () => one("SELECT pc.id FROM product_cards pc JOIN leads l ON l.id=pc.lead_id WHERE l.sales_org='BONANZA' ORDER BY pc.id LIMIT 1")?.id,
   journey: () => one("SELECT j.id FROM kyc_journeys j JOIN leads l ON l.id=j.lead_id WHERE l.sales_org='BONANZA' ORDER BY j.id LIMIT 1")?.id,
+  user: () => one("SELECT id FROM users WHERE sales_org='BONANZA' AND active=1 ORDER BY id LIMIT 1")?.id,
 };
 
 /* ---------------------------------------------------------------- tests */
