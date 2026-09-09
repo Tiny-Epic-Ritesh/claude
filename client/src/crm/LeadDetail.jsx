@@ -131,36 +131,6 @@ export default function LeadDetail({ session }) {
               )}
             </div>
           )}
-
-          {/* P2-11. These five were a row of full-width boxes sitting between
-              the tab strip and the tab content, on every tab. That put a band
-              of summary between a heading and the thing it heads, so the
-              products list never lined up with the bar above it — and the same
-              break appeared on Details, Activity and Notes.
-
-              They belong to the record rather than to any one tab, so they now
-              read as part of the header: compact facts you glance at, not
-              cards you study. The tab strip now sits directly on top of its
-              own content. */}
-          <div className="record-facts">
-            <Fact label="Lead score" value={lead.score} />
-            <Fact
-              label="AUM"
-              value={lead.aum ? money(lead.aum) : '—'}
-              title={lead.aum_as_of ? `as of ${lead.aum_as_of}` : 'no active products'}
-            />
-            <Fact
-              label="Owner"
-              value={lead.owner_name || '—'}
-              title={lead.partner_name ? `sourced by ${lead.partner_name}` : lead.source}
-            />
-            <Fact
-              label="Last contact"
-              value={lead.days_since_contact == null ? 'never' : `${lead.days_since_contact}d ago`}
-              title={shortDate(lead.last_activity_at)}
-            />
-            <Fact label="Risk" value={lead.risk_profile || '—'} />
-          </div>
         </div>
 
         {/* ENH-11: these sat loose against the page with nothing separating
@@ -216,6 +186,47 @@ export default function LeadDetail({ session }) {
           block and the buttons — far enough down that people did not find it.
           It is now the first thing under the header, where a record's
           navigation belongs. */}
+
+      {/* P3-40. Lifted out of the left column of the head, where they were
+          squeezed into half the width with the other half empty — which is why
+          they neither lined up nor filled the space. Full width, one cell each,
+          label above value, so they align in columns.
+
+          Still above the tab strip, not between it and its content: P2-11 moved
+          them out of that position for good reason and this does not put them
+          back. */}
+      <div className="lead-stats">
+        <Stat label="Lead score" value={lead.score ?? '—'} meter={lead.score} />
+        <Stat
+          label="AUM"
+          value={lead.aum ? money(lead.aum) : '—'}
+          sub={lead.aum_as_of ? `as of ${shortDate(lead.aum_as_of)}` : 'no active products'}
+        />
+        <Stat
+          label="Owner"
+          value={lead.owner_name || '—'}
+          /* Labelled, because a bare "Webinar" under a person's name reads
+             as part of the name rather than as where the lead came from. */
+          sub={lead.partner_name ? `via ${lead.partner_name}` : lead.source ? `from ${lead.source}` : null}
+        />
+        <Stat
+          label="Last contact"
+          value={lead.days_since_contact == null ? 'never' : `${lead.days_since_contact}d ago`}
+          /* The date was a tooltip, which is a place nobody looks. */
+          sub={lead.last_activity_at ? shortDate(lead.last_activity_at) : 'nothing logged'}
+        />
+        <Stat label="Risk" value={lead.risk_profile || '—'} tone={riskTone(lead.risk_profile)} />
+        {/* Sixth rather than a short row, and worth its place: it is the thing
+            an RM opening a lead asks first, and it was only visible by counting
+            days on the Tasks tab. */}
+        <Stat
+          label="Next follow-up"
+          value={lead.next_follow_up_at ? shortDate(lead.next_follow_up_at) : '—'}
+          tone={overdue(lead.next_follow_up_at) ? 'warn' : null}
+          sub={overdue(lead.next_follow_up_at) ? 'overdue' : null}
+        />
+      </div>
+
       <Tabs tabs={tabs} active={tab} onChange={setTab} />
 
       {tab === 'cards' && (
@@ -267,6 +278,45 @@ export default function LeadDetail({ session }) {
  * title attribute: "as of 2026-08-30" is worth having, but not worth a line of
  * its own five times across the top of every tab.
  */
+/** Is a follow-up date in the past? */
+const overdue = (at) => Boolean(at) && new Date(at) < new Date();
+
+/**
+ * Risk as a tone.
+ *
+ * Read rather than mapped from a fixed list: the values are configurable, and a
+ * hardcoded list would silently stop colouring the day somebody adds one.
+ */
+function riskTone(risk) {
+  const r = String(risk ?? '').toLowerCase();
+  if (!r) return null;
+  if (/high|aggress/.test(r)) return 'warn';
+  if (/low|conserv/.test(r)) return 'good';
+  return null;
+}
+
+/**
+ * One figure from the record.
+ *
+ * Label above value rather than beside it, which is what makes six of these
+ * line up in columns. `meter` draws a bar for a value that has a scale — a lead
+ * score of 60 means nothing without one.
+ */
+function Stat({ label, value, sub, tone, meter }) {
+  return (
+    <div className={`lead-stat ${tone ? `is-${tone}` : ''}`}>
+      <span className="lead-stat-label">{label}</span>
+      <strong className="lead-stat-value">{value}</strong>
+      {Number.isFinite(meter) && (
+        <span className="lead-stat-meter" aria-hidden="true">
+          <span style={{ width: `${Math.max(0, Math.min(100, meter))}%` }} />
+        </span>
+      )}
+      {sub && <span className="lead-stat-sub">{sub}</span>}
+    </div>
+  );
+}
+
 const Fact = ({ label, value, title }) => (
   <span className="fact" title={title || undefined}>
     <span className="fact-label">{label}</span>

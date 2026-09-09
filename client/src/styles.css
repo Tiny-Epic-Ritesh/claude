@@ -6321,3 +6321,103 @@ tr.row-inactive .user-cell strong { color: var(--ink-3); }
 .attend-chip.is-in .attend-dot { background: var(--good, #3aa76d); }
 .attend-chip.is-out .attend-dot { background: var(--ink-3, #888); }
 .attend-chip.is-out { opacity: 0.85; }
+
+/* ------------------------------------------- lead detail stats (P3-40)
+ *
+ * Six cells across the full width, label above value. The old version was five
+ * inline label-value pairs inside the left half of the page head: squeezed
+ * against a toolbar pinned right, with the other half of the row empty, and
+ * wrapping so that no two of them lined up. The empty gap and the poor
+ * alignment were the same problem, and this is the one fix for both.
+ *
+ * auto-fit rather than a fixed six, so the row reflows to three or two on a
+ * narrow window instead of scrolling sideways.
+ */
+.lead-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin: 14px 0 16px;
+}
+.lead-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--line, rgba(127, 127, 127, 0.18));
+  border-radius: 9px;
+  background: var(--surface-1, rgba(127, 127, 127, 0.03));
+  min-width: 0;
+}
+.lead-stat-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+.lead-stat-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  /* A long owner name must not push the cell wider than its share. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lead-stat-sub {
+  font-size: 11.5px;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A number with a scale gets the scale. 60 out of what, otherwise. */
+.lead-stat-meter {
+  display: block;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line, rgba(127, 127, 127, 0.2));
+  overflow: hidden;
+  margin: 3px 0 1px;
+}
+.lead-stat-meter > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+/* Tone on the cell, not just the text, so it reads at a glance without
+   colour being the only signal — the label and value are still there. */
+.lead-stat.is-warn { border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+.lead-stat.is-warn .lead-stat-value { color: var(--danger); }
+.lead-stat.is-good { border-color: color-mix(in srgb, var(--good, #3aa76d) 45%, transparent); }
+
+/* ------------------------------------------------- back button (P3-40)
+ *
+ * "Make the Back button prominent enough that users find it easily." It was
+ * small grey text above the name, which is where a breadcrumb goes and where
+ * nobody looks for a control. On this page it is a real button.
+ */
+.page-head .backlink,
+.page-head a.small.muted {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--line, rgba(127, 127, 127, 0.28));
+  border-radius: 7px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  text-decoration: none;
+}
+.page-head .backlink:hover,
+.page-head a.small.muted:hover {
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  color: var(--ink);
+  text-decoration: none;
+}
