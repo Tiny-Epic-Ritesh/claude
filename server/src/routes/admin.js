@@ -3,7 +3,7 @@
  * content library, KYC journey composer, rule builder, integrations, audit.
  */
 
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { all, one, run, audit, ROLES, ROLE_LABELS } from '../db.js';
 import { requireUser, requirePermission, permissionsFor, orgsFor, activeOrg, mayUseOrg, PERMISSIONS } from '../auth.js';
 import { hashPassword } from '../security.js';
@@ -153,6 +153,92 @@ router.post('/products', requirePermission('admin.products'), (req, res) => {
   }
   audit(req.user.id, 'product_created', 'product_type', id, { code });
   res.status(201).json({ id, cards_generated: one('SELECT COUNT(*) n FROM product_cards WHERE product_type_id = ?', [id]).n });
+});
+
+/* ------------------------------------------------- product brochure (P3-15)
+ *
+ * The formats are stated here rather than in the dialog, so the screen cannot
+ * offer something the upload refuses. PDF is what everybody actually has; the
+ * image types are for the one-page flyers marketing sends as JPEGs.
+ */
+export const BROCHURE_TYPES = [
+  { mime: 'application/pdf', ext: '.pdf', label: 'PDF' },
+  { mime: 'image/png', ext: '.png', label: 'PNG' },
+  { mime: 'image/jpeg', ext: '.jpg', label: 'JPEG' },
+  {
+    mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    ext: '.pptx',
+    label: 'PowerPoint',
+  },
+];
+
+/** 12 MB. Larger than any brochure worth emailing, small enough not to be a way to fill a disk. */
+export const BROCHURE_MAX = 12 * 1024 * 1024;
+
+router.get('/products/brochure-formats', requirePermission('admin.products'), (_req, res) => {
+  res.json({
+    formats: BROCHURE_TYPES.map((t) => ({ label: t.label, ext: t.ext, mime: t.mime })),
+    accept: BROCHURE_TYPES.map((t) => t.ext).join(','),
+    max_bytes: BROCHURE_MAX,
+    note: 'The file is stored in the CRM, so it opens on a call and can be attached to an email without depending on anything outside.',
+  });
+});
+
+/**
+ * Attach a brochure.
+ *
+ * Raw body rather than a multipart form, because multipart means a parsing
+ * dependency for one route and the browser can send the file's bytes directly.
+ * The name comes from a header; the type is checked against the list above
+ * rather than trusted from the request, since a Content-Type is whatever the
+ * caller says it is.
+ */
+router.post(
+  '/products/:id/brochure',
+  requirePermission('admin.products'),
+  express.raw({ type: '*/*', limit: BROCHURE_MAX }),
+  (req, res) => {
+    const product = one('SELECT id, name FROM product_types WHERE id = ?', [req.params.id]);
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+
+    const bytes = req.body;
+    if (!Buffer.isBuffer(bytes) || !bytes.length) {
+      return res.status(400).json({ error: 'No file was sent' });
+    }
+    if (bytes.length > BROCHURE_MAX) {
+      return res.status(400).json({ error: `That file is larger than ${Math.round(BROCHURE_MAX / 1024 / 1024)} MB` });
+    }
+
+    const filename = String(req.get('X-Filename') || 'brochure').replace(/[^\w.\- ]+/g, '').slice(0, 120);
+    const known = BROCHURE_TYPES.find((t) => filename.toLowerCase().endsWith(t.ext));
+    if (!known) {
+      return res.status(400).json({
+        error: `${filename} is not a format a brochure may be in`,
+        accepted: BROCHURE_TYPES.map((t) => t.label).join(', '),
+      });
+    }
+
+    /* Replaced, not versioned. "A brochure" is singular in the requirement and
+       a call is no place to be choosing between three of them. */
+    run(
+      `INSERT INTO product_brochure (product_type_id, filename, mime, size, bytes, uploaded_by)
+       VALUES (?,?,?,?,?,?)
+       ON CONFLICT(product_type_id) DO UPDATE SET
+         filename = excluded.filename, mime = excluded.mime, size = excluded.size,
+         bytes = excluded.bytes, uploaded_by = excluded.uploaded_by,
+         uploaded_at = datetime('now')`,
+      [product.id, filename, known.mime, bytes.length, bytes, req.user.id],
+    );
+
+    audit(req.user.id, 'product_brochure_attached', 'product', product.id, { filename, size: bytes.length });
+    return res.status(201).json({ ok: true, filename, size: bytes.length, mime: known.mime });
+  },
+);
+
+router.delete('/products/:id/brochure', requirePermission('admin.products'), (req, res) => {
+  run('DELETE FROM product_brochure WHERE product_type_id = ?', [req.params.id]);
+  audit(req.user.id, 'product_brochure_removed', 'product', Number(req.params.id), {});
+  res.json({ ok: true });
 });
 
 router.patch('/products/:id', requirePermission('admin.products'), (req, res) => {

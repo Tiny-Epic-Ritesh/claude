@@ -17,7 +17,7 @@
  */
 
 import { strict as assert } from 'node:assert';
-import { all, one, run } from '../src/db.js';
+import { all, one, run, transact } from '../src/db.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
@@ -45,9 +45,30 @@ const call = async (method, path, body) => {
 /* Restored afterwards, because this suite writes to real seeded leads and the
    files that run after it read them. */
 const snapshot = all("SELECT id, source, stage FROM leads WHERE deleted_at IS NULL AND sales_org = 'BONANZA'");
-const restore = () => {
-  for (const l of snapshot) {
-    run('UPDATE leads SET source = ?, stage = ? WHERE id = ?', [l.source, l.stage, l.id]);
+/**
+ * Put the seeded leads back.
+ *
+ * One transaction, not one statement per lead. These tests share the database
+ * file with a running server, and SQLite refuses a writer while a reader holds
+ * the lock — so several hundred separate writes is several hundred chances to
+ * lose that race, and losing it once killed the run with "database is locked".
+ * The whole thing is retried, because a transaction can still start at a busy
+ * moment; the difference is that it is now one attempt rather than a race per
+ * row.
+ */
+const restore = async () => {
+  for (let i = 0; i < 20; i += 1) {
+    try {
+      transact(() => {
+        for (const l of snapshot) {
+          run('UPDATE leads SET source = ?, stage = ? WHERE id = ?', [l.source, l.stage, l.id]);
+        }
+      });
+      return;
+    } catch (err) {
+      if (!/locked|busy/i.test(err.message) || i === 19) throw err;
+      await new Promise((r) => setTimeout(r, 120));      // eslint-disable-line no-await-in-loop
+    }
   }
 };
 
@@ -113,7 +134,7 @@ await test('the first N updates exactly N', async () => {
 
     const set = one("SELECT COUNT(*) n FROM leads WHERE source = 'Probe first'").n;
     assert.equal(set, n, `${set} leads were changed, not ${n}`);
-  } finally { restore(); }
+  } finally { await restore(); }
 });
 
 await test('all updates everything the filter matches, and nothing outside it', async () => {
@@ -129,7 +150,7 @@ await test('all updates everything the filter matches, and nothing outside it', 
       "SELECT COUNT(*) n FROM leads WHERE source = 'Probe all' AND stage != 'New'",
     ).n;
     assert.equal(strays, 0, `${strays} leads outside the filter were updated`);
-  } finally { restore(); }
+  } finally { await restore(); }
 });
 
 await test('an id outside the filter cannot be reached by sending it', async () => {
@@ -145,7 +166,7 @@ await test('an id outside the filter cannot be reached by sending it', async () 
     assert.equal(r.body.matched, 0, 'a lead outside the filter was matched');
     assert.equal(one('SELECT source FROM leads WHERE id = ?', [outside.id]).source, outside.source,
       'a lead outside the filter was changed');
-  } finally { restore(); }
+  } finally { await restore(); }
 });
 
 await test('a lead in another book cannot be reached either', async () => {
@@ -159,7 +180,7 @@ await test('a lead in another book cannot be reached either', async () => {
     assert.equal(r.body.matched, 0, 'a Bonanza administrator reached a Bigul lead');
     assert.equal(one('SELECT source FROM leads WHERE id = ?', [bigul.id]).source, bigul.source,
       'a Bigul lead was changed by a Bonanza administrator');
-  } finally { restore(); }
+  } finally { await restore(); }
 });
 
 /* ------------------------------------------------------------- the record */
@@ -173,7 +194,7 @@ await test('a lead already holding the value is left alone', async () => {
 
     assert.equal(again.body.changed, 0, `${again.body.changed} leads were rewritten with the value they had`);
     assert(again.body.unchanged > 0, 'nothing was reported as already set');
-  } finally { restore(); }
+  } finally { await restore(); }
 });
 
 await test('every changed lead is recorded individually', async () => {
@@ -188,10 +209,10 @@ await test('every changed lead is recorded individually', async () => {
     const after = one("SELECT COUNT(*) n FROM audit_log WHERE action = 'lead.bulk.field'").n;
 
     assert.equal(after - before, r.body.changed, `${r.body.changed} leads changed but ${after - before} rows were written`);
-  } finally { restore(); }
+  } finally { await restore(); }
 });
 
-restore();
+await restore();
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exitCode = failed ? 1 : 0;

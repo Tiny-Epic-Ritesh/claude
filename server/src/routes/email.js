@@ -228,6 +228,7 @@ router.post('/send', requirePermission('lead.contact'), (req, res) => {
   const {
     lead_id: leadId, subject, body, template_id: templateId,
     content_ids: contentIds = [], attachments = [], intent = 'service',
+    brochure_product_ids: brochureIds = [],
   } = req.body ?? {};
 
   const lead = loadLead(req, leadId);
@@ -277,6 +278,29 @@ router.post('/send', requirePermission('lead.contact'), (req, res) => {
     }
   }
 
+  /* Product brochures, read here rather than uploaded by the browser (P3-15).
+   *
+   * The RM chooses a product; the bytes are already ours. Sending them out to
+   * be sent back would move the file twice and put it through the client-side
+   * attachment limit, which exists for files we have never seen. */
+  const brochures = brochureIds.length
+    ? all(
+      `SELECT b.filename, b.mime, b.size, b.bytes, p.name AS product_name
+         FROM product_brochure b JOIN product_types p ON p.id = b.product_type_id
+        WHERE b.product_type_id IN (${brochureIds.map(() => '?').join(',')})`,
+      brochureIds.map(Number),
+    )
+    : [];
+
+  if (brochures.length !== brochureIds.length) {
+    return res.status(400).json({ error: 'One of those products no longer has a brochure. Remove it and try again.' });
+  }
+
+  const brochureBytes = brochures.reduce((sum, b) => sum + b.size, 0);
+  if (brochureBytes > MAX_ATTACHMENT_BYTES * 3) {
+    return res.status(400).json({ error: 'Those brochures come to more than a client mailbox will accept. Send fewer.' });
+  }
+
   const vars = {
     name: (lead.name || '').split(' ')[0],
     full_name: lead.name,
@@ -292,6 +316,7 @@ router.post('/send', requirePermission('lead.contact'), (req, res) => {
   const attachmentNames = [
     ...library.map((l) => `${l.name} (v${l.version ?? 1})`),
     ...attachments.map((a) => a.name),
+    ...brochures.map((b) => `${b.product_name} brochure`),
   ];
 
   /* Collateral is held as a link, not as bytes — the library stores a URL so a
@@ -339,7 +364,16 @@ router.post('/send', requirePermission('lead.contact'), (req, res) => {
     /* The files themselves, not just their names. They were listed on the
        timeline and then dropped, so a client was told a factsheet was attached
        and received a message with nothing on it. */
-    attachments: attachments.map((a) => ({ name: a.name, content: a.data, type: a.type })),
+    attachments: [
+      ...attachments.map((a) => ({ name: a.name, content: a.data, type: a.type })),
+      /* Base64 because that is what the mailer expects, and the buffer is
+         already in hand. */
+      ...brochures.map((b) => ({
+        name: b.filename,
+        content: Buffer.from(b.bytes).toString('base64'),
+        type: b.mime,
+      })),
+    ],
     /* A reply goes to the RM who wrote it. Sending as the RM's own address
        would fail SPF and DKIM for the Bonanza domain and land in spam, so the
        mail comes from the firm and the reply goes to the person. */

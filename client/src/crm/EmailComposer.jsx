@@ -39,6 +39,9 @@ export default function EmailComposer({ leadId, onClose, onSent, onError }) {
   const [d, { loading, error }] = useApi(leadId ? `/email/compose/${leadId}` : null, [leadId]);
   const [form, setForm] = useState({ subject: '', body: '', template_id: '', intent: 'service' });
   const [contentIds, setContentIds] = useState([]);
+  /* Product brochures the RM chose to send (P3-15). */
+  const [brochureIds, setBrochureIds] = useState([]);
+  const [brochures] = useApi('/products/brochures');
   const [saving, setSaving] = useState(null);      // null | 'ask' | 'busy'
   const [tplName, setTplName] = useState('');
   const [tplScope, setTplScope] = useState('personal');
@@ -88,6 +91,11 @@ export default function EmailComposer({ leadId, onClose, onSent, onError }) {
         template_id: form.template_id || null,
         content_ids: contentIds,
         attachments: files,
+        /* P3-15. The product ids, not the bytes: the file is already ours and
+           the server reads it. Sending it out to be sent back would move a few
+           megabytes twice and put it through the attachment limit, which
+           exists for files nobody here has seen. */
+        brochure_product_ids: brochureIds,
         // Declared, never defaulted. The server treats a missing intent as
         // 'service', and service is the permissive branch -- it is allowed
         // through a marketing opt-out on purpose, because a KYC reminder is
@@ -290,6 +298,26 @@ export default function EmailComposer({ leadId, onClose, onSent, onError }) {
 
         {/* Approved collateral first. */}
         <div className="field">
+          {(brochures?.brochures ?? []).length > 0 && (
+            <div className="field">
+              <span className="field-name">Product brochures</span>
+              <div className="pick-grid">
+                {brochures.brochures.map((b) => (
+                  <label key={b.product_type_id} className="pick-row">
+                    <input
+                      type="checkbox"
+                      checked={brochureIds.includes(b.product_type_id)}
+                      onChange={() => setBrochureIds((ids) => (ids.includes(b.product_type_id)
+                        ? ids.filter((x) => x !== b.product_type_id)
+                        : [...ids, b.product_type_id]))}
+                    />
+                    <span>{b.product_name} <span className="tiny muted">{(b.size / 1024).toFixed(0)} KB</span></span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
           <label htmlFor="em-library">Attach approved collateral</label>
           <select id="em-library" value=""
             onChange={(e) => {

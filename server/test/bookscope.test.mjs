@@ -152,6 +152,9 @@ const NOT_A_RECORD = {
   '/api/approvals/:id': 'Guarded by inReach() on the record the approval is about.',
   '/api/approvals/history/:entity/:id': 'Guarded by orgOf() on the record asked about.',
   '/api/approvals/scopes/:scope/approvers': 'Who may decide a scope. Configuration.',
+  '/api/products/:id/brochure': 'The brochure for a product type. Marketing material written to be '
+    + 'handed to strangers, and the catalogue it hangs on is firm-wide — so there is no book to '
+    + 'cross. It is behind a session, which brochure.test.mjs asserts.',
   '/api/products/:id': 'A product type. Firm-wide catalogue, the same in both businesses.',
   '/api/queues/:id/work': 'Queue contents, scoped by the queue rules and by leadScope.',
   '/api/portal/clients/:leadId': 'Partner portal. Authenticates as a partner, not a CRM user.',

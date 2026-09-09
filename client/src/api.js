@@ -86,6 +86,30 @@ export const api = {
    * rather than stringing them through the URL, and an export is not something
    * to leave in a browser cache keyed by its query.
    */
+  /**
+   * Send one file's bytes to an endpoint.
+   *
+   * The raw body rather than a multipart form: multipart would mean a parsing
+   * dependency on the server for a single route, and the browser can send the
+   * bytes directly. The name travels in a header because there is no form to
+   * carry it.
+   */
+  upload: async (p, file, kind = 'crm') => {
+    const headers = { 'Content-Type': file.type || 'application/octet-stream', 'X-Filename': file.name };
+    const t = token.get(kind);
+    if (t) headers.Authorization = `Bearer ${t}`;
+    if (activeOrg) headers['X-Sales-Org'] = activeOrg;
+
+    const res = await fetch(`/api${p}`, { method: 'POST', headers, body: file });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      const err = new Error(detail.error || `Upload failed (${res.status})`);
+      err.status = res.status;
+      throw err;
+    }
+    return res.json();
+  },
+
   blob: async (p, kind = 'crm', body = null) => {
     const headers = {};
     const t = token.get(kind);

@@ -112,8 +112,16 @@ await test('a message with no recipient is refused rather than sent nowhere', as
 test('the route hands the attachment bytes over, not only the names', () => {
   // They were listed on the timeline and dropped, so a client was told a
   // factsheet was attached and got a message with nothing on it.
-  assert(/attachments: attachments\.map\(/.test(src),
-    'the composer no longer passes attachment content to send()');
+  //
+  // Asserted on the content reaching the mailer rather than on the shape of the
+  // call: this matched `attachments: attachments.map(` verbatim until product
+  // brochures (P3-15) made that a spread of two lists, and a test that breaks
+  // on a reshape while the behaviour holds is a test that gets edited to pass.
+  assert(/content: a\.data/.test(src),
+    'an uploaded file reaches send() without its content');
+  assert(/content: Buffer\.from\(b\.bytes\)/.test(src),
+    'a product brochure reaches send() without its content');
+  assert(/attachments:/.test(src), 'nothing is passed as attachments at all');
 });
 
 test('library collateral reaches the client as a link', () => {

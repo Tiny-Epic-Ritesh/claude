@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, money, mins, STATE_LABEL } from '../api.js';
-import { useApi, ErrorBanner, Spinner, Empty, Progress } from '../components/ui.jsx';
+import { Icon, useApi, ErrorBanner, Spinner, Empty, Progress } from '../components/ui.jsx';
 
 /**
  * In-Call Cockpit (BRD §5) + AI call summary and auto-disposition (§6.1).
@@ -22,6 +22,12 @@ const SAMPLE_TRANSCRIPTS = [
 ];
 
 export default function InCall({ lead, session, onClose }) {
+  /* Which products have a brochure. One request for the set rather than one
+     per card: a call screen showing five products should not make five. */
+  const [brochures] = useApi('/products/brochures');
+  const brochureFor = (productTypeId) => (brochures?.brochures ?? [])
+    .some((b) => b.product_type_id === productTypeId);
+
   const [phase, setPhase] = useState('live');       // live → disposing → review
   const [seconds, setSeconds] = useState(0);
   const [selected, setSelected] = useState(lead.cards[0]?.id ?? null);
@@ -152,7 +158,26 @@ export default function InCall({ lead, session, onClose }) {
 
                   {card && (
                     <div className="card" style={{ marginTop: 12 }}>
-                      <div className="card-head"><h3>{card.product_name} — pitch</h3><span className="badge">{STATE_LABEL[card.state]}</span></div>
+                      <div className="card-head">
+                        <h3>{card.product_name} — pitch</h3>
+                        <div className="row" style={{ gap: 6 }}>
+                          {/* P3-15. The brochure, one click away while the call
+                              is live. Opened in a tab rather than downloaded:
+                              a save dialog in the middle of a conversation is
+                              the wrong thing to put in front of somebody. */}
+                          {brochureFor(card.product_type_id) && (
+                            <a
+                              className="btn-sm"
+                              href={`/api/products/${card.product_type_id}/brochure`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              <Icon name="description" size={14} /> Brochure
+                            </a>
+                          )}
+                          <span className="badge">{STATE_LABEL[card.state]}</span>
+                        </div>
+                      </div>
                       <div className="card-body">
                         <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>
                           {pitch.map((p, i) => <li key={i} style={{ marginBottom: 3 }}>{p}</li>)}

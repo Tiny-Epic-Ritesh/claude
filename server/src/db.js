@@ -19,6 +19,20 @@ mkdirSync(dataDir, { recursive: true });
 export const db = new DatabaseSync(join(dataDir, 'bonanza.db'));
 db.exec('PRAGMA journal_mode = WAL');
 db.exec('PRAGMA foreign_keys = ON');
+/* Wait for a held write lock rather than failing on it.
+ *
+ * WAL lets readers and a writer work at the same time; it does not let two
+ * writers. With no busy timeout the second does not queue -- SQLite throws
+ * SQLITE_BUSY straight away, which surfaces as "database is locked" and, in a
+ * request, as a 500.
+ *
+ * That is reachable by ordinary use: a bulk update over five thousand leads
+ * holds the lock for a moment, and a call being logged at the same instant
+ * fails outright. Rare enough to look like a fluke, frequent enough to happen.
+ *
+ * Five seconds outlasts any write this product makes, and still lets a
+ * genuinely stuck lock surface instead of hanging the request forever. */
+db.exec('PRAGMA busy_timeout = 5000');
 
 /**
  * Write durability.
@@ -1416,6 +1430,25 @@ CREATE INDEX IF NOT EXISTS idx_slabs_plan ON incentive_slabs(plan_id, basis, fro
  * is the requirement, and somebody who checks out for lunch and back in has two
  * intervals -- one row per day would either lose the second or count the lunch
  * as worked. The day's total is the sum of its rows. */
+/* The brochure for a product (P3-15).
+ *
+ * The bytes, not a link. It has to be openable while somebody is on a call and
+ * attachable to an email, and a URL to a third-party host is neither reliably
+ * the first nor possible as the second.
+ *
+ * One per product: "allow a brochure to be attached to each product". Replacing
+ * it overwrites the row, so there is never a question of which one is current.
+ */
+CREATE TABLE IF NOT EXISTS product_brochure (
+  product_type_id INTEGER PRIMARY KEY REFERENCES product_types(id) ON DELETE CASCADE,
+  filename    TEXT NOT NULL,
+  mime        TEXT NOT NULL,
+  size        INTEGER NOT NULL,
+  bytes       BLOB NOT NULL,
+  uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  uploaded_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS attendance_session (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

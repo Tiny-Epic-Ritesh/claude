@@ -88,6 +88,47 @@ router.get('/', (req, res) => {
 
 /* ---------------------------------------------------------------- a desk */
 
+/* ------------------------------------------------- the brochure (P3-15)
+ *
+ * Readable by anybody signed in, which is the point: the requirement is that a
+ * caller can open it mid-conversation. It is marketing material written to be
+ * handed to strangers, not client data, so gating it behind an admin
+ * permission would only mean the person on the phone cannot reach it.
+ *
+ * Above `/:id`, because "brochures" would otherwise be read as a product id.
+ */
+
+/** Which products have one, so a screen can offer it without asking per product. */
+router.get('/brochures', (_req, res) => {
+  res.json({
+    brochures: all(
+      `SELECT b.product_type_id, b.filename, b.mime, b.size, b.uploaded_at, p.name AS product_name
+         FROM product_brochure b JOIN product_types p ON p.id = b.product_type_id
+        ORDER BY p.name`,
+    ),
+  });
+});
+
+/**
+ * The file itself.
+ *
+ * Inline rather than as an attachment, because the first of its two jobs is
+ * being read on screen while somebody is on the phone. A download prompt in the
+ * middle of a call is a worse answer than a tab.
+ */
+router.get('/:id/brochure', (req, res) => {
+  const row = one('SELECT * FROM product_brochure WHERE product_type_id = ?', [req.params.id]);
+  if (!row) return res.status(404).json({ error: 'That product has no brochure' });
+
+  res.setHeader('Content-Type', row.mime);
+  res.setHeader('Content-Disposition', `inline; filename="${row.filename}"`);
+  res.setHeader('Content-Length', String(row.size));
+  /* Not cached by anything in between. The file is behind a session and a
+     shared cache holding it would hand it to whoever asked next. */
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.send(Buffer.from(row.bytes));
+});
+
 router.get('/:id', (req, res) => {
   const org = orgScope(req.user, 'pt', activeOrg(req));
   const product = one(

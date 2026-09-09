@@ -103,6 +103,15 @@ export default function ProductsSetup() {
       </div>
 
       <section className="card">
+        <div className="row-between" style={{ marginBottom: 12 }}>
+          <span className="tiny muted">
+            A product carries a permanent code. Cards, KYC journeys and dialler campaigns bind to it.
+          </span>
+          <button type="button" className="btn btn-primary" onClick={() => setEditing({})}>
+            <Icon name="add" size={16} /> New product
+          </button>
+        </div>
+
         <div className="card-head">
           <div>
             <h2>{shown.length === list.length ? `${list.length} products` : `${shown.length} of ${list.length} products`}</h2>
@@ -181,6 +190,11 @@ export default function ProductsSetup() {
  * mapping all bind to it. The name above it is free to change.
  */
 function ProductEditor({ product, onClose, onSaved, onError }) {
+  /* An empty object means "new". The screen opens the same form either way,
+     because a product being created and a product being changed are the same
+     set of decisions — only the code differs, and that is issued rather than
+     typed. */
+  const making = !product?.id;
   const [form, setForm] = useState({
     name: product.name ?? '',
     category: product.category ?? '',
@@ -202,26 +216,43 @@ function ProductEditor({ product, onClose, onSaved, onError }) {
     if (!form.name.trim()) { onError('A product needs a name'); return; }
     setBusy(true);
     try {
-      await api.patch(`/admin/products/${product.id}`, {
+      const body = {
         ...form,
         name: form.name.trim(),
         // Empty means "not set", which is a different thing from zero.
         min_investment: form.min_investment === '' ? null : Number(form.min_investment),
         requires_kyc: form.requires_kyc ? 1 : 0,
-      });
+      };
+      if (making) await api.post('/admin/products', body);
+      else await api.patch(`/admin/products/${product.id}`, body);
       onSaved();
     } catch (err) { onError(err.message); setBusy(false); }
   };
 
   return (
-    <Modal title={product.name} subtitle={product.code} onClose={onClose} wide>
+    <Modal
+      title={making ? 'New product' : product.name}
+      subtitle={making ? 'It will be given a permanent code' : product.code}
+      onClose={onClose}
+      wide
+    >
       <form onSubmit={submit} className="form-grid">
         <div className="glass notice span-2">
           <Icon name="lock" size={16} />
           <div>
-            The code <code>{product.code}</code> never changes — every product card on
-            every lead, the KYC journeys and the dialler campaigns all bind to it.
-            Renaming below changes what people read, not what anything depends on.
+            {making ? (
+              <>
+                The code issued here never changes. Every product card on every lead,
+                the KYC journeys and the dialler campaigns will bind to it, so the name
+                stays free to change afterwards and the code does not.
+              </>
+            ) : (
+              <>
+                The code <code>{product.code}</code> never changes — every product card on
+                every lead, the KYC journeys and the dialler campaigns all bind to it.
+                Renaming below changes what people read, not what anything depends on.
+              </>
+            )}
           </div>
         </div>
 
@@ -234,6 +265,10 @@ function ProductEditor({ product, onClose, onSaved, onError }) {
           <span>Category</span>
           <input value={form.category} onChange={set('category')} placeholder="Equity, Mutual Fund, PMS…" />
         </label>
+
+        {/* P3-15. Only once the product exists: a file has to belong to
+            something, and there is no id to attach it to until it is saved. */}
+        {!making && <Brochure productId={product.id} onError={onError} />}
 
         <label>
           <span>Minimum investment</span>
@@ -290,5 +325,74 @@ function ProductEditor({ product, onClose, onSaved, onError }) {
         </div>
       </form>
     </Modal>
+  );
+}
+
+/**
+ * The brochure on a product (P3-15).
+ *
+ * Two jobs, and they decided that the file is stored rather than linked: it has
+ * to open while somebody is on a call, and it has to be attachable to an email.
+ * A URL to somebody else's host is unreliable for the first and impossible for
+ * the second.
+ */
+function Brochure({ productId, onError }) {
+  const [meta] = useApi('/admin/products/brochure-formats');
+  const [current, { reload }] = useApi(`/products/brochures`);
+  const [busy, setBusy] = useState(false);
+
+  const mine = (current?.brochures ?? []).find((b) => b.product_type_id === productId);
+
+  const upload = async (file) => {
+    setBusy(true);
+    try {
+      await api.upload(`/admin/products/${productId}/brochure`, file);
+      reload();
+    } catch (err) { onError(err.message); }
+    finally { setBusy(false); }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await api.del(`/admin/products/${productId}/brochure`);
+      reload();
+    } catch (err) { onError(err.message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="span-2">
+      <span className="field-name">Brochure</span>
+      {mine ? (
+        <div className="row-between" style={{ gap: 8, marginTop: 4 }}>
+          <span className="tiny">
+            <Icon name="description" size={15} /> {mine.filename}
+            <span className="muted"> · {(mine.size / 1024).toFixed(0)} KB</span>
+          </span>
+          <div className="row" style={{ gap: 6 }}>
+            <a className="btn-sm" href={`/api/products/${productId}/brochure`} target="_blank" rel="noreferrer">Open</a>
+            <button type="button" className="btn-sm" disabled={busy} onClick={remove}>Remove</button>
+          </div>
+        </div>
+      ) : (
+        <label className="filedrop" style={{ marginTop: 4 }}>
+          <input
+            type="file"
+            accept={meta?.accept}
+            disabled={busy}
+            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) upload(f); }}
+          />
+          <Icon name="upload" size={17} />
+          <span>{busy ? 'Uploading…' : 'Attach a brochure'}</span>
+        </label>
+      )}
+      {/* The formats come from the server, so this cannot promise one the
+          upload refuses. */}
+      <p className="hint">
+        {meta ? `${meta.formats.map((f) => f.label).join(', ')} · up to ${Math.round(meta.max_bytes / 1024 / 1024)} MB.` : ' '}
+        {' '}Stored in the CRM, so it opens on a call and can be emailed to a client.
+      </p>
+    </div>
   );
 }
