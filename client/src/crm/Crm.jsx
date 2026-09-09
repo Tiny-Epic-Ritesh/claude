@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { api, appUrl, token, ROLE_LABEL } from '../api.js';
 import GhostBar, { hasParentToken, parentName, leaveGhost, ghostReturnTo } from './GhostBar.jsx';
+import Attendance from './Attendance.jsx';
 import { Loading, Icon, Avatar, OrgSwitcher, ThemeToggle } from '../components/ui.jsx';
 import { AppLauncher, TabBar, GlobalSearch, UserMenu } from '../components/AppNav.jsx';
 import { applyOrgAccent } from '../theme.js';
@@ -364,6 +365,10 @@ export default function Crm() {
               <Icon name="settings" size={18} />
             </NavLink>
           )}
+
+          {/* P3-09. Renders nothing for roles attendance is not asked of, so
+              this is not a control an administrator has to look past. */}
+          <Attendance />
 
           <button className="btn-ghost btn-sm copilot-trigger" onClick={() => setCopilotOpen(true)} title="Ask the copilot">
             <Icon name="auto_awesome" size={18} />

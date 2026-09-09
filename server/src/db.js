@@ -1410,6 +1410,53 @@ CREATE INDEX IF NOT EXISTS idx_slabs_plan ON incentive_slabs(plan_id, basis, fro
    MASK_STRATEGIES: how to obscure the value, which cannot be guessed from the
    field name. */
 /* One lead import, kept so its result can be looked at again (P3-34). */
+/* One interval of a working day (P3-09).
+ *
+ * A row per check-in, not per day. "Capture the duration and intervals overall"
+ * is the requirement, and somebody who checks out for lunch and back in has two
+ * intervals -- one row per day would either lose the second or count the lunch
+ * as worked. The day's total is the sum of its rows. */
+CREATE TABLE IF NOT EXISTS attendance_session (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  sales_org      TEXT NOT NULL,
+  checked_in_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  checked_out_at TEXT,
+  /* 'user' when they pressed the button, 'auto' when the policy closed it,
+     'admin' when somebody corrected it. The report shows these apart, because
+     an hour a person vouched for and an hour a rule inferred are different
+     kinds of number and should never be added up as if they were the same. */
+  closed_by      TEXT,
+  source         TEXT NOT NULL DEFAULT 'web',
+  note           TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_attendance_user ON attendance_session(user_id, checked_in_at DESC);
+CREATE INDEX IF NOT EXISTS idx_attendance_open ON attendance_session(checked_out_at) WHERE checked_out_at IS NULL;
+
+/* What happens when somebody forgets to check out, per business.
+ *
+ * A table rather than a constant because the ticket asks for the behaviour to
+ * be agreed, and an agreement that lives in code is one nobody can change
+ * afterwards without a release. */
+CREATE TABLE IF NOT EXISTS attendance_policy (
+  sales_org     TEXT PRIMARY KEY,
+  /* Which roles are asked to check in. Attendance is a sales-team requirement;
+     prompting an administrator who never leaves the office trains everybody to
+     dismiss the prompt. JSON array of role codes. */
+  prompt_roles  TEXT,
+  /* last_activity | fixed_time | leave_open
+     last_activity: close at the last thing they actually did in the CRM
+     fixed_time:    close at auto_close_at, the way the legacy system did
+     leave_open:    do not close it; the report shows the day as incomplete */
+  unclosed      TEXT NOT NULL DEFAULT 'last_activity',
+  auto_close_at TEXT NOT NULL DEFAULT '20:00',
+  /* A ceiling whatever the rule says. Without it a forgotten check-out over a
+     long weekend becomes a seventy-hour day in somebody's report. */
+  max_hours     INTEGER NOT NULL DEFAULT 12,
+  updated_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS import_run (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,

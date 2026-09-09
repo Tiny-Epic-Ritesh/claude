@@ -13,6 +13,7 @@
 
 import { useState } from 'react';
 import { useApi, Loading, ErrorBanner, Empty, Tabs } from '../components/ui.jsx';
+import { AttendanceReport } from './Attendance.jsx';
 import { rupees, rupeesCompact, ROLE_LABEL } from '../api.js';
 
 const STATE_LABEL = {
@@ -447,6 +448,10 @@ export default function Reports({ session }) {
     // server, so the roles whose work it describes can open it.
     has('partner.view') && { key: 'partners', label: 'Partners' },
     { key: 'activity', label: 'Activity' },
+    /* P3-09. No capability gate: the route scopes itself — a sales user sees
+       their own hours, a manager their team's, an administrator everyone's —
+       so gating the tab would hide from an RM the one row that is theirs. */
+    { key: 'attendance', label: 'Attendance' },
   ].filter(Boolean);
 
   const [tab, setTab] = useState(tabs[0].key);
@@ -478,6 +483,7 @@ export default function Reports({ session }) {
       {tab === 'sla' && <Sla />}
       {tab === 'partners' && <PartnerReport />}
       {tab === 'activity' && <Activity days={days} />}
+      {tab === 'attendance' && <AttendanceReport />}
     </>
   );
 }

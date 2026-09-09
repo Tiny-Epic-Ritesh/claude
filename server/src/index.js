@@ -18,6 +18,7 @@ import { internal as kycInternal, dkyc } from './routes/kyc.js';
 import portal from './routes/portal.js';
 import admin from './routes/admin.js';
 import cockpit from './routes/cockpit.js';
+import attendance from './routes/attendance.js';
 import aiRoutes from './routes/ai.js';
 import webhooks from './routes/webhooks.js';
 import reports from './routes/reports.js';
@@ -275,6 +276,7 @@ app.get('/api/health', (_req, res) => res.json({
    is a vendor, not a user — each verifies its own shared secret instead. */
 app.use('/api/webhooks', webhooks);
 
+app.use('/api/attendance', attendance);
 app.use('/api/cockpit', cockpit);
 app.use('/api/ai', aiRoutes);
 app.use('/api/tickets', tickets);
