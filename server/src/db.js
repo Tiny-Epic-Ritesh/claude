@@ -9,11 +9,23 @@ import { DatabaseSync } from 'node:sqlite';
 import { actingActor } from './engine/reqcontext.js';
 import { hashPasswordSync } from './security.js';
 import { mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const dataDir = join(here, '..', 'data');
+
+/*
+ * Where the database lives. `CRM_DATA_DIR` overrides it, which exists for one
+ * reason: proving that a schema can still be built from an empty directory.
+ * That had quietly stopped being true -- a fresh database died on `no such
+ * table: dispositions` -- and it could not be tested, because the only way to
+ * try was to move the development database out of the way and hope nothing
+ * had it open. A test that needs a live process killed first is a test nobody
+ * runs.
+ */
+const dataDir = process.env.CRM_DATA_DIR
+  ? resolve(process.env.CRM_DATA_DIR)
+  : join(here, '..', 'data');
 mkdirSync(dataDir, { recursive: true });
 
 export const db = new DatabaseSync(join(dataDir, 'bonanza.db'));
@@ -54,6 +66,27 @@ db.exec('PRAGMA synchronous = NORMAL');
 
 /** Batch writes into one transaction. One fsync instead of N. */
 export function transact(fn) {
+  /*
+   * Join a transaction that is already open rather than opening a second one.
+   *
+   * SQLite has no nested transactions, so `BEGIN` inside one raises "cannot
+   * start a transaction within a transaction" — and because that BEGIN used to
+   * sit outside the try below, the error escaped from whichever helper called
+   * it, naming a line that gives no hint where the outer transaction was
+   * opened.
+   *
+   * The seed is where this bites: it holds BEGIN IMMEDIATE for its whole run
+   * so that two seeds cannot interleave, and then calls helpers —
+   * seedMetadata, syncDispositionPicklists — that each want a transaction of
+   * their own. Every one of them was a failure waiting for somebody to seed a
+   * database rather than let a server do it.
+   *
+   * Joining is the right semantics as well as the working one: the caller has
+   * already said "all of this or none of it", and a helper inside that has no
+   * business committing halfway through somebody else's atomic unit.
+   */
+  if (db.isTransaction) return fn();
+
   db.exec('BEGIN');
   try {
     const out = fn();
@@ -1416,7 +1449,24 @@ const COLUMNS = [
   ['tickets', 'sla_version_id', 'INTEGER'],
 ];
 
+/**
+ * Add a column to a table that predates it.
+ *
+ * Tables are created in several passes below, so at this point some of them do
+ * not exist yet -- and a table created later is created carrying its columns,
+ * so there is nothing here for it to add. This loop cannot simply move to the
+ * end instead: the indexes immediately after it are on columns it adds.
+ *
+ * A table that never appears at all is a mistake, and `assertMigrated` at the
+ * bottom of this file is what catches it, once everything has been created.
+ */
+const migrationSkipped = [];
+
 for (const [table, column, type] of COLUMNS) {
+  if (!db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name=?").get(table).n) {
+    migrationSkipped.push([table, column]);
+    continue;
+  }
   const exists = db.prepare(`SELECT COUNT(*) n FROM pragma_table_info(?) WHERE name = ?`).get(table, column);
   if (!exists.n) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }
@@ -1829,7 +1879,15 @@ CREATE TABLE IF NOT EXISTS dispositions (
 
   hint          TEXT,                    -- shown under the picker in the UI
   sort_order    INTEGER NOT NULL DEFAULT 0,
-  active        INTEGER NOT NULL DEFAULT 1
+  active        INTEGER NOT NULL DEFAULT 1,
+
+  -- Who last changed this outcome, and whether the business added it rather
+  -- than it shipping with the product. Declared here as well as in COLUMNS:
+  -- COLUMNS carries them onto databases that predate them, this carries them
+  -- onto one created today.
+  edited_at     TEXT,
+  edited_by     INTEGER,
+  is_custom     INTEGER NOT NULL DEFAULT 0
 );
 
 /**
@@ -1850,6 +1908,9 @@ CREATE TABLE IF NOT EXISTS teams (
   rr_cursor   INTEGER NOT NULL DEFAULT 0,
   active      INTEGER NOT NULL DEFAULT 1,
   sales_org   TEXT NOT NULL DEFAULT 'BONANZA',
+  -- A branch hangs under another branch, to any depth. Null is a root, which
+  -- is a business rather than a team.
+  parent_id   INTEGER REFERENCES teams(id),
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -2130,6 +2191,12 @@ CREATE TABLE IF NOT EXISTS entity_def (
   sales_org    TEXT,                      -- null = shared by both businesses
   active       INTEGER NOT NULL DEFAULT 1,
   sort_order   INTEGER NOT NULL DEFAULT 0,
+
+  -- The organisation-wide default: the floor every other grant is added to.
+  -- Private unless somebody decided otherwise, in both directions.
+  owd_internal TEXT NOT NULL DEFAULT 'private',
+  owd_external TEXT NOT NULL DEFAULT 'private',
+
   created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -2507,9 +2574,33 @@ CREATE TABLE IF NOT EXISTS rule_failures (
 CREATE INDEX IF NOT EXISTS idx_rule_failures ON rule_failures(resolved_at, created_at DESC);
 `);
 
-/* The registered senders. The entity ids are filled in from the DLT portal --
-   left null rather than guessed, because a wrong Principal Entity id is a
-   campaign that is accepted here and dropped by every operator. */
+/**
+ * Every migration landed.
+ *
+ * The loop above skips a table it has not reached yet, because tables are
+ * created in several passes and one created later carries its columns already.
+ * That is only safe if something says so out loud afterwards: without this, a
+ * typo in COLUMNS -- a renamed table, a misspelt name -- becomes a column that
+ * silently never appears, and the first anyone hears of it is a query failing
+ * in production.
+ *
+ * Every table exists by this point, so anything still missing is a mistake in
+ * the list rather than an ordering artefact, and it stops the process.
+ */
+const stillMissing = migrationSkipped.filter(([table, column]) => {
+  const there = db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name=?").get(table).n;
+  if (!there) return true;
+  return !db.prepare('SELECT COUNT(*) n FROM pragma_table_info(?) WHERE name = ?').get(table, column).n;
+});
+
+if (stillMissing.length) {
+  throw new Error(
+    'these columns are declared in COLUMNS and do not exist on the finished schema:\n  '
+    + stillMissing.map(([t, c]) => `${t}.${c}`).join('\n  ')
+    + '\nEither the table is never created, or the name is wrong.',
+  );
+}
+
 /* The default field map. This was a constant in the vendor module; it is rows
    now so a form asking something else can be handled without a deploy. */
 for (const [question, crmField] of [
@@ -2523,6 +2614,9 @@ for (const [question, crmField] of [
   ).run({ question, crmField });
 }
 
+/* The registered senders. The entity ids are filled in from the DLT portal --
+   left null rather than guessed, because a wrong Principal Entity id is a
+   campaign that is accepted here and dropped by every operator. */
 for (const h of [
   { header: 'BONANZ', sales_org: 'BONANZA' },
   { header: 'BIGULX', sales_org: 'BIGUL' },

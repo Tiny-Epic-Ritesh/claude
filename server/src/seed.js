@@ -16,7 +16,7 @@ import { MASTER_STEPS } from './engine/kyc.js';
 import { ONBOARDING_STEPS, LMS_MODULES } from './routes/partners.js';
 import { seedDispositions, applyEffects } from './engine/dispositions.js';
 import { seedKra, seedIncentives } from './engine/kra.js';
-import { syncDispositionPicklists } from './engine/metadata.js';
+import { syncDispositionPicklists, seedMetadata, seedPicklists } from './engine/metadata.js';
 import { createFollowUp } from './engine/followups.js';
 import { DEFAULT_SLA } from './engine/sla.js';
 import { ticketSummary } from './ai/mock.js';
@@ -26,6 +26,65 @@ import { hashPasswordSync, encryptField } from './security.js';
 const ago = (d, h = 0) => new Date(Date.now() - d * 864e5 - h * 36e5).toISOString().slice(0, 19).replace('T', ' ');
 const ahead = (d, h = 0) => new Date(Date.now() + d * 864e5 + h * 36e5).toISOString().slice(0, 19).replace('T', ' ');
 const pick = (arr, i) => arr[i % arr.length];
+
+/*
+ * One seed at a time, and all of it or none of it.
+ *
+ * This clears thirty tables and refills them, and it used to do so as a few
+ * thousand separate auto-commit statements. Two consequences, both of which
+ * present as somebody else's bug:
+ *
+ * TWO SEEDS INTERLEAVE. Start a second `npm test` while the first is still
+ * seeding — two terminals, two agents, a re-run begun because the first looked
+ * stuck — and the second's `DELETE FROM users` lands between the first's
+ * nineteenth and twentieth INSERT. The first then dies on `FOREIGN KEY
+ * constraint failed`, because the manager it inserted a moment ago is gone, or
+ * on `UNIQUE constraint failed: users.employee_code`, because the other run has
+ * already taken BNZ1005. Neither message mentions concurrency and neither
+ * points here.
+ *
+ * A FAILURE POISONS THE NEXT RUN. However it died, it died with the tables
+ * cleared and half refilled — four users, no leads — and left that behind.
+ * Every suite afterwards then failed on `HTTP 401` or "no Bonanza user to aim
+ * at", which reads as a broken feature rather than a broken fixture, until some
+ * later run happened to seed cleanly.
+ *
+ * BEGIN IMMEDIATE settles both. It takes the write lock up front, so a second
+ * seed waits and then says so plainly instead of corrupting the first; and
+ * nothing is visible to anyone until the COMMIT at the end, so a seed that dies
+ * half way leaves the previous dataset exactly as it was. A transaction
+ * abandoned by a dying process is discarded by SQLite, so there is no ROLLBACK
+ * handler here to get wrong.
+ */
+/*
+ * The metadata layer, before anything that references an entity.
+ *
+ * These were only ever called by src/index.js on server start, so seeding a
+ * database that no server had ever run against died on a foreign key:
+ * field_def.entity references entity_def(api_name), and entity_def was empty.
+ * It worked everywhere it was tried because everywhere it was tried, a server
+ * had already been up.
+ *
+ * Ahead of BEGIN IMMEDIATE rather than inside it. Both wrap themselves in
+ * `transact`, whose own BEGIN sits outside its try block, so calling either
+ * inside an open transaction raises "cannot start a transaction within a
+ * transaction" from a place that gives no hint where the outer one was opened.
+ * Both are idempotent upserts that preserve any label an administrator has
+ * renamed, so they gain nothing from the seed's all-or-nothing guarantee.
+ */
+seedMetadata();
+seedPicklists();
+
+try {
+  db.exec('BEGIN IMMEDIATE');
+} catch (err) {
+  if (!/lock|busy/i.test(err.message)) throw err;
+  console.error(
+    'Another seed is already running against this database. Wait for it to finish\n'
+    + 'and run this again — nothing has been changed.',
+  );
+  process.exit(1);
+}
 
 /*
  * Throwaway test accounts from previous runs.
@@ -1552,6 +1611,10 @@ if (bigulAdmin) {
     );
   }
 }
+
+/* Everything above becomes visible here, in one step. Until this line another
+   process still reads the previous dataset rather than a half-built one. */
+db.exec('COMMIT');
 
 console.log(`
 Seeded Bonanza CRM
