@@ -130,6 +130,65 @@ CREATE TABLE IF NOT EXISTS templates (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS meta_ad_campaign (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  meta_id      TEXT NOT NULL UNIQUE,
+  name         TEXT NOT NULL,
+  objective    TEXT,
+  daily_budget REAL,
+  -- Always PAUSED on creation. A CRM button that starts spending the second it
+  -- is pressed is a bad idea however good the confirmation dialog; a human
+  -- starts it in Ads Manager having seen it.
+  status       TEXT,
+  sales_org    TEXT NOT NULL DEFAULT 'BONANZA',
+  simulated    INTEGER NOT NULL DEFAULT 0,
+  created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Spend and results as Meta last reported them, with when that was. Cached
+  -- rather than fetched per page load: it is a paid API call against a rate
+  -- limit, and yesterday's spend does not change.
+  insights     TEXT,
+  insights_at  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS meta_audience_push (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  list_id     INTEGER,
+  sales_org   TEXT,
+  -- Three different numbers, and the gaps between them are the point:
+  -- how many were on the list, how many were left after the opt-out check,
+  -- and how many Meta said it could match.
+  considered  INTEGER NOT NULL DEFAULT 0,
+  sent        INTEGER NOT NULL DEFAULT 0,
+  matched     INTEGER,
+  pushed_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS meta_message (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  external_id TEXT UNIQUE,
+  -- The sender's page-scoped id. Meta gives a different one per page, and it
+  -- is not a contact detail: it cannot be called, and on its own it identifies
+  -- nobody.
+  psid        TEXT,
+  platform    TEXT NOT NULL,
+  body        TEXT,
+  attachments INTEGER NOT NULL DEFAULT 0,
+  lead_id     INTEGER REFERENCES leads(id) ON DELETE SET NULL,
+  at          TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_meta_message_at ON meta_message(at DESC);
+
+CREATE TABLE IF NOT EXISTS meta_contact (
+  psid      TEXT PRIMARY KEY,
+  lead_id   INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  linked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  linked_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS meta_lead_form (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   -- Meta's own id for the form. Forms are registered the first time one of

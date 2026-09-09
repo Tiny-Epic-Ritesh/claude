@@ -4550,9 +4550,22 @@ await check('a per-channel withdrawal closes only that channel', async () => {
         entry: [{ id: 'p', messaging: [{ sender: { id: 'stranger-1' }, recipient: { id: 'page' }, timestamp: Date.now(), message: { mid: `m-${RUN}`, text: 'Hello' } }] }],
       },
     });
-    eq(data.messages, 0, 'a stranger’s DM created a record');
+    // Recorded, which is what this check's name has always said and what the
+    // code did not do (P3-18). The sender used to be looked up against
+    // leads.external_id — a leadgen id — so no DM ever matched and every one
+    // was discarded; this asserted that discarding. Keeping the message is the
+    // fix: it waits in the console until somebody says who sent it.
+    eq(data.messages, 1, 'a stranger’s DM was dropped instead of being kept');
+
+    // The part that was always the point: not turned into a lead. A Messenger
+    // id is not a contact detail, and a CRM full of records nobody can ring is
+    // worse than a missed message.
     const after = (await req('/api/admin/connectors/meta/leads', { token: T.superadmin, expect: 200 })).data.length;
     eq(after, before, 'the lead count changed on an unmatched DM');
+
+    const convos = await req('/api/admin/connectors/meta/messages', { token: T.superadmin, expect: 200 });
+    assert(convos.data.rows.some((c) => c.psid === 'stranger-1' && !c.lead_id),
+      'the DM was kept but is not listed as an unclaimed conversation');
   });
 
   await check('an ad campaign is created paused, never spending on the button press', async () => {

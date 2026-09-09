@@ -24,6 +24,7 @@ import * as aisensy from '../vendors/aisensy.js';
 import * as bonanzakyc from '../vendors/bonanzakyc.js';
 import * as meta from '../vendors/meta.js';
 import { formFor, applyMap, recordDelivery } from '../engine/leadads.js';
+import { saveMessage } from '../engine/metaads.js';
 import { applyScore } from '../engine/rules.js';
 import { assignLead } from '../engine/assignment.js';
 import { kycStatusSql, kycStatusFor } from '../engine/kycstatus.js';
@@ -430,27 +431,48 @@ function createMetaLead(lead) {
 }
 
 /**
- * A DM lands on the timeline of whoever it came from, if we know them.
+ * A DM is kept, and lands on a timeline once somebody says whose it is.
  *
- * A message from a stranger is not turned into a lead: a Messenger id is not a
- * contact detail, and a CRM full of records nobody can call is worse than a
- * missed message. It is recorded as unmatched instead.
+ * THE BUG THIS REPLACES
+ *
+ * The sender was looked up with `leads.external_id = msg.from`, and
+ * `external_id` holds a Meta *leadgen* id. A page-scoped sender id is never
+ * equal to one, so the lookup failed for every message ever received and each
+ * was discarded — a connector reporting zero messages forever, which reads
+ * exactly like nobody having messaged.
+ *
+ * There is no automatic fix. Meta sends no phone number and no email with a
+ * DM; a page-scoped id identifies nobody on its own, and that is deliberate on
+ * Meta\'s part. So the message is kept either way and the console shows the
+ * conversations nobody has claimed, where a person who recognises one links it.
+ *
+ * Still not turned into a lead. A Messenger id is not a contact detail, and a
+ * CRM full of records nobody can call is worse than a missed message — that
+ * reasoning was right and is unchanged.
  */
 function recordMetaMessage(msg) {
-  const lead = one('SELECT id FROM leads WHERE external_id = ? AND deleted_at IS NULL', [msg.from]);
-  if (!lead) return false;
+  const saved = saveMessage({
+    externalId: msg.external_id,
+    psid: msg.from,
+    platform: msg.platform,
+    body: msg.body,
+    attachments: msg.attachments,
+    at: msg.at.slice(0, 19).replace('T', ' '),
+  });
 
-  if (msg.external_id && one('SELECT id FROM activities WHERE external_id = ?', [msg.external_id])) {
-    return false;   // Meta retried; we already have it
+  if (!saved) return false;          // Meta retried; we already have it
+
+  /* Only once somebody has said who this sender is. Until then it waits in the
+     console, and linking it back-fills the timeline. */
+  if (saved.leadId) {
+    run(
+      `INSERT INTO activities (lead_id, type, direction, subject, body, external_id, user_id, created_at)
+       VALUES (?, 'Messenger', 'inbound', ?, ?, ?, NULL, ?)`,
+      [saved.leadId, `${msg.platform} message`, msg.body || `(${msg.attachments} attachment(s))`,
+        msg.external_id, msg.at.slice(0, 19).replace('T', ' ')],
+    );
   }
 
-  run(
-    `INSERT INTO activities (lead_id, type, direction, subject, body, external_id, user_id, created_at)
-     VALUES (?, ?, 'inbound', ?, ?, ?, NULL, ?)`,
-    [lead.id, msg.platform === 'Instagram' ? 'WhatsApp' : 'WhatsApp',
-      `${msg.platform} message`, msg.body || `(${msg.attachments} attachment(s))`,
-      msg.external_id, msg.at.slice(0, 19).replace('T', ' ')],
-  );
   return true;
 }
 

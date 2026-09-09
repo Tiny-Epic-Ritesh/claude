@@ -22,6 +22,10 @@ import * as meta from '../vendors/meta.js';
 import {
   MAPPABLE, isMappable, listForms, unmappedQuestions, deliveries,
 } from '../engine/leadads.js';
+import {
+  recordCampaign, listCampaigns, saveInsights,
+  recordPush, listPushes, conversations, linkSender,
+} from '../engine/metaads.js';
 import { healthReport } from '../engine/conflicts.js';
 import {
   ARTEFACTS, snapshot, versionsOf, byId as versionById, diff as versionDiff,
@@ -1518,9 +1522,26 @@ router.post('/connectors/meta/campaigns', requirePermission('campaign.manage'), 
   const { name, objective, daily_budget: dailyBudget } = req.body ?? {};
   if (!name?.trim()) return res.status(400).json({ error: 'Give the ad campaign a name' });
 
+  const org = activeOrg(req) ?? req.user.sales_org;
+
   try {
     const out = await meta.publishCampaign({ name: name.trim(), objective, dailyBudget });
-    audit(req.user.id, 'meta_campaign_published', 'campaign', null, { name, id: out.id });
+
+    /* Kept, because until now publishing left no record that a CRM button had
+       committed a budget -- no list to pull spend against, and no answer to
+       "who started this". */
+    recordCampaign({
+      metaId: out.id,
+      name: name.trim(),
+      objective,
+      dailyBudget,
+      status: out.status,
+      salesOrg: org,
+      simulated: out.simulated,
+      userId: req.user.id,
+    });
+
+    audit(req.user.id, 'meta_campaign_published', 'campaign', null, { name, id: out.id, sales_org: org });
     return res.status(201).json({
       ...out,
       note: out.note ?? 'Created paused. Start it in Ads Manager once you have reviewed it.',
@@ -1531,9 +1552,24 @@ router.post('/connectors/meta/campaigns', requirePermission('campaign.manage'), 
   }
 });
 
+/** What this user's books have published, with spend as last pulled. */
+router.get('/connectors/meta/campaigns', requirePermission('campaign.manage'), (req, res) => {
+  res.json(listCampaigns(orgsFor(req.user)));
+});
+
+/**
+ * Spend and results, pulled on request rather than per page load.
+ *
+ * It is a paid API call against a rate limit, and yesterday's spend does not
+ * change — so it is cached against the campaign with the time it was taken,
+ * and the screen says how old the number is instead of pretending it is live.
+ */
 router.get('/connectors/meta/campaigns/:id/insights', requirePermission('campaign.manage'), async (req, res, next) => {
-  try { return res.json(await meta.campaignInsights(req.params.id)); }
-  catch (err) {
+  try {
+    const insights = await meta.campaignInsights(req.params.id);
+    saveInsights(req.params.id, insights);
+    return res.json(insights);
+  } catch (err) {
     if (err.name === 'VendorError') return res.status(502).json({ error: err.message, vendor: 'meta' });
     return next(err);
   }
@@ -1557,6 +1593,12 @@ router.post('/connectors/meta/audiences', requirePermission('campaign.manage'), 
     return res.status(409).json(await meta.pushAudience({ name, leads: [] }));
   }
 
+  const considered = all(
+    `SELECT l.id FROM lead_list_members m JOIN leads l ON l.id = m.lead_id
+     WHERE m.list_id = ? AND l.deleted_at IS NULL`,
+    [listId],
+  ).length;
+
   // Only members who have not opted out. An audience is marketing by
   // definition, so the same consent rule applies as to any campaign send.
   const leads = all(
@@ -1569,6 +1611,20 @@ router.post('/connectors/meta/audiences', requirePermission('campaign.manage'), 
 
   try {
     const out = await meta.pushAudience({ name: name.trim(), leads });
+
+    /* Recorded as well as audited. This is the one capability that breaks the
+       firm's own data-residency rule, so what left the country needs to be
+       answerable from a screen rather than by reading the audit log. */
+    recordPush({
+      name: name.trim(),
+      listId: Number(listId),
+      salesOrg: activeOrg(req) ?? req.user.sales_org,
+      considered,
+      sent: leads.length,
+      matched: out.matched,
+      userId: req.user.id,
+    });
+
     audit(req.user.id, 'meta_audience_pushed', 'lead_list', Number(listId), {
       name, sent: out.matched, note: 'Hashed identifiers left India',
     });
@@ -1577,6 +1633,62 @@ router.post('/connectors/meta/audiences', requirePermission('campaign.manage'), 
     if (err.name === 'VendorError') return res.status(502).json({ error: err.message, vendor: 'meta' });
     return next(err);
   }
+});
+
+/**
+ * Every audience push, and the lists that could be pushed.
+ *
+ * The counts are kept apart on purpose: how many were on the list, how many
+ * survived the opt-out check, and how many Meta said it matched. A push where
+ * those diverge sharply is worth looking at before the next one.
+ */
+router.get('/connectors/meta/audiences', requirePermission('campaign.manage'), (req, res) => {
+  const orgs = orgsFor(req.user);
+  res.json({
+    enabled: meta.audiencesEnabled(),
+    residency_note: meta.status().residency_note,
+    pushes: listPushes(orgs),
+    lists: all(
+      `SELECT id, name, (SELECT COUNT(*) FROM lead_list_members m WHERE m.list_id = lead_lists.id) AS members
+         FROM lead_lists ORDER BY name`,
+    ),
+  });
+});
+
+/**
+ * Messenger and Instagram conversations, the unclaimed ones first.
+ *
+ * Grouped by sender rather than listed as messages, because the job here is
+ * deciding who somebody is, and that is a judgement about a conversation
+ * rather than about one line of it.
+ */
+router.get('/connectors/meta/messages', requirePermission('admin.system'), (_req, res) => {
+  res.json(conversations(Number(_req.query.limit) || 30));
+});
+
+/**
+ * Say who a sender is.
+ *
+ * Meta sends no phone number and no email with a DM — a page-scoped id
+ * identifies nobody on its own — so this link is made by a person who
+ * recognises the conversation, and it is the only way it can be made. Linking
+ * back-fills the messages already received onto the lead's timeline; a link
+ * that only worked going forwards would strand the conversation that prompted
+ * it.
+ */
+router.post('/connectors/meta/messages/link', requirePermission('admin.system'), (req, res) => {
+  const { psid, lead_id: leadId } = req.body ?? {};
+  if (!psid || !leadId) return res.status(400).json({ error: 'A sender and a lead are both required' });
+
+  const lead = one('SELECT * FROM leads WHERE id = ? AND deleted_at IS NULL', [leadId]);
+  if (!lead) return res.status(404).json({ error: 'That lead does not exist' });
+  if (!mayUseOrg(req.user, lead.sales_org)) {
+    return res.status(403).json({ error: 'That lead is in a book you do not hold' });
+  }
+
+  const backfilled = linkSender(String(psid), lead.id, req.user.id);
+  audit(req.user.id, 'meta_sender_linked', 'lead', lead.id, { psid, messages: backfilled });
+  return res.json({ ok: true, lead: { id: lead.id, name: lead.name }, backfilled });
 });
 
 /* ----------------------------------------------------------- calendars */

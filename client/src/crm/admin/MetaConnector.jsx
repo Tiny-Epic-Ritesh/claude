@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, shortDate } from '../../api.js';
-import { useApi, Loading, Empty, Icon, ErrorBanner } from '../../components/ui.jsx';
+import { useApi, Loading, Empty, Icon, ErrorBanner, Modal, Spinner } from '../../components/ui.jsx';
 
 /**
  * Meta Lead Ads console (P3-18).
@@ -26,10 +26,15 @@ import { useApi, Loading, Empty, Icon, ErrorBanner } from '../../components/ui.j
  *                stopped" and "everyone who filled the form was already a
  *                client" look identical from the lead list.
  *   Leads        the arrivals themselves.
+ *   Ad campaigns what has been published from here, and what it has spent
+ *   Audiences    the one capability that breaks the data-residency rule, so
+ *                the conflict is on the screen that does it and the history of
+ *                what left the country is on the same screen
+ *   Messages     Messenger and Instagram conversations, unclaimed ones first
  *
- * The three Meta capabilities that are not lead ads — publishing ad campaigns,
- * Custom Audiences, Messenger and Instagram DMs — have working routes and no
- * screen. They are not here because this console is about lead ads.
+ * The last three had working routes and no screen at all, which is how a
+ * connector comes to be signed off while one of its capabilities silently
+ * discards everything it receives — see the DM section.
  */
 export function MetaConnector() {
   const [problem, setProblem] = useState(null);
@@ -42,6 +47,9 @@ export function MetaConnector() {
       <Mapping onError={setProblem} />
       <Deliveries />
       <RecentLeads />
+      <AdCampaigns onError={setProblem} />
+      <Audiences onError={setProblem} />
+      <Messages onError={setProblem} />
     </>
   );
 }
@@ -476,5 +484,396 @@ function RecentLeads() {
         </div>
       )}
     </section>
+  );
+}
+
+/* ----------------------------------------------------- 6 · ad campaigns */
+
+const money = (n) => (n === null || n === undefined ? '—' : `₹${Number(n).toLocaleString('en-IN')}`);
+
+/* Spend over leads, or nothing at all — a campaign that has spent and produced
+   no leads yet would otherwise divide by zero and read as infinite cost. */
+const costPerLead = (insights) => (insights?.leads
+  ? money(Math.round(insights.spend / insights.leads))
+  : '—');
+
+/**
+ * Ad campaigns published from here.
+ *
+ * Every one is created PAUSED, and the screen says so rather than leaving it
+ * to be discovered: a CRM button that starts spending the second it is pressed
+ * is a bad idea however good the confirmation dialog, so a human starts it in
+ * Ads Manager having seen it.
+ *
+ * Spend is pulled on request, not on load. It is a paid API call against a
+ * rate limit and yesterday's spend does not change, so the number is cached
+ * with the time it was taken and the screen says how old it is.
+ */
+function AdCampaigns({ onError }) {
+  const [rows, { loading, reload }] = useApi('/admin/connectors/meta/campaigns');
+  const [draft, setDraft] = useState({ name: '', daily_budget: '' });
+  const [busy, setBusy] = useState(false);
+  if (loading) return <Loading />;
+
+  const publish = async () => {
+    if (!draft.name.trim()) return;
+    setBusy(true);
+    try {
+      await api.post('/admin/connectors/meta/campaigns', {
+        name: draft.name.trim(),
+        daily_budget: draft.daily_budget ? Number(draft.daily_budget) : undefined,
+      });
+      setDraft({ name: '', daily_budget: '' });
+      reload();
+    } catch (err) { onError(err.message); }
+    finally { setBusy(false); }
+  };
+
+  const refresh = async (metaId) => {
+    try { await api.get(`/admin/connectors/meta/campaigns/${metaId}/insights`); reload(); }
+    catch (err) { onError(err.message); }
+  };
+
+  return (
+    <section className="card section-card">
+      <div className="section-head">
+        <div>
+          <h2>Ad campaigns</h2>
+          <p>Published from here. Every one is created paused — start it in Ads Manager once you have reviewed it.</p>
+        </div>
+      </div>
+
+      <div className="field-row">
+        <div className="field">
+          <label>Campaign name</label>
+          <input
+            value={draft.name}
+            onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+            placeholder="Bigul — SIP lead ads, October"
+          />
+        </div>
+        <div className="field">
+          <label>Daily budget</label>
+          <input
+            type="number"
+            value={draft.daily_budget}
+            onChange={(e) => setDraft((d) => ({ ...d, daily_budget: e.target.value }))}
+            placeholder="5000"
+          />
+        </div>
+        <div className="field" style={{ alignSelf: 'end' }}>
+          <button className="btn btn-primary" disabled={busy || !draft.name.trim()} onClick={publish}>
+            {busy ? <Spinner /> : <Icon name="add" size={16} />} Publish paused
+          </button>
+        </div>
+      </div>
+
+      {!rows?.length ? (
+        <Empty>Nothing has been published from here.</Empty>
+      ) : (
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Campaign</th><th>Status</th><th>Book</th><th className="num">Budget/day</th>
+                <th className="num">Spend</th><th className="num">Clicks</th><th className="num">Leads</th>
+                <th className="num">Cost/lead</th><th>As of</th><th />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((c) => (
+                <tr key={c.meta_id}>
+                  <td>
+                    <strong>{c.name}</strong>
+                    <div className="tiny muted">
+                      {c.meta_id}{c.simulated ? ' · simulated' : ''}
+                      {c.created_by_name ? ` · ${c.created_by_name}` : ''}
+                    </div>
+                  </td>
+                  <td>
+                    <span className={`state-pill ${c.status === 'PAUSED' ? 'state-exploring' : 'state-active'}`}>
+                      {c.status || '—'}
+                    </span>
+                  </td>
+                  <td className="small muted">{c.sales_org}</td>
+                  <td className="num">{money(c.daily_budget)}</td>
+                  <td className="num">{money(c.insights?.spend)}</td>
+                  <td className="num">{c.insights?.clicks ?? '—'}</td>
+                  <td className="num">{c.insights?.leads ?? '—'}</td>
+                  {/* What a lead is costing, which is the number this table
+                      exists to produce. Spend and leads separately are two
+                      figures somebody has to divide. */}
+                  <td className="num">{costPerLead(c.insights)}</td>
+                  <td className="small muted">
+                    {c.insights_at ? shortDate(c.insights_at) : 'never pulled'}
+                  </td>
+                  <td>
+                    <button className="btn-sm" onClick={() => refresh(c.meta_id)}>Pull spend</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* -------------------------------------------------------- 7 · audiences */
+
+/**
+ * Custom Audiences, and the rule they break.
+ *
+ * Pushing a segment to Meta sends hashed client identifiers to Meta's servers
+ * — client data leaving India, which contradicts the standing constraint this
+ * project was set up under. It is lawful under DPDP with consent and it is
+ * ordinary industry practice; it is still this firm's own rule, at a
+ * SEBI-regulated broker.
+ *
+ * So the conflict is stated on the screen that does it rather than in a
+ * document somebody read once, the capability is off unless deliberately
+ * enabled, and every push is listed here — what left the country is answerable
+ * from the same screen that sends it.
+ */
+function Audiences({ onError }) {
+  const [data, { loading, reload }] = useApi('/admin/connectors/meta/audiences');
+  const [draft, setDraft] = useState({ name: '', list_id: '' });
+  const [busy, setBusy] = useState(false);
+  if (loading || !data) return <Loading />;
+
+  const push = async () => {
+    setBusy(true);
+    try {
+      await api.post('/admin/connectors/meta/audiences', { name: draft.name.trim(), list_id: Number(draft.list_id) });
+      setDraft({ name: '', list_id: '' });
+      reload();
+    } catch (err) { onError(err.message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <section className="card section-card">
+      <div className="section-head">
+        <div>
+          <h2>Custom Audiences</h2>
+          <p>{data.enabled ? 'Enabled — pushes send hashed identifiers to Meta.' : 'Off, deliberately.'}</p>
+        </div>
+      </div>
+
+      <div className={`notice ${data.enabled ? 'notice-warn' : ''}`}>
+        <Icon name="public_off" />
+        <div className="tiny">
+          {data.residency_note}
+          {!data.enabled && (
+            <> Needs compliance sign-off and <code>CRM_META_AUDIENCES_ENABLED=true</code> in <code>server/.env</code>.</>
+          )}
+        </div>
+      </div>
+
+      {data.enabled && (
+        <div className="field-row">
+          <div className="field">
+            <label>Audience name</label>
+            <input
+              value={draft.name}
+              onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+              placeholder="SIP prospects — October"
+            />
+          </div>
+          <div className="field">
+            <label>From lead list</label>
+            <select value={draft.list_id} onChange={(e) => setDraft((d) => ({ ...d, list_id: e.target.value }))}>
+              <option value="">Choose…</option>
+              {data.lists.map((l) => (
+                <option key={l.id} value={l.id}>{l.name} ({l.members})</option>
+              ))}
+            </select>
+          </div>
+          <div className="field" style={{ alignSelf: 'end' }}>
+            <button
+              className="btn btn-primary"
+              disabled={busy || !draft.name.trim() || !draft.list_id}
+              onClick={push}
+            >
+              {busy ? <Spinner /> : <Icon name="upload" size={16} />} Push to Meta
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!data.pushes.length ? (
+        <Empty>Nothing has been pushed to Meta.</Empty>
+      ) : (
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Audience</th><th>List</th><th className="num">On the list</th>
+                <th className="num">Sent</th><th className="num">Matched</th><th>Pushed by</th><th>When</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.pushes.map((p) => (
+                <tr key={p.id}>
+                  <td><strong>{p.name}</strong></td>
+                  <td className="small muted">{p.list_name || '—'}</td>
+                  <td className="num">{p.considered}</td>
+                  {/* The gap between these two is everyone who opted out. */}
+                  <td className="num">{p.sent}</td>
+                  <td className="num">{p.matched ?? '—'}</td>
+                  <td className="small muted">{p.pushed_by_name || '—'}</td>
+                  <td className="small muted">{shortDate(p.at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* --------------------------------------------------------- 8 · messages */
+
+/**
+ * Messenger and Instagram conversations.
+ *
+ * Every one of these was being discarded before this: the sender was looked up
+ * against `leads.external_id`, which holds a Meta *leadgen* id, and a
+ * page-scoped sender id is never equal to one. The connector reported zero
+ * messages forever, which reads exactly like nobody having messaged.
+ *
+ * There is no automatic fix — Meta sends no phone number and no email with a
+ * DM, deliberately — so a person who recognises a conversation says who it is,
+ * and everything that sender has already sent is attached to that timeline at
+ * the same time.
+ */
+function Messages({ onError }) {
+  const [data, { loading, reload }] = useApi('/admin/connectors/meta/messages');
+  const [linking, setLinking] = useState(null);
+  if (loading || !data) return <Loading />;
+
+  return (
+    <section className="card section-card">
+      <div className="section-head">
+        <div>
+          <h2>Messenger &amp; Instagram</h2>
+          <p>
+            {data.unmatched
+              ? `${data.unmatched} conversation${data.unmatched === 1 ? '' : 's'} nobody has claimed`
+              : 'Every conversation is on a timeline'}
+          </p>
+        </div>
+        <button className="btn btn-ghost btn-sm" onClick={reload}>Refresh</button>
+      </div>
+
+      {!data.rows.length ? (
+        <Empty>Nothing has arrived from Messenger or Instagram yet.</Empty>
+      ) : (
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr><th>From</th><th>Platform</th><th>Last message</th><th className="num">Messages</th><th>When</th><th>Lead</th></tr>
+            </thead>
+            <tbody>
+              {data.rows.map((c) => (
+                <tr key={c.psid}>
+                  <td className="small muted"><code>{c.psid}</code></td>
+                  <td><span className="badge">{c.platform}</span></td>
+                  <td className="small">{c.last_body || <span className="muted">(attachment)</span>}</td>
+                  <td className="num">{c.messages}</td>
+                  <td className="small muted">{shortDate(c.last_at)}</td>
+                  <td>
+                    {c.lead_id
+                      ? <a href={`#/leads/${c.lead_id}`}>{c.lead_name}</a>
+                      : (
+                        <button className="btn-sm" onClick={() => setLinking(c)}>
+                          <Icon name="link" size={14} /> Say who this is
+                        </button>
+                      )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {linking && (
+        <LinkSender
+          conversation={linking}
+          onClose={() => setLinking(null)}
+          onDone={() => { setLinking(null); reload(); }}
+          onError={onError}
+        />
+      )}
+    </section>
+  );
+}
+
+/**
+ * Find the lead a conversation belongs to.
+ *
+ * Searched rather than typed as an id, because the person doing this is
+ * recognising a name, not looking one up. The search is the app's own, so it
+ * returns only leads this user is allowed to see — a link is a write onto
+ * somebody's timeline and must not be a way to reach a record you could not
+ * otherwise open.
+ */
+function LinkSender({ conversation, onClose, onDone, onError }) {
+  const [q, setQ] = useState('');
+  const [hits, setHits] = useState([]);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (q.trim().length < 2) { setHits([]); return undefined; }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await api.get(`/search?q=${encodeURIComponent(q.trim())}`);
+        setHits(res.groups?.Leads ?? []);
+      } catch { setHits([]); }
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [q]);
+
+  const link = async (leadId) => {
+    setBusy(true);
+    try {
+      const res = await api.post('/admin/connectors/meta/messages/link', {
+        psid: conversation.psid, lead_id: leadId,
+      });
+      onDone(res);
+    } catch (err) { onError(err.message); setBusy(false); }
+  };
+
+  return (
+    <Modal title="Who is this?" subtitle={`${conversation.platform} · ${conversation.messages} message(s)`} onClose={onClose}>
+      <p className="hint">
+        Meta sends no phone number or email with a message, so this link is made by
+        somebody who recognises the conversation. Everything this sender has already
+        sent joins the lead&rsquo;s timeline.
+      </p>
+
+      <blockquote className="dlt-text" style={{ marginBottom: 10 }}>
+        <code>{conversation.last_body || '(attachment)'}</code>
+      </blockquote>
+
+      <div className="field">
+        <label>Find the lead</label>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, mobile or client code" autoFocus />
+      </div>
+
+      {q.trim().length >= 2 && !hits.length && <Empty>Nothing matches.</Empty>}
+
+      <div className="stack" style={{ gap: 1 }}>
+        {hits.map((h) => (
+          <button key={h.id} type="button" className="btn-ghost row-between" disabled={busy} onClick={() => link(h.id)}>
+            <span><strong>{h.title}</strong> <span className="tiny muted">{h.subtitle}</span></span>
+            <span className="badge">{h.badge}</span>
+          </button>
+        ))}
+      </div>
+    </Modal>
   );
 }
