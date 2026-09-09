@@ -67,6 +67,19 @@ export async function probeAdmin(slug, options = {}) {
   const { token } = await res.json();
   const user = one('SELECT id FROM users WHERE email = ?', [email]);
 
+  /*
+   * NOT cleaned up from a `process.on('exit')` handler, which is the obvious
+   * place and does not work here: a node:sqlite write during exit teardown
+   * aborts the process on Windows with
+   *
+   *   Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src\win\async.c
+   *
+   * — a native crash after the tests have already reported, which reads as the
+   * suite failing for no visible reason. The accounts are swept by the seed
+   * instead, which runs at the top of every `npm test`; `cleanup()` is here for
+   * a file that wants its account gone sooner.
+   */
+
   return {
     token,
     email,

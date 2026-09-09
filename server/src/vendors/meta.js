@@ -102,10 +102,19 @@ const FIELD_ALIASES = {
 };
 
 export function normaliseLead(raw) {
-  const answers = {};
+  /* Every answer, under the name the advertiser gave the question. What each
+     one means is decided in engine/leadads.js against a map that can be edited,
+     rather than here against a constant -- a form asking "Which product
+     interests you?" used to have that answer read and then dropped, which is
+     the one question on the form that says why the person is interested. */
+  const asked = {};
   for (const f of raw?.field_data ?? []) {
-    const key = FIELD_ALIASES[f.name] ?? f.name;
-    answers[key] = Array.isArray(f.values) ? f.values[0] : f.values;
+    asked[f.name] = Array.isArray(f.values) ? f.values[0] : f.values;
+  }
+
+  const answers = {};
+  for (const [name, value] of Object.entries(asked)) {
+    answers[FIELD_ALIASES[name] ?? name] = value;
   }
 
   if (!answers.name && (answers.first_name || answers.last_name)) {
@@ -119,6 +128,9 @@ export function normaliseLead(raw) {
   }
 
   return {
+    /* The raw questions, for the map to interpret. The five columns below stay
+       as they were so everything that already reads this shape keeps working. */
+    answers: asked,
     name: answers.name?.trim() || 'Unnamed Meta lead',
     mobile: answers.mobile || null,
     email: answers.email || null,
@@ -164,6 +176,10 @@ export async function fetchLead(leadgenId) {
         { name: 'phone_number', values: [`+9198${String(Date.now()).slice(-8)}`] },
         { name: 'email', values: ['simulated.meta@example.com'] },
         { name: 'city', values: ['Mumbai'] },
+        /* A question the advertiser wrote. Present in the simulator because it
+           is the case the old mapping silently dropped, and a simulator that
+           only exercises the easy path proves the easy path. */
+        { name: 'which_product_interests_you', values: ['Mutual Funds'] },
       ],
       form_id: 'sim-form', page_id: 'sim-page', platform: 'facebook',
     });

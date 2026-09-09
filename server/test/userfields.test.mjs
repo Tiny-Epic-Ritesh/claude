@@ -189,5 +189,9 @@ await test('turning a requirement off leaves no rule behind', () => {
   assert.equal(left.length, 0, `${left.length} user rules left behind: ${left.map((r) => r.name).join(', ')}`);
 });
 
+/* Give the borrowed administrator back, so it does not turn up in every
+   owner and assignee picker in the app. */
+PROBE.cleanup();
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exitCode = failed ? 1 : 0;

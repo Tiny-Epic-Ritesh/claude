@@ -27,6 +27,19 @@ const ago = (d, h = 0) => new Date(Date.now() - d * 864e5 - h * 36e5).toISOStrin
 const ahead = (d, h = 0) => new Date(Date.now() + d * 864e5 + h * 36e5).toISOString().slice(0, 19).replace('T', ' ');
 const pick = (arr, i) => arr[i % arr.length];
 
+/*
+ * Throwaway test accounts from previous runs.
+ *
+ * test/helpers/probeadmin.mjs gives each test file its own administrator so no
+ * file spends the shared account's login budget. They are harmless but they
+ * persist, and they turn up in every owner, assignee and approver picker in
+ * the app as "Probe bulkupdate" — twelve of them had accumulated before this
+ * swept them. Done here because the seed runs at the top of every npm test,
+ * and because a node:sqlite write in a process exit handler aborts the
+ * process on Windows.
+ */
+run("DELETE FROM users WHERE email LIKE 'probe-%@bonanza.test'");
+
 console.log('Clearing…');
 for (const t of [
   'sessions', 'notifications', 'audit_log', 'rule_runs', 'rules', 'campaigns', 'lead_list_members', 'lead_lists',

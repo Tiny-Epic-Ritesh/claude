@@ -534,7 +534,171 @@ await test('the limits the builder shows are the limits the server holds', async
   assert(spec.body.merge_fields.length, 'no merge fields offered to the builder');
 });
 
+/* ------------------------------------------------------ the book boundary */
+
+/**
+ * A template belongs to one business, and every route that reads or writes one
+ * says so.
+ *
+ * The senders were scoped when the SMS builder landed: BONANZ belongs to
+ * Bonanza and BIGULX to Bigul, and a template naming the other one is refused
+ * above. That is why this gap survived — delivery could not cross the boundary,
+ * so the screen looked safe, and `templates` quietly had no sales_org at all.
+ * What crossed was the copy: every admin and marketing manager of either
+ * business read, edited and deleted the other's client-facing wording.
+ *
+ * These are WhatsApp templates deliberately. WhatsApp carries no DLT header, so
+ * the sender check does not fire and nothing here is riding on it — each test
+ * below fails if, and only if, its own guard is removed.
+ */
+
+const bigulAdmin = await probeAdmin('templates_book', { sales_org: 'BIGUL' });
+
+const asBigul = async (method, path, body) => {
+  const res = await fetch(`${BASE}/api${path}`, {
+    method,
+    headers: bigulAdmin.headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  return { status: res.status, body: await res.json().catch(() => null) };
+};
+
+/* Made by each probe rather than picked out of the seed, so the destructive
+   tests below own the rows they aim at. */
+let bonanzaTemplate = null;
+let bigulTemplate = null;
+let bigulRows = [];
+
+await test("a new template is created in its author's book", async () => {
+  /* The mistake POST /admin/users shipped: an INSERT that does not name
+     sales_org takes the column default, so everything a Bigul administrator
+     creates lands in Bonanza's book — invisible to its author, readable by the
+     other business. Both directions are asserted, because a default that
+     happens to be right for one of them proves nothing. */
+  const mine = await call('POST', '/admin/templates', {
+    ...WA, name: 'templates_probe_book_bonanza', body: 'Hi {{name}}, a Bonanza note.',
+  });
+  assert.equal(mine.status, 201, `create failed: ${JSON.stringify(mine.body)}`);
+  bonanzaTemplate = mine.body.id;
+
+  const theirs = await asBigul('POST', '/admin/templates', {
+    ...WA, name: 'templates_probe_book_bigul', body: 'Hi {{name}}, a Bigul note.',
+  });
+  assert.equal(theirs.status, 201, `create failed: ${JSON.stringify(theirs.body)}`);
+  bigulTemplate = theirs.body.id;
+
+  assert.equal(one('SELECT sales_org FROM templates WHERE id = ?', [bonanzaTemplate]).sales_org, 'BONANZA');
+  const wrote = one('SELECT sales_org FROM templates WHERE id = ?', [bigulTemplate]).sales_org;
+  assert.equal(wrote, 'BIGUL', `a Bigul administrator created a ${wrote} template`);
+});
+
+await test("the template list shows only the reader's own book", async () => {
+  const res = await asBigul('GET', '/admin/templates');
+  assert.equal(res.status, 200, `the list failed: ${JSON.stringify(res.body)}`);
+  bigulRows = res.body;
+
+  const crossed = bigulRows.filter((t) => t.sales_org !== 'BIGUL');
+  assert.equal(crossed.length, 0,
+    `a Bigul administrator was shown ${crossed.map((t) => `"${t.name}" (${t.sales_org})`).join(', ')}`);
+
+  /* An empty list would pass the assertion above for the wrong reason. */
+  assert(bigulRows.some((t) => t.id === bigulTemplate),
+    'the Bigul administrator cannot see their own template, so the list proves nothing');
+});
+
+await test('the channel tab counts follow the scoped list', () => {
+  /* Templates.jsx derives the tab counts from the rows the list returns
+     (`rows.reduce(...)`), so it needs no scoping of its own — but "it follows
+     automatically" is a claim about a number on a screen, and this is the
+     number. Recomputed here exactly as the component does it. */
+  const counts = bigulRows.reduce((acc, t) => ({ ...acc, [t.channel]: (acc[t.channel] ?? 0) + 1 }), {});
+  const shown = Object.values(counts).reduce((a, b) => a + b, 0);
+  const held = one("SELECT COUNT(*) n FROM templates WHERE sales_org = 'BIGUL'").n;
+
+  assert.equal(shown, held,
+    `the tabs would total ${shown} across ${JSON.stringify(counts)}, but Bigul owns ${held} templates`);
+});
+
+await test('a template in the other book cannot be edited', async () => {
+  /* Scoping the list is not scoping the record. Ids are sequential, so a
+     template the screen no longer shows is still reachable by number — and a
+     template is the text that reaches clients. */
+  const before = one('SELECT name, body FROM templates WHERE id = ?', [bonanzaTemplate]);
+
+  const res = await asBigul('PATCH', `/admin/templates/${bonanzaTemplate}`, {
+    body: 'Hi {{name}}, rewritten across the book.',
+  });
+  assert.equal(res.status, 403, `a Bigul administrator edited a Bonanza template: HTTP ${res.status}`);
+
+  const after = one('SELECT name, body FROM templates WHERE id = ?', [bonanzaTemplate]);
+  assert.deepEqual(after, before, 'the edit landed anyway, which is the half that matters');
+});
+
+await test('a template in the other book cannot be deleted', async () => {
+  const res = await asBigul('DELETE', `/admin/templates/${bonanzaTemplate}`);
+  assert.equal(res.status, 403, `a Bigul administrator deleted a Bonanza template: HTTP ${res.status}`);
+  assert(one('SELECT id FROM templates WHERE id = ?', [bonanzaTemplate]), 'the row went anyway');
+
+  /* Refused before the in-use check, not after. "Still used by 3 campaigns"
+     counts the other book's campaigns, which is a fact about their business. */
+  assert(!/still used by/i.test(res.body?.error ?? ''), `the refusal counted the other book's campaigns: ${res.body?.error}`);
+});
+
+/* ------------------------------------------- the same boundary, other screens */
+
+/**
+ * The admin list is not the only place template text is handed out.
+ *
+ * Adding the column is what made these two wrong: an RM's picker and the email
+ * composer both selected every approved template in the table, which was one
+ * book's worth of copy offered to the other's staff.
+ */
+
+await test('the RM template picker offers only their own book', async () => {
+  const res = await asBigul('GET', '/meta');
+  assert.equal(res.status, 200, `/meta failed: ${JSON.stringify(res.body)}`);
+
+  const ids = res.body.templates.map((t) => t.id);
+  assert(!ids.includes(bonanzaTemplate), "a Bigul RM was offered Bonanza's template");
+
+  /* The seeded copy is the point: it signs off as "Bonanza Portfolio Ltd". */
+  const bonanzaSeeded = one("SELECT id FROM templates WHERE name = 'PMS overview'");
+  assert(!ids.includes(bonanzaSeeded?.id), 'a Bigul RM was offered the Bonanza PMS note');
+});
+
+await test('the email composer offers only their own book', async () => {
+  const lead = one("SELECT id FROM leads WHERE sales_org = 'BIGUL' AND deleted_at IS NULL ORDER BY id LIMIT 1");
+  assert(lead, 'no Bigul lead in the seed, so this proves nothing');
+
+  const res = await asBigul('GET', `/email/compose/${lead.id}`);
+  assert.equal(res.status, 200, `compose failed: ${JSON.stringify(res.body)}`);
+
+  const offered = res.body.templates.map((t) => t.name);
+  assert(!offered.includes('PMS overview') && !offered.includes('Brokerage plan comparison'),
+    `a Bigul RM was offered Bonanza's email copy: ${offered.join(', ')}`);
+});
+
+await test("an email template is saved into its author's book", async () => {
+  /* The other INSERT that did not name the column. An org-scoped template
+     saved from the composer by a Bigul RM became a Bonanza template. */
+  const made = await asBigul('POST', '/email/templates', {
+    name: 'templates_probe_book_email', scope: 'org',
+    subject: 'A Bigul note', body: '<p>Hi {{name}}</p>',
+  });
+  assert.equal(made.status, 201, `save failed: ${JSON.stringify(made.body)}`);
+
+  const wrote = one('SELECT sales_org FROM templates WHERE id = ?', [made.body.id]).sales_org;
+  assert.equal(wrote, 'BIGUL', `a Bigul RM saved a ${wrote} template`);
+});
+
 clean();
+
+/* The probe accounts too -- this file makes three, two of them inside tests
+   that need a Bigul administrator. Left behind they turn up in every owner and
+   assignee picker in the app as "Probe templates_bigul". */
+run("DELETE FROM users WHERE email LIKE 'probe-templates%@bonanza.test'");
+
+bigulAdmin.cleanup();
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exitCode = failed ? 1 : 0;

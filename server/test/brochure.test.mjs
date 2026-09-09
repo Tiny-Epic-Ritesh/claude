@@ -212,5 +212,9 @@ await test('removing it takes the bytes with it', async () => {
 
 clean();
 
+/* Give the borrowed administrator back, so it does not turn up in every
+   owner and assignee picker in the app. */
+PROBE.cleanup();
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exitCode = failed ? 1 : 0;

@@ -19,6 +19,9 @@ import { DEFAULT_SLA } from '../engine/sla.js';
 import { checkConsent } from '../engine/consent.js';
 import { MAY_RECEIVE_CAMPAIGN, normaliseKind } from '../engine/leadlists.js';
 import * as meta from '../vendors/meta.js';
+import {
+  MAPPABLE, isMappable, listForms, unmappedQuestions, deliveries,
+} from '../engine/leadads.js';
 import { healthReport } from '../engine/conflicts.js';
 import {
   ARTEFACTS, snapshot, versionsOf, byId as versionById, diff as versionDiff,
@@ -1364,6 +1367,134 @@ router.get('/connectors/meta', requirePermission('admin.system'), (_req, res) =>
       { key: 'META_AD_ACCOUNT_ID', label: 'Ad account id (for publishing ads)', have: Boolean(process.env.META_AD_ACCOUNT_ID) },
     ],
   });
+});
+
+/* ------------------------------------------------- lead ads console (P3-18) */
+
+/**
+ * The forms that have actually sent us leads.
+ *
+ * Registered on arrival rather than listed from Meta, so this is what is in
+ * use rather than what exists in Ads Manager. Scoped to the books the user
+ * holds, like every other list.
+ */
+router.get('/connectors/meta/forms', requirePermission('admin.system'), (req, res) => {
+  res.json({
+    forms: listForms(orgsFor(req.user)),
+    orgs: all('SELECT code, name FROM sales_orgs ORDER BY sort_order'),
+    owners: all("SELECT id, name, sales_org FROM users WHERE active = 1 AND role != 'superadmin' ORDER BY name"),
+    /* With the book, because both books carry a "Mutual Funds" and a
+       "Global Investing" — an unlabelled list shows each twice and there is
+       no way to tell which is which. */
+    products: all('SELECT id, name, sales_org FROM product_types ORDER BY name'),
+  });
+});
+
+/**
+ * Which book a form feeds, and where its leads land.
+ *
+ * The book is the field that matters. Meta leads were all being written into
+ * the first sales org, so a Bigul page's leads arrived in Bonanza's book and
+ * were owned and called by the wrong RMs. Changing it here changes it for
+ * every lead that arrives from that form afterwards -- leads already created
+ * are not moved, because moving somebody else's client between books silently
+ * is worse than leaving a mistake somebody can see.
+ */
+router.patch('/connectors/meta/forms/:formId', requirePermission('admin.system'), (req, res) => {
+  const form = one('SELECT * FROM meta_lead_form WHERE form_id = ?', [req.params.formId]);
+  if (!form) return res.status(404).json({ error: 'That form has not sent us anything yet' });
+
+  if (!mayUseOrg(req.user, form.sales_org)) {
+    return res.status(403).json({ error: 'That form belongs to a book you do not hold' });
+  }
+
+  const { sales_org: org, source_label: label, owner_id: ownerId, product_type_id: productId, active, name } = req.body ?? {};
+
+  if (org !== undefined && !mayUseOrg(req.user, org)) {
+    return res.status(403).json({ error: `You cannot move a form into ${org}` });
+  }
+  if (ownerId) {
+    const owner = one('SELECT * FROM users WHERE id = ? AND active = 1', [ownerId]);
+    const intoOrg = org ?? form.sales_org;
+    if (!owner) return res.status(400).json({ error: 'That owner does not exist' });
+    /* An owner in the other book would be assigned leads they cannot see. */
+    if (owner.sales_org !== intoOrg) {
+      return res.status(400).json({ error: `${owner.name} is in ${owner.sales_org} and could not see leads from a ${intoOrg} form` });
+    }
+  }
+
+  const sets = [];
+  const params = [];
+  for (const [column, value] of [
+    ['sales_org', org], ['source_label', label], ['owner_id', ownerId],
+    ['product_type_id', productId], ['active', active === undefined ? undefined : (active ? 1 : 0)],
+    ['name', name],
+  ]) {
+    if (value !== undefined) { sets.push(`${column} = ?`); params.push(value === '' ? null : value); }
+  }
+  if (!sets.length) return res.json(form);
+
+  params.push(form.id);
+  run(`UPDATE meta_lead_form SET ${sets.join(', ')} WHERE id = ?`, params);
+  audit(req.user.id, 'meta_form_updated', 'meta_lead_form', form.id, { form_id: form.form_id, ...req.body });
+  return res.json(one('SELECT * FROM meta_lead_form WHERE id = ?', [form.id]));
+});
+
+/**
+ * What the questions on a form mean.
+ *
+ * `*` is the default map every form falls back to, which is what the vendor
+ * module's constant used to be. `unmapped` is the working list: questions that
+ * have genuinely arrived and nobody has said what to do with. Their answers
+ * are kept as a note in the meantime rather than dropped.
+ */
+router.get('/connectors/meta/field-map', requirePermission('admin.system'), (req, res) => {
+  const formId = req.query.form_id || '*';
+  res.json({
+    form_id: formId,
+    fields: MAPPABLE,
+    rows: all('SELECT * FROM meta_field_map WHERE form_id = ? ORDER BY question', [formId]),
+    defaults: formId === '*' ? [] : all("SELECT * FROM meta_field_map WHERE form_id = '*' ORDER BY question"),
+    unmapped: unmappedQuestions(),
+  });
+});
+
+router.put('/connectors/meta/field-map', requirePermission('admin.system'), (req, res) => {
+  const { form_id: formId = '*', question, crm_field: crmField } = req.body ?? {};
+  if (!String(question ?? '').trim()) return res.status(400).json({ error: 'Which question?' });
+
+  /* Null is a real answer -- it means "keep it as a note", which is different
+     from nobody having decided yet. Anything else has to be a column it is
+     safe to fill from a form designed outside the company. */
+  if (crmField && !isMappable(crmField)) {
+    return res.status(400).json({ error: `An answer cannot be written into "${crmField}"` });
+  }
+
+  run(
+    `INSERT INTO meta_field_map (form_id, question, crm_field) VALUES (?,?,?)
+     ON CONFLICT(form_id, question) DO UPDATE SET crm_field = excluded.crm_field`,
+    [formId, question.trim(), crmField || null],
+  );
+  audit(req.user.id, 'meta_field_mapped', 'meta_field_map', null, { form_id: formId, question, crm_field: crmField });
+  return res.json(one('SELECT * FROM meta_field_map WHERE form_id = ? AND question = ?', [formId, question.trim()]));
+});
+
+router.delete('/connectors/meta/field-map', requirePermission('admin.system'), (req, res) => {
+  const { form_id: formId, question } = req.query;
+  if (formId === '*') return res.status(400).json({ error: 'The default map is what everything falls back to' });
+  run('DELETE FROM meta_field_map WHERE form_id = ? AND question = ?', [formId, question]);
+  return res.json({ ok: true });
+});
+
+/**
+ * What happened to each delivery.
+ *
+ * Without this the only evidence of the connector working is leads appearing,
+ * so "it has stopped" and "everyone who filled the form was already a client"
+ * look identical. Duplicates and failures are rows here, not silence.
+ */
+router.get('/connectors/meta/deliveries', requirePermission('admin.system'), (_req, res) => {
+  res.json(deliveries(Number(_req.query.limit) || 50));
 });
 
 /** Recent leads that arrived from Meta, so the connector can be seen working. */

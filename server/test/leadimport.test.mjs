@@ -124,5 +124,9 @@ await test('a column the importer does not know is ignored, not fatal', async ()
   assert.equal((await res.json()).valid, 3, 'unknown columns cost valid rows');
 });
 
+/* Give the borrowed administrator back, so it does not turn up in every
+   owner and assignee picker in the app. */
+PROBE.cleanup();
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exitCode = failed ? 1 : 0;

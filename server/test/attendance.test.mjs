@@ -298,5 +298,9 @@ await test('leave_open really does leave it open', async () => {
 
 await cleanup();
 
+/* And the borrowed administrator, which `cleanup` above does not cover — it
+   deals with this file's `attend-` users. */
+PROBE.cleanup();
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exitCode = failed ? 1 : 0;

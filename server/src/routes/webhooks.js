@@ -23,6 +23,7 @@ import * as quickcall from '../vendors/quickcall.js';
 import * as aisensy from '../vendors/aisensy.js';
 import * as bonanzakyc from '../vendors/bonanzakyc.js';
 import * as meta from '../vendors/meta.js';
+import { formFor, applyMap, recordDelivery } from '../engine/leadads.js';
 import { applyScore } from '../engine/rules.js';
 import { assignLead } from '../engine/assignment.js';
 import { kycStatusSql, kycStatusFor } from '../engine/kycstatus.js';
@@ -297,6 +298,14 @@ router.post('/meta', guard('meta', meta.verifyWebhook), async (req, res) => {
         if (createMetaLead(lead, req)) results.leads += 1;
         else results.skipped += 1;
       } catch (err) {
+        /* A delivery that threw is the one most worth recording: Meta will not
+           resend it, so this row is the only evidence it ever arrived. */
+        recordDelivery({
+          leadgenId: change.value?.leadgen_id,
+          formId: change.value?.form_id,
+          outcome: 'failed',
+          detail: { error: err.message },
+        });
         results.errors.push(err.message);
       }
     }
@@ -327,30 +336,66 @@ router.post('/meta', guard('meta', meta.verifyWebhook), async (req, res) => {
  * duplicate for an RM to reconcile.
  */
 function createMetaLead(lead) {
+  /* The form decides the book. Registered on first sight, so the console lists
+     the forms that are really sending leads rather than the ones somebody
+     remembered to add. */
+  const form = formFor(lead.form_id, lead.page_id);
+  const org = form?.sales_org ?? SALES_ORGS[0];
+
+  /* The advertiser's own questions, kept. `answers` carries every field on the
+     form; the map says which are lead columns and which are notes. */
+  const { fields, notes } = applyMap(lead.answers ?? {}, lead.form_id);
+  const unmapped = notes.filter((n) => !n.known).map((n) => n.question);
+
+  const record = (outcome, leadId = null, extra = {}) => recordDelivery({
+    leadgenId: lead.external_id, formId: lead.form_id, outcome, leadId,
+    detail: { platform: lead.platform, unmapped, ...extra },
+  });
+
   if (lead.external_id) {
     const seen = one('SELECT id FROM leads WHERE external_id = ?', [lead.external_id]);
-    if (seen) return false;
+    if (seen) {
+      /* Meta retried a delivery we already handled. Recorded so the console can
+         say so, rather than counting as silence. */
+      record('duplicate', seen.id);
+      return false;
+    }
   }
-  if (lead.mobile) {
-    const seen = one('SELECT id FROM leads WHERE mobile = ? AND deleted_at IS NULL', [lead.mobile]);
+
+  /* Deduplicated within the book, not across it. The same person can be a
+     Bonanza lead and a Bigul lead -- they are different relationships with
+     different RMs, and collapsing them hides one of them from the book that
+     owns it. */
+  if (fields.mobile) {
+    const seen = one(
+      'SELECT id FROM leads WHERE mobile = ? AND sales_org = ? AND deleted_at IS NULL',
+      [fields.mobile, org],
+    );
     if (seen) {
       // Not a new lead, but the fact they responded to an ad is worth knowing.
       run(
         `INSERT INTO activities (lead_id, type, direction, subject, body, user_id)
          VALUES (?, 'Note', 'system', ?, ?, NULL)`,
         [seen.id, `${lead.platform} lead form submitted again`,
-          `Form ${lead.form_id ?? '—'}${lead.campaign_name ? ` · ${lead.campaign_name}` : ''}`],
+          [`Form ${form?.name || lead.form_id || '—'}`, lead.campaign_name,
+            ...notes.map((n) => `${n.question}: ${n.value}`)].filter(Boolean).join(' · ')],
       );
+      record('repeat', seen.id);
       return false;
     }
   }
 
-  const source = lead.platform === 'Instagram' ? 'Instagram' : 'Facebook Lead Ads';
+  const source = form?.source_label
+    || (lead.platform === 'Instagram' ? 'Instagram' : 'Facebook Lead Ads');
+
   const info = run(
-    `INSERT INTO leads (name, mobile, email, city, state, source, stage, sales_org, external_id, created_at)
-     VALUES (?,?,?,?,?,?,'New',?,?, datetime('now'))`,
-    [lead.name, lead.mobile, lead.email, lead.city, lead.state, source,
-      SALES_ORGS[0], lead.external_id],
+    `INSERT INTO leads (name, mobile, email, city, state, pan, language, risk_profile,
+                        source, stage, sales_org, owner_id, external_id, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?, 'New', ?,?,?, datetime('now'))`,
+    [fields.name || lead.name, fields.mobile ?? null, fields.email ?? null,
+      fields.city ?? null, fields.state ?? null, fields.pan ?? null,
+      fields.language ?? null, fields.risk_profile ?? null,
+      source, org, form?.owner_id ?? null, lead.external_id],
   );
   const leadId = Number(info.lastInsertRowid);
 
@@ -360,18 +405,26 @@ function createMetaLead(lead) {
     [leadId, `Arrived from ${source}`,
       [lead.campaign_name && `Campaign: ${lead.campaign_name}`,
         lead.ad_id && `Ad: ${lead.ad_id}`,
-        lead.form_id && `Form: ${lead.form_id}`].filter(Boolean).join(' · ') || 'No campaign detail supplied'],
+        form?.name && `Form: ${form.name}`,
+        !form?.name && lead.form_id && `Form: ${lead.form_id}`,
+        /* The answers with nowhere structured to go. Usually the only thing on
+           the form that says why this person is interested. */
+        ...notes.map((n) => `${n.question}: ${n.value}`),
+      ].filter(Boolean).join(' · ') || 'No campaign detail supplied'],
   );
 
-  // Routed by the same assignment rules as any other inbound lead — the seed
-  // already carries "Facebook Lead Ads → Digital Desk", which now actually
-  // has leads to act on.
-  try {
-    assignLead(one('SELECT * FROM leads WHERE id = ?', [leadId]));
-  } catch { /* an unrouted lead is still a lead; it lands unassigned */ }
+  /* A form with its own owner has already said where the lead goes. Otherwise
+     it is routed by the same assignment rules as any other inbound lead -- the
+     seed already carries "Facebook Lead Ads → Digital Desk". */
+  if (!form?.owner_id) {
+    try {
+      assignLead(one('SELECT * FROM leads WHERE id = ?', [leadId]));
+    } catch { /* an unrouted lead is still a lead; it lands unassigned */ }
+  }
 
+  record('created', leadId, { sales_org: org });
   audit(null, 'lead_created_from_meta', 'lead', leadId, {
-    source, form_id: lead.form_id, campaign: lead.campaign_name,
+    source, sales_org: org, form_id: lead.form_id, campaign: lead.campaign_name,
   });
   return true;
 }

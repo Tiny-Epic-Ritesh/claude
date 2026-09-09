@@ -245,5 +245,9 @@ clean();
 run('DELETE FROM import_failure WHERE run_id IN (SELECT id FROM import_run WHERE filename = ?)', ['probe.csv']);
 run('DELETE FROM import_run WHERE filename = ?', ['probe.csv']);
 
+/* Give the borrowed administrator back, so it does not turn up in every
+   owner and assignee picker in the app. */
+PROBE.cleanup();
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exitCode = failed ? 1 : 0;

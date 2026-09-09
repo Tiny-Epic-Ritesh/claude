@@ -130,6 +130,55 @@ CREATE TABLE IF NOT EXISTS templates (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS meta_lead_form (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  -- Meta's own id for the form. Forms are registered the first time one of
+  -- their leads arrives, so the console lists what is really in use rather
+  -- than what somebody remembered to add.
+  form_id       TEXT NOT NULL UNIQUE,
+  page_id       TEXT,
+  name          TEXT,
+  -- Which book this form feeds. Bigul runs its own pages, and a lead from one
+  -- of them belongs in Bigul's book, not in whichever org happens to sort
+  -- first.
+  sales_org     TEXT NOT NULL DEFAULT 'BONANZA',
+  -- What to write in leads.source. Left null to use the platform default.
+  source_label  TEXT,
+  owner_id      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  product_type_id INTEGER REFERENCES product_types(id) ON DELETE SET NULL,
+  active        INTEGER NOT NULL DEFAULT 1,
+  first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_seen_at  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS meta_field_map (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  -- '*' is the map applied to every form that has no map of its own, which is
+  -- what the old hardcoded alias table was.
+  form_id    TEXT NOT NULL DEFAULT '*',
+  question   TEXT NOT NULL,
+  -- A lead column, or null to keep the answer as a note rather than dropping
+  -- it. An answer somebody typed is worth keeping even when there is nowhere
+  -- structured to put it.
+  crm_field  TEXT,
+  UNIQUE(form_id, question)
+);
+
+CREATE TABLE IF NOT EXISTS meta_delivery (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  leadgen_id  TEXT,
+  form_id     TEXT,
+  -- created / duplicate / repeat / failed. Kept even when nothing was created,
+  -- because "nothing arrived" and "everything was a duplicate" look identical
+  -- from the lead list and mean very different things.
+  outcome     TEXT NOT NULL,
+  lead_id     INTEGER,
+  detail      TEXT,
+  at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_meta_delivery_at ON meta_delivery(at DESC);
+
 CREATE TABLE IF NOT EXISTS dlt_header (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   -- The six-character sender ID as registered. Unique across both entities:
@@ -2356,6 +2405,19 @@ CREATE INDEX IF NOT EXISTS idx_rule_failures ON rule_failures(resolved_at, creat
 /* The registered senders. The entity ids are filled in from the DLT portal --
    left null rather than guessed, because a wrong Principal Entity id is a
    campaign that is accepted here and dropped by every operator. */
+/* The default field map. This was a constant in the vendor module; it is rows
+   now so a form asking something else can be handled without a deploy. */
+for (const [question, crmField] of [
+  ['full_name', 'name'], ['first_name', 'first_name'], ['last_name', 'last_name'],
+  ['email', 'email'], ['phone_number', 'mobile'], ['phone', 'mobile'],
+  ['city', 'city'], ['state', 'state'], ['company_name', null],
+]) {
+  db.prepare(
+    `INSERT INTO meta_field_map (form_id, question, crm_field) VALUES ('*', @question, @crmField)
+     ON CONFLICT(form_id, question) DO NOTHING`,
+  ).run({ question, crmField });
+}
+
 for (const h of [
   { header: 'BONANZ', sales_org: 'BONANZA' },
   { header: 'BIGULX', sales_org: 'BIGUL' },
