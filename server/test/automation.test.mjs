@@ -16,14 +16,27 @@
 
 import { strict as assert } from 'node:assert';
 import { all, one, run } from '../src/db.js';
+import { probeAdmin } from './helpers/probeadmin.mjs';
 import {
-  TRIGGERS, STEP_KINDS, isTrigger, enter, advance, tick, fire, report, whatRunsOn,
+  TRIGGERS, STEP_KINDS, isTrigger, enter, advance, tick, fire, report, whatRunsOn, validate,
 } from '../src/engine/automation.js';
+
+const BASE = process.env.TEST_BASE || 'http://localhost:4100';
+const PROBE = await probeAdmin('automation');
+
+const call = async (method, path, body) => {
+  const res = await fetch(`${BASE}/api${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${PROBE.token}` },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  return { status: res.status, body: await res.json().catch(() => null) };
+};
 
 let passed = 0;
 let failed = 0;
-const test = (name, fn) => {
-  try { fn(); passed += 1; console.log(`  ok   ${name}`); }
+const test = async (name, fn) => {
+  try { await fn(); passed += 1; console.log(`  ok   ${name}`); }
   catch (err) { failed += 1; console.log(`  FAIL ${name}\n       ${err.message}`); }
 };
 
@@ -83,7 +96,7 @@ const marker = () => one('SELECT risk_profile FROM leads WHERE id = ?', [LEAD]).
 
 /* -------------------------------------------------------- the vocabulary */
 
-test('the trigger list matches what the business actually uses', () => {
+await test('the trigger list matches what the business actually uses', () => {
   /* Cross-checked against the LeadSquared audit: Lead Created, Lead Updated,
      Activity Added, At Regular Intervals, On WorkDay End and Sub Automation are
      all live in the tenant today. */
@@ -97,7 +110,7 @@ test('the trigger list matches what the business actually uses', () => {
 
 /* ------------------------------------------------------------ the walk */
 
-test('a lead walks the whole flow in one pass', () => {
+await test('a lead walks the whole flow in one pass', () => {
   /* Ten actions should not take ten ticks. Only a wait stops the walk. */
   const a = build('probe_auto_walk', 'lead.created', [
     noteAction('step-one'),
@@ -113,7 +126,7 @@ test('a lead walks the whole flow in one pass', () => {
   assert.deepEqual(steps.map((s) => s.outcome), ['entered', 'done', 'done', 'exited'], JSON.stringify(steps));
 });
 
-test('a branch takes the else path when the condition fails', () => {
+await test('a branch takes the else path when the condition fails', () => {
   const a = build('probe_auto_branch', 'lead.created', [
     {
       kind: 'branch',
@@ -135,7 +148,7 @@ test('a branch takes the else path when the condition fails', () => {
 
 /* -------------------------------------------------------------- waiting */
 
-test('a wait parks the lead on the next step, not the wait itself', () => {
+await test('a wait parks the lead on the next step, not the wait itself', () => {
   /* The subtle one. If the run stays pointed at the wait card it re-waits every
      tick and never moves — an automation that looks alive and does nothing. */
   const a = build('probe_auto_wait', 'lead.created', [
@@ -149,14 +162,14 @@ test('a wait parks the lead on the next step, not the wait itself', () => {
   assert(r.resume_at, 'no wake-up time was set');
 });
 
-test('a wait that is not due yet is left alone', () => {
+await test('a wait that is not due yet is left alone', () => {
   const before = one("SELECT COUNT(*) n FROM automation_run WHERE status = 'waiting'").n;
   tick();
   const after = one("SELECT COUNT(*) n FROM automation_run WHERE status = 'waiting'").n;
   assert.equal(after, before, 'the tick woke a run that was not due');
 });
 
-test('a wait that has come due resumes and finishes', () => {
+await test('a wait that has come due resumes and finishes', () => {
   /* Wound back rather than slept through, because a test that waits 48 hours is
      a test nobody runs. */
   const r = one("SELECT * FROM automation_run WHERE automation_id = (SELECT id FROM automation WHERE name = 'probe_auto_wait') ORDER BY id DESC LIMIT 1");
@@ -171,7 +184,7 @@ test('a wait that has come due resumes and finishes', () => {
     'the step after the wait never ran');
 });
 
-test('the run survives a restart, because the position is in the database', () => {
+await test('the run survives a restart, because the position is in the database', () => {
   /* There is no in-memory timer to lose. A fresh read of the row is all a new
      process needs to carry on. */
   const a = build('probe_auto_restart', 'lead.created', [
@@ -191,7 +204,7 @@ test('the run survives a restart, because the position is in the database', () =
 
 /* ------------------------------------------------------- the safeguards */
 
-test('a lead already inside an automation does not enter it again', () => {
+await test('a lead already inside an automation does not enter it again', () => {
   /* The safeguard that matters most: 8.5 million Activity Added triggers in the
      legacy tenant, and a client on the other end of every message. */
   const a = build('probe_auto_reentry', 'activity.added', [
@@ -207,7 +220,7 @@ test('a lead already inside an automation does not enter it again', () => {
   assert.equal(runs.length, 1, `${runs.length} live runs for one lead`);
 });
 
-test('a flow that loops is stopped rather than left running', () => {
+await test('a flow that loops is stopped rather than left running', () => {
   /* A branch whose exits point back above it sends a client WhatsApp messages
      until somebody notices. The budget is what notices. */
   const a = build('probe_auto_loop', 'lead.created', [
@@ -220,17 +233,17 @@ test('a flow that loops is stopped rather than left running', () => {
   assert(/loop/i.test(r.detail ?? ''), `the reason does not name the loop: ${r.detail}`);
 });
 
-test('an automation does not fire on the other book', () => {
+await test('an automation does not fire on the other book', () => {
   const a = build('probe_auto_bigul', 'lead.created', [noteAction('should-not-happen')], { org: 'BIGUL' });
   assert.equal(enter(a.id, LEAD), null, 'a Bigul automation entered a Bonanza lead');
 });
 
-test('a draft automation does not run', () => {
+await test('a draft automation does not run', () => {
   const a = build('probe_auto_draft', 'lead.created', [noteAction('draft')], { status: 'draft' });
   assert.equal(enter(a.id, LEAD), null, 'a draft automation ran');
 });
 
-test('a failing action does not stop the steps behind it', () => {
+await test('a failing action does not stop the steps behind it', () => {
   /* One dead template must not abort the flow — the same reasoning the rules
      engine already applies. The failure is written down instead. */
   const a = build('probe_auto_failure', 'lead.created', [
@@ -248,7 +261,7 @@ test('a failing action does not stop the steps behind it', () => {
 
 /* ---------------------------------------------------------- the trigger */
 
-test('firing a trigger enters every active automation watching it, in priority order', () => {
+await test('firing a trigger enters every active automation watching it, in priority order', () => {
   const first = build('probe_auto_prio_a', 'lead.stage_changed', [noteAction('first')]);
   const second = build('probe_auto_prio_b', 'lead.stage_changed', [noteAction('second')]);
   run('UPDATE automation SET priority = 10 WHERE id = ?', [first.id]);
@@ -262,7 +275,7 @@ test('firing a trigger enters every active automation watching it, in priority o
   assert.equal(marker(), 'second');
 });
 
-test('a field-watching trigger ignores changes to fields it does not watch', () => {
+await test('a field-watching trigger ignores changes to fields it does not watch', () => {
   /* "Lead Updated" firing on any change is how the legacy tenant reached 8.5
      million executions. */
   const a = build('probe_auto_fields', 'lead.updated', [noteAction('watched')]);
@@ -276,7 +289,7 @@ test('a field-watching trigger ignores changes to fields it does not watch', () 
 
 /* -------------------------------------------------------------- reports */
 
-test('the report says which step leads are standing on', () => {
+await test('the report says which step leads are standing on', () => {
   /* "1,000 entered and 40 finished" is only useful with the other 960 located. */
   const a = build('probe_auto_report', 'lead.created', [
     { kind: 'wait', config: { hours: 72 } },
@@ -291,7 +304,7 @@ test('the report says which step leads are standing on', () => {
   assert(rep.waiting_at[0].n === 1, JSON.stringify(rep.waiting_at));
 });
 
-test('what runs on a trigger is answerable in one call', () => {
+await test('what runs on a trigger is answerable in one call', () => {
   /* The Salesforce reference names the absence of this as the reason nobody can
      see what touches a field in the legacy tenant. */
   const rows = whatRunsOn('lead.stage_changed');
@@ -299,7 +312,140 @@ test('what runs on a trigger is answerable in one call', () => {
   assert(rows[0].priority <= rows[1].priority, 'not returned in the order they would run');
 });
 
+/* ------------------------------------------------------- validation */
+
+await test('a flow with a card wired to nothing is not ready to run', () => {
+  /* The failure mode this exists for: a dangling exit ends the flow there,
+     silently, for every lead that reaches it. It looks fine on a canvas. */
+  const a = build('probe_auto_dangling', 'lead.created', [
+    { kind: 'action', config: { type: 'update_lead', params: { field: 'risk_profile', value: 'x' } }, next: null },
+  ]);
+
+  const problems = validate(a.id);
+  assert(problems.some((p) => /nothing follows/i.test(p.message)),
+    `a dangling exit was accepted: ${JSON.stringify(problems)}`);
+});
+
+await test('a lead-updated trigger that names no fields is refused', () => {
+  /* Watching every field is how the legacy tenant reached 8.5 million
+     executions on one automation. */
+  const a = build('probe_auto_nofields', 'lead.updated', [
+    { kind: 'exit', config: {} },
+  ]);
+  const problems = validate(a.id);
+  assert(problems.some((p) => /name the fields/i.test(p.message)),
+    `a field-less lead.updated trigger was accepted: ${JSON.stringify(problems)}`);
+});
+
+await test('every problem comes back, not the first', () => {
+  const a = build('probe_auto_many', 'lead.updated', [
+    { kind: 'action', config: {}, next: null },
+    { kind: 'wait', config: { hours: 0 }, next: null },
+  ]);
+  assert(validate(a.id).length >= 3, JSON.stringify(validate(a.id)));
+});
+
+/* ----------------------------------------------------------- the routes */
+
+let made = null;
+
+await test('an automation is created as a draft, in the creator\'s own book', async () => {
+  const res = await call('POST', '/admin/automations', {
+    name: 'probe_auto_route', trigger_type: 'lead.created',
+  });
+  assert.equal(res.status, 201, `create failed: ${JSON.stringify(res.body)}`);
+  assert.equal(res.body.status, 'draft', `created as ${res.body.status}`);
+  assert(res.body.sales_org, 'created with no book');
+  made = res.body.id;
+});
+
+await test('a trigger nobody recognises is refused', async () => {
+  const res = await call('POST', '/admin/automations', { name: 'probe_auto_bad', trigger_type: 'nonsense' });
+  assert.equal(res.status, 400, `HTTP ${res.status}`);
+});
+
+await test('an unfinished automation cannot be activated', async () => {
+  /* It has no steps at all. Going live would mean leads entering a flow with
+     nothing in it. */
+  const res = await call('POST', `/admin/automations/${made}/activate`);
+  assert.equal(res.status, 400, `HTTP ${res.status}`);
+  assert(res.body.problems?.length, 'the refusal does not say what is wrong');
+});
+
+await test('a step is added, wired, and the automation then activates', async () => {
+  const step = await call('POST', `/admin/automations/${made}/steps`, {
+    kind: 'exit', config: { reason: 'done' }, label: 'End',
+  });
+  assert.equal(step.status, 201, JSON.stringify(step.body));
+
+  const ok = await call('POST', `/admin/automations/${made}/activate`);
+  assert.equal(ok.status, 200, `activate failed: ${JSON.stringify(ok.body)}`);
+  assert.equal(ok.body.status, 'active');
+});
+
+await test('pausing stops new arrivals and says who is still inside', async () => {
+  const res = await call('POST', `/admin/automations/${made}/pause`);
+  assert.equal(res.status, 200);
+  assert.equal(res.body.status, 'paused');
+});
+
+await test('a step cannot be made to follow itself', async () => {
+  const step = one('SELECT id FROM automation_step WHERE automation_id = ? LIMIT 1', [made]);
+  const res = await call('PATCH', `/admin/automations/${made}/steps/${step.id}`, { next_step_id: step.id });
+  assert.equal(res.status, 400, `HTTP ${res.status}`);
+});
+
+await test('deleting a step closes the gap behind it', async () => {
+  /* Otherwise its neighbours point at nothing and the flow ends there for
+     every lead that arrives afterwards. */
+  const a = build('probe_auto_gap', 'lead.created', [
+    noteAction('one'), noteAction('two'), { kind: 'exit', config: {} },
+  ]);
+  const res = await call('DELETE', `/admin/automations/${a.id}/steps/${a.ids[1]}`);
+  assert.equal(res.status, 200, `HTTP ${res.status}`);
+
+  const first = one('SELECT next_step_id FROM automation_step WHERE id = ?', [a.ids[0]]);
+  assert.equal(first.next_step_id, a.ids[2], 'the gap was not closed');
+});
+
+await test('an automation with leads inside it cannot be deleted', async () => {
+  /* Deleting it strands them mid-flow: the rows cascade away and nothing ever
+     finishes what it started. */
+  const a = build('probe_auto_busy', 'lead.created', [
+    { kind: 'wait', config: { hours: 24 } }, noteAction('later'),
+  ]);
+  enter(a.id, LEAD);
+
+  const res = await call('DELETE', `/admin/automations/${a.id}`);
+  assert.equal(res.status, 409, `HTTP ${res.status}`);
+  assert(res.body.live >= 1, 'the refusal does not say how many are inside');
+});
+
+await test('the spec the builder reads is the vocabulary the engine runs', async () => {
+  const res = await call('GET', '/admin/automations/spec');
+  assert.equal(res.status, 200);
+  assert.equal(res.body.triggers.length, TRIGGERS.length, 'the trigger lists disagree');
+  assert.equal(res.body.step_kinds.length, STEP_KINDS.length, 'the step lists disagree');
+  assert(res.body.actions.length, 'no actions offered');
+});
+
+await test("another book's automation is out of reach", async () => {
+  const bigul = build('probe_auto_otherbook', 'lead.created', [{ kind: 'exit', config: {} }], { org: 'BIGUL' });
+  const res = await call('GET', `/admin/automations/${bigul.id}`);
+  assert.equal(res.status, 403, `HTTP ${res.status}`);
+
+  const list = await call('GET', '/admin/automations');
+  assert(!list.body.some((x) => x.id === bigul.id), 'a Bigul automation was listed to a Bonanza admin');
+});
+
+await test('the explorer says what runs on a trigger, in order', async () => {
+  const res = await call('GET', '/admin/automations/explorer/lead.stage_changed');
+  assert.equal(res.status, 200);
+  assert(Array.isArray(res.body), 'not a list');
+});
+
 clean();
+PROBE.cleanup();
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exitCode = failed ? 1 : 0;

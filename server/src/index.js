@@ -17,6 +17,7 @@ import partners from './routes/partners.js';
 import { internal as kycInternal, dkyc } from './routes/kyc.js';
 import portal from './routes/portal.js';
 import admin from './routes/admin.js';
+import automations from './routes/automations.js';
 import cockpit from './routes/cockpit.js';
 import attendance from './routes/attendance.js';
 import aiRoutes from './routes/ai.js';
@@ -308,6 +309,9 @@ app.use('/api/approvals', approvals);
 // like the other unauthenticated surfaces.
 app.use('/public/market', dkycLimiter, publicIndices);
 app.use('/api/reports', reports);
+/* Before /api/admin, so the automation surface owns its own prefix. It is a
+   module in its own right rather than a corner of admin.js (P3-16). */
+app.use('/api/admin/automations', automations);
 app.use('/api/admin', admin);
 app.use('/api/portal', portal);
 app.use('/dkyc-api', dkycLimiter, dkyc);   // public — no CRM session required

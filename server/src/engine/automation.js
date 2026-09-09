@@ -345,6 +345,104 @@ export function fire(triggerKey, { leadId, fields = [] } = {}) {
   return { entered };
 }
 
+/* ----------------------------------------------------------- validation */
+
+/**
+ * Everything wrong with an automation, before it is allowed to run.
+ *
+ * Activating a broken flow is not like saving a broken draft. A card wired to
+ * nothing silently ends the flow there; a loop sends a client the same message
+ * until somebody notices; a wait with no next step parks leads for ever and the
+ * report counts them as live work. All three look fine on a canvas.
+ *
+ * Returns every problem rather than the first, for the same reason the template
+ * builder does: being told about one, fixing it, and being told about the next
+ * is how a screen becomes something people work around.
+ */
+export function validate(automationId) {
+  const auto = one('SELECT * FROM automation WHERE id = ?', [automationId]);
+  if (!auto) return [{ message: 'That automation does not exist' }];
+
+  const problems = [];
+  const steps = stepsOf(automationId);
+  const byId = new Map(steps.map((s) => [s.id, s]));
+
+  if (!isTrigger(auto.trigger_type)) {
+    problems.push({ field: 'trigger', message: `"${auto.trigger_type}" is not a trigger` });
+  }
+
+  /* A field-watching trigger with no fields watches everything, which is the
+     8.5-million-executions shape. */
+  const trigger = TRIGGERS.find((t) => t.key === auto.trigger_type);
+  if (trigger?.needs_fields) {
+    const config = parse(auto.trigger_config, {});
+    if (!config.fields?.length) {
+      problems.push({
+        field: 'trigger',
+        message: 'Name the fields this watches. A lead-updated trigger with no fields fires on every change to every lead.',
+      });
+    }
+  }
+
+  if (!steps.length) {
+    problems.push({ field: 'steps', message: 'An automation with no steps does nothing' });
+    return problems;
+  }
+
+  if (!auto.first_step_id || !byId.has(auto.first_step_id)) {
+    problems.push({ field: 'steps', message: 'Nothing is marked as the first step' });
+  }
+
+  for (const step of steps) {
+    const kind = STEP_KINDS.find((k) => k.kind === step.kind);
+    if (!kind) {
+      problems.push({ step_id: step.id, message: `"${step.kind}" is not a kind of step` });
+      continue;
+    }
+
+    /* A dangling exit ends the flow there, which is either deliberate or a
+       mistake — and an `exit` card is how you say deliberate. */
+    for (const exit of kind.exits) {
+      const target = exit === 'next' ? step.next_step_id : step.else_step_id;
+      if (target && !byId.has(target)) {
+        problems.push({ step_id: step.id, message: `${step.label || step.kind}: its ${exit} path points at a step that no longer exists` });
+      }
+      if (!target) {
+        problems.push({
+          step_id: step.id,
+          message: `${step.label || step.kind}: nothing follows its ${exit} path. Add an End card if that is deliberate.`,
+        });
+      }
+    }
+
+    const config = parse(step.config, {});
+    if (step.kind === 'action' && !config.type) {
+      problems.push({ step_id: step.id, message: 'An action card with no action does nothing' });
+    }
+    if (step.kind === 'branch' && !config.conditions) {
+      problems.push({ step_id: step.id, message: 'A branch with no condition always takes the same path' });
+    }
+    if (step.kind === 'wait' && !Number(config.hours) && !Number(config.minutes)) {
+      problems.push({ step_id: step.id, message: 'A wait of zero is not a wait' });
+    }
+  }
+
+  /* Walk it for a cycle. A loop is the one problem that cannot be seen by
+     looking at a single card. */
+  const seen = new Set();
+  let cursor = auto.first_step_id;
+  while (cursor && byId.has(cursor)) {
+    if (seen.has(cursor)) {
+      problems.push({ step_id: cursor, message: 'These steps loop back on themselves — a lead would never leave' });
+      break;
+    }
+    seen.add(cursor);
+    cursor = byId.get(cursor).next_step_id;
+  }
+
+  return problems;
+}
+
 /* ------------------------------------------------------------ reporting */
 
 /**
