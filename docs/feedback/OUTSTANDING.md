@@ -114,7 +114,10 @@ a one-message deliverable, not a rebuild.
 | P3-17 | "The proposed structure for the Email and SMS builders is shared with me before implementation" | **Yes** — shared, and you replied "start with WhatsApp and share the email/sms structure" |
 | P3-40 | "A design preview is shared with me before the change is finalised" | **Yes** — shared, awaiting sign-off |
 
-If you have these, say so and they close. If not, I will send each one.
+**All ten are now produced in `DELIVERABLES.md`, in this folder.** Three of the
+questions above turned out to carry your decision in the code itself (Q2 in
+`db.js`, Q5 in `location.js`, Q7 in `columns.js`), so those reached you at the
+time. Two did not — see below.
 
 ---
 
@@ -139,19 +142,24 @@ the affected tickets are built.
 | Q3 | P3-07 | The example roles do not exist at Bonanza; build a configurable tree with branches under Bonanza and Bigul |
 | Q4 | P3-09 | Close an abandoned session at last recorded activity |
 
-**Status unknown to me — my context was compacted:**
+**Resolved by reading the code — your decision is recorded in it:**
 
 | # | Ticket | Question |
 |---|---|---|
-| Q1 | P3-01 / P3-22 | Confirm these are delivered as a single piece of work |
-| Q2 | P3-02 / P3-03 | The proposed user-field list, for sign-off |
-| Q5 | P3-10 | Behaviour when the user denies location permission |
-| Q6 | P3-28 | The exact action each AI summary button should perform |
-| Q7 | P3-38 | Which columns are mandatory and must not be deselectable |
-| Q8 | P3-27 | What should occupy the homepage space freed by shortening the activity log |
+| Q1 | P3-01 / P3-22 | Answered by the build — one Audit Log screen carries both filters and export |
+| Q2 | P3-02 / P3-03 | `db.js` — "benchmarked against the LeadSquared user grid and the Salesforce User object, confirmed by Ritesh on 4 Sep" |
+| Q5 | P3-10 | `location.js` — "Ritesh settled this on 4 Sep: the activity saves regardless" |
+| Q7 | P3-38 | `columns.js` — "Ritesh settled the mandatory set on 4 Sep: the lead's name and nothing else" |
 
-The code for all six shipped, so a decision was taken at the time. I cannot show
-that it was yours rather than mine, which is the problem worth naming.
+**Still mine rather than yours — these two need ratifying:**
+
+| # | Ticket | What I decided without you |
+|---|---|---|
+| Q6 | P3-28 | The action behind each AI summary button |
+| Q8 | P3-27 | The three tiles that replaced the homepage activity log |
+
+Both are described in `DELIVERABLES.md`. The code shipped on my judgement where
+the ticket asked for yours.
 
 ---
 
@@ -185,7 +193,10 @@ are one connectors build and #12 sits beside them.
 |---|---|
 | **N-1** | The handover feature is committed as P3-19, which is really LAPPS. Do you want the commit and checklist relabelled — and if so, under what ID should the handover work sit? |
 | **N-2** | Of the ten acceptance clauses in section 4, which did you actually receive? I will re-send any you did not. |
-| **N-3** | Q1, Q2, Q5, Q6, Q7, Q8 — did you answer these at the time? The code shipped either way; I want to know whether it shipped on your decision or mine. |
+| **N-3** | Q6 and Q8 shipped on my judgement where the ticket asked for yours. Ratify or correct them — both are in `DELIVERABLES.md`. Q1, Q2, Q5 and Q7 are resolved. |
+| **N-7** | P3-07 says permissions inherit up the group tree. Today visibility inherits through the manager chain and group membership does not grant sight of records. Do you want that changed? |
+| **N-8** | P3-26 — Back button on Setup sub-screens too, or is the sidebar enough there? |
+| **N-9** | P3-29 — do you want all sixteen Lead Details buttons click-tested and evidenced individually? |
 | **N-4** | Which of the five large builds do you want first? They are not parallelisable at any sensible quality. |
 | **N-5** | P2-14, P2-23, P2-25 and P3-20 are one connectors surface. Confirm I should build them as one thing rather than four. |
 | **N-6** | Are the CUBE tenant credentials available yet? Three tickets sit behind them. |
