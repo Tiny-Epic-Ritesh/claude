@@ -161,5 +161,23 @@ test('every project helper a file uses is imported into that file', () => {
     `a helper is used without being imported — it will throw the first time that line runs:\n         ${problems.join('\n         ')}`);
 });
 
+test('every test file is actually run', () => {
+  /* `test:unit` is a hand-written chain of `node test/x.mjs && node test/y.mjs`.
+     Nothing generates it, so a new test file passes when it is run by hand and
+     then never runs again -- the suite total does not move, and a file that is
+     silently skipped looks exactly like a suite that had nothing to add.
+     Written the first time that happened, which is the only reason it exists. */
+  const chain = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8')).scripts['test:unit'];
+
+  const missing = readdirSync(here)
+    .filter((f) => f.endsWith('.test.mjs'))
+    .filter((f) => !chain.includes('test/' + f))
+    .map((f) => `
+         ${f}`);
+
+  assert.equal(missing.length, 0,
+    `a test file exists but is not in the test:unit chain, so it never runs:${missing.join('')}`);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exitCode = failed ? 1 : 0;

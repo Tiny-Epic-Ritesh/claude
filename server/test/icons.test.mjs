@@ -106,6 +106,13 @@ function usedIcons(vocabulary) {
        those is a false positive sending somebody to add a glyph nothing
        renders. */
     .replace(/className=(['"`])[^'"`]*\1/g, ' ')
+    /* A `field=` attribute names a form field so a validation problem can be
+       matched to it — never an icon. Same reasoning as className above: the
+       vocabulary overlaps ordinary field names ("language", "category",
+       "phone"), and each overlap sends somebody to add a glyph that nothing
+       renders. Icons arrive as `<Icon name=`, `icon:` or a material-symbols
+       span, none of which this touches. */
+    .replace(/\bfield=(['"`])[^'"`]*\1/g, ' ')
     /* A key passed to .set/.get/.append/.setItem is a parameter name, not an
        icon. `query.set('sort', sort)` sent somebody off to add a `sort` glyph
        that nothing renders — the same false positive as the two strips above,

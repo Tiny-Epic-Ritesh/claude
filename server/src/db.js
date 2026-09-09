@@ -1196,6 +1196,12 @@ const COLUMNS = [
   ['users', 'whatsapp', 'TEXT'],
   ['users', 'updated_at', 'TEXT'],            // maintained by a trigger, see below
 
+  /* The structured parts of a template (P3-17): header, footer, buttons,
+     category, language. JSON alongside `body` rather than replacing it, so
+     everything that already sends a template keeps reading the same column and
+     a template written before this still works. */
+  ['templates', 'components', 'TEXT'],
+
   /* P3-07. A group's place in the org tree. Null means it hangs directly under
      its own business, which is the root — the two businesses are assembled from
      `sales_orgs` when the tree is read rather than written into `teams`, where

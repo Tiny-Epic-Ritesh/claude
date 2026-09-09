@@ -6421,3 +6421,51 @@ tr.row-inactive .user-cell strong { color: var(--ink-3); }
   color: var(--ink);
   text-decoration: none;
 }
+
+/* --------------------------------------- template builder (P3-17)
+ *
+ * The preview is drawn as the channel draws it. A template is judged by how it
+ * lands on a phone, and a preview rendered as a form field tells nobody whether
+ * the footer is doing its job or the buttons fit.
+ */
+.tmpl-build { display: grid; grid-template-columns: 1fr 300px; gap: 20px; align-items: start; }
+@media (max-width: 900px) { .tmpl-build { grid-template-columns: 1fr; } }
+
+.wa-phone { background: #0b141a; border-radius: 12px; padding: 14px 12px; }
+.wa-bubble {
+  background: #005c4b; color: #e9edef;
+  border-radius: 8px 8px 8px 2px;
+  padding: 8px 10px; max-width: 100%;
+  font-size: 13px; line-height: 1.45;
+  word-break: break-word;
+}
+.wa-bubble.is-sms { background: #2b3a4a; border-radius: 14px; }
+.wa-header { font-weight: 700; margin-bottom: 4px; }
+.wa-media {
+  background: rgba(255,255,255,0.12); border-radius: 5px;
+  padding: 18px; text-align: center; text-transform: uppercase;
+  font-size: 10.5px; letter-spacing: 0.08em; margin-bottom: 6px;
+}
+.wa-body { white-space: pre-wrap; }
+.wa-footer { margin-top: 5px; font-size: 11.5px; opacity: 0.65; }
+.wa-time { text-align: right; font-size: 10px; opacity: 0.6; margin-top: 3px; }
+.wa-buttons { margin-top: 4px; display: grid; gap: 3px; }
+.wa-button {
+  background: #1f2c33; color: #53bdeb;
+  border-radius: 6px; padding: 7px; text-align: center;
+  font-size: 12.5px; display: flex; align-items: center; justify-content: center; gap: 5px;
+}
+
+.mail-preview { border: 1px solid var(--line, rgba(127,127,127,0.25)); border-radius: 8px; overflow: hidden; }
+.mail-head {
+  padding: 9px 11px; display: flex; flex-direction: column; gap: 2px;
+  border-bottom: 1px solid var(--line, rgba(127,127,127,0.2));
+}
+.mail-body { padding: 11px; font-size: 13px; line-height: 1.5; }
+
+.tmpl-meta { margin-top: 10px; }
+.tmpl-meta pre {
+  max-height: 220px; overflow: auto; margin: 6px 0 0;
+  background: var(--surface-2, rgba(127,127,127,0.07));
+  padding: 8px; border-radius: 6px;
+}

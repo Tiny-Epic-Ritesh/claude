@@ -10,6 +10,9 @@ import { hashPassword } from '../security.js';
 import { CONDITION_FIELDS, ACTION_TYPES, runRule } from '../engine/rules.js';
 import { MASTER_STEPS } from '../engine/kyc.js';
 import { integrationRegistry, getOutbox, syncTradingDb, vendorStatus } from '../integrations.js';
+import {
+  CHANNELS, MERGE_FIELDS, checkTemplate, withExamples, smsSegments, toMetaTemplate,
+} from '../engine/templates.js';
 import { DEFAULT_SLA } from '../engine/sla.js';
 import { checkConsent } from '../engine/consent.js';
 import { MAY_RECEIVE_CAMPAIGN, normaliseKind } from '../engine/leadlists.js';
@@ -292,13 +295,60 @@ router.post('/categories', requirePermission('admin.sla'), (req, res) => {
 
 router.get('/templates', (_req, res) => res.json(all('SELECT * FROM templates ORDER BY channel, name')));
 
-router.post('/templates', requirePermission('admin.templates'), (req, res) => {
-  const { name, channel, subject, body, product_type_id, approved = 0 } = req.body;
-  if (!name?.trim() || !body?.trim()) return res.status(400).json({ error: 'Name and body are required' });
+/**
+ * What a template may contain, per channel (P3-17).
+ *
+ * Sent to the builder so the limits it enforces and the limits the write
+ * enforces are the same numbers. They are the providers' limits rather than
+ * ours — a WhatsApp template is approved or rejected by Meta, and a builder
+ * that accepts a 90-character header collects work and loses it a day later to
+ * a rejection nobody can read.
+ */
+router.get('/templates/spec', requirePermission('admin.templates'), (_req, res) => {
+  res.json({ channels: CHANNELS, merge_fields: MERGE_FIELDS });
+});
 
-  const result = run('INSERT INTO templates (name, channel, subject, body, product_type_id, approved) VALUES (?,?,?,?,?,?)', [
-    name, channel || 'whatsapp', subject || null, body, product_type_id || null, approved ? 1 : 0,
-  ]);
+/**
+ * What this template would look like, and what is wrong with it.
+ *
+ * The same check the write runs, so the preview cannot be kinder than the save.
+ * The Meta payload is included for WhatsApp because the translation from our
+ * named merge fields to Meta's positional {{1}} is the part most likely to be
+ * wrong, and reading it is far cheaper than having a template rejected.
+ */
+router.post('/templates/preview', requirePermission('admin.templates'), (req, res) => {
+  const draft = req.body ?? {};
+  const problems = checkTemplate(draft);
+
+  res.json({
+    problems,
+    ok: problems.length === 0,
+    rendered: {
+      subject: withExamples(draft.subject),
+      body: withExamples(draft.body),
+      header: withExamples(draft.components?.header?.text),
+      footer: withExamples(draft.components?.footer),
+    },
+    sms: draft.channel === 'sms' ? smsSegments(draft.body) : null,
+    meta: draft.channel === 'whatsapp' ? toMetaTemplate(draft) : null,
+  });
+});
+
+router.post('/templates', requirePermission('admin.templates'), (req, res) => {
+  const { name, channel, subject, body, product_type_id, approved = 0, components } = req.body;
+
+  const problems = checkTemplate({ channel: channel || 'whatsapp', name, subject, body, components });
+  if (problems.length) {
+    return res.status(400).json({ error: problems[0].message, field: problems[0].field, problems });
+  }
+
+  const result = run(
+    'INSERT INTO templates (name, channel, subject, body, product_type_id, approved, components) VALUES (?,?,?,?,?,?,?)',
+    [
+      name, channel || 'whatsapp', subject || null, body, product_type_id || null, approved ? 1 : 0,
+      components ? JSON.stringify(components) : null,
+    ],
+  );
   const templateId = Number(result.lastInsertRowid);
   audit(req.user.id, 'template_created', 'template', templateId, { channel });
   snapshot('template', templateId, { note: 'Created', userId: req.user.id });
@@ -306,16 +356,71 @@ router.post('/templates', requirePermission('admin.templates'), (req, res) => {
 });
 
 router.patch('/templates/:id', requirePermission('admin.templates'), (req, res) => {
+  const current = one('SELECT * FROM templates WHERE id = ?', [req.params.id]);
+  if (!current) return res.status(404).json({ error: 'Template not found' });
+
+  /* Checked as the template WOULD be, not as the patch arrives. Somebody
+     editing only the body still has a header and buttons, and validating the
+     fragment alone would pass a template that the whole of is invalid. */
+  if (req.body.body !== undefined || req.body.subject !== undefined || req.body.components !== undefined) {
+    const merged = {
+      channel: current.channel,
+      name: req.body.name ?? current.name,
+      subject: req.body.subject ?? current.subject,
+      body: req.body.body ?? current.body,
+      components: req.body.components ?? JSON.parse(current.components || '{}'),
+    };
+    const problems = checkTemplate(merged);
+    if (problems.length) {
+      return res.status(400).json({ error: problems[0].message, field: problems[0].field, problems });
+    }
+  }
+
   const fields = ['name', 'subject', 'body', 'approved', 'product_type_id'];
   const sets = [];
   const params = [];
   for (const f of fields) if (req.body[f] !== undefined) { sets.push(`${f} = ?`); params.push(req.body[f]); }
+  if (req.body.components !== undefined) {
+    sets.push('components = ?');
+    params.push(req.body.components ? JSON.stringify(req.body.components) : null);
+  }
   if (sets.length) run(`UPDATE templates SET ${sets.join(', ')} WHERE id = ?`, [...params, req.params.id]);
   const templateVersion = sets.length
     ? snapshot('template', Number(req.params.id), { note: req.body.note ?? null, userId: req.user.id })
     : null;
   audit(req.user.id, 'template_updated', 'template', Number(req.params.id), req.body);
   res.json({ ok: true, version: templateVersion?.version ?? null });
+});
+
+/**
+ * Delete a template.
+ *
+ * Refused while anything still points at it. An automation rule or a scheduled
+ * campaign holding a template id that no longer exists fails at the moment it
+ * fires, which is the moment nobody is watching — better to say so now and let
+ * somebody decide.
+ */
+router.delete('/templates/:id', requirePermission('admin.templates'), (req, res) => {
+  const template = one('SELECT * FROM templates WHERE id = ?', [req.params.id]);
+  if (!template) return res.status(404).json({ error: 'Template not found' });
+
+  const usedBy = [];
+  const campaigns = all('SELECT name FROM campaigns WHERE template_id = ?', [template.id]);
+  if (campaigns.length) usedBy.push(`${campaigns.length} campaign${campaigns.length === 1 ? '' : 's'}`);
+
+  const rules = all("SELECT name FROM rules WHERE actions LIKE ?", [`%"template_id":${template.id}%`]);
+  if (rules.length) usedBy.push(`${rules.length} automation rule${rules.length === 1 ? '' : 's'}`);
+
+  if (usedBy.length) {
+    return res.status(409).json({
+      error: `${template.name} is still used by ${usedBy.join(' and ')}. Change those first.`,
+      used_by: usedBy,
+    });
+  }
+
+  run('DELETE FROM templates WHERE id = ?', [template.id]);
+  audit(req.user.id, 'template_deleted', 'template', template.id, { name: template.name, channel: template.channel });
+  return res.json({ ok: true });
 });
 
 /* ------------------------------------------------------ content library */
