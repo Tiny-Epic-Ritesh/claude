@@ -23,6 +23,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../api.js';
 import { useApi, Loading, Icon, Modal, ErrorBanner, Empty, Spinner, Tabs } from '../../components/ui.jsx';
+import RichText from '../../components/RichText.jsx';
+
+/* The rich editor is addressed by id so a merge field can be inserted at the
+   caret rather than appended to the markup. */
+const BODY_ID = 'tmpl-body';
 
 const CHANNEL_LABEL = { whatsapp: 'WhatsApp', email: 'Email', sms: 'SMS' };
 
@@ -51,9 +56,9 @@ export function Templates() {
       <div className="row-between">
         <Tabs
           tabs={[
-            { id: 'all', label: `All ${rows.length}` },
+            { key: 'all', label: `All ${rows.length}` },
             ...Object.keys(CHANNEL_LABEL).map((c) => ({
-              id: c, label: `${CHANNEL_LABEL[c]} ${counts[c] ?? 0}`,
+              key: c, label: `${CHANNEL_LABEL[c]} ${counts[c] ?? 0}`,
             })),
           ]}
           active={channel}
@@ -123,6 +128,27 @@ export function Templates() {
 
 /* ------------------------------------------------------------- builder */
 
+/**
+ * A labelled control, with whatever the server says is wrong with it.
+ *
+ * Declared here rather than inside TemplateBuilder. A component defined inside
+ * another component is a new function every render, so React reads it as a new
+ * type, unmounts the subtree and mounts a replacement -- which destroys the
+ * input and takes the caret with it. The builder could not be typed into at
+ * all until this moved out, and nothing caught it because a test that sets a
+ * value in one shot survives a remount and only real typing does not.
+ */
+function Field({ problems = [], label, hint, children }) {
+  return (
+    <div className="field">
+      <label>{label}</label>
+      {children}
+      {problems.map((p) => <p key={p.message} className="err-text">{p.message}</p>)}
+      {hint && !problems.length && <p className="hint">{hint}</p>}
+    </div>
+  );
+}
+
 function TemplateBuilder({ template, spec, onClose, onSaved, onError }) {
   const making = !template.id;
   const channel = template.channel ?? 'whatsapp';
@@ -147,6 +173,19 @@ function TemplateBuilder({ template, spec, onClose, onSaved, onError }) {
   }));
   const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
+
+  /* Only what is still sendable. The send route re-checks approval and expiry
+     at the moment of sending, so offering a withdrawn document here would be
+     offering something that fails later, quietly, to a client. */
+  const [library, setLibrary] = useState([]);
+  useEffect(() => {
+    if (channel !== 'email') return;
+    api.get('/admin/content?status=approved')
+      .then((rows) => setLibrary(rows.filter((r) => !r.expired)))
+      .catch(() => setLibrary([]));
+  }, [channel]);
+
+  const intentNote = (rules.intents ?? []).find((i) => i.key === draft.components.intent)?.note;
 
   const set = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }));
   /* A patch object rather than a (key, value) pair. The keys are then keys
@@ -175,14 +214,28 @@ function TemplateBuilder({ template, spec, onClose, onSaved, onError }) {
     } catch (err) { onError(err.message); setBusy(false); }
   };
 
-  const Field = ({ field, label, hint, children }) => (
-    <div className="field">
-      <label>{label}</label>
-      {children}
-      {problemsFor(field).map((p) => <p key={p.message} className="err-text">{p.message}</p>)}
-      {hint && !problemsFor(field).length && <p className="hint">{hint}</p>}
-    </div>
-  );
+  /**
+   * Put a merge field where the caret is.
+   *
+   * A plain textarea has no caret we track, so it appends -- which is what it
+   * did before and is fine for a short SMS. The rich editor does have one, and
+   * appending to its innerHTML would drop the text outside the last paragraph
+   * where it renders in the wrong place and cannot be edited normally.
+   * execCommand fires the editor's own input handler, so the draft updates
+   * through the same path typing does.
+   */
+  const insertMerge = (key) => {
+    const token = `{{${key}}}`;
+    if (channel !== 'email') {
+      setDraft((d) => ({ ...d, body: `${d.body}${token}` }));
+      return;
+    }
+    const el = document.getElementById(BODY_ID);
+    if (!el) return;
+    el.focus();
+    // eslint-disable-next-line no-restricted-syntax
+    document.execCommand('insertText', false, token);
+  };
 
   return (
     <Modal
@@ -196,14 +249,14 @@ function TemplateBuilder({ template, spec, onClose, onSaved, onError }) {
           {/* ------------------------------------------------ basic details */}
           <h4 className="muted">Basic details</h4>
 
-          <Field field="name" label="Name" hint={rules.name_hint}>
+          <Field problems={problemsFor('name')} label="Name" hint={rules.name_hint}>
             <input value={draft.name} onChange={set('name')} placeholder="sip_review_reminder" autoFocus />
           </Field>
 
           {channel === 'whatsapp' && (
             <>
               <div className="field-row">
-                <Field field="category" label="Category">
+                <Field problems={problemsFor('category')} label="Category">
                   <select
                     value={draft.components.category ?? ''}
                     onChange={(e) => setPart({ category: e.target.value })}
@@ -221,7 +274,7 @@ function TemplateBuilder({ template, spec, onClose, onSaved, onError }) {
                   </p>
                 </Field>
 
-                <Field field="language" label="Language">
+                <Field problems={problemsFor('language')} label="Language">
                   <select
                     value={draft.components.language ?? 'en'}
                     onChange={(e) => setPart({ language: e.target.value })}
@@ -240,7 +293,7 @@ function TemplateBuilder({ template, spec, onClose, onSaved, onError }) {
               {/* ------------------------------------------------------ header */}
               <h4 className="muted">Header</h4>
               <div className="field-row">
-                <Field field="header" label="Type">
+                <Field problems={problemsFor('header')} label="Type">
                   <select
                     value={draft.components.header?.type ?? 'none'}
                     onChange={(e) => setPart({ header: { ...draft.components.header, type: e.target.value } })}
@@ -252,7 +305,7 @@ function TemplateBuilder({ template, spec, onClose, onSaved, onError }) {
                 </Field>
 
                 {draft.components.header?.type === 'text' && (
-                  <Field field="header" label="Header text" hint={`Up to ${rules.header?.max} characters, one merge field.`}>
+                  <Field problems={problemsFor('header')} label="Header text" hint={`Up to ${rules.header?.max} characters, one merge field.`}>
                     <input
                       value={draft.components.header?.text ?? ''}
                       onChange={(e) => setPart({ header: { ...draft.components.header, text: e.target.value } })}
@@ -265,24 +318,75 @@ function TemplateBuilder({ template, spec, onClose, onSaved, onError }) {
           )}
 
           {channel === 'email' && (
-            <Field field="subject" label="Subject">
-              <input value={draft.subject} onChange={set('subject')} maxLength={rules.subject?.max} />
-            </Field>
+            <>
+              {/* Not a label. The send path already runs
+                  checkConsent(lead, 'email', intent), which suppresses a
+                  marketing send to a lead who opted out and lets a KYC or
+                  statement through. Declared here rather than at send time so
+                  a campaign cannot be posted as "service" to get past it. */}
+              <Field problems={problemsFor('intent')} label="What kind of email">
+                <select
+                  value={draft.components.intent ?? ''}
+                  onChange={(e) => setPart({ intent: e.target.value })}
+                >
+                  <option value="">Choose…</option>
+                  {(rules.intents ?? []).map((i) => (
+                    <option key={i.key} value={i.key}>{i.label}</option>
+                  ))}
+                </select>
+              </Field>
+              {intentNote && <p className="hint">{intentNote}</p>}
+
+              <Field problems={problemsFor('subject')} label="Subject">
+                <input value={draft.subject} onChange={set('subject')} maxLength={rules.subject?.max} />
+              </Field>
+
+              <Field
+                field="preheader"
+                label="Preheader"
+                hint={`The grey line an inbox shows after the subject. Up to ${rules.preheader?.max ?? 140} characters.`}
+              >
+                <input
+                  value={draft.components.preheader ?? ''}
+                  onChange={(e) => setPart({ preheader: e.target.value })}
+                  maxLength={rules.preheader?.max}
+                  placeholder="Your quarterly review is ready"
+                />
+              </Field>
+
+              <Field problems={problemsFor('reply_to')} label="Replies go to" hint="Leave blank to use the sending address.">
+                <input
+                  value={draft.components.reply_to ?? ''}
+                  onChange={(e) => setPart({ reply_to: e.target.value })}
+                  placeholder="rm@bonanza.com"
+                />
+              </Field>
+            </>
           )}
 
           {/* -------------------------------------------------------- body */}
           <h4 className="muted">Body</h4>
           <Field
-            name="body"
+            field="body"
             label="Message"
             hint={rules.body?.max ? `${draft.body.length} of ${rules.body.max} characters.` : null}
           >
-            <textarea
-              value={draft.body}
-              onChange={set('body')}
-              rows={channel === 'sms' ? 4 : 6}
-              style={{ width: '100%' }}
-            />
+            {channel === 'email' ? (
+              <RichText
+                id={BODY_ID}
+                value={draft.body}
+                onChange={(html) => setDraft((d) => ({ ...d, body: html }))}
+                placeholder="Write the email…"
+                rows={12}
+              />
+            ) : (
+              <textarea
+                value={draft.body}
+                onChange={set('body')}
+                rows={channel === 'sms' ? 4 : 6}
+                style={{ width: '100%' }}
+              />
+            )}
           </Field>
 
           <div className="row wrap" style={{ gap: 5 }}>
@@ -292,7 +396,10 @@ function TemplateBuilder({ template, spec, onClose, onSaved, onError }) {
                 key={f.key}
                 type="button"
                 className="btn-sm"
-                onClick={() => setDraft((d) => ({ ...d, body: `${d.body}{{${f.key}}}` }))}
+                /* onMouseDown, not onClick: clicking blurs the editor and the
+                   caret is gone before a click handler runs. Same reason the
+                   RichText toolbar does it. */
+                onMouseDown={(e) => { e.preventDefault(); insertMerge(f.key); }}
               >
                 {f.label}
               </button>
@@ -307,15 +414,28 @@ function TemplateBuilder({ template, spec, onClose, onSaved, onError }) {
             <p className={`hint ${preview.sms.segments > 1 ? 'err-text' : ''}`}>
               {preview.sms.characters} characters ·{' '}
               {preview.sms.segments} segment{preview.sms.segments === 1 ? '' : 's'}
-              {preview.sms.unicode && ' · unicode, so 70 characters per segment instead of 160'}
+              {' '}of {preview.sms.per_segment}
+              {preview.sms.unicode && ' · unicode, which halves what fits'}
             </p>
+          )}
+
+          {channel === 'email' && (
+            <>
+              <h4 className="muted">Attachments</h4>
+              <Attachments
+                chosen={draft.components.attachments ?? []}
+                library={library}
+                problems={problemsFor('attachments')}
+                onChange={(attachments) => setPart({ attachments })}
+              />
+            </>
           )}
 
           {channel === 'whatsapp' && (
             <>
               {/* ----------------------------------------------------- footer */}
               <h4 className="muted">Footer</h4>
-              <Field field="footer" label="Footer" hint={`Up to ${rules.footer?.max} characters. No merge fields — Meta does not allow them here.`}>
+              <Field problems={problemsFor('footer')} label="Footer" hint={`Up to ${rules.footer?.max} characters. No merge fields — Meta does not allow them here.`}>
                 <input
                   value={draft.components.footer ?? ''}
                   onChange={(e) => setPart({ footer: e.target.value })}
@@ -437,6 +557,47 @@ function Buttons({ buttons, rules, problems, onChange }) {
   );
 }
 
+/**
+ * Documents attached by reference, never by copy.
+ *
+ * content_items already carries version, expiry and approval state, so a
+ * template that points at "SIP factsheet" sends whatever the current approved
+ * version is and stops sending when it expires. A copy taken at the moment the
+ * template was written would go stale without anybody being told, which is the
+ * failure this is shaped to avoid.
+ */
+function Attachments({ chosen, library, problems, onChange }) {
+  const ids = chosen.map((a) => Number(a.content_id ?? a));
+  const toggle = (id) => onChange(
+    ids.includes(id)
+      ? chosen.filter((a) => Number(a.content_id ?? a) !== id)
+      : [...chosen, { content_id: id }],
+  );
+
+  if (!library.length) {
+    return <p className="hint">Nothing in the content library is approved and current.</p>;
+  }
+
+  return (
+    <>
+      <div className="stack" style={{ gap: 1 }}>
+        {library.map((item) => (
+          <label key={item.id} className="row" style={{ gap: 6, alignItems: 'center' }}>
+            <input type="checkbox" checked={ids.includes(item.id)} onChange={() => toggle(item.id)} />
+            <Icon name="attach_file" size={14} />
+            <span>{item.name}</span>
+            <span className="tiny muted">
+              {item.type} · v{item.version}
+              {item.expiring_soon ? ' · expires within 30 days' : ''}
+            </span>
+          </label>
+        ))}
+      </div>
+      {problems.map((p) => <p key={p.message} className="err-text">{p.message}</p>)}
+    </>
+  );
+}
+
 /* ------------------------------------------------------------- preview */
 
 /**
@@ -488,13 +649,51 @@ function Preview({ channel, draft, preview }) {
     );
   }
 
+  return <MailPreview draft={draft} rendered={r} />;
+}
+
+/**
+ * An email, both halves of it.
+ *
+ * Every email goes out as formatted HTML and as a plain-text alternative, and
+ * the text half is generated rather than written -- so it is the half that
+ * goes wrong without anybody seeing. Shown behind a toggle rather than left to
+ * be discovered by a client reading mail on something that will not render the
+ * other one.
+ *
+ * The body is the server's sanitised output, so what is drawn here is what
+ * would be sent rather than what was typed.
+ */
+function MailPreview({ draft, rendered: r }) {
+  const [plain, setPlain] = useState(false);
+  const marketing = draft.components?.intent === 'marketing';
+
   return (
     <div className="mail-preview">
       <div className="mail-head">
         <strong>{r.subject || <span className="muted">Subject</span>}</strong>
+        {r.preheader && <span className="tiny muted">{r.preheader}</span>}
         <span className="tiny muted">Bonanza Portfolio Ltd.</span>
       </div>
-      <div className="mail-body" dangerouslySetInnerHTML={{ __html: r.body || '' }} />
+
+      {plain
+        ? <pre className="mail-body is-plain">{r.text || ''}</pre>
+        : <div className="mail-body" dangerouslySetInnerHTML={{ __html: r.body || '' }} />}
+
+      {marketing && (
+        /* Appended by the sender and refused if switched off, so it belongs in
+           the preview even though it is not in the body. */
+        <div className="mail-unsub tiny muted">Unsubscribe</div>
+      )}
+
+      <div className="row" style={{ gap: 4, marginTop: 6 }}>
+        <button type="button" className={`btn-sm ${plain ? '' : 'is-on'}`} onClick={() => setPlain(false)}>
+          Formatted
+        </button>
+        <button type="button" className={`btn-sm ${plain ? 'is-on' : ''}`} onClick={() => setPlain(true)}>
+          Plain text
+        </button>
+      </div>
     </div>
   );
 }

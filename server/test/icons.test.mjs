@@ -113,6 +113,11 @@ function usedIcons(vocabulary) {
        renders. Icons arrive as `<Icon name=`, `icon:` or a material-symbols
        span, none of which this touches. */
     .replace(/\bfield=(['"`])[^'"`]*\1/g, ' ')
+    /* And the same name passed to problemsFor(), which is how a control asks
+       for the problems belonging to it now that Field takes them as a prop.
+       Same overlap, same false positive, arriving through a call instead of an
+       attribute. */
+    .replace(/problemsFor\((['"`])[a-z0-9_]+\1\)/g, ' ')
     /* A key passed to .set/.get/.append/.setItem is a parameter name, not an
        icon. `query.set('sort', sort)` sent somebody off to add a `sort` glyph
        that nothing renders — the same false positive as the two strips above,

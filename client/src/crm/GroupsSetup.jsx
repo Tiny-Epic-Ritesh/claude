@@ -49,7 +49,7 @@ export default function GroupsSetup() {
     <div className="stack" style={{ gap: 14 }}>
       <div className="row-between">
         <Tabs
-          tabs={[{ id: 'tree', label: 'Org tree' }, { id: 'list', label: 'All groups' }]}
+          tabs={[{ key: 'tree', label: 'Org tree' }, { key: 'list', label: 'All groups' }]}
           active={view}
           onChange={setView}
         />

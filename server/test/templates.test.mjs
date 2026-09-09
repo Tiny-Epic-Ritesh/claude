@@ -18,7 +18,7 @@ import { strict as assert } from 'node:assert';
 import { one, run } from '../src/db.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
 import {
-  checkTemplate, toMetaTemplate, smsSegments, withExamples, CHANNELS,
+  checkTemplate, checkAttachments, toMetaTemplate, smsSegments, withExamples, CHANNELS,
 } from '../src/engine/templates.js';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
@@ -155,16 +155,47 @@ await test('the parts Meta expects are all present', () => {
 
 /* --------------------------------------------------------------- the SMS */
 
-await test('an SMS is counted in segments, and unicode halves them', () => {
-  /* The billing fact. One rupee sign pasted from Word pushes the whole message
-     into UCS-2, where a segment is 70 characters rather than 160 — which is
-     noticed on an invoice rather than on a screen unless it is said here. */
+await test('an SMS is counted in septets, not characters', () => {
+  /* The billing fact, and the reason this is not a length check. GSM-7 packs
+     most characters into one septet, reaches eight of them through an escape
+     that costs two, and cannot represent the rest at all -- at which point the
+     whole message becomes UCS-2 and every character in it doubles. */
   assert.equal(smsSegments('A'.repeat(160)).segments, 1);
   assert.equal(smsSegments('A'.repeat(161)).segments, 2);
 
-  const rupee = smsSegments('Your SIP is ₹5,000');
+  const rupee = smsSegments('Your SIP is \u20b95,000');
   assert.equal(rupee.unicode, true, 'a rupee sign was not detected as unicode');
   assert.equal(rupee.per_segment, 70, `per segment was ${rupee.per_segment}`);
+});
+
+await test('the escaped characters cost two septets', () => {
+  /* 159 letters and one tilde is 160 characters and 161 septets. Counting
+     characters calls it one segment and it is billed as two -- which is the
+     whole difference between this function and String.length, and was wrong
+     here until an SMS made of brackets proved it. */
+  const brackets = smsSegments('A'.repeat(159) + '~');
+  assert.equal(brackets.characters, 160);
+  assert.equal(brackets.segments, 2, 'an escaped character was counted as one septet');
+
+  /* The euro sign is the surprise in the other direction: it is reachable in
+     GSM-7, so it does not force the message to UCS-2 the way a rupee sign does. */
+  const euro = smsSegments('Cost \u20ac5');
+  assert.equal(euro.unicode, false, 'a euro sign was treated as unicode');
+});
+
+await test('a message that spills is billed at the concatenated size', () => {
+  /* Past one segment every part carries the header that stitches them back
+     together, which costs 7 septets of each. 153, not 160 -- so 306 characters
+     is two parts and 307 is three. */
+  assert.equal(smsSegments('A'.repeat(306)).segments, 2);
+  assert.equal(smsSegments('A'.repeat(307)).segments, 3, 'a third part was not counted');
+  assert.equal(smsSegments('A'.repeat(200)).per_segment, 153);
+
+  /* And the same for unicode: 70 fit alone, and the 71st drops the whole
+     message to 67 per part. */
+  assert.equal(smsSegments('\u20b9'.repeat(70)).segments, 1);
+  assert.equal(smsSegments('\u20b9'.repeat(71)).segments, 2);
+  assert.equal(smsSegments('\u20b9'.repeat(71)).per_segment, 67);
 });
 
 await test('the count is of what is sent, not of the template', () => {
@@ -173,6 +204,125 @@ await test('the count is of what is sent, not of the template', () => {
   const counted = smsSegments('Hi {{name}}');
   assert.equal(counted.characters, withExamples('Hi {{name}}').length,
     'the segment count is of the raw template rather than the rendered message');
+});
+
+/* ------------------------------------------------------------- the email */
+
+const MAIL = {
+  channel: 'email',
+  name: 'templates_probe_mail',
+  subject: 'Your {{product}} review, {{name}}',
+  body: '<p>Hi {{name}}, your review with {{rm}} is ready.</p>',
+  components: { intent: 'service', preheader: 'Your quarterly review is ready' },
+};
+
+await test('a valid email template has nothing wrong with it', () => {
+  assert.deepEqual(checkTemplate(MAIL), [], JSON.stringify(checkTemplate(MAIL)));
+});
+
+await test('an email has to say what kind of email it is', () => {
+  /* The send path runs checkConsent(lead, 'email', intent). Without an intent
+     there is nothing to check it against, and the safe default is not a
+     default -- it is a question. */
+  const problems = checkTemplate({ ...MAIL, components: { preheader: 'x' } });
+  assert(problems.some((p) => p.field === 'intent'), 'an email with no intent was accepted');
+});
+
+await test('marketing mail cannot have its unsubscribe switched off', () => {
+  /* Refused rather than quietly re-enabled, so nobody believes they turned it
+     off and sends a campaign thinking they did. */
+  const problems = checkTemplate({
+    ...MAIL,
+    components: { ...MAIL.components, intent: 'marketing', unsubscribe: false },
+  });
+  assert(problems.some((p) => /unsubscribe/i.test(p.message)), 'unsubscribe was allowed off on marketing');
+
+  /* Service mail is a statement or a KYC notice and carries no unsubscribe. */
+  assert.deepEqual(
+    checkTemplate({ ...MAIL, components: { ...MAIL.components, unsubscribe: false } }),
+    [],
+    'service mail was made to carry an unsubscribe',
+  );
+});
+
+await test('a body of formatting and nothing else is empty', () => {
+  /* What the editor leaves behind when everything is deleted. It passes a
+     .trim() check and sends a blank email to a client. */
+  for (const body of ['<p><br></p>', '<div>&nbsp;</div>', '<p></p>']) {
+    const problems = checkTemplate({ ...MAIL, body });
+    assert(problems.some((p) => p.field === 'body'), `${body} was accepted as a message`);
+  }
+});
+
+await test('the subject and preheader are held to their lengths', () => {
+  const long = checkTemplate({ ...MAIL, subject: 'x'.repeat(151) });
+  assert(long.some((p) => p.field === 'subject'), 'a 151-character subject was accepted');
+
+  const pre = checkTemplate({ ...MAIL, components: { ...MAIL.components, preheader: 'x'.repeat(141) } });
+  assert(pre.some((p) => p.field === 'preheader'), 'a 141-character preheader was accepted');
+});
+
+await test('a merge field in the preheader is checked like anywhere else', () => {
+  /* It is rendered and sent like the subject, so an unfillable field there
+     reaches an inbox as literal braces. */
+  const problems = checkTemplate({
+    ...MAIL,
+    components: { ...MAIL.components, preheader: 'Ready, {{nickname}}' },
+  });
+  assert(problems.some((p) => /nickname/.test(p.message)), 'an unknown merge field in the preheader was accepted');
+});
+
+await test('a reply-to that could not receive a reply is refused', () => {
+  const bad = checkTemplate({ ...MAIL, components: { ...MAIL.components, reply_to: 'priya at bonanza' } });
+  assert(bad.some((p) => p.field === 'reply_to'), 'a malformed reply-to was accepted');
+
+  const ok = checkTemplate({ ...MAIL, components: { ...MAIL.components, reply_to: 'priya@bonanza.com' } });
+  assert.deepEqual(ok, [], JSON.stringify(ok));
+});
+
+await test('an attachment that is no longer sendable is named', () => {
+  /* checkAttachments is given the ids asked for and the rows still approved
+     and unexpired. Anything asked for and not returned was withdrawn. */
+  assert.deepEqual(checkAttachments([4, 9], [{ id: 4, name: 'SIP factsheet' }]).length, 1);
+  assert(checkAttachments([9], []).length && /#9/.test(checkAttachments([9], [])[0].message));
+  assert.deepEqual(checkAttachments([4], [{ id: 4, name: 'SIP factsheet' }]), []);
+});
+
+await test('a withdrawn attachment stops the save, not just the preview', async () => {
+  /* The id has to be one content_items will not return -- withdrawn, expired,
+     or never there. A template holding it would fail at send time, quietly. */
+  const gone = (one('SELECT MAX(id) AS id FROM content_items')?.id ?? 0) + 500;
+
+  const draft = { ...MAIL, components: { ...MAIL.components, attachments: [{ content_id: gone }] } };
+
+  const preview = await call('POST', '/admin/templates/preview', draft);
+  assert.equal(preview.body.ok, false, 'the preview accepted a withdrawn attachment');
+
+  const save = await call('POST', '/admin/templates', draft);
+  assert.equal(save.status, 400, `the save accepted it: HTTP ${save.status}`);
+});
+
+await test('the preview sends back both halves of the email', async () => {
+  /* Every email goes out as HTML and as plain text. The text half is
+     generated, so it is the half that goes wrong unseen. */
+  const res = await call('POST', '/admin/templates/preview', MAIL);
+
+  assert.equal(res.body.rendered.subject, 'Your Mutual Funds review, Rohan',
+    `subject rendered as ${res.body.rendered.subject}`);
+  assert(res.body.rendered.text, 'no plain-text alternative was returned');
+  assert(!/[<>]/.test(res.body.rendered.text), `the text half still has markup: ${res.body.rendered.text}`);
+  assert(/Rohan/.test(res.body.rendered.text), 'the text half did not render its merge fields');
+  assert.equal(res.body.rendered.preheader, 'Your quarterly review is ready');
+});
+
+await test('the preview shows what would be sent, not what was typed', async () => {
+  /* Sanitised before it is drawn. An unsanitised preview is a nicer email than
+     the one that arrives, which makes it useless for judging the real one. */
+  const res = await call('POST', '/admin/templates/preview', {
+    ...MAIL,
+    body: '<p>Hi {{name}}</p><script>alert(1)</script>',
+  });
+  assert(!/script/i.test(res.body.rendered.body), `the script survived: ${res.body.rendered.body}`);
 });
 
 /* ------------------------------------------------------------ the routes */

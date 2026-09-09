@@ -11,8 +11,9 @@ import { CONDITION_FIELDS, ACTION_TYPES, runRule } from '../engine/rules.js';
 import { MASTER_STEPS } from '../engine/kyc.js';
 import { integrationRegistry, getOutbox, syncTradingDb, vendorStatus } from '../integrations.js';
 import {
-  CHANNELS, MERGE_FIELDS, checkTemplate, withExamples, smsSegments, toMetaTemplate,
+  CHANNELS, MERGE_FIELDS, checkTemplate, checkAttachments, withExamples, smsSegments, toMetaTemplate,
 } from '../engine/templates.js';
+import { sanitizeHtml, htmlToText } from '../engine/sanitize.js';
 import { DEFAULT_SLA } from '../engine/sla.js';
 import { checkConsent } from '../engine/consent.js';
 import { MAY_RECEIVE_CAMPAIGN, normaliseKind } from '../engine/leadlists.js';
@@ -316,18 +317,57 @@ router.get('/templates/spec', requirePermission('admin.templates'), (_req, res) 
  * named merge fields to Meta's positional {{1}} is the part most likely to be
  * wrong, and reading it is far cheaper than having a template rejected.
  */
+/**
+ * Everything wrong with a draft, including the parts only the database knows.
+ *
+ * checkTemplate is pure and stays that way -- it is the same function the
+ * tests run without a server. Whether an attached document is still approved
+ * and unexpired is not a property of the draft, so it is resolved here and
+ * folded in, and the preview and the write both call this rather than each
+ * having their own idea of what is wrong.
+ */
+function templateProblems(draft) {
+  const problems = checkTemplate(draft);
+
+  const ids = (draft.components?.attachments ?? []).map((a) => Number(a.content_id ?? a));
+  if (ids.length) {
+    const found = all(
+      `SELECT id, name FROM content_items
+        WHERE id IN (${ids.map(() => '?').join(',')})
+          AND status = 'approved'
+          AND (expiry_date IS NULL OR expiry_date >= date('now'))`,
+      ids,
+    );
+    problems.push(...checkAttachments(ids, found));
+  }
+
+  return problems;
+}
+
 router.post('/templates/preview', requirePermission('admin.templates'), (req, res) => {
   const draft = req.body ?? {};
-  const problems = checkTemplate(draft);
+  const problems = templateProblems(draft);
+
+  /* Sanitised before it is shown, because the preview's job is to be what
+     goes out. Showing the raw markup would make the preview a nicer email
+     than the one the client receives. */
+  const html = draft.channel === 'email'
+    ? sanitizeHtml(withExamples(draft.body))
+    : withExamples(draft.body);
 
   res.json({
     problems,
     ok: problems.length === 0,
     rendered: {
       subject: withExamples(draft.subject),
-      body: withExamples(draft.body),
+      body: html,
       header: withExamples(draft.components?.header?.text),
       footer: withExamples(draft.components?.footer),
+      preheader: withExamples(draft.components?.preheader),
+      /* The other half of every email we send. It is generated, never written,
+         so it is the half that goes wrong unseen -- worth showing beside the
+         formatted one rather than trusting it. */
+      text: draft.channel === 'email' ? htmlToText(html) : null,
     },
     sms: draft.channel === 'sms' ? smsSegments(draft.body) : null,
     meta: draft.channel === 'whatsapp' ? toMetaTemplate(draft) : null,
@@ -337,7 +377,7 @@ router.post('/templates/preview', requirePermission('admin.templates'), (req, re
 router.post('/templates', requirePermission('admin.templates'), (req, res) => {
   const { name, channel, subject, body, product_type_id, approved = 0, components } = req.body;
 
-  const problems = checkTemplate({ channel: channel || 'whatsapp', name, subject, body, components });
+  const problems = templateProblems({ channel: channel || 'whatsapp', name, subject, body, components });
   if (problems.length) {
     return res.status(400).json({ error: problems[0].message, field: problems[0].field, problems });
   }
@@ -370,7 +410,7 @@ router.patch('/templates/:id', requirePermission('admin.templates'), (req, res) 
       body: req.body.body ?? current.body,
       components: req.body.components ?? JSON.parse(current.components || '{}'),
     };
-    const problems = checkTemplate(merged);
+    const problems = templateProblems(merged);
     if (problems.length) {
       return res.status(400).json({ error: problems[0].message, field: problems[0].field, problems });
     }

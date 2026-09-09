@@ -6463,6 +6463,22 @@ tr.row-inactive .user-cell strong { color: var(--ink-3); }
 }
 .mail-body { padding: 11px; font-size: 13px; line-height: 1.5; }
 
+/* The plain-text alternative. Monospaced and wrapped exactly as it is sent, so
+   a line that will arrive broken looks broken here. */
+.mail-body.is-plain {
+  margin: 0; white-space: pre-wrap; word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+/* Appended by the sender rather than written into the body, and drawn the way
+   a mail client draws it: after the message, quiet, and still there. */
+.mail-unsub {
+  padding: 7px 11px; text-align: center;
+  border-top: 1px solid var(--line, rgba(127,127,127,0.2));
+  text-decoration: underline;
+}
+
 .tmpl-meta { margin-top: 10px; }
 .tmpl-meta pre {
   max-height: 220px; overflow: auto; margin: 6px 0 0;

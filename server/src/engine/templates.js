@@ -17,6 +17,8 @@
  * older template with no components is still a valid template.
  */
 
+import { isEmptyHtml } from './sanitize.js';
+
 /**
  * Merge fields, and the fact that they are ours rather than Meta's.
  *
@@ -75,8 +77,20 @@ export const CHANNELS = {
   email: {
     label: 'Email',
     subject: { max: 150, required: true },
-    body: { required: true },
+    body: { required: true, html: true },
+    /* The grey line an inbox shows after the subject. Free space that is
+       currently unused, and the cheapest open-rate change available. */
     preheader: { max: 140 },
+    /* Not a label. `checkConsent(lead, 'email', intent)` already blocks a
+       marketing send to a lead who opted out and lets a KYC or statement
+       through, so declaring intent on the template rather than at send time
+       is what stops a campaign being posted as "service" to get past a
+       suppression. */
+    intents: [
+      { key: 'service', label: 'Service', note: 'Transactional and regulatory: KYC, statements, dues, SLA. Reaches an opted-out lead.' },
+      { key: 'marketing', label: 'Marketing', note: 'Campaigns, pitches, offers. Suppressed for anyone opted out, and carries an unsubscribe link.' },
+    ],
+    attachments: { max: 5 },
   },
 };
 
@@ -118,7 +132,7 @@ export function checkTemplate({ channel, name, subject, body, components = {} })
   /* Merge fields we cannot fill. A template naming {{account_number}} renders
      the literal text to a client, which is worse than refusing it here. */
   const known = new Set(MERGE_FIELDS.map((f) => f.key));
-  for (const part of [subject, body, components.header?.text, components.footer]) {
+  for (const part of [subject, body, components.header?.text, components.footer, components.preheader]) {
     for (const field of fieldsIn(part)) {
       if (!known.has(field)) {
         problems.push({ field: 'body', message: `There is no merge field called "${field}"` });
@@ -127,7 +141,79 @@ export function checkTemplate({ channel, name, subject, body, components = {} })
   }
 
   if (channel === 'whatsapp') problems.push(...checkWhatsApp(components, spec));
+  if (channel === 'email') problems.push(...checkEmail(components, spec, body));
   return problems;
+}
+
+/**
+ * An email address, to the only standard worth applying here.
+ *
+ * Deliberately loose. The exhaustive RFC 5322 pattern rejects addresses that
+ * work and accepts ones that do not, and the real test of an address is
+ * whether mail to it is delivered. This catches the typo -- a missing @, a
+ * trailing comma, a space -- and leaves the rest to the mail server.
+ */
+const EMAIL = /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/;
+
+function checkEmail(c, spec, body) {
+  const problems = [];
+
+  if (!c.intent) {
+    problems.push({ field: 'intent', message: 'Say whether this is a service or a marketing email' });
+  } else if (!spec.intents.some((i) => i.key === c.intent)) {
+    problems.push({ field: 'intent', message: `"${c.intent}" is not an intent` });
+  }
+
+  if (len(c.preheader) > spec.preheader.max) {
+    problems.push({ field: 'preheader', message: `A preheader is at most ${spec.preheader.max} characters -- this is ${len(c.preheader)}` });
+  }
+
+  /* An empty body is not an empty string. The editor leaves <p><br></p> behind
+     when everything is deleted, which passes a .trim() check and sends a blank
+     email to a client. */
+  if (body && isEmptyHtml(body)) {
+    problems.push({ field: 'body', message: 'The body looks empty. Formatting on its own is not a message.' });
+  }
+
+  if (c.reply_to && !EMAIL.test(String(c.reply_to).trim())) {
+    problems.push({ field: 'reply_to', message: `"${c.reply_to}" is not an email address replies could go to` });
+  }
+
+  const attachments = c.attachments ?? [];
+  if (!Array.isArray(attachments)) {
+    problems.push({ field: 'attachments', message: 'Attachments must be a list' });
+  } else if (attachments.length > spec.attachments.max) {
+    problems.push({ field: 'attachments', message: `At most ${spec.attachments.max} attachments` });
+  }
+
+  /* Marketing mail must carry a way out of it, and the template is not the
+     place that decision gets made. Refused rather than silently corrected, so
+     nobody believes they turned it off. */
+  if (c.intent === 'marketing' && c.unsubscribe === false) {
+    problems.push({ field: 'intent', message: 'A marketing email has to carry an unsubscribe link. Send it as service if it is not marketing.' });
+  }
+
+  return problems;
+}
+
+/**
+ * Attachments that are still sendable.
+ *
+ * Separate from checkTemplate because it needs rows from the database and the
+ * rest of this module is pure. The route resolves the ids and passes what it
+ * found; anything asked for and not returned was withdrawn or has expired,
+ * which is the same rule the send route applies at the moment of sending. A
+ * template holding a withdrawn document is not an error until somebody notices
+ * -- so it is said here, while the template is open.
+ */
+export function checkAttachments(ids = [], found = []) {
+  const have = new Map(found.map((r) => [r.id, r]));
+  return ids
+    .filter((id) => !have.has(Number(id)))
+    .map((id) => ({
+      field: 'attachments',
+      message: `An attached document (#${id}) has been withdrawn or has expired. Remove it.`,
+    }));
 }
 
 function checkWhatsApp(c, spec) {
@@ -201,6 +287,25 @@ export const withExamples = (text) => String(text ?? '').replace(
 );
 
 /**
+ * The GSM-7 alphabet (GSM 03.38), as two sets rather than one regex.
+ *
+ * A character in the basic set costs one septet. The eight in the extended
+ * set are reached through an escape and cost two. Anything in neither forces
+ * the whole message into UCS-2 -- one Greek letter, one em dash, one curly
+ * quote pasted out of Word, and every character in the message doubles.
+ */
+const GSM7 = [
+  '@\u00a3$\u00a5\u00e8\u00e9\u00f9\u00ec\u00f2\u00c7\n\u00d8\u00f8\r\u00c5\u00e5',
+  '\u0394_\u03a6\u0393\u039b\u03a9\u03a0\u03a8\u03a3\u0398\u039e\u00c6\u00e6\u00df\u00c9',
+  ' !"#\u00a4%&\'()*+,-./0123456789:;<=>?',
+  '\u00a1ABCDEFGHIJKLMNOPQRSTUVWXYZ\u00c4\u00d6\u00d1\u00dc\u00a7',
+  '\u00bfabcdefghijklmnopqrstuvwxyz\u00e4\u00f6\u00f1\u00fc\u00e0',
+].join('');
+
+/* Two septets each. The euro sign is the one people are surprised by. */
+const GSM7_EXTENDED = '^{}\\[~]|\u20ac';
+
+/**
  * What an SMS actually costs to send.
  *
  * Anything outside GSM-7 forces the whole message into UCS-2, where a segment
@@ -210,13 +315,34 @@ export const withExamples = (text) => String(text ?? '').replace(
  */
 export function smsSegments(text) {
   const s = withExamples(text);
-  const unicode = /[^ -@£$¥èéùìòÇØøÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !"#¤%&'()*+,\-./0-9:;<=>?¡A-ZÄÖÑÜ§¿a-zäöñüà\n\r]/.test(s);
-  const per = unicode ? CHANNELS.sms.segment_unicode : CHANNELS.sms.segment;
+
+  let septets = 0;
+  for (const ch of s) {
+    if (GSM7_EXTENDED.includes(ch)) septets += 2;
+    else if (GSM7.includes(ch)) septets += 1;
+    else return ucs2(s);
+  }
+
+  /* 160 septets in a message that fits one part. Past that every part carries
+     the header that stitches them together, which costs 7 of them. */
+  const per = septets > 160 ? 153 : 160;
   return {
     characters: s.length,
-    unicode,
+    unicode: false,
     per_segment: per,
-    segments: Math.max(1, Math.ceil(s.length / per)),
+    segments: Math.max(1, Math.ceil(septets / per)),
+  };
+}
+
+/* 70 characters alone, 67 once the concatenation header takes its share. */
+function ucs2(s) {
+  const units = [...s].reduce((n, ch) => n + (ch.codePointAt(0) > 0xffff ? 2 : 1), 0);
+  const per = units > 70 ? 67 : 70;
+  return {
+    characters: s.length,
+    unicode: true,
+    per_segment: per,
+    segments: Math.max(1, Math.ceil(units / per)),
   };
 }
 
