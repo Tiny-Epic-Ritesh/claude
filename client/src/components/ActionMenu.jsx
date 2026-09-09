@@ -186,6 +186,10 @@ export default function ActionMenu({
  * the mistake.
  */
 export const BULK_ACTIONS = [
+  /* P3-39. First in the list because it is the one that does the most:
+     everything else here acts on the ticked rows, and this is the only one
+     that can reach the whole result. */
+  { key: 'bulk_update', label: 'Bulk update', icon: 'edit', needs: 'lead.edit' },
   { key: 'bulk_owner', label: 'Reassign owner', icon: 'person_pin', needs: 'lead.reassign' },
   { key: 'bulk_dialler', label: 'Push to autodialler', icon: 'dialpad', needs: 'lead.contact' },
   { key: 'bulk_whatsapp', label: 'Send WhatsApp', icon: 'chat', needs: 'lead.contact' },

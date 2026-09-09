@@ -8,6 +8,7 @@ import ActionModal from './ActionModals.jsx';
 import { useLeadActions, CallNumber } from './leadActions.jsx';
 import AdvancedSearch from '../components/AdvancedSearch.jsx';
 import ExportDialog from '../components/ExportDialog.jsx';
+import BulkUpdate from './BulkUpdate.jsx';
 
 const BANDS = ['Fresh', 'Active', 'Ageing', 'At Risk', 'Cold'];
 
@@ -249,6 +250,7 @@ export default function Leads({ session }) {
 
   const canCreate = session.permissions.includes('lead.create');
   const [exporting, setExporting] = useState(false);
+  const [bulking, setBulking] = useState(false);
   const set = (k) => (e) => setFilters({ ...filters, [k]: e.target.value });
 
   return (
@@ -509,9 +511,22 @@ export default function Leads({ session }) {
       <BulkBar
         count={selected.size}
         permissions={session.permissions}
-        onAction={(key) => actions.runBulk(key, [...selected])}
+        onAction={(key) => (key === 'bulk_update' ? setBulking(true) : actions.runBulk(key, [...selected]))}
         onClear={() => setSelected(new Set())}
       />
+
+      {bulking && (
+        <BulkUpdate
+          selected={[...selected]}
+          /* The unpaged count, not the page. "Select all 1,500 across all
+             pages" has to say the real number or it is asking somebody to
+             agree to something they cannot see. */
+          total={found ? found.total : count}
+          query={query}
+          onClose={() => setBulking(false)}
+          onDone={() => { setSelected(new Set()); reload(); }}
+        />
+      )}
 
       <ActionModal
         state={actions.modal}

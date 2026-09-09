@@ -472,6 +472,168 @@ router.get('/leads/import/runs/:id', requirePermission('lead.create'), (req, res
   return res.json(found);
 });
 
+/* ------------------------------------------------ bulk update (P3-39)
+ *
+ * Above `/leads/:id`, like every literal path under /leads.
+ */
+
+/**
+ * Which fields a bulk update may set, and what they may be set to.
+ *
+ * Deliberately narrow, and the same narrowness the list-based bulk edit uses:
+ * never an identifier. Setting `mobile` in bulk is a way to destroy the thing
+ * every other record is matched on, and renaming 1,200 people at once is not a
+ * feature anybody asked for.
+ */
+export const BULK_FIELDS = [
+  { key: 'stage', label: 'Stage', values: LEAD_STAGES },
+  { key: 'source', label: 'Source' },
+  { key: 'city', label: 'City' },
+  { key: 'state', label: 'State' },
+  { key: 'language', label: 'Language' },
+  { key: 'risk_profile', label: 'Risk profile' },
+  { key: 'owner_id', label: 'Owner', kind: 'user' },
+];
+
+/**
+ * The fields, and the values each one allows.
+ *
+ * Sent from here rather than assembled in the browser so a dialog cannot offer
+ * a field the write will refuse, or a value it will not accept. P3-39 asks for
+ * the value box to stay frozen until a field is chosen and then to present that
+ * field's valid values — this is the list it presents.
+ */
+router.get('/leads/bulk/options', requirePermission('lead.edit'), (req, res) => {
+  const orgs = orgsFor(req.user);
+
+  const fields = BULK_FIELDS.map((f) => {
+    if (f.values) return f;
+
+    if (f.kind === 'user') {
+      return {
+        ...f,
+        values: all(
+          `SELECT id AS value, name AS label FROM users
+            WHERE active = 1 AND sales_org IN (${orgs.map(() => '?').join(',') || "''"})
+            ORDER BY name`,
+          orgs,
+        ),
+      };
+    }
+
+    /* Whatever is already in use, within this person's books. A free-text
+       field with no catalogue still deserves a list rather than a blank box —
+       it is how "Mumbai" stops competing with "mumbai" and " Mumbai". */
+    const used = all(
+      `SELECT DISTINCT ${f.key} AS value FROM leads
+        WHERE deleted_at IS NULL AND ${f.key} IS NOT NULL AND TRIM(${f.key}) != ''
+          AND sales_org IN (${orgs.map(() => '?').join(',') || "''"})
+        ORDER BY ${f.key} LIMIT 200`,
+      orgs,
+    ).map((r) => r.value);
+
+    return { ...f, values: used, free: true };
+  });
+
+  res.json({
+    fields,
+    max: 5000,
+    note: 'A bulk update applies to the leads you can see, and is recorded against each one.',
+  });
+});
+
+/**
+ * Set one field across a chosen set of leads.
+ *
+ * The set comes from the same filter the list is showing, bounded three ways:
+ *
+ *   ids    the rows ticked on this page
+ *   all    everything the filter matches
+ *   first  the first N of it, N checked against what the filter actually
+ *          returns rather than against a number the caller sent
+ */
+router.post('/leads/bulk/field', requirePermission('lead.edit'), (req, res) => {
+  const { field, value, mode = 'ids', ids = [], limit } = req.body ?? {};
+
+  const known = BULK_FIELDS.find((f) => f.key === field);
+  if (!known) {
+    return res.status(400).json({ error: `"${field}" cannot be set in bulk`, allowed: BULK_FIELDS.map((f) => f.key) });
+  }
+  if (known.values && !known.free && known.kind !== 'user'
+      && value !== null && !known.values.includes(value)) {
+    return res.status(400).json({ error: `"${value}" is not a value ${known.label} accepts`, field: 'value' });
+  }
+
+  /* The same filter the screen is showing. Every mode narrows this rather than
+     querying separately, so "all" here and "all" on the list cannot mean two
+     different things. */
+  const { clause, params } = leadFilter(req);
+  const total = one(`SELECT COUNT(*) n FROM leads l WHERE ${clause}`, params).n;
+
+  let where = clause;
+  let args = [...params];
+  let bound = null;
+
+  if (mode === 'ids') {
+    const wanted = ids.map(Number).filter(Number.isFinite);
+    if (!wanted.length) return res.status(400).json({ error: 'No leads selected' });
+    /* ANDed into the scoped filter rather than used on their own. Ids arrive
+       from a browser and prove nothing; this way a caller can only ever reach
+       rows the filter would already have given them. */
+    where = `${clause} AND l.id IN (${wanted.map(() => '?').join(',')})`;
+    args = [...params, ...wanted];
+  } else if (mode === 'first') {
+    const n = Number(limit);
+    if (!Number.isFinite(n) || n < 1) {
+      return res.status(400).json({ error: 'Enter how many leads to update', field: 'limit' });
+    }
+    if (n > total) {
+      return res.status(400).json({
+        error: `There ${total === 1 ? 'is' : 'are'} only ${total.toLocaleString('en-IN')} lead${total === 1 ? '' : 's'} in this result — ${n.toLocaleString('en-IN')} is more than that.`,
+        field: 'limit',
+        available: total,
+      });
+    }
+    bound = n;
+  } else if (mode !== 'all') {
+    return res.status(400).json({ error: `"${mode}" is not a way to choose leads`, field: 'mode' });
+  }
+
+  const targets = all(
+    `SELECT l.id, l.${field} AS current FROM leads l WHERE ${where} ORDER BY l.id${bound ? ' LIMIT ?' : ''}`,
+    bound ? [...args, bound] : args,
+  );
+
+  if (targets.length > 5000) {
+    return res.status(400).json({
+      error: `That is ${targets.length.toLocaleString('en-IN')} leads — the most one update may carry is 5,000.`,
+    });
+  }
+
+  let changed = 0;
+  let unchanged = 0;
+  for (const t of targets) {
+    /* A row already holding the value is left alone. Writing it anyway would
+       put a change on its history and move its last-modified for a change that
+       did not happen. */
+    if (String(t.current ?? '') === String(value ?? '')) { unchanged += 1; continue; }
+    run(`UPDATE leads SET ${field} = ? WHERE id = ?`, [value, t.id]);
+    audit(req.user.id, 'lead.bulk.field', 'lead', t.id, { field, from: t.current, to: value, mode });
+    changed += 1;
+  }
+
+  return res.json({
+    ok: true,
+    field,
+    value,
+    mode,
+    matched: targets.length,
+    changed,
+    unchanged,
+    total,
+  });
+});
+
 /* ------------------------------------------------- lead export columns
  *
  * Above `/leads/:id` deliberately. Express matches in registration order and
