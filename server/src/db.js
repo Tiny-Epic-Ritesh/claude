@@ -1168,6 +1168,21 @@ const COLUMNS = [
   ["tickets", "sales_org", "TEXT NOT NULL DEFAULT 'BONANZA'"],
   ["campaigns", "sales_org", "TEXT NOT NULL DEFAULT 'BONANZA'"],
   ["lead_lists", "sales_org", "TEXT NOT NULL DEFAULT 'BONANZA'"],
+  /* Templates were the one message surface with no book on it (P3-17).
+   *
+   * The DLT senders have been scoped since the SMS builder landed -- BONANZ
+   * belongs to Bonanza and BIGULX to Bigul, and a template naming the other
+   * one is refused -- so nothing could ever be *delivered* across the
+   * boundary. The list itself was the leak: every admin and marketing manager
+   * of either business read the other's client-facing copy, which is the
+   * wording, the offers and the product positioning of a competitor.
+   *
+   * The default backfills the existing rows to Bonanza, and here that is the
+   * right answer rather than the convenient one: all six seeded templates name
+   * Bonanza in the body they send ("Bonanza Portfolio Ltd", "your Bonanza
+   * account"), so there is no Bigul-authored template to mislabel. If that
+   * ever stops being true the backfill has to be written, not defaulted. */
+  ["templates", "sales_org", "TEXT NOT NULL DEFAULT 'BONANZA'"],
 
   /* Lead Lists (BUG-25).
    *

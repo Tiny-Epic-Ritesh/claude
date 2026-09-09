@@ -302,7 +302,32 @@ router.post('/categories', requirePermission('admin.sla'), (req, res) => {
 
 /* ----------------------------------------------------------- templates */
 
-router.get('/templates', (_req, res) => res.json(all('SELECT * FROM templates ORDER BY channel, name')));
+/**
+ * The templates this user's business owns.
+ *
+ * This list never asked which book it was reading. The senders did -- a
+ * template naming the other entity's header is refused on the write -- so
+ * nothing could be *delivered* across the boundary, and that made the gap easy
+ * to miss. What crossed was the copy itself: every admin and marketing manager
+ * of either business read the other's client-facing wording, offers and
+ * product positioning straight off the Templates screen.
+ *
+ * Entitlement only, like the campaign list beside it: a person holding both
+ * books sees both, and the header switcher does not narrow this screen. What a
+ * template is written for is the business that owns it, not the business
+ * currently being looked at.
+ */
+router.get('/templates', (req, res) => {
+  const orgs = orgsFor(req.user);
+  if (!orgs.length) return res.json([]);          // fail closed: no book, no templates
+
+  return res.json(all(
+    `SELECT * FROM templates
+      WHERE sales_org IN (${orgs.map(() => '?').join(',')})
+      ORDER BY channel, name`,
+    orgs,
+  ));
+});
 
 /**
  * What a template may contain, per channel (P3-17).
@@ -437,11 +462,28 @@ router.post('/templates', requirePermission('admin.templates'), (req, res) => {
     return res.status(400).json({ error: problems[0].message, field: problems[0].field, problems });
   }
 
+  /* The book, named on the INSERT rather than left to the column default.
+   *
+   * POST /admin/users made exactly this mistake: it did not name sales_org, so
+   * every user created anywhere took the default and became a Bonanza user --
+   * including the ones a Bigul administrator created, who then read the wrong
+   * book and vanished from the list of the person who made them. A default is
+   * a backfill for rows that predate a column, never the value for a row being
+   * written by somebody whose book is known.
+   *
+   * Taken from the switcher when it is set and from the author otherwise, and
+   * checked either way: `activeOrg` already refuses a book the user does not
+   * hold, and `mayUseOrg` catches the case where they hold none at all. */
+  const org = activeOrg(req) ?? req.user.sales_org;
+  if (!mayUseOrg(req.user, org)) {
+    return res.status(403).json({ error: `You cannot create templates in ${org ?? 'that business'}`, field: 'sales_org' });
+  }
+
   const result = run(
-    'INSERT INTO templates (name, channel, subject, body, product_type_id, approved, components) VALUES (?,?,?,?,?,?,?)',
+    'INSERT INTO templates (name, channel, subject, body, product_type_id, approved, components, sales_org) VALUES (?,?,?,?,?,?,?,?)',
     [
       name, channel || 'whatsapp', subject || null, body, product_type_id || null, approved ? 1 : 0,
-      components ? JSON.stringify(components) : null,
+      components ? JSON.stringify(components) : null, org,
     ],
   );
   const templateId = Number(result.lastInsertRowid);
@@ -453,6 +495,14 @@ router.post('/templates', requirePermission('admin.templates'), (req, res) => {
 router.patch('/templates/:id', requirePermission('admin.templates'), (req, res) => {
   const current = one('SELECT * FROM templates WHERE id = ?', [req.params.id]);
   if (!current) return res.status(404).json({ error: 'Template not found' });
+  /* Scoping the list is not scoping the record. Ids are sequential, so a
+     template the Templates screen no longer shows can still be reached by
+     number and rewritten -- and a template is the text that reaches clients,
+     so an edit here is an edit to what the other business says to its own
+     market. The same hole PATCH /admin/users had, in the same file. */
+  if (!mayUseOrg(req.user, current.sales_org)) {
+    return res.status(403).json({ error: 'That template belongs to another book' });
+  }
 
   /* Checked as the template WOULD be, not as the patch arrives. Somebody
      editing only the body still has a header and buttons, and validating the
@@ -498,6 +548,12 @@ router.patch('/templates/:id', requirePermission('admin.templates'), (req, res) 
 router.delete('/templates/:id', requirePermission('admin.templates'), (req, res) => {
   const template = one('SELECT * FROM templates WHERE id = ?', [req.params.id]);
   if (!template) return res.status(404).json({ error: 'Template not found' });
+  /* Refused before the in-use check, not after: "23 campaigns still use this"
+     names the other book's campaigns and how many there are, which is a fact
+     about their business, so the boundary has to be the first answer. */
+  if (!mayUseOrg(req.user, template.sales_org)) {
+    return res.status(403).json({ error: 'That template belongs to another book' });
+  }
 
   const usedBy = [];
   const campaigns = all('SELECT name FROM campaigns WHERE template_id = ?', [template.id]);

@@ -24,7 +24,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit } from '../db.js';
-import { requireUser, requirePermission, reqScope, mayUnmask, can } from '../auth.js';
+import { requireUser, requirePermission, reqScope, mayUnmask, can, orgsFor } from '../auth.js';
 import { decryptField } from '../security.js';
 import { checkConsent } from '../engine/consent.js';
 import { send } from '../integrations.js';
@@ -76,6 +76,9 @@ router.get('/compose/:leadId', (req, res) => {
 
   const verdict = checkConsent(lead, 'email', 'service');
 
+  const orgs = orgsFor(req.user);
+  const orgPlaceholders = orgs.map(() => '?').join(',') || 'NULL';
+
   res.json({
     lead: {
       id: lead.id,
@@ -96,15 +99,18 @@ router.get('/compose/:leadId', (req, res) => {
     /* Approved org templates, plus this person's own drafts.
      *
      * A personal template is the RM's own wording and needs no approval; it is
-     * only ever offered to them. An org template is firm-wide client-facing
-     * copy and only appears once approved. */
+     * only ever offered to them. An org template is client-facing copy for one
+     * business -- not firm-wide, as this once assumed -- and only appears once
+     * approved and only to the book that owns it. A personal template needs no
+     * book test: it is offered to its author alone, and its author has one. */
     templates: all(
       `SELECT id, name, subject, body, product_type_id, scope
          FROM templates
         WHERE channel = 'email'
-          AND ((scope = 'org' AND approved = 1) OR (scope = 'personal' AND owner_id = ?))
+          AND ((scope = 'org' AND approved = 1 AND sales_org IN (${orgPlaceholders}))
+               OR (scope = 'personal' AND owner_id = ?))
         ORDER BY scope DESC, name`,
-      [req.user.id],
+      [...orgs, req.user.id],
     ),
     /* What a template may reference. Encrypted and read-restricted fields are
        not in here -- see engine/mergefields.js for why that is the important
@@ -182,8 +188,13 @@ router.post('/templates', requirePermission('lead.contact'), (req, res) => {
 
   const clean = sanitizeHtml(body);
   const r = run(
-    `INSERT INTO templates (name, channel, subject, body, product_type_id, approved, scope, owner_id)
-     VALUES (?, 'email', ?, ?, ?, ?, ?, ?)`,
+    /* sales_org is named here for the same reason it is named on
+       POST /admin/templates: an INSERT that leaves it to the column default
+       puts every template any Bigul RM saves into Bonanza's book, where its
+       author cannot see it and the other business can. The author's own book,
+       which for an RM is the only one they have. */
+    `INSERT INTO templates (name, channel, subject, body, product_type_id, approved, scope, owner_id, sales_org)
+     VALUES (?, 'email', ?, ?, ?, ?, ?, ?, ?)`,
     [
       name.trim(), subject.trim(), clean, productId || null,
       // A personal template is usable by its owner immediately; an org one is
@@ -191,6 +202,7 @@ router.post('/templates', requirePermission('lead.contact'), (req, res) => {
       scope === 'personal' ? 1 : 0,
       scope,
       scope === 'personal' ? req.user.id : null,
+      req.user.sales_org,
     ],
   );
 

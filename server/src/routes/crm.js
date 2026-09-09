@@ -1804,7 +1804,15 @@ router.get('/meta', (req, res) => {
       orgs,
     ),
     ticket_categories: all('SELECT * FROM ticket_categories WHERE active = 1'),
-    templates: all('SELECT id, name, channel, subject, body, product_type_id FROM templates WHERE approved = 1'),
+    // Scoped like the product and partner pickers above it. A template carries
+    // the sender's own branding in its body, so offering an RM the other
+    // book's copy offers them a message signed by a business they do not work
+    // for -- and under a DLT header the send would refuse anyway.
+    templates: all(
+      `SELECT id, name, channel, subject, body, product_type_id
+       FROM templates WHERE approved = 1 AND sales_org IN (${placeholders})`,
+      orgs,
+    ),
     orgs,
     me: {
       id: req.user.id, name: req.user.name, role: req.user.role,

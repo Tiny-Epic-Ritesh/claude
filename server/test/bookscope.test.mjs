@@ -187,6 +187,22 @@ const LIST_ROUTES = {
   '/api/partners': { org: (r) => r.sales_org },
   // A task inherits its lead's book, and a task with no lead has none.
   '/api/tasks': { query: 'all=true', viaLead: (r) => r.lead_id },
+  /* Not a client record, and listed here anyway.
+   *
+   * A template is the firm's own words rather than a client's data, so on the
+   * face of it it belongs in NOT_A_LIST_OF_RECORDS. It does not: the words are
+   * client-facing copy written for one business — its offers, its pricing, its
+   * positioning — and this list handed every admin and marketing manager the
+   * other book's. The classifier's question is whether the boundary applies,
+   * not whether the row names a person.
+   *
+   * Added by hand because the scanner above only discovers routers mounted at
+   * '/' (`\w+\.get\('\/'`), and this one is `/templates` under /api/admin. So
+   * nothing forces a named list route to be classified — a real gap, and a
+   * wider one than this change: extending the scan to named GETs would sweep in
+   * most of setup.js and admin.js at once, which is its own piece of work.
+   * Listing it here at least probes the route on every run. */
+  '/api/admin/templates': { org: (r) => r.sales_org },
 };
 
 /** Routes that return many rows but not client records. */
