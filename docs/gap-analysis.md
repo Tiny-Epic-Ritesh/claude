@@ -895,13 +895,38 @@ same scanner only classifies **GET** routes, leaving 122 write routes
 unclassified. Both were recommended as their own piece of work and neither has
 been done.
 
-**The work, when it is done:** extend the scan to named routes and to writes,
-then classify what it sweeps in. The classification is the expensive half -
-`setup.js` and `admin.js` together would produce well over a hundred routes
-needing a decision each, and most will be configuration rather than client
-records. Doing it in one pass is what makes it worth doing: a partial sweep
-leaves exactly the same false confidence, which is the thing that actually cost
-us here.
+**The work, measured on 9 Sep 2026.** Counting the GET routes across
+`src/routes`: 18 are mounted at `/` and classified, 49 take a parameter and are
+swept by the detail scanner, and **132 are named GETs that nothing classifies at
+all**. They sit like this:
+
+| File | Named GETs | Mostly |
+|---|---:|---|
+| `admin.js` | 35 | configuration |
+| `setup.js` | 26 | configuration |
+| `crm.js` | 15 | client data |
+| `reports.js` | 8 | client data, aggregated |
+| `market.js` | 7 | market data, not ours |
+| `attendance.js` | 5 | staff data |
+| the other 18 files | 36 | mixed |
+
+So about 61 are configuration, 7 are market data that belongs to no book, and
+the remaining 64 touch records that do. Add the 122 unclassified write routes
+and it is roughly 190 decisions.
+
+**Why it has not been started.** The classification is the expensive half and
+the only half that matters — extending the scanner is an afternoon. Doing it in
+one pass is what makes it worth doing: a partial sweep leaves exactly the same
+false confidence, which is the thing that actually cost us with templates. A
+hundred routes rubber-stamped as configuration without reading the handler
+would be worse than the gap, because the gap is at least honest.
+
+**A better shape than classifying by hand.** Rather than trusting a
+`NOT_A_LIST_OF_RECORDS` label, the check could prove itself: call each route as
+a user holding one book and as a user holding the other, and fail if a response
+carries a `sales_org` the caller does not hold. That turns 190 judgements into
+190 assertions, and the ones that cannot be answered that way are exactly the
+ones worth a human reading.
 
 Until then the honest statement of coverage is: **the boundary is enforced by
 tests on the list routes mounted at `/`, and by review everywhere else.**

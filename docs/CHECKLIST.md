@@ -2956,3 +2956,125 @@ campaigns and how many there are.
 scanner only discovers routers mounted at `/`, so no named list route is forced
 to be classified at all. That is a wider gap than this change and is called out
 in the file rather than left implicit.
+
+## Hand a book over when somebody leaves - 9 Sep 2026
+
+_P3-19._ There was already a version of this hidden inside deactivation: pass
+`reassign_to` and every open lead and open task went to one person. The right
+instinct, and much too small a version of it.
+
+What it left behind: won and lost leads, still owned by somebody who cannot
+sign in, so the clients they became had no reachable RM. Clients, tickets,
+product cards and partners, all of which have owners. Direct reports - which
+matter more than they look, because team visibility resolves through
+`users.manager_id`, so a departing supervisor left their reports under a
+manager who no longer existed and nobody above them could see the team. No way
+to see what would happen before it happened, no way to put it back, and no way
+to split a book, so the only option was dropping several thousand leads on one
+person.
+
+### The screen sits before Disable, not after it
+
+Disabling first is what orphans a book, so the button that prevents that is the
+one the eye reaches first. It answers three questions in order and moves
+nothing until all three are answered: what they hold, who takes it, what that
+will look like.
+
+The preview is the server's own plan rather than a count computed in the
+browser - the same function produces the numbers shown and the moves executed.
+A preview that can differ from its own execution is worse than none, because it
+is believed.
+
+Round-robin deals per object type rather than across the whole book: a two-way
+split of 300 leads and 40 tickets gives 150/150 and 20/20, not one person taking
+every ticket because the leads ended on an odd number.
+
+### Moving closed leads is safe, and worth saying why
+
+It looks like rewriting history and would be if credit came from
+`leads.owner_id`. It does not: KRA and every activity report attribute to
+`activities.user_id`, which is who actually made the call. Ownership is who is
+responsible now, and a won lead owned by somebody who left is a client with
+nobody to ring.
+
+### Undo refuses what somebody else has since touched
+
+`handover_move` records the previous owner per row rather than just the batch's
+source, so undo restores each row to where it came from and skips any row whose
+owner has changed since. Undo is for the handover that went to the wrong person
+and is noticed within the hour, not a way to overwrite a fortnight of a
+colleague's work because the batch is still in the list.
+
+Private dashboards, personal templates and personal lead lists stay with the
+person leaving - their own working notes rather than the firm's book - and are
+shown as staying rather than omitted silently.
+
+Deactivation goes through the same engine now, so there is one implementation
+and it is undoable, but it still moves open leads and open tasks and no more.
+Widening what an existing API does as a side effect of a refactor is not a
+change to make quietly.
+
+
+## A database could not be built from nothing - 9 Sep 2026
+
+Found while chasing test failures that turned out not to be test failures.
+
+### Nobody could stand up a new environment
+
+`node src/seed.js` against an empty data directory died on `no such table:
+dispositions`. Tables are created in several passes for readability and the
+column-migration loop sits between the first pass and the rest, so on a fresh
+database it tried to ALTER three tables that did not exist yet. On any existing
+database they were already there from a previous run, so it only ever failed on
+the one case nobody exercises - and the project could only be carried forward
+from a database somebody already had.
+
+The six columns are declared in their own CREATE TABLE now, the loop skips a
+table it has not reached, and a check at the bottom - once every table exists -
+asserts that every migration actually landed. Skipping quietly is only safe if
+something says so out loud afterwards.
+
+Then it died again on a foreign key: `field_def.entity` references
+`entity_def(api_name)`, and `entity_def` is filled by `seedMetadata()`, which
+only `src/index.js` ever called. Seeding a database no server had run against
+left it empty.
+
+### transact was not reentrant, and that was the real story
+
+SQLite has no nested transactions, so `BEGIN` inside one raises "cannot start a
+transaction within a transaction" - and because that BEGIN sat outside
+`transact`'s own try block, the error escaped from whichever helper called it,
+naming a line that gives no hint where the outer transaction was opened.
+
+The seed is where it bit. It holds BEGIN IMMEDIATE for its whole run so two
+seeds cannot interleave, then calls helpers that each want a transaction of
+their own. What came out were FOREIGN KEY and UNIQUE constraint failures on
+`users`, at whichever `addUser` ran after the transaction had been broken -
+which is why it looked intermittent and pointed nowhere near the cause.
+
+`transact` joins an open transaction instead. That is the right semantics as
+well as the working one: the caller has already said "all of this or none of
+it", and a helper inside that has no business committing halfway through
+somebody else's atomic unit.
+
+Measured on the same database: **4 failures in 8 seeds before, 0 in 11 after** -
+five against a directory built from nothing and six against the development
+database that had been failing half the time.
+
+### It was never tested because it could not be
+
+The database path was hardcoded, so the only way to try was to move the
+development database aside and hope nothing had it open - and a test that needs
+a live process killed first is a test nobody runs. `CRM_DATA_DIR` overrides it,
+and `test/bootstrap.test.mjs` seeds a real empty directory in a subprocess.
+Deliberately slow, because every cheaper version of that check is a version that
+passes while the thing it stands for is broken.
+
+### A wrong answer, corrected
+
+The first diagnosis of the intermittent seed failure - reported before it was
+tested - was `users.manager_id`, a self-referencing foreign key with no ON
+DELETE action. It is not the cause: `DELETE FROM users` handles the chain,
+including when the manager sorts first. It was disproved directly before the
+real cause was found, and it is recorded here because a confident wrong
+explanation is worth remembering as such.
