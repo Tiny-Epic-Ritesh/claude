@@ -142,7 +142,10 @@ export function evaluate(conditions, facts) {
 
 /* --------------------------------------------------------------- actions */
 
-function runAction(action, facts, { dryRun }) {
+/* Exported so engine/automation.js performs an action the same way a rule does.
+   Two implementations of "send a WhatsApp" would drift, and only one of them
+   would be the one with the consent check in it. */
+export function runAction(action, facts, { dryRun }) {
   const lead = facts._lead;
   const describe = { action: action.type, params: action.params };
 

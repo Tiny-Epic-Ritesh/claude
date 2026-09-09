@@ -50,6 +50,7 @@ import { accessLog, sweepAccessLog } from './engine/accesslog.js';
 import { sweepSla } from './engine/sla.js';
 import { sweepKyc } from './engine/kyc.js';
 import { runEnabledRules } from './engine/rules.js';
+import { tick as automationTick } from './engine/automation.js';
 import { sweepReminders } from './engine/followups.js';
 import { sweepMetrics } from './engine/metrics.js';
 import { seedMetadata, seedPicklists } from './engine/metadata.js';
@@ -479,6 +480,12 @@ setInterval(() => { try { sweepKyc(); } catch (e) { console.error('[kyc]', e.mes
    minutes late is useless, but polling every second would be waste. */
 setInterval(() => { try { sweepReminders(); } catch (e) { console.error('[reminders]', e.message); } }, 60_000);
 setInterval(() => { try { runEnabledRules(); } catch (e) { console.error('[rules]', e.message); } }, 5 * MINUTE);
+
+/* Automations wake on their own tick, and a faster one than the rules sweep:
+   a flow that says "wait 30 minutes then send" is judged by whether it sent at
+   30 minutes or at 35. Everything it needs is in automation_run, so a restart
+   costs only the seconds since the last tick (P3-16). */
+setInterval(() => { try { automationTick(); } catch (e) { console.error('[automation]', e.message); } }, MINUTE);
 
 /* Recency decays with the calendar, so a lead nobody touches still changes
    score overnight. Rebuilding on a schedule is what keeps a derived value

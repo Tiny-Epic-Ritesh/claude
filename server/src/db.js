@@ -163,6 +163,86 @@ CREATE TABLE IF NOT EXISTS templates (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS automation (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  name           TEXT NOT NULL,
+  description    TEXT,
+  -- The book it belongs to. An automation is client-facing copy and routing;
+  -- Bigul's should not fire on Bonanza's leads.
+  sales_org      TEXT NOT NULL DEFAULT 'BONANZA',
+
+  -- What starts it. trigger_config carries the specifics -- for lead.updated,
+  -- the fields it watches, because a trigger that fires on any change is how
+  -- you get eight million executions where a few thousand were meant.
+  trigger_type   TEXT NOT NULL,
+  trigger_config TEXT,
+
+  -- Who is allowed in, as a nested AND/OR tree -- the same shape
+  -- engine/conditions.js already evaluates.
+  entry_conditions TEXT,
+
+  status         TEXT NOT NULL DEFAULT 'draft',   -- draft / active / paused
+  version        INTEGER NOT NULL DEFAULT 1,
+  -- Explicit, because non-negotiable 12 asks for ordering and the audit found
+  -- three "Lead Updated" automations racing on overlapping populations.
+  priority       INTEGER NOT NULL DEFAULT 100,
+  first_step_id  INTEGER,
+  created_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS automation_step (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  automation_id INTEGER NOT NULL REFERENCES automation(id) ON DELETE CASCADE,
+  -- action / branch / wait / wait_activity / wait_workday / exit
+  kind          TEXT NOT NULL,
+  config        TEXT,
+  -- Linked rather than indexed: a branch has two exits, and renumbering an
+  -- array to insert a card in the middle is how flows silently rewire.
+  next_step_id  INTEGER,
+  else_step_id  INTEGER,
+  label         TEXT,
+  sort_order    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_automation_step_auto ON automation_step(automation_id);
+
+CREATE TABLE IF NOT EXISTS automation_run (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  automation_id INTEGER NOT NULL REFERENCES automation(id) ON DELETE CASCADE,
+  lead_id       INTEGER REFERENCES leads(id) ON DELETE CASCADE,
+  -- Where this lead is standing. Null once the run has ended.
+  step_id       INTEGER,
+  -- running / waiting / done / exited / failed
+  status        TEXT NOT NULL DEFAULT 'running',
+  -- When to wake it. The whole reason this table exists: a process that sleeps
+  -- in memory is a process that dies on deploy.
+  resume_at     TEXT,
+  -- For wait_activity: what it is waiting for, and when to give up.
+  wait_for      TEXT,
+  entered_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  finished_at   TEXT,
+  detail        TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_automation_run_due
+  ON automation_run(status, resume_at);
+CREATE INDEX IF NOT EXISTS idx_automation_run_lead
+  ON automation_run(automation_id, lead_id, status);
+
+CREATE TABLE IF NOT EXISTS automation_run_step (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id   INTEGER NOT NULL REFERENCES automation_run(id) ON DELETE CASCADE,
+  step_id  INTEGER,
+  -- done / branched / waited / resumed / failed / exited
+  outcome  TEXT NOT NULL,
+  detail   TEXT,
+  at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_automation_run_step_run ON automation_run_step(run_id);
+
 CREATE TABLE IF NOT EXISTS handover_batch (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   from_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
