@@ -869,3 +869,39 @@ The route also refuses both sides in one call. They are different decisions and
 an approver should not be shown two of them wearing one reason.
 
 **Nothing else on constraint 7 is outstanding.**
+
+## The guard-rails have a hole - 9 Sep 2026
+
+Not a ticket, and worth recording here rather than in the checklist because it
+is about the conformance tests themselves rather than about a feature.
+
+`bookscope.test.mjs` has two scanners and they cover different things. The one
+that finds **detail** routes reads every GET and keeps the ones with a `:`
+parameter, so `/api/leads/:id` and its siblings are all swept in. The one that
+forces a **list** route to be classified matches only `\w+\.get\('\/'` - a
+router mounted at its own root.
+
+So `/api/leads`, `/api/clients` and `/api/partners` are classified, and no
+**named** list route ever is. `/api/admin/templates` is a named list route. So
+is most of `admin.js`, and most of `setup.js`.
+
+That is how templates came to be the last message surface with no book on them
+and nothing noticed: the route existed, returned every row in the table to
+whoever asked, and no guard-rail was ever pointed at it. It was added to the
+classifier by hand on 9 Sep, which fixes the one route and not the hole.
+
+This is the second finding of the same shape. The first, in August, was that the
+same scanner only classifies **GET** routes, leaving 122 write routes
+unclassified. Both were recommended as their own piece of work and neither has
+been done.
+
+**The work, when it is done:** extend the scan to named routes and to writes,
+then classify what it sweeps in. The classification is the expensive half -
+`setup.js` and `admin.js` together would produce well over a hundred routes
+needing a decision each, and most will be configuration rather than client
+records. Doing it in one pass is what makes it worth doing: a partial sweep
+leaves exactly the same false confidence, which is the thing that actually cost
+us here.
+
+Until then the honest statement of coverage is: **the boundary is enforced by
+tests on the list routes mounted at `/`, and by review everywhere else.**

@@ -2761,3 +2761,198 @@ description says which side it changes.
 
 29 checks in the OWD suite, 621 e2e, all unit suites pass. Constraint 7 has
 nothing outstanding.
+
+## Templates got a builder, for three channels - 9 Sep 2026
+
+_P3-17. "Template Management currently offers no way to add or create a
+template."_
+
+It did not: the screen was a list and an approve button. What it is now is
+three builders behind one set of rules, and the rules are the providers' rather
+than ours.
+
+### The limits belong to Meta, to TRAI, and to the inbox
+
+A WhatsApp template is approved or rejected by Meta, so a builder that accepts a
+90-character header collects somebody's work and loses it a day later to a
+rejection they cannot read. Every limit is checked at the point of writing, and
+`checkTemplate` returns **all** the problems rather than the first - being told
+about one, fixing it, and being told about the next is how a form becomes
+something people work around.
+
+The preview and the save call the same function, so a screen cannot show "ready
+to save" for something the write refuses.
+
+### Named merge fields, translated on the way out
+
+Ours are named because a person writing a template should not have to hold a
+numbering in their head. Meta's are positional `{{1}}`; DLT's are all the same
+`{#var#}`. One translation layer, two regimes, and it is shown on screen before
+anything is submitted - it is the part most likely to be wrong, and reading it
+is far cheaper than a rejection.
+
+### SMS is a registration ledger, not a composer
+
+TRAI's DLT regime means a commercial SMS is delivered only if the Principal
+Entity, the header and the template id are all registered **and** the text sent
+matches the registered text character for character. Bigul is a separate
+Principal Entity from Bonanza, so the entity id belongs to the header rather
+than to the firm:
+
+    BONANZ -> BONANZA        BIGULX -> BIGUL
+
+which makes the book boundary a lookup rather than a rule somebody remembers.
+The builder shows the exact text to register, ready to copy - retyping it on the
+portal is how the registered and sent text come to differ - and a pasted-back
+approval is compared character by character, with the mismatch located:
+
+    from character 33: yours reads "ar#} SIP is due. - Bonanza",
+    registered reads "ar#} SIP is overdue. - Bon"
+
+One field, not two: the DLT category decides the consent question rather than a
+separate intent. Two fields that can disagree would mean whether a message sends
+depends on which code path asked.
+
+### Email carries its intent
+
+`checkConsent(lead, 'email', intent)` already existed. Declaring intent on the
+template rather than at send time is what stops a campaign being posted as
+"service" to slip past a suppression, and marketing mail cannot have its
+unsubscribe switched off - refused, not silently corrected, so nobody believes
+they turned it off.
+
+Attachments are references into the content library, never copies: a template
+attaching "SIP factsheet" sends the current approved version and stops when it
+expires. The preview shows both halves, formatted and plain text, because the
+text half is generated rather than written and is therefore the half that goes
+wrong unseen.
+
+### Three defects the WhatsApp half hid
+
+**The builder could not be typed into.** `Field` was declared inside
+`TemplateBuilder`, so it was a new component type every render and React
+unmounted the subtree to mount a replacement - one character into Name and focus
+was gone. It survived review because every browser check set values through the
+native setter in one shot, which a remount survives. Only real typing does not.
+
+**The channel tabs did nothing.** `Tabs` reads `t.key`; Templates and
+GroupsSetup passed `id`. So `onChange(undefined)` - the filter emptied the list
+it was filtering and "New template" always built a WhatsApp one, in both
+screens. `tabs.test.mjs` now refuses an `id` in any `tabs={[...]}` literal;
+`id` is the more natural word, which is exactly why it was written twice.
+
+**`smsSegments` counted the wrong thing.** The GSM-7 class was meant to read
+`[^ -@...]` and a shell heredoc turned ` -@` into a literal NUL-to-DEL range on
+its way into the file, so it asked "is this byte non-ASCII" rather than "is this
+in GSM-7". It passed its own tests and was wrong in the direction that costs
+money: `[ ] { } ~ ^ |` counted as one septet where GSM-7 charges two. Rewritten
+as two explicit sets that need no escaping. Concatenation was wrong too - past
+one segment the stitching header costs 7 septets of each part, so the sizes are
+153 and 67, and a 320-character message is three parts where this called it two.
+
+### A test file that existed and never ran
+
+`test:unit` is a hand-written chain of `node test/x.mjs && ...`. Nothing
+generates it, so `templates.test.mjs` passed when run by hand and never ran in
+the suite - and a skipped file looks exactly like a file with nothing to add.
+`imports.test.mjs` now fails if any `test/*.test.mjs` is missing from the chain.
+
+
+## The Meta connector got a console, and two capabilities were broken - 9 Sep 2026
+
+_P3-18._ The connector received leads and that was the whole of it. No way to
+tell which form sent them, whose book they belonged in, what the advertiser's
+own questions meant, or what became of a delivery that produced no lead.
+
+Eight sections now: connection, lead forms, field mapping, deliveries, arrivals,
+ad campaigns, Custom Audiences, and Messenger/Instagram.
+
+### Every Meta lead was going into the wrong book
+
+`SALES_ORGS[0]`. A lead from a Bigul page landed in Bonanza's book and was owned
+and called by RMs it did not belong to - the boundary this project is built on,
+crossed silently by a webhook at whatever hour Meta delivered. The form carries
+its book now and the lead takes it from there; deduplication moved inside the
+book with it, because the same person can be a Bonanza lead and a Bigul lead and
+collapsing them hides one from the book that owns it.
+
+Proved by putting `SALES_ORGS[0]` back: *a Bigul form's lead landed in BONANZA*.
+
+### The advertiser's own question was being thrown away
+
+Mapping was a constant listing nine Meta field names and `normaliseLead`
+returned five columns, so a form asking "Which product interests you?" had that
+answer read, matched against nothing, and dropped - the one question on the form
+that says why the person is interested. The map is rows now, unmapped answers
+are kept as a note rather than discarded, and the console lists the questions
+nobody has decided about. What an answer may be written into is a fixed list:
+the form is designed outside the company, and letting an answer reach `stage` or
+`owner_id` would let whoever built the ad decide routing.
+
+### Messenger had never received a message
+
+The sender was looked up against `leads.external_id`, which holds a Meta
+*leadgen* id. A page-scoped sender id is never equal to one, so the lookup
+failed for every message ever received and each was discarded - a connector
+reporting zero messages forever, indistinguishable from nobody having messaged.
+There was no screen to show otherwise, which is how it survived.
+
+There is no automatic fix; Meta sends no phone number and no email with a DM,
+deliberately. So messages are kept regardless, unclaimed conversations are
+listed, and a person who recognises one says who it is - linking by sender, so
+everything they have already sent joins that timeline at the same moment. The
+DMs that did arrive were also written to the timeline as type `WhatsApp`, for
+messages that never went near WhatsApp; a channel column that lies corrupts
+every report built on it.
+
+### Ads and audiences
+
+Publishing returned an id and kept nothing - no list to pull spend against, no
+answer to "who committed this budget". Campaigns are recorded with book and
+publisher, still created **paused**, and spend is pulled on request rather than
+per page load: a paid call against a rate limit, cached with the time it was
+taken so the screen says how old the number is.
+
+Custom Audiences remain the one capability that breaks this firm's own
+data-residency rule. The conflict is stated on the screen that does it, the push
+form only appears when the capability is deliberately enabled, and every push
+records three counts kept apart - on the list, sent after the opt-out check,
+matched by Meta. What left the country is answerable from the screen that sends
+it.
+
+### Test accounts were leaking into every picker
+
+`probeadmin.mjs` gives each test file its own administrator so no file spends
+the shared account's login budget. Eight of the eleven files using it never gave
+the account back, and twelve had accumulated - visible in every owner, assignee
+and approver picker in the app as "Probe bulkupdate". Found by looking at a
+screen, not by a test.
+
+Each file cleans up now and the seed sweeps survivors. **Not** from a
+`process.on('exit')` handler, which was the first attempt and is worse than the
+problem: a `node:sqlite` write during exit teardown aborts the process on
+Windows with a libuv assertion, after the tests have already reported pass.
+
+
+## Templates scoped by book - 9 Sep 2026
+
+Templates were the last message surface with no book on them. The DLT senders
+have been scoped since the SMS builder landed, so nothing could ever be
+*delivered* across the boundary - which made the gap easy to miss.
+
+What crossed was the copy itself: every admin and marketing manager of either
+business read the other's client-facing wording, offers and product positioning
+off the Templates screen, and could rewrite or delete it, because ids are
+sequential and a template the screen no longer shows is still reachable by
+number.
+
+`sales_org` is named on every INSERT rather than left to the column default -
+the mistake `POST /admin/users` made, where every user created anywhere became a
+Bonanza user. PATCH and DELETE refuse another book's template **before** the
+in-use check, because "23 campaigns still use this" names the other book's
+campaigns and how many there are.
+
+`bookscope.test.mjs` lists `/api/admin/templates` by hand and says why: the
+scanner only discovers routers mounted at `/`, so no named list route is forced
+to be classified at all. That is a wider gap than this change and is called out
+in the file rather than left implicit.
