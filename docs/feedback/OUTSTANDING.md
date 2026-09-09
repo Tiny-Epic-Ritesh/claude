@@ -29,8 +29,15 @@ So:
 - the handover feature is **built and working**, but it is not P3-19
 - **the real P3-19 (LAPPS) is not started**
 
-Nothing is lost, but the ticket numbering is wrong in one commit and in the
-checklist. See question **N-1** at the foot of this file.
+**Resolved 9 Sep:** the handover work takes its own ID, **`OPS-01`**, outside the
+feedback numbering. `P3-19` means LAPPS and nothing else. Commit `56de104` keeps
+its title — rewriting a pushed commit message would be worse than a footnote —
+and this table is the mapping.
+
+| Label | Means |
+|---|---|
+| `P3-19` | LAPPS — scriptable custom app framework. **Not started.** |
+| `OPS-01` | Hand a book over when somebody leaves. Built, commit `56de104`. |
 
 ---
 
@@ -191,12 +198,12 @@ are one connectors build and #12 sits beside them.
 
 | # | Question |
 |---|---|
-| **N-1** | The handover feature is committed as P3-19, which is really LAPPS. Do you want the commit and checklist relabelled — and if so, under what ID should the handover work sit? |
+| ~~N-1~~ | **Resolved** — handover is `OPS-01`; `P3-19` stays LAPPS. |
 | **N-2** | Of the ten acceptance clauses in section 4, which did you actually receive? I will re-send any you did not. |
 | **N-3** | Q6 and Q8 shipped on my judgement where the ticket asked for yours. Ratify or correct them — both are in `DELIVERABLES.md`. Q1, Q2, Q5 and Q7 are resolved. |
 | **N-7** | P3-07 says permissions inherit up the group tree. Today visibility inherits through the manager chain and group membership does not grant sight of records. Do you want that changed? |
 | **N-8** | P3-26 — Back button on Setup sub-screens too, or is the sidebar enough there? |
 | **N-9** | P3-29 — do you want all sixteen Lead Details buttons click-tested and evidenced individually? |
-| **N-4** | Which of the five large builds do you want first? They are not parallelisable at any sensible quality. |
-| **N-5** | P2-14, P2-23, P2-25 and P3-20 are one connectors surface. Confirm I should build them as one thing rather than four. |
+| ~~N-4~~ | **Resolved** — order approved: automation, then connectors, then reports, then internal comms, with LAPPS challenged. `P3-16-automation-design.md` is with you for approval. |
+| ~~N-5~~ | **Resolved** — one connectors build, absorbing P2-14, P2-23, P2-25 and P3-20. |
 | **N-6** | Are the CUBE tenant credentials available yet? Three tickets sit behind them. |
