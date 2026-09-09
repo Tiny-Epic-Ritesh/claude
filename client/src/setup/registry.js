@@ -43,6 +43,7 @@ const Database = lazy(() => import('../crm/Database.jsx'));
    They are a file each now, and each is its own chunk. Named rather than
    default exports, so the module is unwrapped on the way through. */
 const Rules = lazy(() => import('../crm/admin/Rules.jsx').then((m) => ({ default: m.Rules })));
+const Automations = lazy(() => import('../crm/admin/Automations.jsx').then((m) => ({ default: m.Automations })));
 const Sla = lazy(() => import('../crm/admin/Sla.jsx').then((m) => ({ default: m.Sla })));
 const Calendars = lazy(() => import('../crm/admin/Calendars.jsx').then((m) => ({ default: m.Calendars })));
 const Journeys = lazy(() => import('../crm/admin/Journeys.jsx').then((m) => ({ default: m.Journeys })));
@@ -158,6 +159,16 @@ export const SECTIONS = [
   },
 
   /* ----------------------------------------------------------- automation */
+  {
+    key: 'automations',
+    label: 'Automations',
+    group: 'automation',
+    icon: 'account_tree',
+    needs: ['admin.rules'],
+    blurb: 'Flows a lead walks through — triggers, branches, waits and actions',
+    keywords: ['automation', 'flow', 'journey', 'trigger', 'wait', 'branch', 'drip', 'nurture', 'workflow'],
+    Component: Automations,
+  },
   {
     key: 'rules',
     label: 'Rule builder',

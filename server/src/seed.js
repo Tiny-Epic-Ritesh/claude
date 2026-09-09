@@ -102,6 +102,12 @@ run("DELETE FROM users WHERE email LIKE 'probe-%@bonanza.test'");
 console.log('Clearing…');
 for (const t of [
   'sessions', 'notifications', 'audit_log', 'rule_runs', 'rules', 'campaigns', 'lead_list_members', 'lead_lists',
+  /* Automations are configuration, like the rules beside them, and a seed that
+     left them behind would accumulate them the way the roles table accumulated
+     76 test roles (P3-16). Children first: the cascade from `automation` would
+     cover it, but stating the order means the clear does not depend on a
+     foreign key staying declared the way it is today. */
+  'automation_run_step', 'automation_run', 'automation_step', 'automation',
   'kyc_journey_progress', 'kyc_journeys', 'kyc_journey_steps', 'kyc_steps_master',
   'commissions', 'partner_lms', 'partner_steps', 'ticket_replies', 'tickets',
   // Clients before leads: converted_from_lead_id is ON DELETE SET NULL, so
