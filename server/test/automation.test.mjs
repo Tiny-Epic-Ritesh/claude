@@ -18,7 +18,7 @@ import { strict as assert } from 'node:assert';
 import { all, one, run } from '../src/db.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
 import {
-  TRIGGERS, STEP_KINDS, isTrigger, enter, advance, tick, fire, report, whatRunsOn, validate,
+  TRIGGERS, STEP_KINDS, isTrigger, enter, advance, tick, fire, report, whatRunsOn, validate, detect,
 } from '../src/engine/automation.js';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
@@ -50,6 +50,10 @@ const clean = () => {
   run("DELETE FROM automation_step WHERE automation_id IN (SELECT id FROM automation WHERE name LIKE 'probe_auto%')");
   run("DELETE FROM automation WHERE name LIKE 'probe_auto%'");
   run("DELETE FROM leads WHERE name LIKE 'Automation probe%'");
+  /* Watermarks too. A run that left one pointing past the rows the next run
+     creates would see nothing new and the detection tests would pass without
+     detecting anything. */
+  run('DELETE FROM automation_watermark');
 };
 clean();
 
@@ -442,6 +446,95 @@ await test('the explorer says what runs on a trigger, in order', async () => {
   const res = await call('GET', '/admin/automations/explorer/lead.stage_changed');
   assert.equal(res.status, 200);
   assert(Array.isArray(res.body), 'not a list');
+});
+
+/* ------------------------------------------------------------ detection */
+
+await test('a fresh watermark starts at now, not at the beginning of time', () => {
+  /* The single worst thing this file could do: start at zero, treat all
+     495,118 existing leads as new, and enter every one of them into every
+     automation — at three in the morning, on a timer. */
+  run('DELETE FROM automation_watermark');
+
+  const a = build('probe_auto_watermark', 'lead.created', [noteAction('swept')]);
+  const before = one("SELECT COUNT(*) n FROM automation_run WHERE automation_id = ?", [a.id]).n;
+
+  detect();
+
+  const after = one("SELECT COUNT(*) n FROM automation_run WHERE automation_id = ?", [a.id]).n;
+  assert.equal(after, before, `the first scan entered ${after - before} existing leads`);
+
+  const mark = one("SELECT last_id FROM automation_watermark WHERE trigger_type = 'lead.created'");
+  assert(mark && mark.last_id > 0, 'no watermark was set');
+});
+
+await test('a lead created afterwards is detected, whoever created it', () => {
+  /* Written straight into the table, the way the importer and the Meta webhook
+     do — no route, no fire() call. The scanner is what makes those paths work
+     without each of them knowing the automation engine exists. */
+  const a = build('probe_auto_detect', 'lead.created', [noteAction('detected')]);
+  detect();   // set the watermark at now
+
+  const fresh = Number(run(
+    `INSERT INTO leads (name, mobile, source, stage, sales_org)
+     VALUES ('Automation probe detected', '9800000002', 'Referral', 'New', 'BONANZA')`,
+  ).lastInsertRowid);
+
+  const out = detect();
+  assert(out['lead.created'] >= 1, `nothing was detected: ${JSON.stringify(out)}`);
+
+  const r = one('SELECT * FROM automation_run WHERE automation_id = ? AND lead_id = ?', [a.id, fresh]);
+  assert(r, 'the new lead did not enter the automation');
+});
+
+await test('the same lead is not detected twice', () => {
+  /* The watermark only moves forward. Without that every tick would re-enter
+     everything it had already seen. */
+  const out = detect();
+  assert(!out['lead.created'], `a second scan re-entered ${out['lead.created']} leads`);
+});
+
+await test('a field change is detected from field_history, with the field named', () => {
+  /* field_history already records every change with its old and new value,
+     whoever made it and by whatever route — so the scanner reads that rather
+     than computing a diff of its own. */
+  const a = build('probe_auto_fieldchange', 'lead.updated', [noteAction('field-changed')]);
+  run(`UPDATE automation SET trigger_config = '{"fields":["stage"]}' WHERE id = ?`, [a.id]);
+  detect();
+
+  run(
+    `INSERT INTO field_history (entity, record_id, field, old_value, new_value, source)
+     VALUES ('lead', ?, 'stage', 'New', 'Contacted', 'ui')`,
+    [LEAD],
+  );
+
+  detect();
+  assert(one('SELECT id FROM automation_run WHERE automation_id = ? AND lead_id = ?', [a.id, LEAD]),
+    'a stage change recorded in field_history did not reach the automation');
+});
+
+await test('a change to a field the automation does not watch is ignored', () => {
+  const a = build('probe_auto_unwatched', 'lead.updated', [noteAction('should-not-fire')]);
+  run(`UPDATE automation SET trigger_config = '{"fields":["pan"]}' WHERE id = ?`, [a.id]);
+  detect();
+
+  run(
+    `INSERT INTO field_history (entity, record_id, field, old_value, new_value, source)
+     VALUES ('lead', ?, 'city', 'Mumbai', 'Pune', 'ui')`,
+    [LEAD],
+  );
+
+  detect();
+  assert(!one('SELECT id FROM automation_run WHERE automation_id = ?', [a.id]),
+    'an automation watching pan fired on a city change');
+});
+
+await test('the tick detects and resumes in one pass', () => {
+  /* A lead that enters on this tick and has nothing to wait for should finish
+     on this tick, not the next one. */
+  const out = tick();
+  assert(typeof out.resumed === 'number', 'the tick does not report what it resumed');
+  assert(out.fired !== undefined, 'the tick does not report what it detected');
 });
 
 clean();

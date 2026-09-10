@@ -231,6 +231,13 @@ CREATE INDEX IF NOT EXISTS idx_automation_run_due
 CREATE INDEX IF NOT EXISTS idx_automation_run_lead
   ON automation_run(automation_id, lead_id, status);
 
+CREATE TABLE IF NOT EXISTS automation_watermark (
+  -- One row per trigger: how far the scanner has read.
+  trigger_type TEXT PRIMARY KEY,
+  last_id      INTEGER NOT NULL DEFAULT 0,
+  checked_at   TEXT
+);
+
 CREATE TABLE IF NOT EXISTS automation_run_step (
   id       INTEGER PRIMARY KEY AUTOINCREMENT,
   run_id   INTEGER NOT NULL REFERENCES automation_run(id) ON DELETE CASCADE,

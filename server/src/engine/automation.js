@@ -284,6 +284,10 @@ function finish(runId, status, detail) {
  * restart loses nothing but the seconds since the last tick.
  */
 export function tick({ limit = 200 } = {}) {
+  /* Detect first, then resume. A lead that entered this tick and has nothing to
+     wait for should finish in this tick rather than the next one. */
+  const fired = detect();
+
   const due = all(
     "SELECT * FROM automation_run WHERE status = 'waiting' AND resume_at IS NOT NULL AND resume_at <= datetime('now') ORDER BY resume_at LIMIT ?",
     [limit],
@@ -313,7 +317,7 @@ export function tick({ limit = 200 } = {}) {
     resumed += 1;
   }
 
-  return { resumed };
+  return { resumed, fired };
 }
 
 /**
@@ -441,6 +445,88 @@ export function validate(automationId) {
   }
 
   return problems;
+}
+
+/* ------------------------------------------------------------- detection */
+
+/**
+ * Where the scanner has read up to, and where it should start.
+ *
+ * A watermark it has never seen starts at the current maximum, not at zero.
+ * Starting at zero would treat every one of the existing leads as new and enter
+ * all of them into every automation — the worst thing this file could do, and
+ * it would be done at three in the morning by a timer.
+ */
+function watermark(trigger, currentMax) {
+  const row = one('SELECT last_id FROM automation_watermark WHERE trigger_type = ?', [trigger]);
+  if (row) return row.last_id;
+
+  run('INSERT INTO automation_watermark (trigger_type, last_id, checked_at) VALUES (?,?,datetime(\'now\'))',
+    [trigger, currentMax]);
+  return currentMax;
+}
+
+const setWatermark = (trigger, id) => run(
+  "UPDATE automation_watermark SET last_id = ?, checked_at = datetime('now') WHERE trigger_type = ?",
+  [id, trigger],
+);
+
+/**
+ * Ask the database what has happened since the last look, and fire for it.
+ *
+ * Batched so one quiet minute costs two queries and a busy one cannot enter ten
+ * thousand leads in a single tick — the cap is the same kind of brake as the
+ * step budget, and for the same reason.
+ */
+export function detect({ batch = 500 } = {}) {
+  const fired = {};
+
+  const sweep = (trigger, sql, rowToEvent) => {
+    const max = one(sql.max)?.n ?? 0;
+    const from = watermark(trigger, max);
+    if (max <= from) return;
+
+    const rows = all(sql.since, [from, batch]);
+    let entered = 0;
+    for (const row of rows) {
+      const event = rowToEvent(row);
+      if (event?.leadId) entered += fire(trigger, event).entered;
+    }
+    setWatermark(trigger, rows.length ? rows[rows.length - 1].id : max);
+    if (entered) fired[trigger] = (fired[trigger] ?? 0) + entered;
+  };
+
+  /* A lead arriving, from anywhere: the form, the importer, the Meta webhook,
+     the KYC portal. None of them has to know this exists. */
+  sweep('lead.created', {
+    max: 'SELECT MAX(id) AS n FROM leads',
+    since: 'SELECT id FROM leads WHERE id > ? AND deleted_at IS NULL ORDER BY id LIMIT ?',
+  }, (r) => ({ leadId: r.id }));
+
+  sweep('activity.added', {
+    max: 'SELECT MAX(id) AS n FROM activities',
+    since: 'SELECT id, lead_id FROM activities WHERE id > ? AND lead_id IS NOT NULL ORDER BY id LIMIT ?',
+  }, (r) => ({ leadId: r.lead_id }));
+
+  /* Field changes come from field_history rather than from a diff we compute:
+     it already records every change with its old and new value, whoever made
+     it and by whatever route. */
+  sweep('lead.updated', {
+    max: "SELECT MAX(id) AS n FROM field_history WHERE entity = 'lead'",
+    since: "SELECT id, record_id, field FROM field_history WHERE entity = 'lead' AND id > ? ORDER BY id LIMIT ?",
+  }, (r) => ({ leadId: r.record_id, fields: [r.field] }));
+
+  sweep('lead.stage_changed', {
+    max: "SELECT MAX(id) AS n FROM field_history WHERE entity = 'lead' AND field = 'stage'",
+    since: "SELECT id, record_id FROM field_history WHERE entity = 'lead' AND field = 'stage' AND id > ? ORDER BY id LIMIT ?",
+  }, (r) => ({ leadId: r.record_id }));
+
+  sweep('task.created', {
+    max: 'SELECT MAX(id) AS n FROM tasks',
+    since: 'SELECT id, lead_id FROM tasks WHERE id > ? AND lead_id IS NOT NULL ORDER BY id LIMIT ?',
+  }, (r) => ({ leadId: r.lead_id }));
+
+  return fired;
 }
 
 /* ------------------------------------------------------------ reporting */
