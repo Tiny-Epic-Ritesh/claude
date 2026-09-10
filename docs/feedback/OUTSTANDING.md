@@ -53,7 +53,7 @@ document maintained as the work was done, not an independent re-test.
 | ID | Title | Status | Waiting on |
 |---|---|---|---|
 | P2-03 | UAT and Production with promote/rollback | **Not started** | Production does not exist. Standing it up is infrastructure work that comes first (your decision, A-5) |
-| P2-14 | Connectors screen (Facebook, Google, CUBE, Smartping) | **Not started** | A-4 — which vendor accounts and credentials are available |
+| P2-14 | Connectors screen (Facebook, Google, CUBE, Smartping) | **Not started** | A-4 — which vendor accounts and credentials are available. *Partly answered 10 Sep: all four are in scope, in the order Meta → CUBE → SMS → Google, and SMS is **more than one gateway, split by book** — Bonanza and Bigul send through different ones, so that connector is book-scoped exactly as the DLT headers are. Still needed: the gateway names, and who owns each vendor account.* |
 | P2-23 | Adapters and vendor endpoints | **Not started** | Same as P2-14 |
 | P2-25 | Outlook configuration from Setup | **Not started** | A-3 — SMTP was chosen first; per-user Outlook waits on Compliance ruling on Graph |
 
@@ -208,9 +208,9 @@ are one connectors build and #12 sits beside them.
 | ~~N-1~~ | **Resolved** — handover is `OPS-01`; `P3-19` stays LAPPS. |
 | **N-2** | Of the ten acceptance clauses in section 4, which did you actually receive? I will re-send any you did not. |
 | **N-3** | Q6 and Q8 shipped on my judgement where the ticket asked for yours. Ratify or correct them — both are in `DELIVERABLES.md`. Q1, Q2, Q5 and Q7 are resolved. |
-| **N-7** | P3-07 says permissions inherit up the group tree. Today visibility inherits through the manager chain and group membership does not grant sight of records. Do you want that changed? |
-| **N-8** | P3-26 — Back button on Setup sub-screens too, or is the sidebar enough there? |
-| **N-9** | P3-29 — do you want all sixteen Lead Details buttons click-tested and evidenced individually? |
+| ~~N-7 / N-7a~~ | **Answered 10 Sep — yes.** There are supervisors outside the reporting line, so group membership must grant visibility on top of the manager chain. Work item against P3-07. |
+| ~~N-8~~ | **Answered 10 Sep — everywhere in Setup**, top-level screens included. Ritesh chose consistency over the narrower recommendation. |
+| ~~N-9~~ | **Answered 10 Sep — yes**, folded into the next browser session rather than run as a standalone task. |
 | ~~N-4~~ | **Resolved** — order approved: automation, then connectors, then reports, then internal comms, with LAPPS challenged. `P3-16-automation-design.md` is with you for approval. |
 | ~~N-5~~ | **Resolved** — one connectors build, absorbing P2-14, P2-23, P2-25 and P3-20. |
 | **N-6** | Are the CUBE tenant credentials available yet? Three tickets sit behind them. |
