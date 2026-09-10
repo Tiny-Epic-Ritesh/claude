@@ -232,3 +232,56 @@ discover it at the end.
 | **A3** | Port the 51 LeadSquared automations, or clean start? |
 | **A4** | Confirm: an automation may hand a lead to the assignment engine but never pick an owner itself. |
 | **A5** | Confirm the trigger list in §2, particularly that "Lead Updated" must name the fields it watches rather than firing on any change. |
+
+---
+
+## 10 · What is built, as of 10 September
+
+The estimate in §9 held: durable execution was the largest piece and the canvas
+is the one still outstanding.
+
+### Working
+
+| Piece | Notes |
+|---|---|
+| Durable execution | Run position lives in `automation_run`, so a lead asleep in a Wait card survives a deploy. One live run per lead per automation — the safeguard against the 14-million-execution shape. |
+| Triggers | Nine of ten fire. A minute-tick scanner asks the database what is new rather than a `fire()` call at each of the 46 write sites, so a lead arriving from Facebook is caught the same as one typed in by hand. |
+| Actions | Nineteen, in the six categories §4 lists. Zoom deferred to P3-20; "Call a LAPP" became Webhook. |
+| Validation | A flow cannot go live wired to nothing, looping, waiting zero, calling itself, pointing at a paused sub-automation, or on a trigger nothing fires. |
+| Reporting | Per automation and per step, as §6 proposed. |
+| Explorer | "Everything that runs on this trigger, in order" — the screen §5 said was missing from the legacy tenant. |
+| Migration | Converts a rule into a draft flow, and refuses when a condition would be lost. |
+
+### The safeguards worth knowing about
+
+**The scanner starts at now, not at zero.** A watermark it has never seen is set
+to the current maximum. Starting at zero would treat all 495,118 existing leads
+as new and enter every one of them into every automation, on a timer, at three
+in the morning. There is a test that fails when that safeguard is removed.
+
+**Converting a rule refuses rather than widens.** Three of the six rules in the
+system lose every condition in translation — `kyc_journey_status`,
+`contact_flag` and a per-product card state have no equivalent in the flow
+builder's vocabulary. A tree with no leaves is true for everybody, so those
+rules would become flows acting on the whole book. The converter refuses them
+by name and says why.
+
+**Every send now checks consent.** It did not before, on either engine. Every
+*route* did; the engines did not, which is precisely the hole `consent.js`
+describes in its own header — and the engines are where a segment-sized send
+actually happens.
+
+### Not built
+
+| Piece | Why |
+|---|---|
+| **The drag-and-drop canvas** | The flow is assembled and wired card by card, which runs and validates. Drawing it is the layer on top. This is the largest piece left in P3-16. |
+| `user.workday_end` | Not lead-shaped: a workday ends for a person, and which of their leads should enter a flow is a business question. Marked unavailable in the builder and refused at activation rather than left to look live — **question A6 below**. |
+| Split test | §7 recommended against it without a population or a success metric. |
+| Zoom | A connector; belongs to P3-20. |
+
+### One more question
+
+| # | Question |
+|---|---|
+| **A6** | "A user ends their workday" — when Priya ends her day, which leads should walk into the flow? Every lead she owns, the ones she did not reach today, or the ones with a task still open? Until this is settled the trigger stays unavailable rather than silently doing nothing. |

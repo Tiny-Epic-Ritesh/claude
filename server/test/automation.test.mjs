@@ -63,6 +63,8 @@ const clean = () => {
   run("DELETE FROM notifications WHERE body LIKE 'probe_auto%'");
   run("DELETE FROM activities WHERE subject LIKE 'probe_auto%'");
   run("DELETE FROM tasks WHERE title LIKE 'probe_auto%'");
+  run("DELETE FROM automation WHERE name LIKE 'probe_rule%'");
+  run("DELETE FROM rules WHERE name LIKE 'probe_rule%'");
 };
 clean();
 
@@ -590,6 +592,115 @@ await test('the tick detects and resumes in one pass', () => {
   const out = tick();
   assert(typeof out.resumed === 'number', 'the tick does not report what it resumed');
   assert(out.fired !== undefined, 'the tick does not report what it detected');
+});
+
+/* --------------------------------------------------- migrating the rules */
+
+const makeRule = (name, conditions, actions) => Number(run(
+  'INSERT INTO rules (name, description, conditions, actions, enabled, priority) VALUES (?,?,?,?,1,100)',
+  [name, 'converted by a test', JSON.stringify(conditions), JSON.stringify(actions)],
+).lastInsertRowid);
+
+await test('a rule whose conditions all translate becomes a flow', async () => {
+  const id = makeRule(
+    'probe_rule_clean',
+    [{ field: 'lead_stage', op: 'eq', value: 'New' }, { field: 'days_since_contact', op: 'gt', value: 30, join: 'AND' }],
+    [{ type: 'notify', params: { role_or_user: 'admin', message: 'chase them' } }],
+  );
+
+  const preview = await call('GET', `/admin/automations/migration/${id}`);
+  assert.equal(preview.status, 200);
+  assert.equal(preview.body.convertible, true, preview.body.warnings?.join(' | '));
+  /* lead_stage is the rules engine's name for it; the builder and toSql call
+     it stage, and the flow has to carry the second. */
+  assert.equal(preview.body.conditions.children[0].field, 'stage');
+  assert.equal(preview.body.conditions.children[1].field, 'days_since_contact');
+
+  const made = await call('POST', `/admin/automations/migration/${id}`, { sales_org: 'BONANZA', every_hours: 12 });
+  assert.equal(made.status, 201, JSON.stringify(made.body));
+
+  const auto = one('SELECT * FROM automation WHERE id = ?', [made.body.automation_id]);
+  assert.equal(auto.status, 'draft', 'a converted rule went live on its own');
+  assert.equal(auto.trigger_type, 'schedule.interval');
+  assert.equal(JSON.parse(auto.trigger_config).every_hours, 12);
+  assert.equal(one('SELECT COUNT(*) n FROM automation_step WHERE automation_id = ?', [auto.id]).n, 1);
+
+  run('DELETE FROM automation_step WHERE automation_id = ?', [auto.id]);
+  run('DELETE FROM automation WHERE id = ?', [auto.id]);
+  run('DELETE FROM rules WHERE id = ?', [id]);
+});
+
+await test('the rule it came from is left running, and left alone', async () => {
+  /* Disabling it belongs to whoever checks the flow and decides it is right --
+     a different act, on a different day, by somebody who has looked at it. */
+  const id = makeRule(
+    'probe_rule_untouched',
+    [{ field: 'lead_stage', op: 'eq', value: 'New' }],
+    [{ type: 'notify', params: { role_or_user: 'admin', message: 'x' } }],
+  );
+  const made = await call('POST', `/admin/automations/migration/${id}`, { sales_org: 'BONANZA' });
+  assert.equal(made.status, 201, JSON.stringify(made.body));
+  assert.equal(one('SELECT enabled FROM rules WHERE id = ?', [id]).enabled, 1, 'the converter disabled the rule');
+
+  run('DELETE FROM automation_step WHERE automation_id = ?', [made.body.automation_id]);
+  run('DELETE FROM automation WHERE id = ?', [made.body.automation_id]);
+  run('DELETE FROM rules WHERE id = ?', [id]);
+});
+
+await test('a rule that would lose a condition is refused, not quietly widened', async () => {
+  /* The failure this converter exists to prevent. An AND group with no children
+     is true for everybody, so a rule that messaged a handful becomes a flow that
+     messages the whole book -- and nothing on the screen would say so. */
+  const id = makeRule(
+    'probe_rule_lossy',
+    [{ field: 'kyc_journey_status', op: 'eq', value: 'Stalled' }],
+    [{ type: 'whatsapp', params: { message: 'finish your application' } }],
+  );
+
+  const preview = await call('GET', `/admin/automations/migration/${id}`);
+  assert.equal(preview.body.convertible, false, 'a rule that lost its only condition was offered as convertible');
+  assert(preview.body.warnings.some((w) => w.includes('kyc_journey_status')), preview.body.warnings.join(' | '));
+  assert(preview.body.warnings.some((w) => w.includes('every lead in the book')), preview.body.warnings.join(' | '));
+  assert(preview.body.book_note?.includes('one book'), 'the book note is not carried apart from the warnings');
+
+  const made = await call('POST', `/admin/automations/migration/${id}`, { sales_org: 'BONANZA' });
+  assert.equal(made.status, 400, 'it converted anyway');
+  assert(!one("SELECT id FROM automation WHERE name LIKE 'probe_rule_lossy%'"), 'a flow was written despite the refusal');
+
+  run('DELETE FROM rules WHERE id = ?', [id]);
+});
+
+await test('a condition on one product card is reported rather than half-converted', async () => {
+  const id = makeRule(
+    'probe_rule_card',
+    [{ field: 'product_card_state', product_code: 'MF', op: 'eq', value: 'WARM' }],
+    [{ type: 'notify', params: { role_or_user: 'admin', message: 'warm' } }],
+  );
+  const preview = await call('GET', `/admin/automations/migration/${id}`);
+  assert.equal(preview.body.convertible, false);
+  assert(preview.body.warnings.some((w) => w.includes('MF')), preview.body.warnings.join(' | '));
+  run('DELETE FROM rules WHERE id = ?', [id]);
+});
+
+await test('every rule is previewed, so the list can say which need a person', async () => {
+  const { status, body } = await call('GET', '/admin/automations/migration');
+  assert.equal(status, 200);
+  assert(Array.isArray(body.rules) && body.rules.length, 'no rules previewed');
+  for (const r of body.rules) {
+    assert(r.rule?.name, 'a preview with no rule on it');
+    assert(Array.isArray(r.warnings), 'a preview with no warnings array');
+  }
+});
+
+await test('a converted flow cannot be pointed at the other book', async () => {
+  const id = makeRule(
+    'probe_rule_book',
+    [{ field: 'lead_stage', op: 'eq', value: 'New' }],
+    [{ type: 'notify', params: { role_or_user: 'admin', message: 'x' } }],
+  );
+  const made = await call('POST', `/admin/automations/migration/${id}`, { sales_org: 'BIGUL' });
+  assert.equal(made.status, 403, `HTTP ${made.status}`);
+  run('DELETE FROM rules WHERE id = ?', [id]);
 });
 
 /* ------------------------------------------------- the clock-shaped ones */

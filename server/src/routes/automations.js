@@ -26,6 +26,7 @@ import {
 } from '../engine/automation.js';
 import { ACTION_TYPES } from '../engine/rules.js';
 import { conditionSchema } from '../engine/conditions.js';
+import { previewAll, previewRule, convertRule } from '../engine/rulemigration.js';
 
 const router = Router();
 router.use(requireUser);
@@ -112,6 +113,38 @@ router.get('/explorer/:trigger', requirePermission('admin.rules'), (req, res) =>
   if (!isTrigger(req.params.trigger)) return res.status(400).json({ error: 'Not a trigger' });
   const orgs = orgsFor(req.user);
   return res.json(whatRunsOn(req.params.trigger).filter((a) => orgs.includes(a.sales_org ?? 'BONANZA')));
+});
+
+/* -------------------------------------------------- migrating the rules */
+
+/**
+ * What the rule builder holds, and what converting each would produce.
+ *
+ * Shipped with the engine for the reason Salesforce ships *Migrate to Flow*:
+ * so the old engine can be switched off on a date rather than by attrition,
+ * and so nothing is retyped by hand into a screen that sends client messages.
+ */
+router.get('/migration', requirePermission('admin.rules'), (_req, res) => {
+  res.json({ rules: previewAll() });
+});
+
+router.get('/migration/:ruleId', requirePermission('admin.rules'), (req, res) => {
+  const preview = previewRule(Number(req.params.ruleId));
+  if (preview.error) return res.status(404).json(preview);
+  return res.json(preview);
+});
+
+router.post('/migration/:ruleId', requirePermission('admin.rules'), (req, res) => {
+  const org = req.body?.sales_org ?? activeOrg(req) ?? req.user.sales_org;
+  if (!mayUseOrg(req.user, org)) return res.status(403).json({ error: 'That book is not yours' });
+
+  const out = convertRule(Number(req.params.ruleId), {
+    salesOrg: org,
+    userId: req.user.id,
+    everyHours: Number(req.body?.every_hours) || 24,
+  });
+  if (out.error) return res.status(400).json(out);
+  return res.status(201).json(out);
 });
 
 /* ------------------------------------------------------------- the list */

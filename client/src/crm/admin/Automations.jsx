@@ -94,6 +94,8 @@ export function Automations() {
         </div>
       )}
 
+      <RuleMigration onConverted={reload} onError={setProblem} />
+
       {making && (
         <NewAutomation
           spec={spec}
@@ -372,6 +374,94 @@ function describe(step) {
     case 'exit': return config.reason ? `ends: ${config.reason}` : 'ends the flow';
     default: return '';
   }
+}
+
+/* ------------------------------------------------------- rule migration */
+
+/**
+ * What the rule builder still holds, and whether each rule can become a flow.
+ *
+ * Beside the flow list rather than on a screen of its own, because "should this
+ * still be a rule?" is a question you ask while looking at the flows. Collapsed
+ * by default: it matters during the changeover and then stops mattering.
+ *
+ * It leads with the refusals. A rule whose conditions do not survive
+ * translation would convert into a flow with no conditions at all, which is
+ * true for every lead in the book — so the converter refuses, and this says
+ * which rules and why, in the words somebody can act on.
+ */
+function RuleMigration({ onConverted, onError }) {
+  const [data, { loading, reload }] = useApi('/admin/automations/migration');
+  const [busy, setBusy] = useState(null);
+
+  if (loading || !data?.rules?.length) return null;
+
+  const ready = data.rules.filter((r) => r.convertible);
+  const needsHand = data.rules.filter((r) => !r.convertible);
+
+  const convert = async (r) => {
+    setBusy(r.rule.id);
+    try {
+      await api.post(`/admin/automations/migration/${r.rule.id}`, { every_hours: r.every_hours });
+      reload();
+      onConverted();
+    } catch (err) { onError(err.message); }
+    setBusy(null);
+  };
+
+  return (
+    <details className="card">
+      <summary>
+        <strong>From the rule builder</strong>{' '}
+        <span className="tiny muted">
+          {data.rules.length} {data.rules.length === 1 ? 'rule' : 'rules'} —{' '}
+          {ready.length} convert cleanly, {needsHand.length} need rebuilding by hand
+        </span>
+      </summary>
+
+      <p className="tiny muted">
+        A rule is a filter: conditions, actions, one pass. A flow is a process a lead is inside.
+        Converting copies the conditions and actions across and leaves the rule running — turning
+        the rule off is a separate decision, for whoever checks the flow.
+      </p>
+      {/* True of every conversion, so it belongs here rather than repeated
+          against each rule as though it were six separate problems. */}
+      <p className="tiny muted">{data.rules[0].book_note}</p>
+
+      <table className="table small">
+        <thead>
+          <tr><th>Rule</th><th>What still needs a person</th><th /></tr>
+        </thead>
+        <tbody>
+          {data.rules.map((r) => (
+            <tr key={r.rule.id}>
+              <td>
+                <strong>{r.rule.name}</strong>
+                <div className="tiny muted">
+                  {r.steps.length} {r.steps.length === 1 ? 'action' : 'actions'}
+                  {r.rule.enabled ? ' · running' : ' · disabled'}
+                </div>
+              </td>
+              <td className="tiny">
+                {r.warnings.length
+                  ? <ul style={{ margin: 0, paddingLeft: 16 }}>{r.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
+                  : <span className="muted">Nothing — it converts as it stands.</span>}
+              </td>
+              <td>
+                {r.convertible ? (
+                  <button className="btn-sm" disabled={busy === r.rule.id} onClick={() => convert(r)}>
+                    {busy === r.rule.id ? 'Converting…' : 'Convert to a flow'}
+                  </button>
+                ) : (
+                  <span className="tiny muted">Rebuild by hand</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </details>
+  );
 }
 
 /* ------------------------------------------------------ action parameters */

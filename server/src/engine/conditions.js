@@ -373,6 +373,9 @@ export function validateTree(node, path = 'root', errors = []) {
  * no `_lead`. Only when the facts do not carry the field is the registry used
  * to read it off the row.
  */
+/** The operator codes a condition may use, for callers validating input. */
+export const OPERATOR_CODES = () => Object.keys(OPERATORS);
+
 export function valueOf(field, facts) {
   /* A fact already computed wins, so every existing caller is untouched.
      Functions are skipped: leadFacts exposes `product_card_state` as a lookup
