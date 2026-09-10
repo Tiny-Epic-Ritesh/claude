@@ -89,7 +89,7 @@ each has an unanswered open question against it. That is why none is started.
 | P3-16 | Advanced automation builder | Builder design presented before implementation | **Q10** |
 | P3-19 | LAPPS — scriptable custom app framework | Feasibility assessment — value, security model, sandbox — before *any* build | **Q11** |
 | P3-20 | Apps marketplace / connectors | Feasibility assessment naming which connectors are viable this phase | **Q12** |
-| P3-21 | Internal communication module | Module design reviewed before implementation | none stated |
+| P3-21 | Internal communication module | Module design reviewed before implementation | **Answered 10 Sep** — Ritesh wants to see a design with options and costs first, rather than confirm a scope up front. Next action is mine. |
 
 These are the largest items in the document. P3-06 and P3-16 in particular are
 each comparable in size to everything delivered in Round 1.
@@ -98,7 +98,7 @@ each comparable in size to everything delivered in Round 1.
 
 | ID | Title | State |
 |---|---|---|
-| P3-40 | Lead Details layout and UI rework | Built and committed (`5642968`). The design preview its acceptance clause requires was shared with you and has not been signed off. |
+| P3-40 | Lead Details layout and UI rework | Built and committed (`5642968`). **10 Sep — Ritesh wants to look again before signing off.** Pointed at the live screen rather than at another image. |
 
 ---
 
@@ -199,6 +199,36 @@ Plus **P3-40** awaiting sign-off, and the ten acceptance clauses in section 4.
 
 **Deduplicated, that is nine distinct pieces of work**, because #7, #10 and #11
 are one connectors build and #12 sits beside them.
+
+---
+
+## 6b · Decided on 10 September, and now waiting on me
+
+Fifteen of the twenty-seven open points were answered on 10 September. Ten of
+those answers turned into work that nobody is blocked on any more.
+
+**Agreed to start first — small, one pass:**
+
+| Item | Work |
+|---|---|
+| `N-8` | A Back button on every Setup screen, top-level included |
+| `Q6a` | "Request a Product RM" notifies that RM — in-app plus SMS, and not on the client's timeline |
+| `A1` (tickets) | `ticket.created`, `ticket.sla_breached`, `ticket.resolved`, `ticket.changed` |
+| `N-9` | All sixteen Lead Details buttons click-tested, folded into the same browser session |
+
+**Then, in no fixed order yet:**
+
+| Item | Work | Size |
+|---|---|---|
+| `Q8a` | A Sales Head tile set for the homepage — I propose it, Ritesh confirms | ~1 day |
+| `N-7a` | Group membership grants visibility, on top of the manager chain. Touches the access floor. | 1–2 days |
+| `A3` | Port the ten flows in `P3-16-automation-design.md` §8 | Needs the definitions out of LeadSquared |
+| `P3-21` | Internal communication — present a design with options and costs | Design first |
+| `OPS-02` | Automations that run on a client rather than a lead | Large; needs scoping |
+| `Q10` | Corrections to the automation builder | Unknown until named |
+
+**Still blocked on someone else:** `P3-06` behind `N-4a`, the connectors behind
+`A-4`, and the three CUBE tickets behind `N-6`.
 
 ---
 
