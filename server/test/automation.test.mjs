@@ -63,6 +63,7 @@ const clean = () => {
   run("DELETE FROM notifications WHERE body LIKE 'probe_auto%'");
   run("DELETE FROM activities WHERE subject LIKE 'probe_auto%'");
   run("DELETE FROM tasks WHERE title LIKE 'probe_auto%'");
+  run("DELETE FROM attendance_session WHERE note LIKE 'probe_auto%'");
   run("DELETE FROM automation WHERE name LIKE 'probe_rule%'");
   run("DELETE FROM rules WHERE name LIKE 'probe_rule%'");
 };
@@ -867,7 +868,11 @@ await test('a task not yet due is left alone', () => {
     [LEAD],
   );
   detect();
-  assert(!one('SELECT id FROM automation_run WHERE automation_id = ?', [a.id]),
+  /* Scoped to this lead rather than to the automation. The sweep looks at every
+     task in the window, and the seeded book has ordinary tasks coming due all
+     the time -- so "nothing at all entered" is a claim about the fixture, while
+     "this lead did not enter" is the claim the test is actually making. */
+  assert(!one('SELECT id FROM automation_run WHERE automation_id = ? AND lead_id = ?', [a.id, LEAD]),
     'a task due in two days was treated as overdue');
 });
 
@@ -976,20 +981,211 @@ await test('an interval automation does not reach the other book', () => {
     "a Bigul interval automation swept a Bonanza lead");
 });
 
-/* --------------------------------------------------------- unwired ones */
+/* ------------------------------------------------------- a day ending (A6) */
 
-await test('a flow on a trigger nothing fires cannot be activated', () => {
-  /* Worse than a draft and worse than a refusal: a flow that looks live and
-     never runs, which nobody goes looking for. */
-  const a = build('probe_auto_unwired', 'user.workday_end', [{ kind: 'exit', config: {} }]);
-  const problems = validate(a.id).map((p) => p.message).join(' | ');
-  assert(problems.includes('workday'), problems);
+/* A workday ends for a person, and the engine can only start a run for a lead.
+   The rule that bridges the two is the whole of A6: the leads they own that
+   still have a task the day asked of them.
+
+   These tests are mostly about the population, because the population is the
+   only part that can quietly become half a million runs a night. */
+
+const DAY = {
+  lead: (name, owner) => Number(run(
+    `INSERT INTO leads (name, mobile, email, source, stage, sales_org, owner_id)
+     VALUES (?, '9800000009', ?, 'Referral', 'New', 'BONANZA', ?)`,
+    [`Automation probe ${name}`, `probe-${name}@workday.test`, owner],
+  ).lastInsertRowid),
+
+  task: (leadId, assignee, due, status = 'Open') => run(
+    `INSERT INTO tasks (title, lead_id, assignee_id, due_at, status, priority)
+     VALUES ('probe_auto workday task', ?, ?, datetime('now', ?), ?, 'Normal')`,
+    [leadId, assignee, due, status],
+  ),
+
+  /* Somebody pressing Check out. `closed_by` is what tells a button press from
+     the eight o'clock policy giving up on them, which is the difference between
+     a fact and a guess. */
+  checkout: (userId, closedBy = 'user', org = 'BONANZA') => run(
+    `INSERT INTO attendance_session (user_id, sales_org, checked_in_at, checked_out_at, closed_by, note)
+     VALUES (?, ?, datetime('now', '-8 hours'), datetime('now'), ?, 'probe_auto day')`,
+    [userId, org, closedBy],
+  ),
+
+  /* Every earlier test's check-out is cleared first. detect() then sets the
+     cursor at now, and winding it back re-opens a window that contains only
+     what this test is about to write -- without the clear, the window also
+     contains the previous test's press of the button, which is how a test
+     about ignoring an automatic close passes on somebody else's manual one. */
+  arm: () => {
+    run("DELETE FROM attendance_session WHERE note LIKE 'probe_auto%'");
+    detect();
+    rewind('user.workday_end', '-1 hours');
+  },
+};
+
+await test('every trigger the builder offers either fires or says why it does not', async () => {
+  /* The invariant the two workday tests here used to carry. A trigger that
+     neither fires nor explains itself is the worst of the three states: it
+     looks live, runs nothing, and nobody goes looking for it. */
+  const { body } = await call('GET', '/admin/automations/spec');
+  const dead = body.triggers.filter((t) => t.unwired);
+  for (const t of dead) {
+    const a = build(`probe_auto_dead_${t.key.replace(/\W/g, '')}`, t.key, [{ kind: 'exit', config: {} }]);
+    assert(validate(a.id).some((p) => p.field === 'trigger'),
+      `${t.key} is marked unavailable but activating it is not refused`);
+  }
+  assert(body.triggers.every((t) => t.unwired || !t.unwired),
+    'a trigger is neither wired nor marked');
 });
 
-await test('the builder is told which triggers are not wired, rather than being shown a dead one', async () => {
-  const { body } = await call('GET', '/admin/automations/spec');
-  const workday = body.triggers.find((t) => t.key === 'user.workday_end');
-  assert(workday?.unwired, 'the screen has no way to tell a live trigger from a dead one');
+await test('a workday ending can be activated now that it has a population', () => {
+  const a = build('probe_auto_day_live', 'user.workday_end', [noteAction('day-end')], { status: 'draft' });
+  const problems = validate(a.id).filter((p) => p.field === 'trigger');
+  assert.equal(problems.length, 0, JSON.stringify(problems));
+});
+
+await test('a day ending starts the flow for the leads that still have a task open', () => {
+  const a = build('probe_auto_day_open', 'user.workday_end', [{ kind: 'exit', config: {} }]);
+  const lead = DAY.lead('day open', PROBE.id);
+  DAY.task(lead, PROBE.id, '-2 hours');
+
+  DAY.arm();
+  DAY.checkout(PROBE.id);
+  detect();
+
+  assert(one('SELECT id FROM automation_run WHERE automation_id = ? AND lead_id = ?', [a.id, lead]),
+    'a lead with an open task due today did not enter when the day ended');
+});
+
+await test('a lead with nothing outstanding is left where it is', () => {
+  /* The difference between this option and "every lead she owns". If a lead
+     with no task enters, the population is the whole book again and the number
+     is 5,965 per person per night. */
+  const a = build('probe_auto_day_idle', 'user.workday_end', [{ kind: 'exit', config: {} }]);
+  const quiet = DAY.lead('day quiet', PROBE.id);
+  const done = DAY.lead('day done', PROBE.id);
+  DAY.task(done, PROBE.id, '-2 hours', 'Done');
+
+  DAY.arm();
+  DAY.checkout(PROBE.id);
+  detect();
+
+  assert(!one('SELECT id FROM automation_run WHERE automation_id = ? AND lead_id = ?', [a.id, quiet]),
+    'a lead with no task at all entered, which makes the population the whole book');
+  assert(!one('SELECT id FROM automation_run WHERE automation_id = ? AND lead_id = ?', [a.id, done]),
+    'a lead whose task was finished entered, so finishing the list is not rewarded');
+});
+
+await test('a task due tomorrow is not something today asked for', () => {
+  const a = build('probe_auto_day_future', 'user.workday_end', [{ kind: 'exit', config: {} }]);
+  const later = DAY.lead('day later', PROBE.id);
+  DAY.task(later, PROBE.id, '+2 days');
+
+  DAY.arm();
+  DAY.checkout(PROBE.id);
+  detect();
+
+  assert(!one('SELECT id FROM automation_run WHERE automation_id = ? AND lead_id = ?', [a.id, later]),
+    'a task not due for two days counted as work that was missed today');
+});
+
+await test('the eight-o-clock policy giving up on somebody does not message their clients', () => {
+  /* `closed_by = 'auto'` is the attendance policy guessing that a person who
+     forgot to check out went home. Messaging a client off a guess is the one
+     failure here that reaches outside the building. */
+  const a = build('probe_auto_day_auto', 'user.workday_end', [{ kind: 'exit', config: {} }]);
+  const lead = DAY.lead('day auto', PROBE.id);
+  DAY.task(lead, PROBE.id, '-2 hours');
+
+  DAY.arm();
+  DAY.checkout(PROBE.id, 'auto');
+  detect();
+
+  assert(!one('SELECT id FROM automation_run WHERE automation_id = ? AND lead_id = ?', [a.id, lead]),
+    'a session the policy closed was treated as somebody deciding their day was over');
+});
+
+await test('a team that never presses the button can opt into the automatic close', () => {
+  const a = build('probe_auto_day_optin', 'user.workday_end', [{ kind: 'exit', config: {} }]);
+  run("UPDATE automation SET trigger_config = ? WHERE id = ?",
+    [JSON.stringify({ closed_by: ['user', 'auto'] }), a.id]);
+  const lead = DAY.lead('day optin', PROBE.id);
+  DAY.task(lead, PROBE.id, '-2 hours');
+
+  DAY.arm();
+  DAY.checkout(PROBE.id, 'auto');
+  detect();
+
+  assert(one('SELECT id FROM automation_run WHERE automation_id = ? AND lead_id = ?', [a.id, lead]),
+    'the automation asked for automatic closes and did not get them');
+});
+
+await test('turning it on does not sweep every check-out ever recorded', () => {
+  /* The same safeguard as every other watermark, and the one with the largest
+     blast radius: 83 people times however many days the table goes back.
+     The cursor is removed rather than wound back, because "never seen before"
+     is the state being tested and a wound-back cursor is not that state. */
+  run("DELETE FROM automation_watermark WHERE trigger_type = 'user.workday_end'");
+  DAY.checkout(PROBE.id);
+  const a = build('probe_auto_day_history', 'user.workday_end', [{ kind: 'exit', config: {} }]);
+  const lead = DAY.lead('day history', PROBE.id);
+  DAY.task(lead, PROBE.id, '-2 hours');
+
+  detect();   // first sight: the cursor starts here, not at the beginning
+
+  assert(!one('SELECT id FROM automation_run WHERE automation_id = ?', [a.id]),
+    'a check-out from before the automation existed entered leads into it');
+});
+
+await test('one person\'s day ending cannot enter more leads than the ceiling', () => {
+  const a = build('probe_auto_day_cap', 'user.workday_end', [{ kind: 'exit', config: {} }]);
+  run("UPDATE automation SET trigger_config = ? WHERE id = ?",
+    [JSON.stringify({ max_leads: 2 }), a.id]);
+
+  for (const n of ['cap a', 'cap b', 'cap c', 'cap d']) {
+    DAY.task(DAY.lead(`day ${n}`, PROBE.id), PROBE.id, '-2 hours');
+  }
+
+  DAY.arm();
+  DAY.checkout(PROBE.id);
+  detect();
+
+  const n = one('SELECT COUNT(*) AS n FROM automation_run WHERE automation_id = ?', [a.id]).n;
+  assert.equal(n, 2, `the ceiling was 2 and ${n} leads entered`);
+});
+
+await test('checking out twice in a day does not run the day twice', () => {
+  /* Somebody who steps out for lunch has had one working day. Without a
+     per-day ceiling rather than a per-check-out one, they get two. */
+  const a = build('probe_auto_day_twice', 'user.workday_end', [{ kind: 'exit', config: {} }]);
+  run("UPDATE automation SET trigger_config = ? WHERE id = ?",
+    [JSON.stringify({ max_leads: 1 }), a.id]);
+  DAY.task(DAY.lead('day twice one', PROBE.id), PROBE.id, '-2 hours');
+  DAY.task(DAY.lead('day twice two', PROBE.id), PROBE.id, '-2 hours');
+
+  DAY.arm();
+  DAY.checkout(PROBE.id);
+  detect();
+  DAY.arm();
+  DAY.checkout(PROBE.id);
+  detect();
+
+  const n = one('SELECT COUNT(*) AS n FROM automation_run WHERE automation_id = ?', [a.id]).n;
+  assert.equal(n, 1, `two check-outs in one day produced ${n} runs against a ceiling of 1`);
+});
+
+await test('a workday ending in the other book does not reach this one', () => {
+  const bigul = build('probe_auto_day_bigul', 'user.workday_end', [{ kind: 'exit', config: {} }], { org: 'BIGUL' });
+  const lead = DAY.lead('day boundary', PROBE.id);
+  DAY.task(lead, PROBE.id, '-2 hours');
+
+  DAY.arm();
+  DAY.checkout(PROBE.id);          // a BONANZA check-out
+  detect();
+
+  assert(!one('SELECT id FROM automation_run WHERE automation_id = ?', [bigul.id]),
+    "a Bonanza user's day ending entered leads into a Bigul automation");
 });
 
 /* ------------------------------------------------------------ conditions */

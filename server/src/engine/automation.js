@@ -67,13 +67,12 @@ export const TRIGGERS = [
     key: 'user.workday_end',
     label: 'A user ends their workday',
     family: 'User',
-    /* Nothing enters leads for this yet, and it is not lead-shaped: a workday
-       ends for a person, and deciding which of that person's leads should walk
-       into a flow is a business question, not one to guess at. Marked rather
-       than hidden, so the screen can say why -- and `validate` refuses to
-       activate a flow that uses it, which is better than one that looks live
-       and never runs. */
-    unwired: 'A workday ending belongs to a person rather than to a lead, so which leads it should start has not been settled yet.',
+    /* Not lead-shaped on its own: a workday ends for a person, and the engine
+       cannot start a run without a lead. Which of that person's leads a day
+       ending is about was a business question rather than a technical one, and
+       it has been answered -- see `workdayEnd` below for the population and
+       why it is that one. */
+    note: 'Starts the flow for the leads they own that still have a task due today or earlier.',
   },
   { key: 'schedule.interval', label: 'At regular intervals', family: 'Schedule' },
   { key: 'sub', label: 'Called by another automation', family: 'Composition' },
@@ -629,6 +628,9 @@ export function detect({ batch = 500 } = {}) {
   const onSchedule = interval({ batch });
   if (onSchedule) fired['schedule.interval'] = onSchedule;
 
+  const atDayEnd = workdayEnd({ batch });
+  if (atDayEnd) fired['user.workday_end'] = atDayEnd;
+
   return fired;
 
   /* ---- the two shapes above, as functions, kept close to their callers ---- */
@@ -662,6 +664,126 @@ export function detect({ batch = 500 } = {}) {
     run('UPDATE automation_watermark SET checked_at = ? WHERE trigger_type = ?', [now, trigger]);
     if (entered) fired[trigger] = (fired[trigger] ?? 0) + entered;
   }
+}
+
+/* A ceiling on how many leads one person's day ending may put into one flow.
+   Not configurable past this: a number an administrator can raise to five
+   thousand is a number that will be raised to five thousand on the evening
+   somebody wants to "reach everyone". */
+const WORKDAY_CAP = 200;
+
+/**
+ * "A user ends their workday", turned into leads.
+ *
+ * WHY THIS NEEDS A RULE AT ALL
+ *
+ * Every other trigger names a lead: a lead was created, a lead changed stage, a
+ * task *on a lead* went overdue. This one names a person. When Priya presses
+ * Check out the engine has a user id and no lead id, and it cannot start a run
+ * without one -- so something has to say which of her leads her day ending is
+ * about, and that is a business rule, not a technical detail.
+ *
+ * WHY THIS POPULATION
+ *
+ * "Every lead she owns" is 495,118 / 83 ~= 5,965 each, or roughly half a
+ * million runs a night across the team -- the same shape as the LeadSquared
+ * automation that has fired fourteen million times. "Every lead she did not
+ * reach today" sounds narrower and is not: the denominator is still her whole
+ * book, because nobody works six thousand leads in a day, so it is the first
+ * option wearing a better sentence.
+ *
+ * An open task due today or earlier is bounded by what the day actually asked
+ * of her. It is usually tens rather than thousands, and it falls to zero when
+ * she finishes her list -- so the flow rewards clearing the list rather than
+ * scaling with the size of the book. The definition is deliberately the same
+ * one the cockpit already shows her as "tasks due today", because a number a
+ * person can see on their own screen is the only kind they can argue with.
+ *
+ * WHOSE CHECK-OUT COUNTS
+ *
+ * Only `closed_by = 'user'` by default -- she pressed the button. An 'auto'
+ * close is the attendance policy guessing at eight in the evening that somebody
+ * went home, and a guess is not a reason to message a client. Configurable,
+ * because a team that never presses the button would otherwise have a trigger
+ * that never fires, but the default is the careful one.
+ */
+function workdayEnd({ batch = 200 } = {}) {
+  const now = one("SELECT datetime('now') AS t").t;
+  const mark = one("SELECT checked_at FROM automation_watermark WHERE trigger_type = 'user.workday_end'");
+
+  if (!mark) {
+    /* First sight starts here, not at the beginning of time -- otherwise
+       turning this on sweeps every check-out the company has ever recorded. */
+    run(
+      "INSERT INTO automation_watermark (trigger_type, last_id, checked_at) VALUES ('user.workday_end', 0, ?)",
+      [now],
+    );
+    return 0;
+  }
+
+  const sessions = all(
+    `SELECT user_id, sales_org, COALESCE(closed_by, 'user') AS closed_by
+       FROM attendance_session
+      WHERE checked_out_at > ? AND checked_out_at <= ?
+      ORDER BY checked_out_at LIMIT ?`,
+    [mark.checked_at, now, batch],
+  );
+
+  /* Advanced whether or not anything was listening. An automation switched off
+     for a week and switched back on must not sweep a week of check-outs in one
+     tick, and a watermark that only moves when somebody is watching does
+     exactly that. */
+  run("UPDATE automation_watermark SET checked_at = ? WHERE trigger_type = 'user.workday_end'", [now]);
+  if (!sessions.length) return 0;
+
+  const active = all(
+    "SELECT * FROM automation WHERE status = 'active' AND trigger_type = 'user.workday_end' ORDER BY priority, id",
+  );
+  if (!active.length) return 0;
+
+  let entered = 0;
+
+  for (const session of sessions) {
+    for (const auto of active) {
+      /* The book boundary. `enter` enforces it per lead as well; narrowing here
+         means a Bigul flow does not read a Bonanza user's whole task list to be
+         told no five thousand times. */
+      if (auto.sales_org !== session.sales_org) continue;
+
+      const config = parse(auto.trigger_config, {});
+      const counts = Array.isArray(config.closed_by) && config.closed_by.length
+        ? config.closed_by
+        : ['user'];
+      if (!counts.includes(session.closed_by)) continue;
+
+      /* The ceiling is per person per day, not per check-out: somebody who
+         checks in and out four times has had one working day, not four. */
+      const already = one(
+        `SELECT COUNT(*) AS n FROM automation_run r JOIN leads l ON l.id = r.lead_id
+          WHERE r.automation_id = ? AND l.owner_id = ? AND date(r.entered_at) = date(?)`,
+        [auto.id, session.user_id, now],
+      ).n;
+
+      const ceiling = Math.min(Number(config.max_leads) || WORKDAY_CAP, WORKDAY_CAP);
+      const room = ceiling - already;
+      if (room <= 0) continue;
+
+      const leads = all(
+        `SELECT DISTINCT l.id FROM leads l
+           JOIN tasks t ON t.lead_id = l.id
+          WHERE l.owner_id = ? AND l.deleted_at IS NULL AND l.sales_org = ?
+            AND t.assignee_id = ?
+            AND t.status NOT IN ('Done', 'Completed', 'Cancelled')
+            AND date(t.due_at) <= date(?)
+          ORDER BY l.id LIMIT ?`,
+        [session.user_id, session.sales_org, session.user_id, now, room],
+      );
+
+      for (const lead of leads) if (enter(auto.id, lead.id)) entered += 1;
+    }
+  }
+
+  return entered;
 }
 
 /**

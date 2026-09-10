@@ -276,7 +276,6 @@ actually happens.
 
 | Piece | Why |
 |---|---|
-| `user.workday_end` | Not lead-shaped: a workday ends for a person, and which of their leads should enter a flow is a business question. Marked unavailable in the builder and refused at activation rather than left to look live — **question A6 below**. |
 | Split test | §7 recommended against it without a population or a success metric. |
 | Zoom | A connector; belongs to P3-20. |
 
@@ -310,8 +309,44 @@ canvas rather than under it. It does everything the canvas does, wiring
 included, and the choice is remembered. The canvas is for seeing; the list is
 for certainty.
 
-### One more question
+### A6, answered — "a user ends their workday"
 
-| # | Question |
-|---|---|
-| **A6** | "A user ends their workday" — when Priya ends her day, which leads should walk into the flow? Every lead she owns, the ones she did not reach today, or the ones with a task still open? Until this is settled the trigger stays unavailable rather than silently doing nothing. |
+The question was which leads a person's day ending is about, because every other
+trigger names a lead and this one names a person. **Answered on 10 September:
+the leads they own that still have a task due today or earlier.**
+
+Why that population and not the two obvious alternatives:
+
+| Option | Volume | Verdict |
+|---|---|---|
+| Every lead she owns | 495,118 ÷ 83 ≈ **5,965 per person per night**, ~495,000 across the team | The fourteen-million-execution shape, reproduced deliberately. Rejected. |
+| Every lead she did not reach today | ~5,900 on day one, and it never shrinks | The denominator is still the whole book, because nobody works six thousand leads in a day. The first option in a better sentence. Rejected. |
+| **An open task due today or earlier** | Usually tens; falls to zero when the list is cleared | Bounded by what the day actually asked of her, and it rewards finishing rather than scaling with the size of the book. **Chosen.** |
+
+It is deliberately the same definition the cockpit already shows a person as
+"tasks due today" — a number somebody can see on their own screen is the only
+kind they can argue with.
+
+Three guard-rails ship with it:
+
+1. **Only a real check-out counts.** `attendance_session.closed_by = 'user'` —
+   she pressed the button. `'auto'` is the eight-o'clock policy guessing that
+   somebody who forgot went home, and a guess is not a reason to message a
+   client. A team that never presses the button can opt in with
+   `trigger_config.closed_by = ['user','auto']`.
+2. **A ceiling of 200 leads per person per day**, not per check-out — somebody
+   who steps out for lunch has had one working day, not two. Lowerable per
+   automation via `trigger_config.max_leads`; not raisable past 200.
+3. The consent gate and the book boundary already apply to every send, so
+   nothing new was needed there.
+
+**What this is not.** "Tell Priya what she missed" is one message to one person,
+not twelve lead-runs, and the engine has no user-shaped actions to express it.
+That belongs in **P3-21 (internal communication)** as a `user.*` action family.
+The two compose; this one does not block it.
+
+**Worth knowing:** the only `On WorkDay End` automation live in the LeadSquared
+tenant is *Auto Check Out 8:00 PM (WorkDay Template)* (128,482 executions),
+which is operational housekeeping and touches no leads at all. We already do
+that natively in `attendance_policy` — so nothing was lost by the trigger having
+been unavailable, and this population is new capability rather than parity.
