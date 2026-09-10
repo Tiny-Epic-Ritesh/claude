@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, shortDate, ROLE_LABEL } from '../../api.js';
 import { useApi, Loading, Empty, Icon, Modal, ErrorBanner, Spinner } from '../../components/ui.jsx';
 import ConditionBuilder from '../../components/ConditionBuilder.jsx';
+import FlowCanvas from './FlowCanvas.jsx';
 
 /**
  * The automation builder (P3-16).
@@ -193,6 +194,17 @@ function Builder({ id, spec, onClose, onError }) {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(null);
 
+  /* Remembered, because somebody who prefers the list prefers it every time and
+     being put back on the canvas at every open is the kind of small rudeness
+     that makes a screen feel like it is arguing. */
+  const [view, setView] = useState(() => {
+    try { return localStorage.getItem('automation.view') === 'list' ? 'list' : 'canvas'; }
+    catch { return 'canvas'; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('automation.view', view); } catch { /* private window */ }
+  }, [view]);
+
   const load = async () => {
     try { setData(await api.get(`/admin/automations/${id}`)); }
     catch (err) { onError(err.message); }
@@ -210,9 +222,21 @@ function Builder({ id, spec, onClose, onError }) {
   const addStep = async (kind) => {
     setBusy(true);
     const last = data.steps.length ? data.steps[data.steps.length - 1] : null;
+
+    /* Placed to the right of everything, the same spot the canvas would put it.
+       A card added from here without a position renders at a fallback that
+       shifts every time another card is added, so it appears to wander until
+       somebody drags something. Giving it a real position on the way in means
+       it never moves on its own. */
+    const right = Math.max(0, ...data.steps.map((s) => s.pos_x ?? 0));
+    const placed = data.steps.some((s) => s.pos_x !== null && s.pos_x !== undefined);
+
     try {
       await api.post(`/admin/automations/${id}/steps`, {
-        kind, config: {}, after: last && last.kind !== 'exit' ? last.id : undefined,
+        kind,
+        config: {},
+        after: last && last.kind !== 'exit' ? last.id : undefined,
+        ...(placed ? { pos_x: right + 296, pos_y: 40 } : {}),
       });
       await load();
     } catch (err) { onError(err.message); }
@@ -235,7 +259,7 @@ function Builder({ id, spec, onClose, onError }) {
   };
 
   return (
-    <Modal title={data.name} subtitle={`${data.status} · ${data.sales_org}`} onClose={onClose} wide>
+    <Modal title={data.name} subtitle={`${data.status} · ${data.sales_org}`} onClose={onClose} size="xl">
       {/* What is wrong with it, before anything else. Activation is refused
           until this list is empty, so it is the first thing to read. */}
       {data.problems.length > 0 && (
@@ -270,11 +294,45 @@ function Builder({ id, spec, onClose, onError }) {
       </div>
 
       {/* ------------------------------------------------------ the steps */}
-      <h4 className="muted">The flow</h4>
+      <div className="row-between">
+        <h4 className="muted">The flow</h4>
+        {/* Two views of one thing, not a picture and a table of it. Every edge
+            on the canvas is the same next_step_id the list names, so there is
+            no diagram to fall out of date — and the list is what works from a
+            keyboard, which the dragging does not. */}
+        <span className="row" style={{ gap: 4 }}>
+          <button
+            type="button"
+            className={view === 'canvas' ? 'btn btn-primary btn-sm' : 'btn-sm'}
+            onClick={() => setView('canvas')}
+          >
+            Canvas
+          </button>
+          <button
+            type="button"
+            className={view === 'list' ? 'btn btn-primary btn-sm' : 'btn-sm'}
+            onClick={() => setView('list')}
+          >
+            List
+          </button>
+        </span>
+      </div>
+
+      {view === 'canvas' && data.steps.length > 0 && (
+        <FlowCanvas
+          data={data}
+          spec={spec}
+          icon={ICON}
+          describe={describe}
+          onConfigure={setEditing}
+          onChanged={load}
+          onError={onError}
+        />
+      )}
 
       {!data.steps.length ? (
         <Empty>No steps yet.</Empty>
-      ) : (
+      ) : view === 'list' && (
         <div className="stack" style={{ gap: 1 }}>
           {data.steps.map((s) => {
             const problems = problemsFor(s.id);

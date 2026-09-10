@@ -594,6 +594,110 @@ await test('the tick detects and resumes in one pass', () => {
   assert(out.fired !== undefined, 'the tick does not report what it detected');
 });
 
+/* ------------------------------------------------------------- the canvas */
+
+await test('where a card sits is remembered', async () => {
+  /* Two people looking at one automation have to see the same picture, or
+     "the card on the left" means nothing in a conversation. */
+  const a = build('probe_auto_layout', 'lead.created', [noteAction('one'), noteAction('two')]);
+
+  const res = await call('PATCH', `/admin/automations/${a.id}/layout`, {
+    positions: [{ id: a.ids[0], x: 120, y: 40 }, { id: a.ids[1], x: 420, y: 200 }],
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.body.saved, 2);
+
+  const back = await call('GET', `/admin/automations/${a.id}`);
+  const first = back.body.steps.find((x) => x.id === a.ids[0]);
+  assert.equal(first.pos_x, 120);
+  assert.equal(first.pos_y, 40);
+});
+
+await test('a card with no position is left null, so the builder lays it out', () => {
+  /* Null is not zero. A flow built before the canvas existed must not have
+     every card stacked at the origin — it is laid out from the graph instead,
+     and null is how the builder knows to. */
+  const a = build('probe_auto_unplaced', 'lead.created', [noteAction('one')]);
+  const step = one('SELECT pos_x, pos_y FROM automation_step WHERE id = ?', [a.ids[0]]);
+  assert.equal(step.pos_x, null);
+  assert.equal(step.pos_y, null);
+});
+
+await test("a layout save ignores cards that are not this automation's", async () => {
+  /* The client sends what it has drawn. A card deleted in another tab should
+     cost somebody a card, not the rest of their layout. */
+  const a = build('probe_auto_layout_mine', 'lead.created', [noteAction('one')]);
+  const other = build('probe_auto_layout_theirs', 'lead.created', [noteAction('one')]);
+
+  const res = await call('PATCH', `/admin/automations/${a.id}/layout`, {
+    positions: [{ id: a.ids[0], x: 10, y: 10 }, { id: other.ids[0], x: 999, y: 999 }],
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.saved, 1, 'it saved a step belonging to another automation');
+  assert.equal(one('SELECT pos_x FROM automation_step WHERE id = ?', [other.ids[0]]).pos_x, null);
+});
+
+await test('a card dragged out of an exit is made and wired in one go', async () => {
+  /* Dropping on empty canvas. Without this the gesture takes three steps — add
+     a card, open it, choose what precedes it — which is the list again with a
+     drawing on top. */
+  const a = build('probe_auto_dropwire', 'lead.created', [{ kind: 'branch', config: {}, next: null, else: null }]);
+
+  const res = await call('POST', `/admin/automations/${a.id}/steps`, {
+    kind: 'action', config: {}, from: a.ids[0], exit: 'else', pos_x: 500, pos_y: 300,
+  });
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  assert.equal(res.body.pos_x, 500);
+
+  const branch = one('SELECT next_step_id, else_step_id FROM automation_step WHERE id = ?', [a.ids[0]]);
+  assert.equal(branch.else_step_id, res.body.id, 'the else exit was not wired to the new card');
+  assert.equal(branch.next_step_id, null, 'wiring the else exit also moved the next one');
+});
+
+await test('dragging the start connector onto a card makes it first', async () => {
+  const a = build('probe_auto_setfirst', 'lead.created', [noteAction('one'), noteAction('two')]);
+  const res = await call('PATCH', `/admin/automations/${a.id}`, { first_step_id: a.ids[1] });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(one('SELECT first_step_id FROM automation WHERE id = ?', [a.id]).first_step_id, a.ids[1]);
+});
+
+await test("the start connector cannot be pointed at another automation's card", async () => {
+  /* A drag can land anywhere, which is what makes this reachable by ordinary
+     use. Unchecked, advance() fails on the first lead with "step 412 no longer
+     exists" and nothing on the screen says why. */
+  const a = build('probe_auto_first_mine', 'lead.created', [noteAction('one')]);
+  const other = build('probe_auto_first_theirs', 'lead.created', [noteAction('one')]);
+
+  const res = await call('PATCH', `/admin/automations/${a.id}`, { first_step_id: other.ids[0] });
+  assert.equal(res.status, 400, `HTTP ${res.status}`);
+  assert.equal(one('SELECT first_step_id FROM automation WHERE id = ?', [a.id]).first_step_id, a.ids[0]);
+});
+
+await test('a card made from the start connector becomes the first step', async () => {
+  const a = build('probe_auto_startdrop', 'lead.created', [noteAction('one')]);
+  run('UPDATE automation SET first_step_id = NULL WHERE id = ?', [a.id]);
+
+  const res = await call('POST', `/admin/automations/${a.id}/steps`, {
+    kind: 'action', config: {}, from: 'flow-start',
+  });
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  assert.equal(one('SELECT first_step_id FROM automation WHERE id = ?', [a.id]).first_step_id, res.body.id);
+});
+
+await test('a layout with nothing in it is refused rather than silently doing nothing', async () => {
+  const a = build('probe_auto_layout_empty', 'lead.created', [noteAction('one')]);
+  const res = await call('PATCH', `/admin/automations/${a.id}/layout`, {});
+  assert.equal(res.status, 400, `HTTP ${res.status}`);
+});
+
+await test("another book's layout is out of reach", async () => {
+  const bigul = build('probe_auto_layout_bigul', 'lead.created', [noteAction('one')], { org: 'BIGUL' });
+  const res = await call('PATCH', `/admin/automations/${bigul.id}/layout`, {
+    positions: [{ id: bigul.ids[0], x: 1, y: 1 }],
+  });
+  assert.equal(res.status, 403, `HTTP ${res.status}`);
+});
+
 /* --------------------------------------------------- migrating the rules */
 
 const makeRule = (name, conditions, actions) => Number(run(

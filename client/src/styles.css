@@ -6500,3 +6500,145 @@ tr.row-inactive .user-cell strong { color: var(--ink-3); }
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px; line-height: 1.5;
 }
+
+/* ============================================================== flow canvas
+ *
+ * The automation builder's drawing surface (P3-16).
+ *
+ * Everything positional is inline on the elements — the canvas computes where a
+ * card sits and the edge maths has to agree with it to the pixel, so a
+ * stylesheet cannot be a second opinion about that. What lives here is only
+ * what the canvas does not calculate: colour, weight, shadow, and the shape of
+ * a port.
+ */
+
+.flow-wrap { display: flex; flex-direction: column; gap: 6px; }
+
+.flow-tools {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; flex-wrap: wrap;
+}
+
+.flow-surface {
+  position: relative;
+  overflow: auto;
+  height: min(56vh, 520px);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  /* The grid is what makes a drag read as movement rather than a jump; without
+     it a card slides against a flat field and the eye has nothing to measure
+     against. */
+  background-color: var(--ground-2);
+  background-image:
+    radial-gradient(circle at 1px 1px, var(--hairline) 1px, transparent 0);
+  background-size: 18px 18px;
+  cursor: grab;
+  touch-action: none;
+}
+.flow-surface.is-panning { cursor: grabbing; }
+
+.flow-plane { position: relative; transform-origin: 0 0; }
+
+.flow-edges { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+
+.flow-edge {
+  fill: none;
+  stroke-width: 1.75;
+  color: var(--ink-4);          /* the arrow marker reads currentColor */
+  stroke: var(--ink-4);
+}
+.flow-edge.is-else { stroke: var(--warn); color: var(--warn); stroke-dasharray: 5 4; }
+.flow-edge.is-flow-start { stroke: var(--accent-dark); color: var(--accent-dark); }
+
+/* An exit leading nowhere. Drawn, and drawn as unfinished — a blank space where
+   an arrow should be is how a flow that ends silently goes unnoticed. */
+.flow-edge.is-open { stroke-dasharray: 3 4; opacity: 0.75; }
+
+.flow-edge.is-wiring { stroke: var(--accent); color: var(--accent); stroke-dasharray: 4 3; }
+
+.flow-edge-label {
+  fill: var(--warn); font-size: 10px; font-family: var(--sans);
+  pointer-events: none; user-select: none;
+}
+
+.flow-node {
+  position: absolute;
+  display: flex; flex-direction: column; gap: 2px; justify-content: center;
+  padding: 8px 10px;
+  background: var(--popover);
+  border: 1px solid var(--popover-border);
+  border-radius: var(--r-xs);
+  box-shadow: var(--lift-1);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.flow-node.is-dragging { box-shadow: var(--lift-3); cursor: grabbing; z-index: 3; }
+.flow-node.is-warn { border-color: var(--warn); background: var(--warn-soft); }
+
+.flow-node-head { display: flex; align-items: center; gap: 5px; overflow: hidden; }
+.flow-node-head strong {
+  font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.flow-node-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.flow-node-warn { position: absolute; right: 8px; bottom: 6px; color: var(--warn); display: flex; }
+
+.flow-cog {
+  position: absolute; top: 5px; right: 5px;
+  display: flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; padding: 0;
+  border: 0; border-radius: var(--r-pill);
+  background: transparent; color: var(--ink-3); cursor: pointer;
+}
+.flow-cog:hover { background: var(--ground-2); color: var(--ink); }
+
+/* The dot you drag an arrow out of. Sized for a finger rather than a pixel:
+   a 6px target is a gesture people miss and then blame themselves for. */
+.flow-port {
+  position: absolute;
+  width: 13px; height: 13px; padding: 0;
+  border: 2px solid var(--popover);
+  border-radius: var(--r-pill);
+  background: var(--ink-4);
+  cursor: crosshair;
+  transform: translate(50%, -50%);
+  right: -7px;
+}
+.flow-port:hover { background: var(--accent); transform: translate(50%, -50%) scale(1.25); }
+.flow-port.is-else { background: var(--warn); }
+
+.flow-start {
+  position: absolute;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px dashed var(--accent-dark);
+  border-radius: var(--r-pill);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  cursor: grab; user-select: none; touch-action: none;
+}
+.flow-start .flow-port { background: var(--accent-dark); right: -7px; top: 50%; }
+
+.flow-menu {
+  position: absolute;
+  display: flex; flex-direction: column; gap: 4px; align-items: stretch;
+  padding: 8px;
+  background: var(--popover-solid);
+  border: 1px solid var(--popover-border);
+  border-radius: var(--r-xs);
+  box-shadow: var(--lift-2);
+  z-index: 4;
+}
+
+.modal-xl { width: min(1180px, 100%); }
+
+@media (max-width: 640px) {
+  .modal-xl { width: 100%; border-radius: 0; min-height: 100%; }
+  /* A drag surface inside a phone-width modal is a scroll trap. The builder
+     offers the list view, which is the same operations without the gesture. */
+  .flow-surface { height: 320px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-port:hover { transform: translate(50%, -50%); }
+}

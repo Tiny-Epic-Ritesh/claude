@@ -126,7 +126,7 @@ export function ErrorBanner({ error, onDismiss }) {
 
 export const Empty = ({ children }) => <div className="empty">{children}</div>;
 
-export function Modal({ title, subtitle, onClose, children, wide }) {
+export function Modal({ title, subtitle, onClose, children, wide, size }) {
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
@@ -142,7 +142,15 @@ export function Modal({ title, subtitle, onClose, children, wide }) {
    * modal rendered from inside a card and would have kept reappearing. */
   return createPortal((
     <div className="backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`modal card ${wide ? 'modal-lg' : ''}`} role="dialog" aria-modal="true" aria-label={title}>
+      {/* `size="xl"` is for a surface rather than a form -- the flow canvas needs
+          the width to be worth drawing on. `wide` is unchanged, so every
+          existing caller keeps the modal it had. */}
+      <div
+        className={`modal card ${size === 'xl' ? 'modal-xl' : wide ? 'modal-lg' : ''}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+      >
         <div className="card-head">
           <div>
             <h2>{title}</h2>

@@ -19,7 +19,7 @@
  */
 
 import { Router } from 'express';
-import { all, one, run, audit } from '../db.js';
+import { all, one, run, audit, transact } from '../db.js';
 import { requireUser, requirePermission, orgsFor, activeOrg, mayUseOrg } from '../auth.js';
 import {
   TRIGGERS, STEP_KINDS, isTrigger, validate, report, whatRunsOn, enter,
@@ -223,7 +223,21 @@ router.patch('/:id', requirePermission('admin.rules'), (req, res) => {
   ]) {
     if (value !== undefined) { sets.push(`${column} = ?`); params.push(value ? JSON.stringify(value) : null); }
   }
-  if (req.body.first_step_id !== undefined) { sets.push('first_step_id = ?'); params.push(req.body.first_step_id); }
+  if (req.body.first_step_id !== undefined) {
+    /* It has to be a card on this automation.
+     *
+     * Unchecked, a flow could be pointed at another flow's card -- or another
+     * book's -- and `advance` would fail on the first lead with "step 412 no
+     * longer exists". The canvas makes this reachable by ordinary use: the
+     * start connector is a thing you drag, and a drag can land anywhere. */
+    const target = req.body.first_step_id;
+    if (target !== null) {
+      const owned = one('SELECT id FROM automation_step WHERE id = ? AND automation_id = ?', [target, auto.id]);
+      if (!owned) return res.status(400).json({ error: 'That is not a step on this automation', field: 'first_step_id' });
+    }
+    sets.push('first_step_id = ?');
+    params.push(target);
+  }
 
   if (req.body.trigger_type !== undefined && !isTrigger(req.body.trigger_type)) {
     return res.status(400).json({ error: 'Not a trigger', field: 'trigger_type' });
@@ -269,15 +283,28 @@ router.post('/:id/steps', requirePermission('admin.rules'), (req, res) => {
   const auto = reachable(req, res, req.params.id);
   if (!auto) return undefined;
 
-  const { kind, config, label, after } = req.body ?? {};
+  const {
+    kind, config, label, after,
+    pos_x: posX, pos_y: posY,
+    /* Dragged out of a card's exit and dropped on empty canvas: the new card is
+       made and that exit is pointed at it in one go. Without this the gesture
+       takes three steps -- add a card, open it, choose what precedes it -- which
+       is the list all over again with a drawing on top. */
+    from, exit,
+  } = req.body ?? {};
+
   if (!STEP_KINDS.some((k) => k.kind === kind)) {
     return res.status(400).json({ error: `"${kind}" is not a kind of step`, field: 'kind' });
   }
 
   const order = one('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM automation_step WHERE automation_id = ?', [auto.id]).n;
   const info = run(
-    'INSERT INTO automation_step (automation_id, kind, config, label, sort_order) VALUES (?,?,?,?,?)',
-    [auto.id, kind, config ? JSON.stringify(config) : '{}', label ?? null, order],
+    'INSERT INTO automation_step (automation_id, kind, config, label, sort_order, pos_x, pos_y) VALUES (?,?,?,?,?,?,?)',
+    [
+      auto.id, kind, config ? JSON.stringify(config) : '{}', label ?? null, order,
+      Number.isFinite(Number(posX)) ? Math.round(Number(posX)) : null,
+      Number.isFinite(Number(posY)) ? Math.round(Number(posY)) : null,
+    ],
   );
   const stepId = Number(info.lastInsertRowid);
 
@@ -289,7 +316,22 @@ router.post('/:id/steps', requirePermission('admin.rules'), (req, res) => {
       run('UPDATE automation_step SET next_step_id = ? WHERE id = ?', [prev.next_step_id, stepId]);
       run('UPDATE automation_step SET next_step_id = ? WHERE id = ?', [stepId, prev.id]);
     }
-  } else if (!auto.first_step_id) {
+  } else if (from === 'flow-start') {
+    /* The canvas's sentinel for "the flow begins here". Checked before the
+       general case below, or it would be looked up as a step id and quietly
+       wire nothing. */
+    run('UPDATE automation SET first_step_id = ? WHERE id = ?', [stepId, auto.id]);
+  } else if (from) {
+    /* Point that one exit at the new card. Unlike `after`, the new card does
+       not take over what the exit used to lead to: dragging an exit somewhere
+       is how you re-route it, so it means "this now" rather than "this first,
+       then what was there". */
+    const source = one('SELECT * FROM automation_step WHERE id = ? AND automation_id = ?', [from, auto.id]);
+    const column = exit === 'else' ? 'else_step_id' : 'next_step_id';
+    if (source) run(`UPDATE automation_step SET ${column} = ? WHERE id = ?`, [stepId, source.id]);
+  }
+
+  if (!auto.first_step_id && !after && !from) {
     run('UPDATE automation SET first_step_id = ? WHERE id = ?', [stepId, auto.id]);
   }
 
@@ -345,6 +387,45 @@ router.delete('/:id/steps/:stepId', requirePermission('admin.rules'), (req, res)
 
   run('DELETE FROM automation_step WHERE id = ?', [step.id]);
   return res.json({ ok: true });
+});
+
+/**
+ * Where every card sits, saved in one go.
+ *
+ * One request rather than one per card, because the first drag on a flow built
+ * before the canvas existed saves the whole computed layout at once — a dozen
+ * PATCHes for one gesture, any of which could half-fail and leave the picture
+ * disagreeing with itself.
+ *
+ * Not audited. A card moved two inches left is not a configuration change, and
+ * an audit log that fills with them is an audit log nobody reads.
+ */
+router.patch('/:id/layout', requirePermission('admin.rules'), (req, res) => {
+  const auto = reachable(req, res, req.params.id);
+  if (!auto) return undefined;
+
+  const positions = Array.isArray(req.body?.positions) ? req.body.positions : null;
+  if (!positions) return res.status(400).json({ error: 'Send a list of positions' });
+  if (positions.length > 500) return res.status(400).json({ error: 'That is more cards than an automation can have' });
+
+  const mine = new Set(
+    all('SELECT id FROM automation_step WHERE automation_id = ?', [auto.id]).map((s) => s.id),
+  );
+
+  transact(() => {
+    for (const p of positions) {
+      /* Silently skipping a card that is not ours rather than failing the whole
+         save: the client sends what it has drawn, and a card deleted in another
+         tab should not lose somebody the rest of their layout. */
+      if (!mine.has(Number(p.id))) continue;
+      if (!Number.isFinite(Number(p.x)) || !Number.isFinite(Number(p.y))) continue;
+      run('UPDATE automation_step SET pos_x = ?, pos_y = ? WHERE id = ?', [
+        Math.round(Number(p.x)), Math.round(Number(p.y)), Number(p.id),
+      ]);
+    }
+  });
+
+  return res.json({ ok: true, saved: positions.filter((p) => mine.has(Number(p.id))).length });
 });
 
 /* ------------------------------------------------------ going live */

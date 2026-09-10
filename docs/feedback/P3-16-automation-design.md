@@ -251,6 +251,7 @@ is the one still outstanding.
 | Reporting | Per automation and per step, as §6 proposed. |
 | Explorer | "Everything that runs on this trigger, in order" — the screen §5 said was missing from the legacy tenant. |
 | Migration | Converts a rule into a draft flow, and refuses when a condition would be lost. |
+| Canvas | Drag to move, drag a port to connect, drop on empty space to add. Positions are stored, so two people see the same picture. |
 
 ### The safeguards worth knowing about
 
@@ -275,10 +276,39 @@ actually happens.
 
 | Piece | Why |
 |---|---|
-| **The drag-and-drop canvas** | The flow is assembled and wired card by card, which runs and validates. Drawing it is the layer on top. This is the largest piece left in P3-16. |
 | `user.workday_end` | Not lead-shaped: a workday ends for a person, and which of their leads should enter a flow is a business question. Marked unavailable in the builder and refused at activation rather than left to look live — **question A6 below**. |
 | Split test | §7 recommended against it without a population or a success metric. |
 | Zoom | A connector; belongs to P3-20. |
+
+### The canvas
+
+Built after the rest, and the order mattered: the drawing and the thing that
+runs are the same object, so it could only be drawn once there was something to
+draw. Every edge on the canvas is a `next_step_id` or an `else_step_id` — there
+is no separate diagram to fall out of date.
+
+What it does:
+
+- **Drag a card** to move it. The first drag on a flow built before the canvas
+  existed saves every card at once, so a flow is wholly computed or wholly
+  stored and never a mix where a moved card lands on a placed one.
+- **Drag a port** onto another card to wire it. Dropping on empty space asks
+  what should go there and creates it already connected — otherwise the gesture
+  takes three steps and the canvas is the list with a drawing on top.
+- **Drag the start marker** onto a card to make it the first step.
+- **Tidy up** re-lays the flow from the graph: depth becomes the column,
+  arrival order the row, and anything unreachable goes in a column of its own
+  rather than on top of the flow where it would look connected.
+
+**An exit that leads nowhere is drawn, not left blank.** It renders as a dashed
+stub with an open end. An unconnected exit ends the flow silently for every lead
+that reaches it, and a blank space where an arrow should be is exactly how that
+goes unnoticed — which is the whole argument for drawing a flow at all.
+
+**Dragging is not reachable by keyboard**, so the List view sits beside the
+canvas rather than under it. It does everything the canvas does, wiring
+included, and the choice is remembered. The canvas is for seeing; the list is
+for certainty.
 
 ### One more question
 

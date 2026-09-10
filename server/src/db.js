@@ -1508,6 +1508,10 @@ const COLUMNS = [
   ['leads', 'owner_queue_id', 'INTEGER REFERENCES queues(id) ON DELETE SET NULL'],
   ['leads', 'assigned_at', 'TEXT'],
   ['leads', 'assigned_by_rule', 'INTEGER'],
+  // Where a card sits on the canvas. Null means never placed, and the builder
+  // lays those out from the graph rather than stacking them at the origin.
+  ['automation_step', 'pos_x', 'INTEGER'],
+  ['automation_step', 'pos_y', 'INTEGER'],
   ['leads', 'starred', 'INTEGER NOT NULL DEFAULT 0'],  // flagged for attention
   ['leads', 'starred_at', 'TEXT'],
   ['leads', 'first_response_at', 'TEXT'],          // speed-to-first-contact
