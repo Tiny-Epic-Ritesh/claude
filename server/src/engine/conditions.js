@@ -44,6 +44,7 @@
  *   2. Values are always bound parameters. Never interpolated. Not once.
  */
 
+import { one } from '../db.js';
 import { kycStatusSql } from './kycstatus.js';
 
 /* ------------------------------------------------------------ registry */
@@ -353,6 +354,50 @@ export function validateTree(node, path = 'root', errors = []) {
  * An empty group is TRUE for AND and FALSE for OR, matching how a reader
  * expects "all of nothing" and "any of nothing" to behave.
  */
+/**
+ * The value a leaf tests, given a facts object.
+ *
+ * Two vocabularies reach this function and both have to work. The rules engine
+ * and the automations built on it evaluate against `leadFacts`, which names
+ * things `lead_stage` and keeps the row under `_lead`. The builder offers the
+ * registry's names -- `stage`, `city`, `owner_id` -- because those are what
+ * `toSql` needs.
+ *
+ * Before this, only the first vocabulary resolved: `facts['stage']` was
+ * undefined, so every condition built through the screen was false, an
+ * automation with entry conditions admitted nobody, and every branch card took
+ * its else path.
+ *
+ * A key already on the facts wins, so nothing that worked before changes --
+ * assignment.js evaluates against `routingFacts`, which has its own names and
+ * no `_lead`. Only when the facts do not carry the field is the registry used
+ * to read it off the row.
+ */
+export function valueOf(field, facts) {
+  /* A fact already computed wins, so every existing caller is untouched.
+     Functions are skipped: leadFacts exposes `product_card_state` as a lookup
+     taking a product code, and returning the function itself would compare a
+     function to a string and quietly be false. */
+  if (facts && field in facts && typeof facts[field] !== 'function') return facts[field];
+
+  const def = FIELDS[field];
+  if (!def?.sql) return undefined;
+
+  const column = def.sql.match(/^l\.(\w+)$/)?.[1];
+  if (column && facts?._lead) return facts._lead[column];
+
+  /* Everything else in the registry is a correlated subquery over `leads l` --
+     open cases, connected calls, the last disposition. Rather than a reader per
+     field, the registry's own SQL is run for the one lead.
+     
+     It costs a query, and only when a condition actually tests such a field, so
+     a flow branching on stage pays nothing. The SQL comes from FIELDS and never
+     from the caller, which is the same guarantee toSql relies on. */
+  const id = facts?._lead?.id;
+  if (!id) return undefined;
+  return one(`SELECT ${def.sql} AS v FROM leads l WHERE l.id = ?`, [id])?.v;
+}
+
 export function evaluate(node, facts) {
   if (!node) return true;
 
@@ -365,7 +410,7 @@ export function evaluate(node, facts) {
 
   const op = OPERATORS[node.operator];
   if (!op) return false;
-  return Boolean(op.test(facts[node.field], node.value));
+  return Boolean(op.test(valueOf(node.field, facts), node.value));
 }
 
 /* ------------------------------------------------------------- to SQL */

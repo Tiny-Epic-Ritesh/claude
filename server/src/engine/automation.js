@@ -37,7 +37,7 @@ import { leadFacts, runAction } from './rules.js';
 /* conditions.js exports this as `evaluate`, and rules.js exports a different
    `evaluate` for its own flat condition list. Aliased so the two cannot be
    confused at a glance -- this one takes the nested tree. */
-import { evaluate as evaluateTree } from './conditions.js';
+import { evaluate as evaluateTree, toSql } from './conditions.js';
 
 /* ------------------------------------------------------------- triggers */
 
@@ -63,7 +63,18 @@ export const TRIGGERS = [
   { key: 'task.created', label: 'A task is created', family: 'Task' },
   { key: 'task.overdue', label: 'A task goes overdue', family: 'Task' },
   { key: 'task.completed', label: 'A task is completed', family: 'Task' },
-  { key: 'user.workday_end', label: 'A user ends their workday', family: 'User' },
+  {
+    key: 'user.workday_end',
+    label: 'A user ends their workday',
+    family: 'User',
+    /* Nothing enters leads for this yet, and it is not lead-shaped: a workday
+       ends for a person, and deciding which of that person's leads should walk
+       into a flow is a business question, not one to guess at. Marked rather
+       than hidden, so the screen can say why -- and `validate` refuses to
+       activate a flow that uses it, which is better than one that looks live
+       and never runs. */
+    unwired: 'A workday ending belongs to a person rather than to a lead, so which leads it should start has not been settled yet.',
+  },
   { key: 'schedule.interval', label: 'At regular intervals', family: 'Schedule' },
   { key: 'sub', label: 'Called by another automation', family: 'Composition' },
 ];
@@ -420,6 +431,12 @@ export function validate(automationId) {
     problems.push({ field: 'trigger', message: `"${auto.trigger_type}" is not a trigger` });
   }
 
+  /* A trigger nothing fires is a flow that looks live and never runs, which is
+     the worst of the three possible states -- worse than a draft, and worse
+     than a refusal, because nobody goes looking for it. */
+  const unwired = TRIGGERS.find((t) => t.key === auto.trigger_type)?.unwired;
+  if (unwired) problems.push({ field: 'trigger', message: unwired });
+
   /* A field-watching trigger with no fields watches everything, which is the
      8.5-million-executions shape. */
   const trigger = TRIGGERS.find((t) => t.key === auto.trigger_type);
@@ -591,7 +608,131 @@ export function detect({ batch = 500 } = {}) {
     since: 'SELECT id, lead_id FROM tasks WHERE id > ? AND lead_id IS NOT NULL ORDER BY id LIMIT ?',
   }, (r) => ({ leadId: r.lead_id }));
 
+  /* Clock-shaped, not row-shaped: a task does not become overdue by being
+     inserted, so there is no larger id to look for. */
+  sweepSince('task.overdue', (from) => all(
+    `SELECT lead_id FROM tasks
+      WHERE lead_id IS NOT NULL AND status NOT IN ('Done', 'Completed', 'Cancelled')
+        AND due_at IS NOT NULL AND due_at > ? AND due_at <= datetime('now')
+      ORDER BY due_at LIMIT ?`,
+    [from, batch],
+  ));
+
+  sweepSince('task.completed', (from) => all(
+    `SELECT lead_id FROM tasks
+      WHERE lead_id IS NOT NULL AND status IN ('Done', 'Completed')
+        AND updated_at > ? AND updated_at <= datetime('now')
+      ORDER BY updated_at LIMIT ?`,
+    [from, batch],
+  ));
+
+  const onSchedule = interval({ batch });
+  if (onSchedule) fired['schedule.interval'] = onSchedule;
+
   return fired;
+
+  /* ---- the two shapes above, as functions, kept close to their callers ---- */
+
+  /**
+   * Fire for everything that happened between the last look and now.
+   *
+   * The window is (checked_at, now]: open at the start so nothing is counted
+   * twice, closed at the end so a row landing exactly on the boundary is
+   * counted once rather than never.
+   */
+  function sweepSince(trigger, rowsSince) {
+    const now = one("SELECT datetime('now') AS t").t;
+    const mark = one('SELECT checked_at FROM automation_watermark WHERE trigger_type = ?', [trigger]);
+
+    if (!mark) {
+      /* First sight starts here, not at the beginning of time -- the same
+         reason the id watermarks do. Every task that ever went overdue is not
+         news. */
+      run(
+        'INSERT INTO automation_watermark (trigger_type, last_id, checked_at) VALUES (?,0,?)',
+        [trigger, now],
+      );
+      return;
+    }
+
+    let entered = 0;
+    for (const row of rowsSince(mark.checked_at)) {
+      if (row.lead_id) entered += fire(trigger, { leadId: row.lead_id }).entered;
+    }
+    run('UPDATE automation_watermark SET checked_at = ? WHERE trigger_type = ?', [now, trigger]);
+    if (entered) fired[trigger] = (fired[trigger] ?? 0) + entered;
+  }
+}
+
+/**
+ * "At regular intervals": every so often, run this on everyone who matches.
+ *
+ * Not a scan. The entry conditions are compiled to SQL -- the builder writes
+ * registry field names, which is exactly what `toSql` takes -- so the database
+ * returns the leads that match and nobody else, already excluding anyone inside
+ * a live run of the same automation. Capped, and continued from a cursor, so a
+ * large population is worked through over successive runs instead of the first
+ * batch being re-examined for ever.
+ *
+ * `enter()` still applies the conditions in JavaScript, so the SQL is a
+ * narrowing and never the authority. A condition it cannot compile becomes
+ * `1=0` and matches nobody, which is the safe direction to fail in.
+ */
+function interval({ batch = 500 } = {}) {
+  const due = all(
+    "SELECT * FROM automation WHERE status = 'active' AND trigger_type = 'schedule.interval' ORDER BY priority, id",
+  );
+  if (!due.length) return 0;
+
+  let entered = 0;
+
+  for (const auto of due) {
+    const config = parse(auto.trigger_config, {});
+    const hours = Number(config.every_hours) || 24;
+    const key = `schedule.interval:${auto.id}`;
+
+    const mark = one('SELECT last_id, checked_at FROM automation_watermark WHERE trigger_type = ?', [key]);
+    if (!mark) {
+      /* Registered as due now rather than at the beginning of time, so turning
+         an automation on does not immediately sweep the whole book. */
+      run(
+        "INSERT INTO automation_watermark (trigger_type, last_id, checked_at) VALUES (?,0,datetime('now'))",
+        [key],
+      );
+      continue;
+    }
+
+    const isDue = one(
+      "SELECT datetime(?, ?) <= datetime('now') AS due",
+      [mark.checked_at, `+${hours} hours`],
+    )?.due;
+    if (!isDue) continue;
+
+    const where = toSql(parse(auto.entry_conditions, null));
+    const rows = all(
+      `SELECT l.id FROM leads l
+        WHERE l.deleted_at IS NULL AND l.sales_org = ? AND l.id > ? AND (${where.sql})
+          AND NOT EXISTS (
+            SELECT 1 FROM automation_run r
+             WHERE r.automation_id = ? AND r.lead_id = l.id AND r.status IN ('running','waiting')
+          )
+        ORDER BY l.id LIMIT ?`,
+      [auto.sales_org, mark.last_id, ...where.params, auto.id, batch],
+    );
+
+    for (const row of rows) if (enter(auto.id, row.id)) entered += 1;
+
+    /* A short batch means the end of the book: start again from the top next
+       time, so a lead that became eligible after the cursor passed it is not
+       waiting for ever. */
+    const next = rows.length === batch ? rows[rows.length - 1].id : 0;
+    run(
+      "UPDATE automation_watermark SET last_id = ?, checked_at = datetime('now') WHERE trigger_type = ?",
+      [next, key],
+    );
+  }
+
+  return entered;
 }
 
 /* ------------------------------------------------------------ reporting */

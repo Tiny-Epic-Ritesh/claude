@@ -144,12 +144,25 @@ function NewAutomation({ spec, onClose, onMade, onError }) {
           {families.map((f) => (
             <optgroup key={f} label={f}>
               {spec.triggers.filter((t) => t.family === f).map((t) => (
-                <option key={t.key} value={t.key}>{t.label}</option>
+                /* Still offered, and still marked. Hiding it would leave
+                   somebody hunting for a trigger they have used elsewhere and
+                   finding no explanation. */
+                <option key={t.key} value={t.key}>
+                  {t.label}{t.unwired ? ' — not available yet' : ''}
+                </option>
               ))}
             </optgroup>
           ))}
         </select>
       </div>
+
+      {chosen?.unwired && (
+        <p className="hint">
+          <strong>Nothing fires this yet.</strong> {chosen.unwired} A flow built on it can be saved
+          as a draft, but it cannot be activated — which is better than one that looks live and
+          never runs.
+        </p>
+      )}
 
       {chosen?.needs_fields && (
         <p className="hint">

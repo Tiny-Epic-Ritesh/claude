@@ -17,6 +17,7 @@
 import { strict as assert } from 'node:assert';
 import { all, one, run } from '../src/db.js';
 import { runAction, ACTION_TYPES, leadFacts } from '../src/engine/rules.js';
+import { conditionSchema, evaluate as evaluateTree, valueOf } from '../src/engine/conditions.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
 import {
   TRIGGERS, STEP_KINDS, isTrigger, enter, advance, tick, fire, report, whatRunsOn, validate, detect,
@@ -61,6 +62,7 @@ const clean = () => {
      de-duplicates, and rows left by the last run make that count a lie. */
   run("DELETE FROM notifications WHERE body LIKE 'probe_auto%'");
   run("DELETE FROM activities WHERE subject LIKE 'probe_auto%'");
+  run("DELETE FROM tasks WHERE title LIKE 'probe_auto%'");
 };
 clean();
 
@@ -588,6 +590,251 @@ await test('the tick detects and resumes in one pass', () => {
   const out = tick();
   assert(typeof out.resumed === 'number', 'the tick does not report what it resumed');
   assert(out.fired !== undefined, 'the tick does not report what it detected');
+});
+
+/* ------------------------------------------------- the clock-shaped ones */
+
+await test('a task that went overdue before the automation existed is not news', () => {
+  /* The same safeguard the id watermarks have, in its other shape. Turning on
+     "when a task goes overdue" must not sweep in every task that ever went
+     overdue -- which, on a book with years of history, is most of them. */
+  run('DELETE FROM automation_watermark');
+  run(
+    `INSERT INTO tasks (title, lead_id, due_at, status, priority)
+     VALUES ('probe_auto old overdue task', ?, datetime('now', '-30 days'), 'Open', 'Normal')`,
+    [LEAD],
+  );
+
+  const a = build('probe_auto_overdue_history', 'task.overdue', [noteAction('swept-history')]);
+  detect();
+
+  assert(!one('SELECT id FROM automation_run WHERE automation_id = ?', [a.id]),
+    'a task overdue for thirty days entered a flow created today');
+});
+
+/* The cursor is "when we last looked", and these fire on what crossed the line
+   since. A test cannot wait for a real due date to pass, so it winds the cursor
+   back instead -- which is the same situation from the sweep's point of view. */
+const rewind = (trigger, offset) => run(
+  "UPDATE automation_watermark SET checked_at = datetime('now', ?) WHERE trigger_type = ?",
+  [offset, trigger],
+);
+
+await test('a task that goes overdue afterwards is detected', () => {
+  const a = build('probe_auto_overdue', 'task.overdue', [noteAction('overdue')]);
+  detect();                                   // cursor to now
+  rewind('task.overdue', '-1 hours');
+
+  /* Due half an hour ago: inside the window, and already past. */
+  run(
+    `INSERT INTO tasks (title, lead_id, due_at, status, priority)
+     VALUES ('probe_auto fresh overdue task', ?, datetime('now', '-30 minutes'), 'Open', 'Normal')`,
+    [LEAD],
+  );
+
+  detect();
+  assert(one('SELECT id FROM automation_run WHERE automation_id = ? AND lead_id = ?', [a.id, LEAD]),
+    'a task that went overdue inside the window was not detected');
+});
+
+await test('a task not yet due is left alone', () => {
+  /* The earlier probe tasks are cleared first: they are genuinely overdue, and
+     winding the cursor back would sweep them in and fire this automation for a
+     reason that has nothing to do with what is being tested. */
+  run("DELETE FROM tasks WHERE title LIKE 'probe_auto%'");
+
+  const a = build('probe_auto_notdue', 'task.overdue', [noteAction('too-early')]);
+  detect();
+  rewind('task.overdue', '-1 hours');
+  run(
+    `INSERT INTO tasks (title, lead_id, due_at, status, priority)
+     VALUES ('probe_auto future task', ?, datetime('now', '+2 days'), 'Open', 'Normal')`,
+    [LEAD],
+  );
+  detect();
+  assert(!one('SELECT id FROM automation_run WHERE automation_id = ?', [a.id]),
+    'a task due in two days was treated as overdue');
+});
+
+await test('completing a task is detected, and the same task is not detected twice', () => {
+  const a = build('probe_auto_completed', 'task.completed', [noteAction('completed')]);
+  detect();
+
+  const taskId = Number(run(
+    `INSERT INTO tasks (title, lead_id, due_at, status, priority)
+     VALUES ('probe_auto to complete', ?, datetime('now'), 'Open', 'Normal')`,
+    [LEAD],
+  ).lastInsertRowid);
+
+  run("UPDATE tasks SET status = 'Done', updated_at = datetime('now') WHERE id = ?", [taskId]);
+  rewind('task.completed', '-1 hours');
+
+  detect();
+  assert(one('SELECT id FROM automation_run WHERE automation_id = ? AND lead_id = ?', [a.id, LEAD]),
+    'a completed task did not reach the automation');
+
+  const runs = one('SELECT COUNT(*) n FROM automation_run WHERE automation_id = ?', [a.id]).n;
+  detect();
+  assert.equal(one('SELECT COUNT(*) n FROM automation_run WHERE automation_id = ?', [a.id]).n, runs,
+    'the same completed task was detected again on the next tick');
+});
+
+/* -------------------------------------------------- at regular intervals */
+
+await test('turning on an interval automation does not sweep the book immediately', () => {
+  /* Registering it as due now rather than at the beginning of time. Otherwise
+     activating one would enter every matching lead in the same second. */
+  run('DELETE FROM automation_watermark');
+  const a = build('probe_auto_interval_new', 'schedule.interval', [noteAction('swept')]);
+  run(`UPDATE automation SET trigger_config = '{"every_hours":24}' WHERE id = ?`, [a.id]);
+
+  detect();
+  assert(!one('SELECT id FROM automation_run WHERE automation_id = ?', [a.id]),
+    'an interval automation swept the book the moment it was turned on');
+  assert(one('SELECT 1 x FROM automation_watermark WHERE trigger_type = ?', [`schedule.interval:${a.id}`]),
+    'no cursor was registered for it');
+});
+
+await test('an interval automation that is due enters the leads its conditions match', () => {
+  const lead = one('SELECT stage FROM leads WHERE id = ?', [LEAD]);
+  const a = build('probe_auto_interval_due', 'schedule.interval', [noteAction('interval-ran')], {
+    conditions: { op: 'AND', children: [{ field: 'stage', operator: 'eq', value: lead.stage }] },
+  });
+  run(`UPDATE automation SET trigger_config = '{"every_hours":1}' WHERE id = ?`, [a.id]);
+
+  detect();      // registers the cursor
+  /* Backdate it so the next pass is due, rather than waiting an hour. */
+  run(
+    "UPDATE automation_watermark SET checked_at = datetime('now', '-2 hours') WHERE trigger_type = ?",
+    [`schedule.interval:${a.id}`],
+  );
+
+  detect();
+  assert(one('SELECT id FROM automation_run WHERE automation_id = ? AND lead_id = ?', [a.id, LEAD]),
+    'a due interval automation did not enter a matching lead');
+});
+
+await test('an interval automation does not enter a lead it is still walking through', () => {
+  /* Still walking through, not "has ever been through". The invariant is one
+     LIVE run per lead per automation, so a flow that finished is one a lead may
+     enter again next interval -- which is the point of "at regular intervals".
+     Parking the flow on a wait card is what makes the run live. */
+  const lead = one('SELECT stage FROM leads WHERE id = ?', [LEAD]);
+  const a = build('probe_auto_interval_live', 'schedule.interval', [
+    { kind: 'wait', config: { hours: 48 } },
+    noteAction('after-the-wait'),
+  ], {
+    conditions: { op: 'AND', children: [{ field: 'stage', operator: 'eq', value: lead.stage }] },
+  });
+  run(`UPDATE automation SET trigger_config = '{"every_hours":1}' WHERE id = ?`, [a.id]);
+  const key = `schedule.interval:${a.id}`;
+
+  detect();
+  run("UPDATE automation_watermark SET checked_at = datetime('now', '-2 hours') WHERE trigger_type = ?", [key]);
+  detect();
+
+  const after = one('SELECT COUNT(*) n FROM automation_run WHERE automation_id = ?', [a.id]).n;
+  assert(after > 0, 'the first interval pass entered nobody at all');
+  assert.equal(
+    one("SELECT COUNT(*) n FROM automation_run WHERE automation_id = ? AND status = 'waiting'", [a.id]).n,
+    after, 'the runs did not park on the wait card, so this proves nothing',
+  );
+
+  /* Second pass, same population, everyone still parked. */
+  run("UPDATE automation_watermark SET checked_at = datetime('now', '-2 hours'), last_id = 0 WHERE trigger_type = ?", [key]);
+  detect();
+
+  assert.equal(one('SELECT COUNT(*) n FROM automation_run WHERE automation_id = ?', [a.id]).n, after,
+    'the interval sweep entered leads that were already inside the flow');
+});
+
+await test('an interval automation does not reach the other book', () => {
+  const a = build('probe_auto_interval_bigul', 'schedule.interval', [noteAction('wrong-book')], { org: 'BIGUL' });
+  run(`UPDATE automation SET trigger_config = '{"every_hours":1}' WHERE id = ?`, [a.id]);
+  detect();
+  run(
+    "UPDATE automation_watermark SET checked_at = datetime('now', '-2 hours') WHERE trigger_type = ?",
+    [`schedule.interval:${a.id}`],
+  );
+  detect();
+  assert(!one('SELECT id FROM automation_run WHERE automation_id = ? AND lead_id = ?', [a.id, LEAD]),
+    "a Bigul interval automation swept a Bonanza lead");
+});
+
+/* --------------------------------------------------------- unwired ones */
+
+await test('a flow on a trigger nothing fires cannot be activated', () => {
+  /* Worse than a draft and worse than a refusal: a flow that looks live and
+     never runs, which nobody goes looking for. */
+  const a = build('probe_auto_unwired', 'user.workday_end', [{ kind: 'exit', config: {} }]);
+  const problems = validate(a.id).map((p) => p.message).join(' | ');
+  assert(problems.includes('workday'), problems);
+});
+
+await test('the builder is told which triggers are not wired, rather than being shown a dead one', async () => {
+  const { body } = await call('GET', '/admin/automations/spec');
+  const workday = body.triggers.find((t) => t.key === 'user.workday_end');
+  assert(workday?.unwired, 'the screen has no way to tell a live trigger from a dead one');
+});
+
+/* ------------------------------------------------------------ conditions */
+
+await test('every condition field the builder offers is one the engine can read', () => {
+  /* These two vocabularies drifted apart once already. The builder shows the
+     registry's names -- stage, city, owner_id -- because that is what toSql
+     needs; the engine evaluated against leadFacts, which calls the same things
+     lead_stage and keeps the row under _lead. So `facts['stage']` was
+     undefined, every condition built on this screen was false, an automation
+     with entry conditions admitted nobody, and every branch took its else path.
+
+     Nothing in the old tests caught it, because they write conditions in the
+     facts vocabulary directly in code rather than through the screen. This
+     walks what the screen actually offers. */
+  const facts = leadFacts(LEAD);
+  const unreadable = [];
+
+  for (const f of conditionSchema().fields) {
+    const actual = valueOf(f.code, facts);
+    /* undefined means the field resolved to nothing at all -- neither a fact
+       nor a column. A null column is a real value and fine. */
+    if (actual === undefined) unreadable.push(f.code);
+  }
+
+  assert.deepEqual(unreadable, [],
+    `the builder offers fields the engine cannot read: ${unreadable.join(', ')}`);
+});
+
+await test('an entry condition written the way the screen writes it admits the right lead', () => {
+  const lead = one('SELECT stage, city FROM leads WHERE id = ?', [LEAD]);
+
+  const yes = build('probe_auto_entry_yes', 'lead.created', [noteAction('admitted')], {
+    conditions: { op: 'AND', children: [{ field: 'stage', operator: 'eq', value: lead.stage }] },
+  });
+  assert(enter(yes.id, LEAD), 'a lead matching the entry condition was turned away');
+
+  const no = build('probe_auto_entry_no', 'lead.created', [noteAction('should-not-run')], {
+    conditions: { op: 'AND', children: [{ field: 'stage', operator: 'eq', value: 'NotAStageAnybodyUses' }] },
+  });
+  assert(!enter(no.id, LEAD), 'a lead that does not match the entry condition was admitted');
+});
+
+await test('a branch written the way the screen writes it takes the yes path', () => {
+  const lead = one('SELECT stage FROM leads WHERE id = ?', [LEAD]);
+  const a = build('probe_auto_branch_ui', 'lead.created', [
+    {
+      kind: 'branch',
+      config: { conditions: { op: 'AND', children: [{ field: 'stage', operator: 'eq', value: lead.stage }] } },
+      next: 1,
+      else: 2,
+    },
+    /* next: null on the yes card, or it falls through into the else card and
+       overwrites the marker with the answer we are testing against. */
+    { ...noteAction('took-the-yes-path'), next: null },
+    noteAction('took-the-else-path'),
+  ]);
+
+  enter(a.id, LEAD);
+  assert.equal(marker(), 'took-the-yes-path', `it took the else path: marker is ${marker()}`);
 });
 
 /* --------------------------------------------------------------- actions */
