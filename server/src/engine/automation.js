@@ -224,6 +224,21 @@ export function advance(runId, { budget = 50 } = {}) {
 
       case 'action': {
         try {
+          /* Composition is performed here rather than in rules.js: it puts the
+             lead into another flow, and a flat rule has no flow to put it into.
+             (rules.js already imports this file; importing it back would make
+             the pair circular.)
+
+             No recursion guard is needed. A calling B calling A is stopped by
+             the invariant that matters most in this file -- a lead inside a
+             live run cannot enter that automation again. A's run is still
+             running when B asks, so enter() declines and the chain ends. */
+          if (config.type === 'sub_automation') {
+            record(runId, step.id, ...subAutomation(r, config.params ?? {}));
+            r = move(runId, step.next_step_id);
+            break;
+          }
+
           const out = runAction({ type: config.type, params: config.params ?? {} }, facts, { dryRun: false });
 
           /* runAction returns `skipped` rather than throwing for an action type
@@ -260,6 +275,36 @@ export function advance(runId, { budget = 50 } = {}) {
 
   /* Out of budget: this flow loops. Stopping it is the kind thing. */
   return finish(runId, 'failed', { error: `stopped after ${budget} steps — the flow appears to loop` });
+}
+
+/**
+ * Hand the lead to another flow.
+ *
+ * Returns the pair `record()` wants — outcome and detail — so the caller reads
+ * as one line. Declining is an ordinary outcome, not a failure: a lead already
+ * inside that automation is exactly what the one-run-per-lead rule is for, and
+ * saying so is more use in the report than a bare "done".
+ */
+function subAutomation(r, params) {
+  const subId = Number(params.automation_id);
+  const sub = subId ? one('SELECT * FROM automation WHERE id = ?', [subId]) : null;
+  const parentOrg = one('SELECT sales_org FROM automation WHERE id = ?', [r.automation_id])?.sales_org;
+
+  const problem = !sub ? 'that sub-automation does not exist'
+    : sub.id === r.automation_id ? 'an automation cannot call itself'
+      : sub.status !== 'active' ? `${sub.name} is not active`
+        : sub.sales_org !== parentOrg ? `${sub.name} belongs to another book`
+          : null;
+
+  if (problem) return ['failed', { error: problem, action: 'sub_automation' }];
+
+  const child = enter(sub.id, r.lead_id);
+  return ['done', {
+    action: 'sub_automation',
+    automation_id: sub.id,
+    entered: Boolean(child),
+    note: child ? null : 'the lead was already inside that automation',
+  }];
 }
 
 const move = (runId, toStepId) => {
@@ -428,6 +473,26 @@ export function validate(automationId) {
     }
     if (step.kind === 'wait' && !Number(config.hours) && !Number(config.minutes)) {
       problems.push({ step_id: step.id, message: 'A wait of zero is not a wait' });
+    }
+
+    /* A sub-automation card is checked here rather than left to fail at run
+       time, because it is the one action whose target can be deleted, paused or
+       moved to the other book long after the flow was built — and a flow that
+       hands leads to nothing looks, on the canvas, exactly like one that works. */
+    if (step.kind === 'action' && config.type === 'sub_automation') {
+      const subId = Number(config.params?.automation_id);
+      const sub = subId ? one('SELECT id, name, status, sales_org FROM automation WHERE id = ?', [subId]) : null;
+      const label = step.label || 'Sub-automation';
+
+      if (!sub) {
+        problems.push({ step_id: step.id, message: `${label}: no sub-automation is chosen, or the one chosen has been deleted` });
+      } else if (sub.id === auto.id) {
+        problems.push({ step_id: step.id, message: `${label}: an automation cannot call itself` });
+      } else if (sub.sales_org !== auto.sales_org) {
+        problems.push({ step_id: step.id, message: `${label}: ${sub.name} belongs to another book` });
+      } else if (sub.status !== 'active') {
+        problems.push({ step_id: step.id, message: `${label}: ${sub.name} is ${sub.status}, so leads sent to it would go nowhere` });
+      }
     }
   }
 

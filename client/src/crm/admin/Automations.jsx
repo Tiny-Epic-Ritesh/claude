@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, shortDate } from '../../api.js';
+import { api, shortDate, ROLE_LABEL } from '../../api.js';
 import { useApi, Loading, Empty, Icon, Modal, ErrorBanner, Spinner } from '../../components/ui.jsx';
 import ConditionBuilder from '../../components/ConditionBuilder.jsx';
 
@@ -361,6 +361,130 @@ function describe(step) {
   }
 }
 
+/* ------------------------------------------------------ action parameters */
+
+/** Wording for the parameters whose field name is not the words a person uses. */
+const PARAM_LABEL = {
+  template_id: 'Template',
+  list_id: 'List',
+  endpoint_id: 'Endpoint',
+  automation_id: 'Sub-automation',
+  role_or_user: 'Notify',
+  role_or_users: 'Nudge',
+  due_in_hours: 'Due',
+  activity_type: 'Kind of activity',
+  starred: 'Star or un-star',
+  intent: 'Kind of message',
+};
+
+/** The things worth saying next to a field rather than in a manual. */
+const PARAM_HELP = {
+  list_id: 'Only static lists appear here. A refreshable or dynamic list is a live query, and its membership cannot be set by an automation.',
+  intent: 'Service messages reach a client who has opted out of marketing. Marketing ones do not.',
+  endpoint_id: 'Endpoints are registered in Setup, and the body carries only the fields registered with them.',
+};
+
+const ROLE_OPTIONS = Object.entries(ROLE_LABEL);
+
+/**
+ * One parameter, edited as what it actually is.
+ *
+ * Keyed by parameter name rather than by a type on the spec, which is what
+ * Rules.jsx does for the rules builder — the two screens configure the same
+ * actions and should not disagree about how. A name with no editor here falls
+ * through to a text box, so adding an action on the server still works before
+ * anybody touches this file.
+ */
+function ActionParam({ name, actionType, value, pickers, onChange }) {
+  const pick = (options, placeholder, render) => (
+    <select value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">{placeholder}</option>
+      {options.map((o) => <option key={o.id} value={o.id}>{render(o)}</option>)}
+    </select>
+  );
+
+  if (name === 'template_id') {
+    /* opt_in_email is an email, so it reads the email templates. */
+    const channel = actionType === 'opt_in_email' ? 'email' : actionType;
+    const opts = (pickers.templates ?? []).filter((t) => t.channel === channel);
+    return opts.length
+      ? pick(opts, 'Choose a template…', (t) => t.name)
+      : <div className="tiny muted">No approved {channel} templates yet — build one under Templates first.</div>;
+  }
+
+  if (name === 'list_id') {
+    const opts = pickers.lists ?? [];
+    return opts.length
+      ? pick(opts, 'Choose a list…', (l) => l.name)
+      : <div className="tiny muted">No static lists in this book yet.</div>;
+  }
+
+  if (name === 'endpoint_id') {
+    const opts = pickers.endpoints ?? [];
+    return opts.length
+      ? pick(opts, 'Choose an endpoint…', (e) => `${e.name} — ${e.url}`)
+      : <div className="tiny muted">No webhook endpoints registered. An admin registers one in Setup before an automation can post to it.</div>;
+  }
+
+  if (name === 'automation_id') {
+    const opts = pickers.automations ?? [];
+    return opts.length
+      ? pick(opts, 'Choose an automation…', (a) => (a.status === 'active' ? a.name : `${a.name} (${a.status})`))
+      : <div className="tiny muted">No other automation to hand the lead to.</div>;
+  }
+
+  if (name === 'due_in_hours') {
+    return (
+      <select value={value} onChange={(e) => onChange(Number(e.target.value))}>
+        {[1, 4, 24, 48, 72, 168].map((h) => (
+          <option key={h} value={h}>{h < 24 ? `in ${h} hours` : `in ${h / 24} day${h > 24 ? 's' : ''}`}</option>
+        ))}
+      </select>
+    );
+  }
+
+  if (name === 'role_or_user' || name === 'role_or_users' || name === 'assignee' || name === 'role') {
+    return (
+      <select value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Choose…</option>
+        {name === 'assignee' && <option value="owner">the lead&apos;s owner</option>}
+        {ROLE_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+      </select>
+    );
+  }
+
+  if (name === 'starred') {
+    return (
+      <select value={String(value === false || value === 'false' ? 'false' : 'true')} onChange={(e) => onChange(e.target.value === 'true')}>
+        <option value="true">Star the lead</option>
+        <option value="false">Remove the star</option>
+      </select>
+    );
+  }
+
+  if (name === 'intent') {
+    return (
+      <select value={value || 'marketing'} onChange={(e) => onChange(e.target.value)}>
+        <option value="marketing">Marketing</option>
+        <option value="service">Service or regulatory</option>
+      </select>
+    );
+  }
+
+  if (name === 'message' || name === 'body' || name === 'script') {
+    return (
+      <textarea
+        rows={3}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="{{name}} is filled in with the lead's name"
+      />
+    );
+  }
+
+  return <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={name.replace(/_/g, ' ')} />;
+}
+
 /* --------------------------------------------------------- step editor */
 
 /**
@@ -409,9 +533,19 @@ function StepEditor({ step, steps, spec, automationId, onClose, onSaved, onError
         <>
           <div className="field">
             <label>Do what</label>
+            {/* Grouped, because nineteen actions in one flat list is something
+                you scroll rather than read. The categories are the server's --
+                the ticket asks for actions "organised into categories" and the
+                engine is what knows which is which. */}
             <select value={config.type ?? ''} onChange={(e) => set({ type: e.target.value, params: {} })}>
               <option value="">Choose…</option>
-              {spec.actions.map((a) => <option key={a.type} value={a.type}>{a.label}</option>)}
+              {[...new Set(spec.actions.map((a) => a.category ?? 'Other'))].map((cat) => (
+                <optgroup key={cat} label={cat}>
+                  {spec.actions.filter((a) => (a.category ?? 'Other') === cat).map((a) => (
+                    <option key={a.type} value={a.type}>{a.label}</option>
+                  ))}
+                </optgroup>
+              ))}
             </select>
           </div>
 
@@ -419,11 +553,15 @@ function StepEditor({ step, steps, spec, automationId, onClose, onSaved, onError
               spec rather than listed here, so the two cannot drift. */}
           {action?.params?.map((param) => (
             <div className="field" key={param}>
-              <label>{param.replace(/_/g, ' ')}</label>
-              <input
+              <label>{PARAM_LABEL[param] ?? param.replace(/_/g, ' ')}</label>
+              <ActionParam
+                name={param}
+                actionType={config.type}
                 value={config.params?.[param] ?? ''}
-                onChange={(e) => set({ params: { ...config.params, [param]: e.target.value } })}
+                pickers={spec.pickers ?? {}}
+                onChange={(v) => set({ params: { ...config.params, [param]: v } })}
               />
+              {PARAM_HELP[param] && <div className="tiny muted">{PARAM_HELP[param]}</div>}
             </div>
           ))}
         </>

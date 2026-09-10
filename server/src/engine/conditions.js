@@ -72,6 +72,7 @@ export const FIELDS = {
   // --- flags --------------------------------------------------------
   mobile_invalid: { label: 'Mobile flagged invalid', type: 'boolean', sql: 'l.mobile_invalid' },
   marketing_opt_out: { label: 'Opted out of marketing', type: 'boolean', sql: 'l.marketing_opt_out' },
+  starred: { label: 'Starred', type: 'boolean', sql: 'l.starred' },
   partner_linked: {
     label: 'Sourced by a partner', type: 'boolean',
     sql: 'CASE WHEN l.partner_id IS NOT NULL THEN 1 ELSE 0 END',

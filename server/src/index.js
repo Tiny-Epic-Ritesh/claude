@@ -52,6 +52,7 @@ import { sweepSla } from './engine/sla.js';
 import { sweepKyc } from './engine/kyc.js';
 import { runEnabledRules } from './engine/rules.js';
 import { tick as automationTick } from './engine/automation.js';
+import { sweepWebhooks } from './engine/webhookdelivery.js';
 import { sweepReminders } from './engine/followups.js';
 import { sweepMetrics } from './engine/metrics.js';
 import { seedMetadata, seedPicklists } from './engine/metadata.js';
@@ -490,6 +491,13 @@ setInterval(() => { try { runEnabledRules(); } catch (e) { console.error('[rules
    30 minutes or at 35. Everything it needs is in automation_run, so a restart
    costs only the seconds since the last tick (P3-16). */
 setInterval(() => { try { automationTick(); } catch (e) { console.error('[automation]', e.message); } }, MINUTE);
+
+/* Queued webhooks go out on their own sweep, off the automation tick. Awaiting
+   a partner's server inside the tick would let one slow endpoint hold up every
+   other automation on the system (P3-16). */
+setInterval(() => {
+  sweepWebhooks().catch((e) => console.error('[webhooks]', e.message));
+}, MINUTE);
 
 /* Recency decays with the calendar, so a lead nobody touches still changes
    score overnight. Rebuilding on a schedule is what keeps a derived value

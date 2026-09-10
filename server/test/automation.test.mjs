@@ -16,6 +16,7 @@
 
 import { strict as assert } from 'node:assert';
 import { all, one, run } from '../src/db.js';
+import { runAction, ACTION_TYPES, leadFacts } from '../src/engine/rules.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
 import {
   TRIGGERS, STEP_KINDS, isTrigger, enter, advance, tick, fire, report, whatRunsOn, validate, detect,
@@ -54,6 +55,12 @@ const clean = () => {
      creates would see nothing new and the detection tests would pass without
      detecting anything. */
   run('DELETE FROM automation_watermark');
+  run("DELETE FROM lead_lists WHERE name LIKE 'probe_auto%'");
+  run("DELETE FROM webhook_endpoint WHERE name LIKE 'probe_auto%'");
+  /* Notifications too. Counting them is how the nudge test proves it
+     de-duplicates, and rows left by the last run make that count a lie. */
+  run("DELETE FROM notifications WHERE body LIKE 'probe_auto%'");
+  run("DELETE FROM activities WHERE subject LIKE 'probe_auto%'");
 };
 clean();
 
@@ -431,6 +438,52 @@ await test('the spec the builder reads is the vocabulary the engine runs', async
   assert.equal(res.body.triggers.length, TRIGGERS.length, 'the trigger lists disagree');
   assert.equal(res.body.step_kinds.length, STEP_KINDS.length, 'the step lists disagree');
   assert(res.body.actions.length, 'no actions offered');
+
+  /* Every action must be in a category. The ticket asks for actions "organised
+     into categories", and the screen groups by this. */
+  const loose = res.body.actions.filter((a) => !a.category).map((a) => a.type);
+  assert.deepEqual(loose, [], `actions with no category: ${loose.join(', ')}`);
+});
+
+await test('the spec offers something to choose for every id-shaped parameter', async () => {
+  /* Without these the builder shows a text box and asks somebody to type a
+     template id. P3-17's acceptance clause is that templates are selectable
+     from automation actions. */
+  const { body } = await call('GET', '/admin/automations/spec');
+  assert(body.pickers, 'no pickers at all');
+  for (const key of ['templates', 'lists', 'endpoints', 'automations']) {
+    assert(Array.isArray(body.pickers[key]), `${key} is not a list`);
+  }
+
+  const idParams = new Set();
+  for (const a of body.actions) for (const p of a.params ?? []) if (p.endsWith('_id')) idParams.add(p);
+  const covered = { template_id: 'templates', list_id: 'lists', endpoint_id: 'endpoints', automation_id: 'automations' };
+  for (const p of idParams) assert(covered[p], `${p} has nothing to pick from`);
+});
+
+await test("the pickers do not offer the other book's things", async () => {
+  const listId = Number(run(
+    "INSERT INTO lead_lists (name, kind, sales_org, snapshot_reason) VALUES ('probe_auto_bigul_pick', 'static', 'BIGUL', 'test')",
+  ).lastInsertRowid);
+  const epId = Number(run(
+    "INSERT INTO webhook_endpoint (name, url, sales_org) VALUES ('probe_auto_bigul_hook', 'https://example.invalid/b', 'BIGUL')",
+  ).lastInsertRowid);
+  const bigul = build('probe_auto_bigul_pick_auto', 'lead.created', [{ kind: 'exit', config: {} }], { org: 'BIGUL' });
+
+  const { body } = await call('GET', '/admin/automations/spec');
+  assert(!body.pickers.lists.some((l) => l.id === listId), "a Bigul list was offered to a Bonanza admin");
+  assert(!body.pickers.endpoints.some((e) => e.id === epId), 'a Bigul webhook endpoint was offered');
+  assert(!body.pickers.automations.some((a) => a.id === bigul.id), 'a Bigul automation was offered as a sub-automation');
+});
+
+await test('only static lists are offered, because only they have membership to write', () => {
+  /* A refreshable or dynamic list is a live query. Offering one would offer a
+     card that refuses at run time. */
+  run("INSERT INTO lead_lists (name, kind, sales_org, criteria) VALUES ('probe_auto_dyn_pick', 'dynamic', 'BONANZA', '{}')");
+  return call('GET', '/admin/automations/spec').then(({ body }) => {
+    const offered = body.pickers.lists.map((l) => l.name);
+    assert(!offered.includes('probe_auto_dyn_pick'), 'a dynamic list was offered as somewhere to add a lead');
+  });
 });
 
 await test("another book's automation is out of reach", async () => {
@@ -535,6 +588,273 @@ await test('the tick detects and resumes in one pass', () => {
   const out = tick();
   assert(typeof out.resumed === 'number', 'the tick does not report what it resumed');
   assert(out.fired !== undefined, 'the tick does not report what it detected');
+});
+
+/* --------------------------------------------------------------- actions */
+
+/* runAction takes facts, not a lead id, so each of these builds them the way
+   the engine does. */
+const factsFor = (leadId) => leadFacts(leadId);
+const act = (type, params = {}, leadId = LEAD) => runAction({ type, params }, factsFor(leadId), { dryRun: false });
+
+await test('every action the spec offers is one the engine can perform', () => {
+  /* The screen reads /spec. An action listed there and not handled below is a
+     card somebody can drop onto a canvas that then does nothing at all. */
+  const unhandled = [];
+  for (const a of ACTION_TYPES) {
+    if (a.flow_only) continue;          // performed by the flow engine, not runAction
+    const out = act(a.type, {});
+    if (out?.skipped === 'unknown action type') unhandled.push(a.type);
+  }
+  assert.deepEqual(unhandled, [], `the spec offers actions nothing performs: ${unhandled.join(', ')}`);
+});
+
+await test('every action is in a category, because the ticket asks for categories', () => {
+  const loose = ACTION_TYPES.filter((a) => !a.category).map((a) => a.type);
+  assert.deepEqual(loose, []);
+});
+
+await test('a marketing message to someone who opted out is refused, not sent', () => {
+  /* consent.js says it in its own header: hiding a button stops an RM, it does
+     not stop an automation, "which is where volume sends actually come from,
+     and where a DND breach would actually happen". */
+  run('UPDATE leads SET marketing_opt_out = 1 WHERE id = ?', [LEAD]);
+  const before = one('SELECT COUNT(*) n FROM activities WHERE lead_id = ?', [LEAD]).n;
+
+  const out = act('whatsapp', { message: 'Open a demat account today' });
+  assert(out.skipped, 'an opted-out lead was sent a marketing WhatsApp');
+  assert.equal(out.code, 'opted_out');
+  assert.equal(one('SELECT COUNT(*) n FROM activities WHERE lead_id = ?', [LEAD]).n, before,
+    'nothing should have been written to the timeline');
+
+  run('UPDATE leads SET marketing_opt_out = 0 WHERE id = ?', [LEAD]);
+});
+
+await test('a service message still reaches someone who opted out of marketing', () => {
+  /* The distinction the whole consent model exists for: a client who opted out
+     of marketing has not opted out of being told their KYC failed. */
+  run('UPDATE leads SET marketing_opt_out = 1 WHERE id = ?', [LEAD]);
+  const out = act('sms', { message: 'Your KYC needs one more document', intent: 'service' });
+  assert(!out.skipped, `a service SMS was blocked: ${out.skipped}`);
+  run('UPDATE leads SET marketing_opt_out = 0 WHERE id = ?', [LEAD]);
+});
+
+await test('an opt-in email goes to someone who opted out of marketing, but not to someone who closed the channel', () => {
+  run('UPDATE leads SET marketing_opt_out = 1, no_email = 0 WHERE id = ?', [LEAD]);
+  assert(!act('opt_in_email', { message: 'May we keep in touch, {{name}}?' }).skipped,
+    'an opt-in email is the one message a marketing opt-out should not block');
+
+  run('UPDATE leads SET no_email = 1 WHERE id = ?', [LEAD]);
+  const closed = act('opt_in_email', { message: 'May we keep in touch?' });
+  assert(closed.skipped, 'somebody who asked us to stop emailing them got one more email');
+
+  run('UPDATE leads SET marketing_opt_out = 0, no_email = 0 WHERE id = ?', [LEAD]);
+});
+
+await test('an activity added by an automation lands on the shared timeline with no author', () => {
+  const out = act('add_activity', { activity_type: 'Note', subject: 'probe_auto activity', body: 'Hello {{name}}' });
+  assert(out.executed, out.skipped);
+  const a = one("SELECT * FROM activities WHERE lead_id = ? AND subject = 'probe_auto activity'", [LEAD]);
+  assert(a, 'nothing was written');
+  assert.equal(a.user_id, null, 'an automated activity must not be attributed to a person');
+  assert(a.body.includes('Automation probe lead'), 'the merge field was not filled');
+});
+
+await test('a lead can be added to and removed from a static list', () => {
+  const listId = Number(run(
+    "INSERT INTO lead_lists (name, kind, sales_org, snapshot_reason) VALUES ('probe_auto_static', 'static', 'BONANZA', 'test')",
+  ).lastInsertRowid);
+
+  assert(act('add_to_list', { list_id: listId }).executed);
+  assert(one('SELECT 1 x FROM lead_list_members WHERE list_id = ? AND lead_id = ?', [listId, LEAD]), 'not added');
+
+  /* Twice is not an error and not a duplicate. */
+  assert(act('add_to_list', { list_id: listId }).executed);
+  assert.equal(one('SELECT COUNT(*) n FROM lead_list_members WHERE list_id = ? AND lead_id = ?', [listId, LEAD]).n, 1);
+
+  assert(act('remove_from_list', { list_id: listId }).executed);
+  assert(!one('SELECT 1 x FROM lead_list_members WHERE list_id = ? AND lead_id = ?', [listId, LEAD]), 'not removed');
+});
+
+await test('a lead cannot be added to a list whose membership is a query', () => {
+  /* Non-negotiable 10: segments are live nested queries, not stored membership
+     rows. Writing a member row into one succeeds and then silently vanishes at
+     the next refresh, which is worse than refusing. */
+  const listId = Number(run(
+    "INSERT INTO lead_lists (name, kind, sales_org, criteria) VALUES ('probe_auto_dynamic', 'dynamic', 'BONANZA', '{}')",
+  ).lastInsertRowid);
+
+  const out = act('add_to_list', { list_id: listId });
+  assert(out.skipped, 'a dynamic list accepted a hand-written member');
+  assert(out.skipped.includes('live query'), out.skipped);
+  assert(!one('SELECT 1 x FROM lead_list_members WHERE list_id = ?', [listId]), 'a row was written anyway');
+});
+
+await test('a lead cannot be added to the other book\'s list', () => {
+  const listId = Number(run(
+    "INSERT INTO lead_lists (name, kind, sales_org, snapshot_reason) VALUES ('probe_auto_bigul_list', 'static', 'BIGUL', 'test')",
+  ).lastInsertRowid);
+  const out = act('add_to_list', { list_id: listId });
+  assert(out.skipped?.includes('another book'), `a Bonanza lead joined a Bigul list: ${JSON.stringify(out)}`);
+});
+
+await test('starring is readable as a condition, not only writable as an action', () => {
+  assert(act('star_lead', {}).executed);
+  const starred = one('SELECT starred, starred_at FROM leads WHERE id = ?', [LEAD]);
+  assert.equal(starred.starred, 1);
+  assert(starred.starred_at, 'starred_at was not stamped');
+  assert.equal(leadFacts(LEAD).starred, true, 'a flow cannot branch on the star it just set');
+
+  assert(act('star_lead', { starred: false }).executed);
+  const cleared = one('SELECT starred, starred_at FROM leads WHERE id = ?', [LEAD]);
+  assert.equal(cleared.starred, 0);
+  assert.equal(cleared.starred_at, null, 'un-starring left the timestamp behind');
+});
+
+await test('an SMS to the owner does not appear on the client\'s timeline', () => {
+  /* The message went to a colleague. Writing it against the lead would tell the
+     next person who reads that timeline that the client received it. */
+  /* Seeded users do not all carry a mobile, so the fixture provides one and
+     puts it back afterwards rather than depending on which user seed ran. */
+  const rm = one('SELECT id, phone FROM users WHERE active = 1 ORDER BY id LIMIT 1');
+  assert(rm, 'no active user to test with');
+  run("UPDATE users SET phone = COALESCE(NULLIF(phone, ''), '9820000000') WHERE id = ?", [rm.id]);
+  run('UPDATE leads SET owner_id = ? WHERE id = ?', [rm.id, LEAD]);
+
+  const before = one('SELECT COUNT(*) n FROM activities WHERE lead_id = ?', [LEAD]).n;
+  const out = act('notify_owner_sms', { message: 'probe_auto owner ping about {{name}}' });
+  assert(out.executed, out.skipped);
+  assert.equal(one('SELECT COUNT(*) n FROM activities WHERE lead_id = ?', [LEAD]).n, before,
+    'an SMS sent to the RM was written onto the client timeline');
+  assert(one("SELECT 1 x FROM notifications WHERE user_id = ? AND body LIKE 'probe_auto owner ping%'", [rm.id]),
+    'the owner was not told in the CRM either');
+
+  run('UPDATE users SET phone = ? WHERE id = ?', [rm.phone ?? null, rm.id]);
+});
+
+await test('an owner-SMS with no owner is refused rather than sent nowhere', () => {
+  run('UPDATE leads SET owner_id = NULL WHERE id = ?', [LEAD]);
+  assert(act('notify_owner_sms', { message: 'x' }).skipped);
+});
+
+await test('distributing a lead goes through the assignment engine', () => {
+  /* The automation hands over; it does not pick. Two mechanisms choosing owners
+     is the race the audit found three live examples of. */
+  run('UPDATE leads SET owner_id = NULL, owner_queue_id = NULL WHERE id = ?', [LEAD]);
+  const out = act('distribute_lead', {});
+  assert(out.executed || out.skipped, 'no verdict at all');
+  if (out.executed) {
+    const after = one('SELECT owner_id, owner_queue_id, assigned_at FROM leads WHERE id = ?', [LEAD]);
+    assert(after.owner_id || after.owner_queue_id, 'it reported success but nobody owns the lead');
+    assert(after.assigned_at, 'assigned_at was not stamped, so the assignment engine did not do it');
+  }
+});
+
+await test('a webhook posts only to a registered endpoint', () => {
+  assert(act('webhook', { endpoint_id: 999999 }).skipped, 'an unregistered endpoint was accepted');
+
+  const epId = Number(run(
+    `INSERT INTO webhook_endpoint (name, url, secret, fields, sales_org)
+     VALUES ('probe_auto_hook', 'https://example.invalid/hook', 's3cret', ?, 'BONANZA')`,
+    [JSON.stringify(['name', 'stage'])],
+  ).lastInsertRowid);
+
+  const out = act('webhook', { endpoint_id: epId });
+  assert(out.executed && out.queued, JSON.stringify(out));
+
+  const d = one('SELECT * FROM webhook_delivery WHERE id = ?', [out.delivery_id]);
+  assert.equal(d.status, 'queued', 'the tick posted it inline instead of queueing it');
+
+  const payload = JSON.parse(d.payload);
+  assert.equal(payload.lead_id, LEAD);
+  assert.equal(payload.name, 'Automation probe lead');
+  assert.equal(payload.stage, 'New');
+  assert.equal(payload.mobile, undefined, 'a field the endpoint was not registered for was sent anyway');
+  assert.equal(payload.pan, undefined, 'a field the endpoint was not registered for was sent anyway');
+});
+
+await test('a webhook body carries the lead id and nothing else when no fields are registered', () => {
+  const epId = Number(run(
+    `INSERT INTO webhook_endpoint (name, url, sales_org) VALUES ('probe_auto_hook_bare', 'https://example.invalid/h', 'BONANZA')`,
+  ).lastInsertRowid);
+  const out = act('webhook', { endpoint_id: epId });
+  const payload = JSON.parse(one('SELECT payload FROM webhook_delivery WHERE id = ?', [out.delivery_id]).payload);
+  assert.deepEqual(Object.keys(payload).sort(), ['event', 'lead_id']);
+});
+
+await test('a nudge reaches each named person once', () => {
+  const two = all('SELECT id FROM users WHERE active = 1 LIMIT 2');
+  assert.equal(two.length, 2, 'need two active users');
+  const spec = `${two[0].id},${two[1].id},${two[0].id}`;     // one named twice
+
+  const out = act('nudge_users', { role_or_users: spec, message: 'probe_auto nudge' });
+  assert.equal(out.nudged, 2, 'somebody named twice was nudged twice');
+  assert.equal(
+    one("SELECT COUNT(*) n FROM notifications WHERE body = 'probe_auto nudge'").n, 2,
+  );
+});
+
+await test('a nudge with nobody named is refused', () => {
+  assert(act('nudge_users', { role_or_users: '  ' }).skipped);
+});
+
+/* ------------------------------------------------------- sub-automations */
+
+await test('a flow hands a lead to a sub-automation', () => {
+  const child = build('probe_auto_child', 'sub', [noteAction('inside-the-child')]);
+  const parent = build('probe_auto_parent', 'lead.created', [
+    { kind: 'action', config: { type: 'sub_automation', params: { automation_id: child.id } } },
+  ]);
+
+  enter(parent.id, LEAD);
+  assert(one('SELECT id FROM automation_run WHERE automation_id = ? AND lead_id = ?', [child.id, LEAD]),
+    'the child automation never received the lead');
+});
+
+await test('an automation that calls itself is caught before it is allowed to run', () => {
+  const a = build('probe_auto_selfcall', 'lead.created', [
+    { kind: 'action', config: { type: 'sub_automation', params: {} } },
+  ]);
+  run(
+    `UPDATE automation_step SET config = ? WHERE automation_id = ?`,
+    [JSON.stringify({ type: 'sub_automation', params: { automation_id: a.id } }), a.id],
+  );
+  const problems = validate(a.id).map((p) => p.message).join(' | ');
+  assert(problems.includes('cannot call itself'), problems);
+});
+
+await test('a chain that loops back stops itself, because a live run cannot be re-entered', () => {
+  /* A -> B -> A. The guard is the invariant that was already here: a lead
+     inside a live run of an automation cannot enter it again. */
+  const a = build('probe_auto_loop_a', 'lead.created', [{ kind: 'action', config: { type: 'sub_automation', params: {} } }]);
+  const b = build('probe_auto_loop_b', 'sub', [{ kind: 'action', config: { type: 'sub_automation', params: {} } }]);
+
+  run('UPDATE automation_step SET config = ? WHERE automation_id = ?',
+    [JSON.stringify({ type: 'sub_automation', params: { automation_id: b.id } }), a.id]);
+  run('UPDATE automation_step SET config = ? WHERE automation_id = ?',
+    [JSON.stringify({ type: 'sub_automation', params: { automation_id: a.id } }), b.id]);
+
+  enter(a.id, LEAD);
+
+  assert.equal(one('SELECT COUNT(*) n FROM automation_run WHERE automation_id = ? AND lead_id = ?', [a.id, LEAD]).n, 1,
+    'the lead entered A more than once');
+  const back = one(
+    `SELECT s.detail FROM automation_run_step s
+       JOIN automation_run r ON r.id = s.run_id
+      WHERE r.automation_id = ? AND r.lead_id = ? AND s.detail LIKE '%sub_automation%'`,
+    [b.id, LEAD],
+  );
+  assert(back, 'B never tried to call A back');
+  assert.equal(JSON.parse(back.detail).entered, false, 'B re-entered the lead into A');
+});
+
+await test('a sub-automation card pointing at a paused flow is not ready to run', () => {
+  const child = build('probe_auto_paused_child', 'sub', [noteAction('x')], { status: 'paused' });
+  const parent = build('probe_auto_paused_parent', 'lead.created', [
+    { kind: 'action', config: { type: 'sub_automation', params: { automation_id: child.id } } },
+  ]);
+  const problems = validate(parent.id).map((p) => p.message).join(' | ');
+  assert(problems.includes('paused'), problems);
 });
 
 clean();

@@ -231,6 +231,44 @@ CREATE INDEX IF NOT EXISTS idx_automation_run_due
 CREATE INDEX IF NOT EXISTS idx_automation_run_lead
   ON automation_run(automation_id, lead_id, status);
 
+CREATE TABLE IF NOT EXISTS webhook_endpoint (
+  -- Where an automation is allowed to post, registered once by an admin rather
+  -- than typed into a card.
+  --
+  -- The difference matters here more than it would elsewhere. A free-text URL
+  -- on an automation card is an egress path that nobody reviewed: whoever built
+  -- the flow chose where client data goes, and for a SEBI-regulated broker
+  -- whose data may not leave India that is a compliance decision, not a form
+  -- field. Registering the endpoint puts the decision somewhere it can be seen,
+  -- listed and revoked.
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  url         TEXT NOT NULL,
+  secret      TEXT,                       -- signs the body so the receiver can verify it
+  -- Which lead fields the body may carry. Empty means id only: the receiver
+  -- looks the rest up over an authenticated API rather than being handed it.
+  fields      TEXT,
+  active      INTEGER NOT NULL DEFAULT 1,
+  sales_org   TEXT NOT NULL DEFAULT 'BONANZA',
+  created_by  INTEGER REFERENCES users(id),
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS webhook_delivery (
+  -- Every attempt, kept. A webhook that silently stopped working is the kind of
+  -- failure nobody notices until the far end asks why it went quiet.
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  endpoint_id  INTEGER NOT NULL REFERENCES webhook_endpoint(id) ON DELETE CASCADE,
+  lead_id      INTEGER REFERENCES leads(id) ON DELETE SET NULL,
+  payload      TEXT,
+  status       TEXT NOT NULL DEFAULT 'queued',   -- queued | sent | failed
+  attempts     INTEGER NOT NULL DEFAULT 0,
+  http_status  INTEGER,
+  error        TEXT,
+  attempted_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS automation_watermark (
   -- One row per trigger: how far the scanner has read.
   trigger_type TEXT PRIMARY KEY,
@@ -1470,6 +1508,8 @@ const COLUMNS = [
   ['leads', 'owner_queue_id', 'INTEGER REFERENCES queues(id) ON DELETE SET NULL'],
   ['leads', 'assigned_at', 'TEXT'],
   ['leads', 'assigned_by_rule', 'INTEGER'],
+  ['leads', 'starred', 'INTEGER NOT NULL DEFAULT 0'],  // flagged for attention
+  ['leads', 'starred_at', 'TEXT'],
   ['leads', 'first_response_at', 'TEXT'],          // speed-to-first-contact
   ['leads', 'next_follow_up_at', 'TEXT'],          // denormalised for the work list
 

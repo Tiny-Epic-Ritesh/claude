@@ -48,12 +48,54 @@ function reachable(req, res, id) {
  * offers is the vocabulary the engine runs — the same reason the template
  * builder reads its limits from the server.
  */
-router.get('/spec', requirePermission('admin.rules'), (_req, res) => {
+router.get('/spec', requirePermission('admin.rules'), (req, res) => {
+  const orgs = orgsFor(req.user);
+  const marks = orgs.map(() => '?').join(',') || "''";
+
   res.json({
     triggers: TRIGGERS,
     step_kinds: STEP_KINDS,
     actions: ACTION_TYPES,
     conditions: conditionSchema(),
+
+    /* What each id-shaped parameter can be set to.
+     *
+     * Without these the builder shows a text box for `template_id` and asks
+     * somebody to type a number. P3-17's acceptance clause is explicit that
+     * templates must be selectable from automation actions, and the same holds
+     * for a list, a sub-automation and a webhook endpoint: a mistyped id is a
+     * card that sends the wrong message to a client, and it looks correct on
+     * the canvas.
+     *
+     * Scoped to this person's books, so the screen cannot offer them the other
+     * business's templates. */
+    pickers: {
+      templates: all(
+        `SELECT id, name, channel FROM templates
+          WHERE (sales_org IN (${marks}) OR sales_org IS NULL) AND approved = 1
+          ORDER BY channel, name`,
+        orgs,
+      ),
+      /* Static lists only. A refreshable or dynamic list is a live query and
+         its membership cannot be set by hand -- offering one would be offering
+         a card that refuses at run time. */
+      lists: all(
+        `SELECT id, name FROM lead_lists
+          WHERE kind = 'static' AND archived_at IS NULL AND sales_org IN (${marks})
+          ORDER BY name`,
+        orgs,
+      ),
+      endpoints: all(
+        `SELECT id, name, url FROM webhook_endpoint
+          WHERE active = 1 AND sales_org IN (${marks}) ORDER BY name`,
+        orgs,
+      ),
+      automations: all(
+        `SELECT id, name, status FROM automation
+          WHERE sales_org IN (${marks}) ORDER BY name`,
+        orgs,
+      ),
+    },
   });
 });
 
