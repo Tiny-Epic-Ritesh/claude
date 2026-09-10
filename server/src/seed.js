@@ -101,7 +101,19 @@ run("DELETE FROM users WHERE email LIKE 'probe-%@bonanza.test'");
 
 console.log('Clearing…');
 for (const t of [
-  'sessions', 'notifications', 'audit_log', 'rule_runs', 'rules', 'campaigns', 'lead_list_members', 'lead_lists',
+  'sessions', 'notifications', 'audit_log', 'rule_runs', 'rules', 'campaigns',
+  /* Approvals before the lists and leads they are about.
+   *
+   * A pending approval survived a reseed and stayed Pending -- still pointing
+   * at an `entity_id` that the rebuild had since handed to a different lead
+   * list. The next run's bulk reassignment was then refused with "there is
+   * already a pending bulk lead reassignment on this record", which is the
+   * guard working correctly on a record that no longer means what it did.
+   *
+   * A decision waiting on a record that has been rebuilt is not a decision
+   * anybody can make. */
+  'approvals',
+  'lead_list_members', 'lead_lists',
   /* Automations are configuration, like the rules beside them, and a seed that
      left them behind would accumulate them the way the roles table accumulated
      76 test roles (P3-16). Children first: the cascade from `automation` would

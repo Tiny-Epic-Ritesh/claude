@@ -78,6 +78,58 @@ export function managerScopeSql(user, alias = 'l', column = 'owner_id') {
 }
 
 /**
+ * Every desk this person manages, and every desk beneath those.
+ *
+ * Recursive over `teams.parent_id` for the same reason `reportsOf` is recursive
+ * over `manager_id`: a regional head managing two desks would otherwise see
+ * neither desk's sub-desks, and a hierarchy that only works one level deep is
+ * not a hierarchy.
+ *
+ * `UNION` rather than `UNION ALL`, so a cycle in the tree terminates instead of
+ * hanging. A team pointed at its own descendant is one bad edit away in any
+ * admin screen.
+ */
+export function desksManagedBy(userId) {
+  if (!userId) return [];
+  return all(
+    `WITH RECURSIVE mine(id) AS (
+       SELECT id FROM teams WHERE manager_id = ? AND active = 1
+       UNION
+       SELECT t.id FROM teams t JOIN mine m ON t.parent_id = m.id WHERE t.active = 1
+     )
+     SELECT id FROM mine`,
+    [userId],
+  ).map((r) => r.id);
+}
+
+/**
+ * The SQL grant for "records owned by somebody on a desk I manage" (N-7a).
+ *
+ * The gap this fills: visibility inherited through the management chain and
+ * nothing else, so a desk supervisor who is not the org-chart manager of their
+ * RMs could not see one of their leads. Ritesh confirmed on 10 September that
+ * Bonanza has those people.
+ *
+ * Membership is read as a subquery rather than materialised, so somebody added
+ * to a desk is visible to its supervisor on the next request rather than after
+ * they next sign in. `accepting` is not consulted: an RM on leave stops
+ * receiving new work, but their book does not leave the desk.
+ *
+ * Returns null when the person manages no desk, so the caller leaves the clause
+ * out entirely rather than emitting `IN ()`, which SQLite rejects.
+ */
+export function deskScopeSql(user, alias = 'l', column = 'owner_id') {
+  const desks = desksManagedBy(user?.id);
+  if (!desks.length) return null;
+  return {
+    sql: `${alias}.${column} IN (
+            SELECT tm.user_id FROM team_members tm WHERE tm.team_id IN (${desks.map(() => '?').join(',')})
+          )`,
+    params: desks,
+  };
+}
+
+/**
  * Explain what a person can see and why.
  *
  * The question the audit says nobody could answer. Every grant is listed
@@ -90,6 +142,18 @@ export function explainVisibility(user, dataScope) {
   const grants = [
     { grant: 'Own book', detail: 'Leads where they are the owner. This is the floor — it is never removed.' },
   ];
+
+  /* N-7a. Named separately from the management chain because it answers a
+     different question: this person supervises a desk, which is not the same
+     as appearing above its members on the org chart. Somebody asking "why can
+     they see this?" needs to be told which of the two it was. */
+  const desks = desksManagedBy(user?.id);
+  if (desks.length) {
+    grants.push({
+      grant: 'Desks they supervise',
+      detail: `Leads owned by anyone on ${desks.length} sales ${desks.length === 1 ? 'group' : 'groups'} they manage, and on any group beneath those — whether or not those people report to them.`,
+    });
+  }
 
   switch (dataScope) {
     case 'org':

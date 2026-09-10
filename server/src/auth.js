@@ -14,7 +14,7 @@ import { one, run, audit, SALES_ORGS } from './db.js';
 import { authenticate as authenticateKey, scopedCapabilities } from './engine/apikeys.js';
 import { queueScopeSql } from './engine/queues.js';
 import { maskedFieldsFor } from './engine/masking.js';
-import { managerScopeSql, explainVisibility } from './engine/sharing.js';
+import { managerScopeSql, deskScopeSql, explainVisibility } from './engine/sharing.js';
 import { owdGrant } from './engine/owd.js';
 import {
   seedAccessModel, roleCapabilities, effectiveCapabilities, dataScope,
@@ -497,6 +497,17 @@ export function leadScope(user, alias = 'l', active = null) {
   const manager = managerScopeSql(user, alias);
   if (manager) grants.push(manager);
 
+  /* N-7a. Supervising a sales group grants sight of what that group owns.
+   *
+   * Distinct from the management chain above it, and deliberately so: a desk
+   * supervisor is often not the org-chart manager of the RMs on their desk,
+   * and before this they could not see one of those RMs' leads. Two grants
+   * rather than one conflated field is also the thing the audit found the
+   * legacy tenant getting wrong -- `Bigul Dealer Team` had twelve managers and
+   * one sales user, because the manager slot was the only way to grant sight. */
+  const desks = deskScopeSql(user, alias);
+  if (desks) grants.push(desks);
+
   const queue = queueScopeSql(user, alias);
   if (queue) grants.push(queue);
 
@@ -568,6 +579,12 @@ export function clientScope(user, alias = 'c', active = null) {
 
   const manager = managerScopeSql(user, alias);
   if (manager) grants.push(manager);
+
+  /* N-7a, on accounts as well as on leads. A supervisor who can see the desk's
+     prospects and not the clients those prospects became would be able to watch
+     work right up to the point it started earning. */
+  const desks = deskScopeSql(user, alias);
+  if (desks) grants.push(desks);
 
   const reach = {
     sql: `(${grants.map((g) => `(${g.sql})`).join(' OR ')})`,
