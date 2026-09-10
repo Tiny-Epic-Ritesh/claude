@@ -33,6 +33,7 @@ export const SETUP_SECTIONS = [
   { key: 'content', label: 'Content library', needs: ['admin.content'] },
   { key: 'campaigns', label: 'Campaigns', needs: ['campaign.manage'] },
   { key: 'integrations', label: 'Integrations', needs: null },
+  { key: 'webhooks', label: 'Outbound webhooks', needs: ['admin.system'] },
   { key: 'telephony', label: 'Telephony', needs: ['admin.system'] },
   { key: 'meta', label: 'Facebook & Instagram', needs: ['admin.system'] },
   { key: 'audit', label: 'Audit log', needs: ['report.system'] },

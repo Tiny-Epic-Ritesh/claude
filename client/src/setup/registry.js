@@ -48,6 +48,7 @@ const Sla = lazy(() => import('../crm/admin/Sla.jsx').then((m) => ({ default: m.
 const Calendars = lazy(() => import('../crm/admin/Calendars.jsx').then((m) => ({ default: m.Calendars })));
 const Journeys = lazy(() => import('../crm/admin/Journeys.jsx').then((m) => ({ default: m.Journeys })));
 const Templates = lazy(() => import('../crm/admin/Templates.jsx').then((m) => ({ default: m.Templates })));
+const WebhookEndpoints = lazy(() => import('../crm/admin/WebhookEndpoints.jsx').then((m) => ({ default: m.WebhookEndpoints })));
 const Content = lazy(() => import('../crm/admin/Content.jsx').then((m) => ({ default: m.Content })));
 const Campaigns = lazy(() => import('../crm/admin/Campaigns.jsx').then((m) => ({ default: m.Campaigns })));
 const Integrations = lazy(() => import('../crm/admin/Integrations.jsx').then((m) => ({ default: m.Integrations })));
@@ -261,6 +262,16 @@ export const SECTIONS = [
     blurb: 'Every external system the CRM talks to, and whether it is live',
     keywords: ['integration', 'vendor', 'api', 'webhook', 'connector', 'smartping', 'aisensy', 'kyc api', 'credentials', 'key'],
     Component: Integrations,
+  },
+  {
+    key: 'webhooks',
+    label: 'Outbound webhooks',
+    group: 'integrations',
+    icon: 'cable',
+    needs: ['admin.system'],
+    blurb: 'The only destinations an automation may post to, and what each is allowed to carry',
+    keywords: ['webhook', 'outbound', 'post', 'callback', 'endpoint', 'egress', 'residency', 'partner', 'lapp', 'http'],
+    Component: WebhookEndpoints,
   },
   {
     key: 'telephony',

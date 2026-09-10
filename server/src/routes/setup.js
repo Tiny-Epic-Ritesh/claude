@@ -2892,4 +2892,178 @@ router.patch('/dialler/agents/:id', requirePermission('admin.system'), (req, res
   return res.json(one('SELECT id, name, cti_agent_id, phone_extension FROM users WHERE id = ?', [user.id]));
 });
 
+
+/* ------------------------------------------------------ outbound webhooks */
+
+/**
+ * Where an automation is allowed to post.
+ *
+ * A free-text URL on an automation card is an egress path nobody reviewed:
+ * whoever last edited the flow decided where client data goes. Registering the
+ * destination here puts that decision behind admin.system, in a list somebody
+ * can read, audit and revoke — which for a broker whose client data may not
+ * leave India is what the decision actually is.
+ *
+ * `fields` is a positive allowlist, not an exclusion list. A column added to
+ * `leads` next year must not start flowing to a partner because nobody
+ * remembered to exclude it.
+ */
+const LEAD_FIELDS_SENDABLE = [
+  'name', 'mobile', 'email', 'city', 'state', 'language', 'source', 'stage',
+  'score', 'risk_profile', 'client_code', 'owner_id', 'sales_org', 'created_at',
+];
+
+const endpointOut = (e) => ({
+  ...e,
+  /* Never returned. It is set once and replaced, not read back — a secret a
+     screen can display is a secret in a screenshot. */
+  secret: undefined,
+  has_secret: Boolean(e.secret),
+  fields: JSON.parse(e.fields || '[]'),
+});
+
+router.get('/webhook-endpoints', requirePermission('admin.system'), (req, res) => {
+  const orgs = orgsFor(req.user);
+  if (!orgs.length) return res.json({ endpoints: [], sendable_fields: LEAD_FIELDS_SENDABLE });
+
+  const marks = orgs.map(() => '?').join(',');
+  const endpoints = all(
+    `SELECT * FROM webhook_endpoint WHERE sales_org IN (${marks}) ORDER BY name`,
+    orgs,
+  ).map(endpointOut);
+
+  /* The recent deliveries alongside, because "is this endpoint working" is the
+     question somebody opens this screen to answer. */
+  for (const e of endpoints) {
+    e.recent = all(
+      `SELECT id, lead_id, status, http_status, error, attempted_at
+         FROM webhook_delivery WHERE endpoint_id = ? ORDER BY id DESC LIMIT 10`,
+      [e.id],
+    );
+    e.failed_count = one(
+      "SELECT COUNT(*) n FROM webhook_delivery WHERE endpoint_id = ? AND status = 'failed'",
+      [e.id],
+    ).n;
+  }
+
+  return res.json({ endpoints, sendable_fields: LEAD_FIELDS_SENDABLE });
+});
+
+const validEndpoint = (body) => {
+  const problems = [];
+  if (!body.name?.trim()) problems.push('Give it a name');
+
+  let url;
+  try { url = new URL(body.url); } catch { problems.push('That is not a URL'); }
+  if (url && url.protocol !== 'https:') {
+    /* Client data over plain HTTP is client data on the wire. There is no
+       version of this endpoint worth registering that cannot manage TLS. */
+    problems.push('The URL must be https');
+  }
+
+  const fields = Array.isArray(body.fields) ? body.fields : [];
+  const unknown = fields.filter((f) => !LEAD_FIELDS_SENDABLE.includes(f));
+  if (unknown.length) problems.push(`Not a field that may be sent: ${unknown.join(', ')}`);
+
+  return problems;
+};
+
+router.post('/webhook-endpoints', requirePermission('admin.system'), (req, res) => {
+  const problems = validEndpoint(req.body ?? {});
+  if (problems.length) return res.status(400).json({ error: problems[0], problems });
+
+  /* The switcher when it is set, the creator's own book otherwise -- the same
+     shape every other create route uses. activeOrg returns null for "all
+     books", which is not an answer to "which book does this belong to". */
+  const org = activeOrg(req) ?? req.user.sales_org;
+  if (!mayUseOrg(req.user, org)) return res.status(403).json({ error: 'That book is not yours' });
+
+  const id = Number(run(
+    `INSERT INTO webhook_endpoint (name, url, secret, fields, active, sales_org, created_by)
+     VALUES (?,?,?,?,?,?,?)`,
+    [
+      req.body.name.trim(),
+      req.body.url.trim(),
+      req.body.secret?.trim() || null,
+      JSON.stringify(req.body.fields ?? []),
+      req.body.active === false ? 0 : 1,
+      org,
+      req.user.id,
+    ],
+  ).lastInsertRowid);
+
+  audit(req.user.id, 'webhook_endpoint_created', 'webhook_endpoint', id, {
+    name: req.body.name,
+    url: req.body.url,
+    fields: req.body.fields ?? [],
+  });
+
+  return res.status(201).json(endpointOut(one('SELECT * FROM webhook_endpoint WHERE id = ?', [id])));
+});
+
+router.patch('/webhook-endpoints/:id', requirePermission('admin.system'), (req, res) => {
+  const existing = one('SELECT * FROM webhook_endpoint WHERE id = ?', [Number(req.params.id)]);
+  if (!existing) return res.status(404).json({ error: 'No such endpoint' });
+  if (!mayUseOrg(req.user, existing.sales_org)) {
+    return res.status(403).json({ error: 'That endpoint belongs to another book' });
+  }
+
+  const merged = {
+    name: req.body.name ?? existing.name,
+    url: req.body.url ?? existing.url,
+    fields: req.body.fields ?? JSON.parse(existing.fields || '[]'),
+  };
+  const problems = validEndpoint(merged);
+  if (problems.length) return res.status(400).json({ error: problems[0], problems });
+
+  run(
+    `UPDATE webhook_endpoint SET name = ?, url = ?, fields = ?, active = ?,
+            secret = COALESCE(?, secret), updated_at = datetime('now') WHERE id = ?`,
+    [
+      merged.name.trim(),
+      merged.url.trim(),
+      JSON.stringify(merged.fields),
+      req.body.active === undefined ? existing.active : (req.body.active ? 1 : 0),
+      /* An empty string clears nothing; only a new secret replaces one. */
+      req.body.secret?.trim() || null,
+      existing.id,
+    ],
+  );
+
+  audit(req.user.id, 'webhook_endpoint_updated', 'webhook_endpoint', existing.id, {
+    from: { url: existing.url, fields: JSON.parse(existing.fields || '[]'), active: existing.active },
+    to: { url: merged.url, fields: merged.fields, active: req.body.active ?? existing.active },
+  });
+
+  return res.json(endpointOut(one('SELECT * FROM webhook_endpoint WHERE id = ?', [existing.id])));
+});
+
+router.delete('/webhook-endpoints/:id', requirePermission('admin.system'), (req, res) => {
+  const existing = one('SELECT * FROM webhook_endpoint WHERE id = ?', [Number(req.params.id)]);
+  if (!existing) return res.status(404).json({ error: 'No such endpoint' });
+  if (!mayUseOrg(req.user, existing.sales_org)) {
+    return res.status(403).json({ error: 'That endpoint belongs to another book' });
+  }
+
+  /* An automation still pointing at it would fail on every run, and the person
+     deleting this cannot see those cards from here. Deactivating is the answer
+     they almost always want, so say so rather than cascading. */
+  const users = all(
+    `SELECT a.id, a.name FROM automation a
+       JOIN automation_step s ON s.automation_id = a.id
+      WHERE s.config LIKE ?`,
+    [`%"endpoint_id":${existing.id}%`],
+  );
+  if (users.length) {
+    return res.status(409).json({
+      error: `${users.length} automation${users.length > 1 ? 's' : ''} still post here. Deactivate the endpoint instead, or change those cards first.`,
+      automations: users,
+    });
+  }
+
+  run('DELETE FROM webhook_endpoint WHERE id = ?', [existing.id]);
+  audit(req.user.id, 'webhook_endpoint_deleted', 'webhook_endpoint', existing.id, { name: existing.name, url: existing.url });
+  return res.json({ ok: true });
+});
+
 export default router;

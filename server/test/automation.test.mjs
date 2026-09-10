@@ -773,6 +773,19 @@ await test('a webhook posts only to a registered endpoint', () => {
   assert.equal(payload.pan, undefined, 'a field the endpoint was not registered for was sent anyway');
 });
 
+await test("a webhook endpoint in the other book does not receive this book's lead", () => {
+  /* The reachable half of the boundary. The registry routes sit behind
+     admin.system, which only superadmin holds, and a superadmin has every book
+     -- so the refusal that can actually happen is this one, where the lead's
+     book and the endpoint's disagree. */
+  const epId = Number(run(
+    "INSERT INTO webhook_endpoint (name, url, sales_org) VALUES ('probe_auto_hook_bigul', 'https://example.invalid/b', 'BIGUL')",
+  ).lastInsertRowid);
+  const out = act('webhook', { endpoint_id: epId });
+  assert(out.skipped?.includes('another book'), `a Bonanza lead was posted to a Bigul endpoint: ${JSON.stringify(out)}`);
+  assert(!one('SELECT id FROM webhook_delivery WHERE endpoint_id = ?', [epId]), 'a delivery was queued anyway');
+});
+
 await test('a webhook body carries the lead id and nothing else when no fields are registered', () => {
   const epId = Number(run(
     `INSERT INTO webhook_endpoint (name, url, sales_org) VALUES ('probe_auto_hook_bare', 'https://example.invalid/h', 'BONANZA')`,

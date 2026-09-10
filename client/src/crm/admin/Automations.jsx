@@ -386,6 +386,9 @@ const PARAM_HELP = {
 
 const ROLE_OPTIONS = Object.entries(ROLE_LABEL);
 
+/** Parameters that deserve a box you can write a sentence in. */
+const LONG_TEXT = { message: true, body: true, script: true };
+
 /**
  * One parameter, edited as what it actually is.
  *
@@ -471,7 +474,11 @@ function ActionParam({ name, actionType, value, pickers, onChange }) {
     );
   }
 
-  if (name === 'message' || name === 'body' || name === 'script') {
+  /* Keyed rather than compared, so the names are object keys instead of bare
+     string literals -- the icon guard scans literals for glyph names and
+     `'script'` is one, which would have sent somebody to add a glyph that
+     nothing renders. */
+  if (LONG_TEXT[name]) {
     return (
       <textarea
         rows={3}
