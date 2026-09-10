@@ -133,14 +133,21 @@ time. Two did not — see below.
 From `ROUND-3-source.md`, the twelve questions that were to be answered before
 the affected tickets are built.
 
-**Definitely outstanding — these gate the five large builds:**
+**Answered 10 September:**
+
+| # | Ticket | Answer |
+|---|---|---|
+| Q10 | P3-16 | **Approved as built, with changes to come.** The ticket stays open until Ritesh lists the corrections. |
+| Q11 | P3-19 | **Drop LAPPS.** Build the missing native features instead. Still needs `N-3a` to know which features those are. |
+| Q12 | P3-20 | **All four connectors in scope** — Meta, CUBE, the SMS gateway, Google — built in that order. Still needs `A-4`, and which SMS gateway is actually live. |
+| A3 | P3-16 | **Clean start, then port ten flows.** The list, and why "the top ten by execution count" is the wrong ten, is in `P3-16-automation-design.md` §8. |
+| A6 | P3-16 | **Leads with a task due today or earlier.** Built and shipped — see the same document. |
+
+**Still outstanding — this one gates the last large build:**
 
 | # | Ticket | Question |
 |---|---|---|
-| Q9 | P3-06 | Approve the predefined report list and the module design before build |
-| Q10 | P3-16 | Approve the automation builder design before build |
-| Q11 | P3-19 | Present the LAPPS feasibility assessment — value, security model, execution sandbox — before any build |
-| Q12 | P3-20 | Confirm which connectors are in scope for this phase |
+| Q9 | P3-06 | Approve the predefined report list and the module design before build — blocked behind `N-4a` |
 
 **Answered during the work:**
 

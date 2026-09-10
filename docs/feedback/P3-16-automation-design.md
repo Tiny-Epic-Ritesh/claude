@@ -200,10 +200,73 @@ condition card and one action card. I would ship that converter with the engine,
 the way Salesforce ships *Migrate to Flow*, so nothing is hand-retyped and the
 old engine can be switched off on a date rather than by attrition.
 
-**Question A3:** do the 51 LeadSquared automations need porting, or is this a
-clean start where the team rebuilds what still matters? Porting 51 blind would
-carry over the clones and the dead ones — the audit found V3 and V4 of the same
-thing both live.
+**Question A3 — answered 10 September: clean start, then port the top ten by
+execution count.** The converter ships with the engine, so porting a chosen ten
+costs almost nothing and the old engine can be switched off on a date rather
+than by attrition.
+
+Working out which ten turned up something worth saying out loud.
+
+### "The top ten by execution count" is the wrong ten
+
+Sorted by volume, the busiest LeadSquared automations are not business logic at
+all. Of the top ten rows, **five should not exist in this system** — not because
+they are bad, but because the data model this CRM was built on removes the need
+for them:
+
+| Executions | Automation | What it really is | What replaces it here |
+|---:|---|---|---|
+| 14,140,741 | Add Activity on Opportunity as per Lead | Mirroring activity from Lead to Opportunity | One shared Interaction timeline — non-negotiable #1. Already built. |
+| 8,482,785 | Activity on Lead | The same mirroring, the other way | Same |
+| 8,023,974 | Activity Score | Stamping a computed number onto a field | A computed field — non-negotiable #3 |
+| 232,055 | Update User's RM Name | Copying the owner's name onto the lead | A lookup through `owner_id` |
+| 154,036 | Connects and Attempts | Counter stamping | Roll-up fields — `activity_count` and `connected_count` are already condition fields |
+
+Nine more rows further down are the same shape: the whole *Capture X Date*
+family (`Created Date`, `RTT Date`, `MQL Date`, `PAN Submitted Date`,
+`First Intent`) exists only because LeadSquared has no stage entry/exit
+timestamps — which are first-class here, non-negotiable #4. And *Auto Check Out
+8:00 PM* is `attendance_policy`, already native.
+
+**So roughly fourteen of the fifty-one are not migration work. They are
+features this product already has**, and porting them would rebuild the
+compensations along with the thing they compensate for. That is the single
+clearest measure of what the new data model buys.
+
+### The ten worth porting
+
+Sorted by volume, after the above are set aside, and grouped by *unit of
+business meaning* rather than by row — the DIY journey is four LeadSquared
+automations calling each other as sub-automations, and porting Journey 1 without
+2, 3 and Drop Off would break it.
+
+| # | The flow | LeadSquared rows | Executions |
+|---:|---|---:|---:|
+| 1 | Engagement Team | 1 | 2,429,896 |
+| 2 | The DIY journey — Journey 1, 2, 3 and Drop Off | 4 | 1,416,679 |
+| 3 | Product to Pitch, by campaign | 1 | 703,024 |
+| 4 | Lead Update — **the two clones merged into one** | 2 | 471,717 |
+| 5 | WhatsApp on not-connected calls | 1 | 274,401 |
+| 6 | Trading Activity Created | 1 | 219,461 |
+| 7 | Lead Creation — distribute + UTM | 1 | 216,015 |
+| 8 | Interested client distribution | 1 | 119,594 |
+| 9 | Day 1 client-profiling WhatsApp | 1 | 92,450 |
+| 10 | Dormancy — "June-Aug not traded in Oct-Nov" | 1 | 92,191 |
+
+**Fourteen rows become ten flows**, covering about 5.6 million of the roughly 6.5
+million executions that are genuine business logic. Row 4 is the V3/V4 pair the
+audit found — one of them is literally named *Clone* — and they are merged on
+the way across rather than after.
+
+**Three of these distribute leads** (4, 7 and 8). Per A4 they hand the lead to
+the assignment engine and do not pick an owner themselves, so each loses a step
+in translation and gains a guarantee: the three racing "Lead Updated"
+automations that can hand one lead to two RMs cannot be rebuilt here.
+
+**Not ported, deliberately:** the twenty-odd rows below 90,000 executions. They
+are where the dead ones and the remaining clones live — *Mobileapp1 leads on
+prospects - Clone* has fired **zero** times and is still published. The team
+rebuilds any of them that still matter, in a builder that shows them the flow.
 
 ---
 
@@ -229,7 +292,7 @@ discover it at the end.
 |---|---|
 | **A1** | Do client or ticket events need to trigger automations, or is lead + activity + task + user enough? |
 | **A2** | Split test — defer, or is there a live A/B need? |
-| **A3** | Port the 51 LeadSquared automations, or clean start? |
+| ~~A3~~ | **Answered 10 Sep** — clean start, then port the ten in §8. |
 | **A4** | Confirm: an automation may hand a lead to the assignment engine but never pick an owner itself. |
 | **A5** | Confirm the trigger list in §2, particularly that "Lead Updated" must name the fields it watches rather than firing on any change. |
 
