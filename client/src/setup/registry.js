@@ -168,6 +168,13 @@ export const SECTIONS = [
     needs: ['admin.rules'],
     blurb: 'Flows a lead walks through — triggers, branches, waits and actions',
     keywords: ['automation', 'flow', 'journey', 'trigger', 'wait', 'branch', 'drip', 'nurture', 'workflow'],
+    /* This screen routes below itself: the flow builder is a page of its own at
+       /setup/automations/:id rather than a dialog, because a canvas needs the
+       window and a modal is 1,180 pixels wide. The shell reads this to decide
+       whether the section's route may match deeper; every other section stays
+       exactly one level, which is what keeps a mistyped URL landing on Home
+       instead of on a blank screen. */
+    deep: true,
     Component: Automations,
   },
   {

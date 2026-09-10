@@ -595,6 +595,131 @@ await test('the tick detects and resumes in one pass', () => {
   assert(out.fired !== undefined, 'the tick does not report what it detected');
 });
 
+/* ------------------------------------------------- switching a card off */
+
+await test('a card that is switched off is walked past, not run', () => {
+  /* The reason this exists rather than "delete it and add it back": the card
+     keeps its configuration. Somebody testing a flow without its WhatsApp step
+     otherwise has to retype the template, so they don't -- they leave it in,
+     and it keeps sending. */
+  const a = build('probe_auto_off', 'lead.created', [
+    noteAction('should-not-run'),
+    noteAction('after-the-off-one'),
+  ]);
+  run('UPDATE automation_step SET disabled = 1 WHERE id = ?', [a.ids[0]]);
+
+  run("UPDATE leads SET risk_profile = NULL WHERE id = ?", [LEAD]);
+  const r = enter(a.id, LEAD);
+
+  assert.equal(marker(), 'after-the-off-one', 'the switched-off card ran, or the walk stopped at it');
+  const outcomes = all('SELECT step_id, outcome FROM automation_run_step WHERE run_id = ? ORDER BY id', [r.id]);
+  assert(outcomes.some((o) => o.step_id === a.ids[0] && o.outcome === 'skipped'),
+    'the skip left no trace, so a run that did nothing surprising has a gap in it instead of a reason');
+});
+
+await test('a switched-off card at the end of a flow ends it rather than failing', () => {
+  const a = build('probe_auto_off_last', 'lead.created', [noteAction('only-card')]);
+  run('UPDATE automation_step SET disabled = 1 WHERE id = ?', [a.ids[0]]);
+
+  const r = enter(a.id, LEAD);
+  assert.equal(r.status, 'done', `a flow of one switched-off card ended as ${r.status}`);
+});
+
+await test('a card with two exits cannot be switched off', async () => {
+  /* n8n allows this and quietly takes the first output. Here that is a message
+     going down the compliance arm because somebody was testing something. */
+  const a = build('probe_auto_off_branch', 'lead.created', [{ kind: 'branch', config: {}, next: null, else: null }]);
+  const res = await call('PATCH', `/admin/automations/${a.id}/steps/${a.ids[0]}`, { disabled: true });
+
+  assert.equal(res.status, 400, `HTTP ${res.status}`);
+  assert.equal(one('SELECT disabled FROM automation_step WHERE id = ?', [a.ids[0]]).disabled, 0);
+});
+
+await test('switching a card off and on again leaves its configuration alone', async () => {
+  const a = build('probe_auto_off_keep', 'lead.created', [noteAction('kept')]);
+  const before = one('SELECT config FROM automation_step WHERE id = ?', [a.ids[0]]).config;
+
+  await call('PATCH', `/admin/automations/${a.id}/steps/${a.ids[0]}`, { disabled: true });
+  const on = await call('PATCH', `/admin/automations/${a.id}/steps/${a.ids[0]}`, { disabled: false });
+
+  assert.equal(on.status, 200, JSON.stringify(on.body));
+  assert.equal(one('SELECT config FROM automation_step WHERE id = ?', [a.ids[0]]).config, before);
+});
+
+await test('a duplicated card is not wired into the flow', async () => {
+  /* A copy is made to be changed. One that starts receiving leads before it has
+     been changed is the same message sent twice. */
+  const a = build('probe_auto_dup', 'lead.created', [noteAction('original'), noteAction('second')]);
+  const res = await call('POST', `/admin/automations/${a.id}/steps/${a.ids[0]}/duplicate`);
+
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  assert.equal(res.body.next_step_id, null, 'the copy inherited the original\'s exit');
+  assert.equal(one('SELECT next_step_id FROM automation_step WHERE id = ?', [a.ids[0]]).next_step_id, a.ids[1],
+    'duplicating a card changed what followed the original');
+  assert.equal(res.body.config, one('SELECT config FROM automation_step WHERE id = ?', [a.ids[0]]).config,
+    'the copy is not a copy');
+});
+
+/* --------------------------------------------------------- sticky notes */
+
+await test('a note pinned to the canvas rides with the automation', async () => {
+  const a = build('probe_auto_sticky', 'lead.created', [noteAction('one')]);
+  const made = await call('POST', `/admin/automations/${a.id}/stickies`, {
+    body: 'The second arm is the compliance one. Agreed with the desk on 3 Sep.',
+    pos_x: 120, pos_y: -40, tone: 'sky',
+  });
+  assert.equal(made.status, 201, JSON.stringify(made.body));
+
+  const back = await call('GET', `/admin/automations/${a.id}`);
+  const note = back.body.stickies.find((n) => n.id === made.body.id);
+  assert(note, 'the note did not come back with the automation');
+  assert.equal(note.tone, 'sky');
+  assert.equal(note.pos_y, -40, 'a note above the origin was clamped, so it cannot sit over the start of a flow');
+});
+
+await test('a note cannot be given a colour that is not one of the four', async () => {
+  /* A free-form colour puts a hex value nobody can read into an audit export. */
+  const a = build('probe_auto_sticky_tone', 'lead.created', [noteAction('one')]);
+  const made = await call('POST', `/admin/automations/${a.id}/stickies`, { body: 'x', tone: '#ff0000' });
+  assert.equal(made.body.tone, 'sand', `an unknown tone was stored as ${made.body.tone}`);
+});
+
+await test('a note cannot be sized down to nothing', async () => {
+  const a = build('probe_auto_sticky_size', 'lead.created', [noteAction('one')]);
+  const made = await call('POST', `/admin/automations/${a.id}/stickies`, { body: 'x' });
+  const res = await call('PATCH', `/admin/automations/${a.id}/stickies/${made.body.id}`, { w: 2, h: 0 });
+
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert(res.body.w >= 140 && res.body.h >= 90, `a note was resized to ${res.body.w}x${res.body.h} and cannot be found again`);
+});
+
+await test('a canvas cannot be papered over with notes', async () => {
+  const a = build('probe_auto_sticky_cap', 'lead.created', [noteAction('one')]);
+  for (let i = 0; i < 40; i += 1) {
+    run('INSERT INTO automation_sticky (automation_id, body) VALUES (?,?)', [a.id, `note ${i}`]);
+  }
+  const res = await call('POST', `/admin/automations/${a.id}/stickies`, { body: 'one too many' });
+  assert.equal(res.status, 400, `HTTP ${res.status}`);
+});
+
+await test("a note on another book's automation is out of reach", async () => {
+  const bigul = build('probe_auto_sticky_bigul', 'lead.created', [noteAction('one')], { org: 'BIGUL' });
+  const res = await call('POST', `/admin/automations/${bigul.id}/stickies`, { body: 'not mine' });
+  assert.equal(res.status, 403, `HTTP ${res.status}`);
+});
+
+await test('a note that belongs to another automation cannot be edited through this one', async () => {
+  /* The id is in the URL and a URL can be typed. Without the pairing check the
+     automation id is decoration. */
+  const mine = build('probe_auto_sticky_mine', 'lead.created', [noteAction('one')]);
+  const theirs = build('probe_auto_sticky_theirs', 'lead.created', [noteAction('one')]);
+  const made = await call('POST', `/admin/automations/${theirs.id}/stickies`, { body: 'theirs' });
+
+  const res = await call('PATCH', `/admin/automations/${mine.id}/stickies/${made.body.id}`, { body: 'rewritten' });
+  assert.equal(res.status, 404, `HTTP ${res.status}`);
+  assert.equal(one('SELECT body FROM automation_sticky WHERE id = ?', [made.body.id]).body, 'theirs');
+});
+
 /* ------------------------------------------------------------- the canvas */
 
 await test('where a card sits is remembered', async () => {

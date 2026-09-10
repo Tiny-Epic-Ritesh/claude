@@ -183,6 +183,21 @@ export function advance(runId, { budget = 50 } = {}) {
       return finish(runId, 'failed', { error: `step ${r.step_id} no longer exists` });
     }
 
+    /* Switched off. The lead walks straight past it and the skip is recorded,
+       so a run that did nothing surprising has a line saying why rather than a
+       gap somebody has to reconstruct.
+
+       Only cards with a single exit can be in this state -- the route refuses
+       the rest -- because skipping a branch would mean choosing one of its two
+       arms on somebody's behalf, and choosing silently is worse than refusing.
+       The budget above still counts these, so a chain of switched-off cards
+       cannot spin. */
+    if (step.disabled) {
+      record(runId, step.id, 'skipped', { reason: 'the card is switched off' });
+      r = move(runId, step.next_step_id);
+      continue;
+    }
+
     const facts = leadFacts(r.lead_id);
     if (!facts) return finish(runId, 'exited', { reason: 'the lead is gone' });
 

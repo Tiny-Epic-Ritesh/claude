@@ -1,196 +1,122 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api } from '../../api.js';
+import {
+  forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState,
+} from 'react';
 import { Icon } from '../../components/ui.jsx';
+import {
+  NODE_W, NODE_H, LABEL_H, COL_GAP, PAD, TRIGGER_ID, ICON, TRIGGER_ICON, TONES,
+  autoLayout, describe, edgePath, edgeMiddle, exitWords, hasTwoExits, snap,
+} from './flowkit.js';
 
 /**
- * The flow, drawn (P3-16).
+ * The flow, drawn (P3-16), rebuilt against n8n.
  *
- * WHY A CANVAS AND NOT A BETTER LIST
- * ----------------------------------
- * A list can say "then → Send WhatsApp". What it cannot show is the shape: that
- * two branches rejoin, that one arm of an If/Else leads nowhere, that a Wait
- * sits between the message and the follow-up. Those are the mistakes people
- * actually make, and every one of them is obvious in a picture and invisible in
- * a column of rows.
+ * WHAT WAS TAKEN FROM n8n, AND WHY EACH ONE EARNS ITS PLACE
  *
- * The ticket asks for the level of Salesforce's Flow Builder. What earns that
- * is not the dragging — it is that the drawing and the thing that runs are the
- * same object. Every edge here is a `next_step_id` or an `else_step_id`; there
- * is no separate diagram to fall out of date.
+ * · The node is a square tile holding its icon, with the name and what it does
+ *   written *below* it. A wide card ellipsises the very text you were reading.
  *
- * WHAT THE DRAWING REFUSES TO HIDE
- * --------------------------------
- * An exit that leads nowhere is drawn as a stub with an open end, not left
- * blank — an unconnected exit ends the flow silently for every lead that
- * reaches it, and the whole reason to draw a flow is to make that visible
- * before it is live. Cards with validation problems carry them on their face.
+ * · An exit that leads nowhere gets a stub and a `+`. The old canvas drew the
+ *   stub, which reported the problem; n8n's `+` reports it and repairs it in
+ *   the same gesture, which is the difference between a diagram and a builder.
  *
- * WHY POSITIONS ARE STORED AND NOT COMPUTED
- * -----------------------------------------
- * Two people looking at one automation have to see the same picture, or "the
- * card on the left" means nothing in a conversation. A flow built before this
- * existed has no positions; those are laid out from the graph, and the first
- * drag saves every card at once — so a flow is wholly computed or wholly
- * stored, never a mix where a moved card lands on top of a placed one.
+ * · Hovering a connection offers to delete it or to drop a card into the middle
+ *   of it. There was previously no way at all to unwire two cards on the canvas
+ *   — you had to open the card and use a select — which made the drawing a
+ *   one-way surface.
+ *
+ * · The trigger is the first card. What starts a flow was configured in a form
+ *   above the picture, which is a form nobody checks. Now it is on the canvas
+ *   with everything else and it opens the same drawer.
+ *
+ * · Cards snap to a grid. It is the reason an n8n workflow somebody dragged
+ *   into shape still looks deliberate a month later.
+ *
+ * WHAT WAS NOT TAKEN
+ *
+ * n8n's per-node execution panes, data pinning and expression language. There
+ * is no per-card sample data in a CRM builder to show, and an expression
+ * language in the path that sends WhatsApp to a client is a way to send
+ * something nobody reviewed. The badge on a card says how many leads are
+ * standing on it, which is the CRM's version of the same reassurance.
  *
  * KEYBOARD
- * --------
- * Dragging is not reachable by keyboard and pretending otherwise would be
- * worse than saying so. The List view beside this one does everything the
- * canvas does — wiring included, through the step editor's own selects — and
- * it is not a lesser fallback but the same operations in a form. The canvas is
- * for seeing; the list is for certainty.
+ *
+ * Handled by the builder shell above this, because half the shortcuts act on
+ * things this component does not own. Dragging is still not reachable from a
+ * keyboard; selecting, opening, deleting, connecting through the drawer's
+ * selects and moving between cards with the arrow keys all are.
  */
 
-/* Node geometry. Fixed rather than measured: the edge maths needs to know where
-   a port is before the DOM has laid anything out, and a card whose height
-   depends on its label makes every arrow jump as you type. */
-const NODE_W = 200;
-const NODE_H = 78;
-const COL_GAP = 96;
-const ROW_GAP = 34;
-const PAD = 40;
+const STICKY_MIN = { w: 140, h: 90 };
 
-/* The start marker is not a step — it is where `first_step_id` points from, and
-   its id is the sentinel used wherever a step id would otherwise go.
-   Hyphenated deliberately: icons.test.mjs scans bare lowercase string literals
-   for Material Symbol names, and a plain 'start' is one, which would send
-   somebody off to add a glyph nothing renders. */
-const START = { id: 'flow-start', w: 92, h: 40 };
-
-/* ------------------------------------------------------------- layout */
-
-/**
- * Place cards the flow has never been drawn with.
- *
- * Breadth-first from the first step, so depth becomes the column and arrival
- * order becomes the row. It is the layout somebody would draw by hand, and it
- * is a pure function of the graph — the same flow lays out the same way in
- * every browser, which is what makes it safe to render without saving.
- *
- * Cards nothing points at — an orphan, or a card just added — go in a column of
- * their own at the end rather than on top of the flow, where they would look
- * connected.
- */
-export function autoLayout(steps, firstStepId) {
-  const byId = new Map(steps.map((s) => [s.id, s]));
-  const depth = new Map();
-  const queue = [];
-
-  if (firstStepId && byId.has(firstStepId)) { depth.set(firstStepId, 0); queue.push(firstStepId); }
-
-  while (queue.length) {
-    const id = queue.shift();
-    const step = byId.get(id);
-    const d = depth.get(id) + 1;
-    for (const next of [step.next_step_id, step.else_step_id]) {
-      if (!next || !byId.has(next) || depth.has(next)) continue;
-      depth.set(next, d);
-      queue.push(next);
-    }
-  }
-
-  /* Anything unreachable sits one column past the deepest reachable card. */
-  const deepest = depth.size ? Math.max(...depth.values()) : -1;
-  let strayRow = 0;
-  const rows = new Map();
-  const at = {};
-
-  for (const s of steps) {
-    const col = depth.has(s.id) ? depth.get(s.id) : deepest + 1;
-    const row = depth.has(s.id) ? (rows.get(col) ?? 0) : strayRow;
-    if (depth.has(s.id)) rows.set(col, row + 1); else strayRow += 1;
-    at[s.id] = {
-      x: PAD + START.w + COL_GAP + col * (NODE_W + COL_GAP),
-      y: PAD + row * (NODE_H + ROW_GAP),
-    };
-  }
-
-  return at;
-}
-
-/* --------------------------------------------------------------- edges */
-
-/**
- * A curve from one port to another.
- *
- * Cubic rather than straight, with the control points pushed out horizontally,
- * so an edge that doubles back on itself reads as a loop instead of crossing
- * the cards it passes.
- */
-function edgePath(from, to) {
-  const dx = Math.max(60, Math.abs(to.x - from.x) * 0.55);
-  return `M ${from.x} ${from.y} C ${from.x + dx} ${from.y}, ${to.x - dx} ${to.y}, ${to.x} ${to.y}`;
-}
-
-/* ---------------------------------------------------------- the canvas */
-
-export default function FlowCanvas({
-  data, spec, icon, describe, onConfigure, onError, onChanged,
-}) {
-  const steps = data.steps;
+const FlowCanvas = forwardRef(function FlowCanvas({
+  data, spec, selected, onSelect, onOpen, onAsk, ops, onError,
+}, ref) {
+  const cards = data.steps;
+  const stickies = data.stickies ?? [];
   const surface = useRef(null);
 
-  /* Stored positions if the flow has any, otherwise the computed ones. Never a
-     mix: `placed` decides which, for the whole flow at once. */
-  const placed = steps.some((s) => s.pos_x !== null && s.pos_x !== undefined);
-  const computed = useMemo(() => autoLayout(steps, data.first_step_id), [steps, data.first_step_id]);
+  /* Arranged, or not. There is deliberately no third state.
+   *
+   * Mixing stored and computed positions is what made a flow disappear: an
+   * automation built before the canvas existed has no positions at all, adding
+   * one card gave that card a real one, and every other card was then treated
+   * as "new" and stacked off the right-hand edge. So the moment any card lacks
+   * a position the whole flow is laid out from the graph — which cannot
+   * overlap — and saved, so the question is asked once and never again. */
+  const arranged = cards.length > 0 && cards.every((c) => c.pos_x !== null && c.pos_x !== undefined);
+  const computed = useMemo(() => autoLayout(cards, data.first_step_id), [cards, data.first_step_id]);
 
   const [pos, setPos] = useState({});
-
-  /* The same positions, readable without going through a state updater.
-     `setPos(cur => { save(cur); return cur; })` looks like a neat way to read
-     the latest value, and React is free to run an updater twice — which sends
-     the save twice. The ref is the boring answer and the correct one. */
   const posRef = useRef(pos);
   useEffect(() => { posRef.current = pos; }, [pos]);
 
+  /* Written at most once per automation. An effect that saves is an effect that
+     can loop, and the reload it triggers would re-enter this one. */
+  const backfilled = useRef(null);
+
   useEffect(() => {
     const next = {};
-
-    /* A card added to a flow that has already been arranged has no position of
-       its own, and the computed layout is no help — it describes a picture
-       nobody is looking at any more, so a new card would land on top of one
-       somebody deliberately put there. It goes to the right of everything
-       instead, which is both out of the way and where "not wired up yet"
-       belongs. */
-    const right = Math.max(0, ...steps.map((s) => s.pos_x ?? 0));
-    let fresh = 0;
-
-    for (const s of steps) {
-      if (placed) {
-        next[s.id] = s.pos_x !== null && s.pos_x !== undefined
-          ? { x: s.pos_x, y: s.pos_y ?? 0 }
-          : { x: right + NODE_W + COL_GAP, y: PAD + (fresh++) * (NODE_H + ROW_GAP) };
-      } else {
-        next[s.id] = computed[s.id];
-      }
+    for (const c of cards) {
+      next[c.id] = arranged ? { x: c.pos_x, y: c.pos_y ?? 0 } : computed[c.id];
     }
     setPos(next);
-  }, [steps, computed, placed]);
 
-  const [startPos, setStartPos] = useState({ x: PAD, y: PAD + (NODE_H - START.h) / 2 });
-  const [drag, setDrag] = useState(null);      // moving a card
-  const [wire, setWire] = useState(null);      // dragging an exit somewhere
+    if (!arranged && cards.length && backfilled.current !== data.id) {
+      backfilled.current = data.id;
+      ops.backfillLayout(next);
+    }
+  }, [cards, computed, arranged, data.id, ops]);
+
+  /* The trigger sits left of the first card. Its position is not stored: it is
+     not a step, and a flow re-laid-out by somebody else should still show the
+     trigger where the flow begins rather than where a colleague parked it. */
+  const triggerPos = useMemo(() => {
+    const first = data.first_step_id ? pos[data.first_step_id] : null;
+    const leftmost = Math.min(...Object.values(pos).map((p) => p?.x ?? Infinity), Infinity);
+    const x = Number.isFinite(leftmost) ? leftmost - NODE_W - COL_GAP : PAD;
+    return { x: Math.max(PAD / 2, x), y: first?.y ?? PAD };
+  }, [pos, data.first_step_id]);
+
+  const [drag, setDrag] = useState(null);
+  const [wire, setWire] = useState(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [panning, setPanning] = useState(null);
   const [zoom, setZoom] = useState(1);
-  const [menu, setMenu] = useState(null);      // "what goes here?" after a drop
-  const [saving, setSaving] = useState(false);
+  const [hotEdge, setHotEdge] = useState(null);
+  const [editingNote, setEditingNote] = useState(null);
+  const [spacePan, setSpacePan] = useState(false);
 
-  const byId = useMemo(() => new Map(steps.map((s) => [s.id, s])), [steps]);
+  const byId = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
   const problemsFor = useCallback(
     (id) => data.problems.filter((p) => p.step_id === id),
     [data.problems],
   );
 
-  /* Screen pixels to canvas coordinates. Every gesture goes through this, so
-     pan and zoom cannot drift apart from what is drawn.
-     
-     It reads the view through refs rather than closing over the state, so its
-     identity never changes. Depending on `pan` would rebuild it on every
-     pointermove of a pan, and the gesture effect below would tear down and
-     re-add its window listeners between one mouse move and the next. */
+  /* Screen pixels to canvas coordinates. Read through a ref rather than closing
+     over the state so its identity never changes — depending on `pan` would
+     tear down and re-add the window listeners between one pointermove of a pan
+     and the next. */
   const view = useRef({ pan, zoom });
   useEffect(() => { view.current = { pan, zoom }; }, [pan, zoom]);
 
@@ -201,32 +127,45 @@ export default function FlowCanvas({
     return { x: (clientX - box.left - p.x) / z, y: (clientY - box.top - p.y) / z };
   }, []);
 
-  /* ------------------------------------------------------------ saving */
+  /* ------------------------------------------------------------- extent */
 
-  const saveLayout = useCallback(async (next) => {
-    setSaving(true);
-    try {
-      await api.patch(`/admin/automations/${data.id}/layout`, {
-        positions: Object.entries(next).map(([id, p]) => ({ id: Number(id), x: p.x, y: p.y })),
-      });
-    } catch (err) { onError(err.message); }
-    finally { setSaving(false); }
-  }, [data.id, onError]);
+  const extent = useMemo(() => {
+    const xs = Object.values(pos).map((p) => p?.x ?? 0).concat(triggerPos.x, ...stickies.map((s) => s.pos_x + s.w));
+    const ys = Object.values(pos).map((p) => p?.y ?? 0).concat(triggerPos.y, ...stickies.map((s) => s.pos_y + s.h));
+    return {
+      w: Math.max(900, Math.max(...xs, 0) + NODE_W + PAD * 2),
+      h: Math.max(420, Math.max(...ys, 0) + NODE_H + LABEL_H + PAD * 2),
+    };
+  }, [pos, triggerPos, stickies]);
 
-  const connect = useCallback(async (fromId, exit, toId) => {
-    try {
-      if (fromId === START.id) {
-        await api.patch(`/admin/automations/${data.id}`, { first_step_id: toId });
-      } else {
-        await api.patch(`/admin/automations/${data.id}/steps/${fromId}`, {
-          [exit === 'else' ? 'else_step_id' : 'next_step_id']: toId,
-        });
-      }
-      await onChanged();
-    } catch (err) { onError(err.message); }
-  }, [data.id, onChanged, onError]);
+  /* Zoom to fit, which n8n binds to "1" and which is the only control that
+     rescues somebody who has dragged a card off into the distance. */
+  const fit = useCallback(() => {
+    const box = surface.current?.getBoundingClientRect();
+    if (!box) return;
+    const z = Math.min(1, Math.max(0.35, Math.min(box.width / extent.w, box.height / extent.h) * 0.94));
+    setZoom(Number(z.toFixed(2)));
+    setPan({ x: 16, y: 16 });
+  }, [extent]);
 
-  /* ---------------------------------------------------------- gestures */
+  useImperativeHandle(ref, () => ({
+    fit,
+    zoomBy: (d) => setZoom((z) => Math.min(2, Math.max(0.35, +(z + d).toFixed(2)))),
+    resetZoom: () => { setZoom(1); setPan({ x: 0, y: 0 }); },
+    zoom,
+    /* The shell drives the arrow keys, and "the card above this one" is a
+       question only the drawn positions can answer. */
+    positions: () => posRef.current,
+    /* The shell needs somewhere sensible to drop a card or a note when the
+       gesture came from a keystroke rather than from a pointer. */
+    middle: () => {
+      const box = surface.current?.getBoundingClientRect();
+      if (!box) return { x: PAD, y: PAD };
+      return toCanvas(box.left + box.width / 2, box.top + box.height / 2);
+    },
+  }), [fit, zoom, toCanvas]);
+
+  /* ------------------------------------------------------------ gestures */
 
   useEffect(() => {
     if (!drag && !wire && !panning) return undefined;
@@ -234,11 +173,33 @@ export default function FlowCanvas({
     const move = (e) => {
       const at = toCanvas(e.clientX, e.clientY);
       if (drag) {
-        const next = { x: Math.round(at.x - drag.dx), y: Math.round(at.y - drag.dy) };
-        if (drag.id === START.id) setStartPos(next);
-        else setPos((cur) => ({ ...cur, [drag.id]: next }));
+        if (drag.what === 'sticky') {
+          setDrag((d) => ({ ...d, live: { x: snap(at.x - d.dx), y: snap(at.y - d.dy) } }));
+        } else if (drag.what === 'resizing') {
+          setDrag((d) => ({
+            ...d,
+            live: {
+              w: Math.max(STICKY_MIN.w, snap(at.x - d.origin.x)),
+              h: Math.max(STICKY_MIN.h, snap(at.y - d.origin.y)),
+            },
+          }));
+        } else {
+          /* Everything selected moves together, by the same delta, so a group
+             keeps its shape. */
+          const dx = snap(at.x - drag.dx) - drag.from.x;
+          const dy = snap(at.y - drag.dy) - drag.from.y;
+          setPos((cur) => {
+            const next = { ...cur };
+            for (const id of drag.ids) {
+              const start = drag.starts[id];
+              if (start) next[id] = { x: start.x + dx, y: start.y + dy };
+            }
+            return next;
+          });
+        }
       } else if (wire) {
-        setWire((w) => ({ ...w, to: at }));
+        const moved = Math.abs(e.clientX - wire.originClient.x) + Math.abs(e.clientY - wire.originClient.y) > 5;
+        setWire((w) => ({ ...w, to: at, moved: w.moved || moved }));
       } else if (panning) {
         setPan({ x: e.clientX - panning.x, y: e.clientY - panning.y });
       }
@@ -246,20 +207,28 @@ export default function FlowCanvas({
 
     const up = (e) => {
       if (drag) {
-        /* The start marker is decoration — it says where the flow begins and
-           moving it changes nothing that runs, so it is not worth a request. */
-        if (drag.id !== START.id) saveLayout(posRef.current);
+        if (drag.what === 'sticky' && drag.live) {
+          ops.saveSticky(drag.id, drag.live, { pos_x: drag.starts.pos_x, pos_y: drag.starts.pos_y }, 'Moved a note');
+        } else if (drag.what === 'resizing' && drag.live) {
+          ops.saveSticky(drag.id, drag.live, { w: drag.starts.w, h: drag.starts.h }, 'Resized a note');
+        } else if (drag.what === 'cards') {
+          ops.moveCards(posRef.current, drag.starts);
+        }
         setDrag(null);
       }
-      if (wire) {
-        const target = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-step]');
-        const toId = target ? Number(target.dataset.step) : null;
 
-        if (toId && toId !== wire.from) connect(wire.from, wire.exit, toId);
-        else if (!toId) {
-          /* Dropped on nothing. Rather than losing the gesture, ask what should
-             go there — which is what the person was reaching for. */
-          setMenu({ from: wire.from, exit: wire.exit, at: toCanvas(e.clientX, e.clientY) });
+      if (wire) {
+        const landed = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-card]');
+        const toId = landed ? Number(landed.dataset.card) : null;
+
+        if (toId && toId !== wire.from) {
+          ops.connect(wire.from, wire.exit, toId);
+        } else if (!toId) {
+          /* Dropped on nothing, or clicked rather than dragged. Both mean the
+             same thing — "something goes here" — so both open the panel, at
+             where the pointer landed or just right of the port. */
+          const at = wire.moved ? toCanvas(e.clientX, e.clientY) : { x: wire.origin.x + 140, y: wire.origin.y - NODE_H / 2 };
+          onAsk({ from: wire.from, exit: wire.exit, at });
         }
         setWire(null);
       }
@@ -272,197 +241,383 @@ export default function FlowCanvas({
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
     };
-  }, [drag, wire, panning, toCanvas, saveLayout, connect]);
+  }, [drag, wire, panning, toCanvas, ops, onAsk]);
 
-  const startDrag = (e, id) => {
-    if (e.button !== 0) return;
+  /* Space to pan, the way every canvas since Photoshop has done it. Held rather
+     than toggled, and released on blur so alt-tabbing away does not leave the
+     canvas stuck in a mode. */
+  useEffect(() => {
+    const typing = (t) => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+    const down = (e) => { if (e.code === 'Space' && !typing(e.target)) { e.preventDefault(); setSpacePan(true); } };
+    const up = (e) => { if (e.code === 'Space') setSpacePan(false); };
+    const blur = () => setSpacePan(false);
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    window.addEventListener('blur', blur);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+      window.removeEventListener('blur', blur);
+    };
+  }, []);
+
+  const onWheel = (e) => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    setZoom((z) => Math.min(2, Math.max(0.35, +(z - Math.sign(e.deltaY) * 0.08).toFixed(2))));
+  };
+
+  const startCardDrag = (e, id) => {
+    if (e.button !== 0 || spacePan) return;
     e.stopPropagation();
     const at = toCanvas(e.clientX, e.clientY);
-    const p = id === START.id ? startPos : pos[id];
+    const p = pos[id];
     if (!p) return;
-    setDrag({ id, dx: at.x - p.x, dy: at.y - p.y });
+
+    const ids = selected.cards.includes(id) ? selected.cards : [id];
+    if (!selected.cards.includes(id)) onSelect({ cards: [id], sticky: null, trigger: false });
+
+    setDrag({
+      what: 'cards',
+      ids,
+      from: { x: p.x, y: p.y },
+      dx: at.x - p.x,
+      dy: at.y - p.y,
+      starts: Object.fromEntries(ids.map((i) => [i, { ...pos[i] }])),
+    });
   };
 
-  const startWire = (e, fromId, exit) => {
+  const startWire = (e, fromId, exit, origin) => {
     e.stopPropagation();
-    const at = toCanvas(e.clientX, e.clientY);
-    setWire({ from: fromId, exit, to: at });
+    e.preventDefault();
+    setWire({
+      from: fromId, exit, origin, to: origin, moved: false,
+      originClient: { x: e.clientX, y: e.clientY },
+    });
   };
 
-  const addAt = async (kind, from, exit, at) => {
-    setMenu(null);
-    try {
-      await api.post(`/admin/automations/${data.id}/steps`, {
-        kind,
-        config: {},
-        from,
-        exit,
-        pos_x: Math.round(at.x - NODE_W / 2),
-        pos_y: Math.round(at.y - NODE_H / 2),
-      });
-      await onChanged();
-    } catch (err) { onError(err.message); }
-  };
+  /* --------------------------------------------------------------- ports */
 
-  const tidy = async () => {
-    const next = autoLayout(steps, data.first_step_id);
-    setPos(next);
-    setStartPos({ x: PAD, y: PAD + (NODE_H - START.h) / 2 });
-    await saveLayout(next);
-    await onChanged();
-  };
-
-  /* ------------------------------------------------------------- ports */
-
-  const outPort = (id, exit) => {
+  const outPort = useCallback((id, exit) => {
     const p = pos[id];
     if (!p) return null;
-    const step = byId.get(id);
-    const two = step && (step.kind === 'branch' || step.kind === 'wait_activity');
+    const two = hasTwoExits(byId.get(id)?.kind);
     return {
       x: p.x + NODE_W,
-      y: p.y + (two ? (exit === 'else' ? NODE_H * 0.72 : NODE_H * 0.28) : NODE_H / 2),
+      y: p.y + (two ? (exit === 'else' ? NODE_H * 0.7 : NODE_H * 0.3) : NODE_H / 2),
     };
-  };
-  const inPort = (id) => {
+  }, [pos, byId]);
+
+  const inPort = useCallback((id) => {
     const p = pos[id];
     return p ? { x: p.x, y: p.y + NODE_H / 2 } : null;
-  };
-  const startPort = () => ({ x: startPos.x + START.w, y: startPos.y + START.h / 2 });
+  }, [pos]);
 
-  /* The drawn area, so the surface can be scrolled to reach a distant card. */
-  const extent = useMemo(() => {
-    const xs = Object.values(pos).map((p) => p?.x ?? 0).concat(startPos.x);
-    const ys = Object.values(pos).map((p) => p?.y ?? 0).concat(startPos.y);
-    return {
-      w: Math.max(720, Math.max(...xs, 0) + NODE_W + PAD * 2),
-      h: Math.max(360, Math.max(...ys, 0) + NODE_H + PAD * 2),
-    };
-  }, [pos, startPos]);
+  const triggerPort = () => ({ x: triggerPos.x + NODE_W, y: triggerPos.y + NODE_H / 2 });
 
-  /* --------------------------------------------------------- rendering */
+  /* --------------------------------------------------------------- edges */
 
   const edges = [];
   if (data.first_step_id && pos[data.first_step_id]) {
-    edges.push({ key: START.id, kind: START.id, from: startPort(), to: inPort(data.first_step_id) });
+    edges.push({
+      key: TRIGGER_ID, from: TRIGGER_ID, exit: 'next', tone: 'trigger',
+      a: triggerPort(), b: inPort(data.first_step_id),
+    });
+  } else {
+    edges.push({
+      key: `${TRIGGER_ID}-open`, from: TRIGGER_ID, exit: 'next', tone: 'trigger', open: true,
+      a: triggerPort(), b: { x: triggerPos.x + NODE_W + 46, y: triggerPos.y + NODE_H / 2 },
+    });
   }
-  for (const s of steps) {
-    if (!pos[s.id]) continue;
-    for (const exit of ['next', 'else']) {
-      const two = s.kind === 'branch' || s.kind === 'wait_activity';
-      if (exit === 'else' && !two) continue;
-      if (exit === 'next' && s.kind === 'exit') continue;
 
-      const targetId = exit === 'else' ? s.else_step_id : s.next_step_id;
-      const from = outPort(s.id, exit);
+  for (const c of cards) {
+    if (!pos[c.id]) continue;
+    const two = hasTwoExits(c.kind);
+    for (const exit of ['next', 'else']) {
+      if (exit === 'else' && !two) continue;
+      if (exit === 'next' && c.kind === 'exit') continue;
+
+      const targetId = exit === 'else' ? c.else_step_id : c.next_step_id;
+      const a = outPort(c.id, exit);
       if (targetId && pos[targetId]) {
-        edges.push({ key: `${s.id}-${exit}`, kind: exit, from, to: inPort(targetId) });
+        edges.push({ key: `${c.id}-${exit}`, from: c.id, exit, tone: exit, a, b: inPort(targetId) });
       } else {
-        /* The stub. An exit leading nowhere ends the flow silently, and a blank
-           space where an arrow should be is exactly how that goes unnoticed. */
-        edges.push({ key: `${s.id}-${exit}-open`, kind: `${exit} open`, from, to: { x: from.x + 46, y: from.y } });
+        /* The stub, and the `+` that fixes it. An exit leading nowhere ends the
+           flow silently for every lead that reaches it; a blank space where an
+           arrow should be is exactly how that goes unnoticed. */
+        edges.push({
+          key: `${c.id}-${exit}-open`, from: c.id, exit, tone: exit, open: true,
+          a, b: { x: a.x + 46, y: a.y },
+        });
       }
     }
   }
 
-  return (
-    <div className="flow-wrap">
-      <div className="flow-tools">
-        <span className="tiny muted">
-          Drag a card to move it · drag a dot to connect · drop on empty space to add
-        </span>
-        <span className="row" style={{ gap: 6 }}>
-          {saving && <span className="tiny muted">Saving…</span>}
-          <button type="button" className="btn-sm" onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))}>−</button>
-          <button type="button" className="btn-sm" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}>{Math.round(zoom * 100)}%</button>
-          <button type="button" className="btn-sm" onClick={() => setZoom((z) => Math.min(1.5, +(z + 0.1).toFixed(2)))}>+</button>
-          <button type="button" className="btn-sm" onClick={tidy}>Tidy up</button>
-        </span>
-      </div>
+  /* -------------------------------------------------------------- render */
 
+  const clearSelection = () => onSelect({ cards: [], sticky: null, trigger: false });
+
+  return (
+    <div
+      className={`flow-surface ${panning ? 'is-panning' : ''} ${spacePan ? 'is-grabby' : ''}`}
+      ref={surface}
+      onWheel={onWheel}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        const onBackdrop = e.target === e.currentTarget || e.target.classList.contains('flow-plane');
+        if (!onBackdrop && !spacePan) return;
+        if (onBackdrop) clearSelection();
+        setEditingNote(null);
+        setPanning({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+      }}
+    >
       <div
-        className={`flow-surface ${panning ? 'is-panning' : ''}`}
-        ref={surface}
-        onPointerDown={(e) => {
-          if (e.button !== 0 || e.target !== e.currentTarget) return;
-          setMenu(null);
-          setPanning({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+        className="flow-plane"
+        style={{
+          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+          width: extent.w,
+          height: extent.h,
         }}
       >
-        <div
-          className="flow-plane"
-          style={{
-            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-            width: extent.w,
-            height: extent.h,
-          }}
-        >
-          <svg className="flow-edges" width={extent.w} height={extent.h}>
-            <defs>
-              <marker id="flow-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
-                <path d="M0,0 L9,4.5 L0,9 z" fill="currentColor" />
-              </marker>
-            </defs>
-            {edges.map((e) => (
-              <path
-                key={e.key}
-                className={`flow-edge is-${e.kind.split(' ')[0]}${e.kind.includes('open') ? ' is-open' : ''}`}
-                d={edgePath(e.from, e.to)}
-                markerEnd={e.kind.includes('open') ? undefined : 'url(#flow-arrow)'}
-              />
-            ))}
-            {edges.filter((e) => e.kind.startsWith('else')).map((e) => (
-              <text key={`${e.key}-l`} className="flow-edge-label" x={e.from.x + 8} y={e.from.y - 6}>otherwise</text>
-            ))}
-            {wire && (
-              <path className="flow-edge is-wiring" d={edgePath(
-                wire.from === START.id ? startPort() : outPort(wire.from, wire.exit),
-                wire.to,
+        {/* --------------------------------------------------- sticky notes */}
+        {/* Under everything. A note is context for the flow, and a note that can
+            cover a card is a note that hides the thing it is explaining. */}
+        {stickies.map((n) => {
+          const live = drag?.id === n.id ? drag.live : null;
+          const box = {
+            left: drag?.what === 'sticky' && live ? live.x : n.pos_x,
+            top: drag?.what === 'sticky' && live ? live.y : n.pos_y,
+            width: drag?.what === 'resizing' && live ? live.w : n.w,
+            height: drag?.what === 'resizing' && live ? live.h : n.h,
+          };
+          const mine = selected.sticky === n.id;
+
+          return (
+            <div
+              key={n.id}
+              className={`flow-note is-${n.tone} ${mine ? 'is-selected' : ''}`}
+              style={box}
+              onPointerDown={(e) => {
+                if (e.button !== 0 || spacePan || editingNote === n.id) return;
+                e.stopPropagation();
+                onSelect({ cards: [], sticky: n.id, trigger: false });
+                const at = toCanvas(e.clientX, e.clientY);
+                setDrag({
+                  what: 'sticky', id: n.id, dx: at.x - n.pos_x, dy: at.y - n.pos_y,
+                  starts: { pos_x: n.pos_x, pos_y: n.pos_y }, live: null,
+                });
+              }}
+              onDoubleClick={(e) => { e.stopPropagation(); setEditingNote(n.id); }}
+            >
+              {editingNote === n.id ? (
+                <textarea
+                  className="flow-note-edit"
+                  defaultValue={n.body}
+                  autoFocus
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onBlur={(e) => {
+                    setEditingNote(null);
+                    if (e.target.value !== n.body) ops.saveSticky(n.id, { body: e.target.value }, { body: n.body }, 'Edited a note');
+                  }}
+                />
+              ) : (
+                <div className="flow-note-body">{n.body || 'Double-click to write something'}</div>
               )}
-              />
-            )}
-          </svg>
 
-          {/* Where the flow begins. Drawn as its own marker rather than as a
-              badge on a card, because "which card is first" is a property of
-              the automation and can be moved to any of them. */}
-          <div
-            className="flow-start"
-            style={{ left: startPos.x, top: startPos.y, width: START.w, height: START.h }}
-            onPointerDown={(e) => startDrag(e, START.id)}
-          >
-            <span className="tiny">Starts</span>
-            <button
-              type="button"
-              className="flow-port"
-              title="Drag to the card that runs first"
-              onPointerDown={(e) => startWire(e, START.id, 'next')}
-            />
-          </div>
-
-          {steps.map((s) => {
-            const p = pos[s.id];
-            if (!p) return null;
-            const problems = problemsFor(s.id);
-            const two = s.kind === 'branch' || s.kind === 'wait_activity';
-            const waiting = data.report.waiting_at?.find((w) => w.id === s.id)?.n ?? 0;
-
-            return (
-              <div
-                key={s.id}
-                data-step={s.id}
-                className={`flow-node ${problems.length ? 'is-warn' : ''} ${drag?.id === s.id ? 'is-dragging' : ''}`}
-                style={{ left: p.x, top: p.y, width: NODE_W, height: NODE_H }}
-                onPointerDown={(e) => startDrag(e, s.id)}
-                onDoubleClick={() => onConfigure(s)}
-              >
-                <div className="flow-node-head">
-                  <Icon name={icon[s.kind] ?? 'help'} size={14} />
-                  <strong>{s.label || spec.step_kinds.find((k) => k.kind === s.kind)?.label || s.kind}</strong>
-                  {waiting > 0 && <span className="badge" title="Leads standing here">{waiting}</span>}
+              {mine && (
+                <div className="flow-note-tools" onPointerDown={(e) => e.stopPropagation()}>
+                  {TONES.map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      className={`flow-tone is-${t} ${n.tone === t ? 'is-on' : ''}`}
+                      title={`Colour: ${t}`}
+                      onClick={() => ops.saveSticky(n.id, { tone: t }, { tone: n.tone }, 'Recoloured a note')}
+                    />
+                  ))}
+                  <button type="button" className="flow-icon-btn" title="Delete this note" onClick={() => ops.removeSticky(n)}>
+                    <Icon name="delete" size={13} />
+                  </button>
                 </div>
-                <div className="tiny muted flow-node-sub">{describe(s)}</div>
+              )}
 
+              <button
+                type="button"
+                className="flow-note-grip"
+                title="Resize"
+                aria-label="Resize this note"
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  setDrag({
+                    what: 'resizing', id: n.id, origin: { x: n.pos_x, y: n.pos_y },
+                    starts: { w: n.w, h: n.h }, live: null,
+                  });
+                }}
+              />
+            </div>
+          );
+        })}
+
+        {/* --------------------------------------------------------- edges */}
+        <svg className="flow-edges" width={extent.w} height={extent.h}>
+          <defs>
+            <marker id="flow-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+              <path d="M0,0 L9,4.5 L0,9 z" fill="currentColor" />
+            </marker>
+          </defs>
+
+          {edges.map((e) => (
+            <path
+              key={e.key}
+              className={`flow-edge is-${e.tone}${e.open ? ' is-open' : ''}${hotEdge === e.key ? ' is-hot' : ''}`}
+              d={edgePath(e.a, e.b)}
+              markerEnd={e.open ? undefined : 'url(#flow-arrow)'}
+            />
+          ))}
+
+          {/* A fat invisible copy of each real edge. An arrow is two pixels wide
+              and nobody can hover two pixels; this is what the pointer actually
+              hits. */}
+          {edges.filter((e) => !e.open).map((e) => (
+            <path
+              key={`${e.key}-hit`}
+              className="flow-edge-hit"
+              d={edgePath(e.a, e.b)}
+              onPointerEnter={() => setHotEdge(e.key)}
+              onPointerLeave={() => setHotEdge((k) => (k === e.key ? null : k))}
+            />
+          ))}
+
+          {edges.filter((e) => e.exit === 'else' || (hasTwoExits(byId.get(e.from)?.kind) && e.exit === 'next')).map((e) => (
+            <text key={`${e.key}-w`} className="flow-edge-label" x={e.a.x + 9} y={e.a.y - 7}>
+              {exitWords(byId.get(e.from)?.kind)[e.exit]}
+            </text>
+          ))}
+
+          {wire && (
+            <path className="flow-edge is-wiring" d={edgePath(wire.origin, wire.to)} />
+          )}
+        </svg>
+
+        {/* What to do with a connection you are pointing at. HTML rather than
+            SVG so the buttons look like every other button in the product. */}
+        {edges.filter((e) => !e.open && hotEdge === e.key).map((e) => {
+          const mid = edgeMiddle(e.a, e.b);
+          return (
+            <div
+              key={`${e.key}-tools`}
+              className="flow-edge-tools"
+              style={{ left: mid.x, top: mid.y }}
+              onPointerEnter={() => setHotEdge(e.key)}
+              onPointerLeave={() => setHotEdge(null)}
+            >
+              <button
+                type="button"
+                title="Put a card in the middle of this"
+                onClick={() => onAsk({ from: e.from, exit: e.exit, at: { x: mid.x - NODE_W / 2, y: mid.y - NODE_H / 2 }, between: true })}
+              >
+                <Icon name="add" size={13} />
+              </button>
+              <button
+                type="button"
+                title="Unhook this connection"
+                onClick={() => { setHotEdge(null); ops.connect(e.from, e.exit, null); }}
+              >
+                <Icon name="close" size={13} />
+              </button>
+            </div>
+          );
+        })}
+
+        {/* ---------------------------------------------------- the trigger */}
+        <div
+          className={`flow-node is-trigger ${selected.trigger ? 'is-selected' : ''} ${data.problems.some((p) => p.field === 'trigger') ? 'is-warn' : ''}`}
+          style={{ left: triggerPos.x, top: triggerPos.y, width: NODE_W, height: NODE_H }}
+          onPointerDown={(e) => {
+            if (e.button !== 0 || spacePan) return;
+            e.stopPropagation();
+            onSelect({ cards: [], sticky: null, trigger: true });
+          }}
+          onDoubleClick={() => onOpen({ trigger: true })}
+        >
+          <div className="flow-tile">
+            <Icon name={TRIGGER_ICON[spec.triggers.find((t) => t.key === data.trigger_type)?.family] ?? 'bolt'} size={26} />
+          </div>
+          <button
+            type="button"
+            className="flow-port is-out"
+            style={{ top: '50%' }}
+            title="Drag to the card that runs first"
+            onPointerDown={(e) => startWire(e, TRIGGER_ID, 'next', triggerPort())}
+          />
+          <div className="flow-node-name">
+            <strong>{spec.triggers.find((t) => t.key === data.trigger_type)?.label ?? data.trigger_type}</strong>
+            <span className="flow-node-sub">what starts this</span>
+          </div>
+        </div>
+
+        {/* ------------------------------------------------------- the cards */}
+        {cards.map((c) => {
+          const p = pos[c.id];
+          if (!p) return null;
+          const problems = problemsFor(c.id);
+          const two = hasTwoExits(c.kind);
+          const waiting = data.report.waiting_at?.find((w) => w.id === c.id)?.n ?? 0;
+          const mine = selected.cards.includes(c.id);
+
+          return (
+            <div
+              key={c.id}
+              data-card={c.id}
+              className={[
+                'flow-node',
+                problems.length ? 'is-warn' : '',
+                c.disabled ? 'is-off' : '',
+                mine ? 'is-selected' : '',
+                drag?.ids?.includes(c.id) ? 'is-dragging' : '',
+              ].join(' ')}
+              style={{ left: p.x, top: p.y, width: NODE_W, height: NODE_H }}
+              onPointerDown={(e) => {
+                if (e.shiftKey) {
+                  e.stopPropagation();
+                  onSelect({
+                    cards: mine ? selected.cards.filter((i) => i !== c.id) : [...selected.cards, c.id],
+                    sticky: null,
+                    trigger: false,
+                  });
+                  return;
+                }
+                startCardDrag(e, c.id);
+              }}
+              onDoubleClick={() => onOpen(c)}
+            >
+              {/* The hover toolbar, n8n's. Hidden until you point at the card,
+                  because five icons on every card is a canvas of icons. */}
+              <div className="flow-node-tools" onPointerDown={(e) => e.stopPropagation()}>
+                <button type="button" title="Configure" onClick={() => onOpen(c)}>
+                  <Icon name="settings" size={13} />
+                </button>
+                <button type="button" title="Make a copy" onClick={() => ops.duplicate(c)}>
+                  <Icon name="content_copy" size={13} />
+                </button>
+                {!hasTwoExits(c.kind) && (
+                  <button
+                    type="button"
+                    className={c.disabled ? 'is-on' : ''}
+                    title={c.disabled ? 'Switch this card back on' : 'Switch this card off — leads walk past it'}
+                    onClick={() => ops.toggleOff(c)}
+                  >
+                    <Icon name="visibility_off" size={13} />
+                  </button>
+                )}
+                <button type="button" title="Delete this card" onClick={() => ops.remove(c)}>
+                  <Icon name="delete" size={13} />
+                </button>
+              </div>
+
+              <div className="flow-tile">
+                <Icon name={ICON[c.kind] ?? 'help'} size={26} />
+                {waiting > 0 && <span className="flow-waiting" title={`${waiting} leads are standing here`}>{waiting}</span>}
                 {problems.length > 0 && (
                   /* Wrapped rather than titled directly: Icon takes name, size,
                      fill, weight, style and className, so a title handed to it
@@ -471,57 +626,54 @@ export default function FlowCanvas({
                     <Icon name="warning" size={13} />
                   </span>
                 )}
-
-                <button
-                  type="button"
-                  className="flow-cog"
-                  title="Configure"
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={() => onConfigure(s)}
-                >
-                  <Icon name="settings" size={13} />
-                </button>
-
-                {s.kind !== 'exit' && (
-                  <button
-                    type="button"
-                    className="flow-port is-next"
-                    style={{ top: two ? '28%' : '50%' }}
-                    title={two ? 'When the condition is met' : 'What follows this'}
-                    onPointerDown={(e) => startWire(e, s.id, 'next')}
-                  />
-                )}
-                {two && (
-                  <button
-                    type="button"
-                    className="flow-port is-else"
-                    style={{ top: '72%' }}
-                    title="Otherwise"
-                    onPointerDown={(e) => startWire(e, s.id, 'else')}
-                  />
-                )}
               </div>
-            );
-          })}
 
-          {menu && (
-            <div className="flow-menu" style={{ left: menu.at.x, top: menu.at.y }}>
-              <div className="tiny muted">What goes here?</div>
-              {spec.step_kinds.map((k) => (
+              <span className="flow-port is-in" aria-hidden="true" />
+
+              {c.kind !== 'exit' && (
                 <button
-                  key={k.kind}
                   type="button"
-                  className="btn-sm"
-                  onClick={() => addAt(k.kind, menu.from, menu.exit, menu.at)}
-                >
-                  {k.label}
-                </button>
-              ))}
-              <button type="button" className="btn-sm" onClick={() => setMenu(null)}>Cancel</button>
+                  className="flow-port is-out"
+                  style={{ top: two ? '30%' : '50%' }}
+                  title={two ? exitWords(c.kind).next : 'What follows this'}
+                  onPointerDown={(e) => startWire(e, c.id, 'next', outPort(c.id, 'next'))}
+                />
+              )}
+              {two && (
+                <button
+                  type="button"
+                  className="flow-port is-out is-else"
+                  style={{ top: '70%' }}
+                  title={exitWords(c.kind).else}
+                  onPointerDown={(e) => startWire(e, c.id, 'else', outPort(c.id, 'else'))}
+                />
+              )}
+
+              <div className="flow-node-name">
+                <strong>{c.label || spec.step_kinds.find((k) => k.kind === c.kind)?.label || c.kind}</strong>
+                <span className="flow-node-sub">{c.disabled ? 'switched off' : describe(c, spec)}</span>
+              </div>
             </div>
-          )}
-        </div>
+          );
+        })}
+
+        {/* The `+` at the end of every exit that leads nowhere. Clicking asks
+            what goes there; dragging from it draws a wire, same as the dot. */}
+        {edges.filter((e) => e.open).map((e) => (
+          <button
+            key={`${e.key}-plus`}
+            type="button"
+            className={`flow-plus is-${e.tone}`}
+            style={{ left: e.b.x, top: e.b.y }}
+            title="Nothing follows this yet — click to add a card"
+            onPointerDown={(ev) => startWire(ev, e.from, e.exit, e.a)}
+          >
+            <Icon name="add" size={14} />
+          </button>
+        ))}
       </div>
     </div>
   );
-}
+});
+
+export default FlowCanvas;

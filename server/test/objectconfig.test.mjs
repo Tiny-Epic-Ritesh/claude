@@ -274,8 +274,25 @@ test('every settings screen has an address of its own', () => {
   const registry = readFileSync(new URL('../../client/src/setup/registry.js', import.meta.url), 'utf8').replace(CRLF, '\n');
   const shell = readFileSync(new URL('../../client/src/setup/SetupShell.jsx', import.meta.url), 'utf8').replace(CRLF, '\n');
 
-  assert(/path=\{key\}/.test(shell), 'sections are no longer routed by their own key');
+  /* The route's path has to come from the section's own key. It is no longer a
+     bare `path={key}`: Automations routes below itself, so its path is
+     `${key}/*`. Both are still the key, which is the property that matters --
+     what this guards against is a hand-written path, which is how a screen ends
+     up at an address the registry does not know about. */
+  const routePath = shell.match(/<Route key=\{key\} path=\{([\s\S]*?)\} element=/)?.[1];
+  assert(routePath, 'the section route is gone, or no longer generated in a loop');
+  assert(/(^|[^A-Za-z0-9_])key([^A-Za-z0-9_]|$)/.test(routePath),
+    `sections are routed by "${routePath}" rather than by their own key`);
+  assert(!/['"`][a-z-]+['"`]\s*[,)]?\s*$/.test(routePath.trim()), 'a section route is hard-coded');
   assert(/sectionsFor/.test(shell), 'the shell no longer builds its routes from the registry');
+
+  /* A section that owns its sub-paths must say so in the registry rather than
+     the shell, or the two lists drift and a deep screen becomes unreachable. */
+  const deep = [...registry.matchAll(/^\s{4}deep: true,$/gm)];
+  if (deep.length) {
+    assert(/deepKeys/.test(shell), 'the registry declares a deep section but the shell does not read it');
+    assert(/\$\{key\}\/\*/.test(shell), 'a deep section has no route that can match below itself');
+  }
 
   const keys = [...registry.matchAll(/^\s{4}key: '([a-z_]+)',$/gm)].map((m) => m[1]);
   assert.equal(new Set(keys).size, keys.length, 'two sections share a key, so one is unreachable');

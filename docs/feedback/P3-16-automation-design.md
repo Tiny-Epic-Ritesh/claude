@@ -279,35 +279,73 @@ actually happens.
 | Split test | §7 recommended against it without a population or a success metric. |
 | Zoom | A connector; belongs to P3-20. |
 
-### The canvas
+### The canvas, rebuilt against n8n
 
-Built after the rest, and the order mattered: the drawing and the thing that
-runs are the same object, so it could only be drawn once there was something to
-draw. Every edge on the canvas is a `next_step_id` or an `else_step_id` — there
-is no separate diagram to fall out of date.
+Ritesh asked on 10 September for the builder to take its reference from n8n —
+"the way it should look and the way it should function" — so it was measured
+against n8n's own editor rather than remembered, and each borrowed idea was kept
+only where it earns its place in a flow that messages clients.
 
-What it does:
+**What was taken, and why each one earns its place**
 
-- **Drag a card** to move it. The first drag on a flow built before the canvas
-  existed saves every card at once, so a flow is wholly computed or wholly
-  stored and never a mix where a moved card lands on a placed one.
-- **Drag a port** onto another card to wire it. Dropping on empty space asks
-  what should go there and creates it already connected — otherwise the gesture
-  takes three steps and the canvas is the list with a drawing on top.
-- **Drag the start marker** onto a card to make it the first step.
-- **Tidy up** re-lays the flow from the graph: depth becomes the column,
-  arrival order the row, and anything unreachable goes in a column of its own
-  rather than on top of the flow where it would look connected.
+| From n8n | Why |
+|---|---|
+| A square tile holding only the icon, with the name and what it does written *below* it | A wide card ellipsises the very text you were reading. At a glance you want the shape of the flow; when you want the wording it is full-width text under the tile. |
+| A `+` at the end of every exit that leads nowhere | The old canvas drew a dashed stub, which *reported* the problem. The `+` reports it and repairs it in one gesture — the difference between a diagram and a builder. |
+| Hovering a connection offers **unhook** and **drop a card in the middle** | There was previously no way at all to unwire two cards on the canvas. You had to open a card and use a select, which made the drawing a one-way surface. |
+| A searchable node panel, with the operation chosen *before* the card lands | The vocabulary is 5 card kinds × 19 actions. It used to be a row of five buttons, one of which put a blank "Do something" card down that you then opened to choose from a grouped select — so 23 of the 24 things were one level down and unsearchable. Now "text message" finds Send SMS and the card arrives already knowing what it does. |
+| The trigger is the first card on the canvas | `trigger_config` had **no editor at all** — the fields a "lead is updated" trigger watches and the interval of a scheduled one could only be set by the rule converter. A flow built by hand on either could not be finished on the screen that built it. |
+| A hover toolbar on each card | Configure · duplicate · switch off · delete. Five icons on every card at rest is a canvas made of icons. |
+| Cards snap to a 20px grid | It is the reason an n8n workflow somebody dragged into shape still looks deliberate a month later. |
+| A card can be **switched off** | It stays on the canvas with its configuration intact and leads walk straight past it. Without this, "take it out and see" means deleting the card and retyping it afterwards — so people don't, and it keeps sending. Refused for If/Else and Wait-for-activity: skipping a two-armed card would mean choosing one of its arms silently. |
+| **Sticky notes** | n8n's most-used documentation feature. For a SEBI-regulated firm, "which arm is the compliance one and who signed it off" living beside the flow is worth having at audit. Four colours from the semantic scale, a 40-note ceiling, no mentions and no threading — a note that can hold a conversation is one nobody reads afterwards. |
+| The full keyboard set | `Enter` open · `F2` rename · `D` switch off · `Delete` · `Ctrl+A/C/V/D` · arrows to walk the flow · `+ − 0` zoom · `1` zoom-to-fit · `Space`+drag or `Ctrl`+drag to pan · `Ctrl`+wheel to zoom · `N`/`Tab` node panel · `Shift+S` note · `Ctrl+Z` / `Ctrl+Shift+Z`. |
+| **`Ctrl+K` command bar** | Doubles as the shortcut sheet: every command shows the key that runs it, so the way to learn the keyboard is the thing you reach for when you have forgotten it. |
 
-**An exit that leads nowhere is drawn, not left blank.** It renders as a dashed
-stub with an open end. An unconnected exit ends the flow silently for every lead
-that reaches it, and a blank space where an arrow should be is exactly how that
-goes unnoticed — which is the whole argument for drawing a flow at all.
+**What was adapted rather than copied.** n8n shows per-node *execution data* — the
+input and output panes either side of a node's parameters are the point of its
+full-screen node view. There is no per-card sample data in a CRM builder, so a
+full-screen view would be a form with the flow hidden behind it, and the question
+somebody is answering while configuring a card is nearly always about its
+neighbours. Configuration is a **right-hand drawer** with the flow still visible.
+The badge on a tile says **how many leads are standing on it**, which is the
+CRM's version of the same reassurance.
 
-**Dragging is not reachable by keyboard**, so the List view sits beside the
-canvas rather than under it. It does everything the canvas does, wiring
-included, and the choice is remembered. The canvas is for seeing; the list is
-for certainty.
+**What was rejected.** The expression language (`{{ $json.x }}`), the Code node,
+per-node credentials, the error-output branch, data pinning and the AI agent
+nodes. None of them has a CRM meaning, and an expression language in the path
+that sends WhatsApp to a client is a way to send something nobody reviewed.
+
+**The builder is a page now, not a dialog.** `/setup/automations/:id`. A flow of
+fifteen cards does not fit in 1,180 pixels, and the one screen in the product
+that genuinely needs the window was the one boxed into a modal. Still inside the
+Setup shell — non-negotiable #6 is uniform configuration surfaces, and this is a
+settings screen.
+
+**Undo is the inverse request, not an older copy.** n8n edits a workflow in
+memory and saves it whole on `Ctrl+S`; this builder writes every gesture as it
+happens, which is the right trade for a screen people leave open all day. So
+undo re-sends the opposite: the previous positions, the previous exit, a delete
+of the card just added.
+
+> **Deleting a card is deliberately not undoable.** A step id appears in
+> `automation_run_step` for every lead that has ever walked through it, so a card
+> can only be *re-created*, with a new id — leaving the run history pointing at
+> something gone while an identical-looking card sits on the canvas. Deleting
+> asks first, and offers to switch the card off instead, which is reversible and
+> is usually what was meant.
+
+**A flow is arranged or it isn't.** Found by using it: an automation built before
+the canvas existed has no stored positions; adding one card gave *that* card a
+real one, and the old rule sent every other card to a stack off the right-hand
+edge. Six of eight cards vanished from the screen. The rule that removes the
+state rather than handling it — if any card is unplaced the whole flow is laid
+out from the graph, and saved once — is what ships.
+
+**Dragging is still not reachable from a keyboard**, and pretending otherwise
+would be worse than saying so. Everything else is: selecting, opening, deleting,
+switching off, walking the flow with the arrow keys, and wiring through the
+drawer's own selects.
 
 ### A6, answered — "a user ends their workday"
 

@@ -276,6 +276,34 @@ CREATE TABLE IF NOT EXISTS automation_watermark (
   checked_at   TEXT
 );
 
+/* Notes pinned to the canvas, beside the flow rather than inside it.
+ *
+ * Not a description field on the automation: a description says what the whole
+ * thing is for, and what people need written down is why *this* corner of it
+ * looks the way it does -- which arm of the branch is the compliance one, which
+ * wait was agreed with the desk and when. That is positional information, so it
+ * is stored positionally.
+ *
+ * Deliberately dumb. No mentions, no threading, no notifications. A note that
+ * can do those things is a conversation, and a conversation on a canvas is one
+ * nobody reads afterwards.
+ */
+CREATE TABLE IF NOT EXISTS automation_sticky (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  automation_id INTEGER NOT NULL REFERENCES automation(id) ON DELETE CASCADE,
+  body          TEXT NOT NULL DEFAULT '',
+  pos_x         INTEGER NOT NULL DEFAULT 0,
+  pos_y         INTEGER NOT NULL DEFAULT 0,
+  w             INTEGER NOT NULL DEFAULT 260,
+  h             INTEGER NOT NULL DEFAULT 170,
+  -- One of a small fixed set, resolved to a colour by the client. A free-form
+  -- colour here would put a hex value nobody can read into an audit export.
+  tone          TEXT NOT NULL DEFAULT 'sand',
+  created_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_automation_sticky ON automation_sticky(automation_id);
+
 CREATE TABLE IF NOT EXISTS automation_run_step (
   id       INTEGER PRIMARY KEY AUTOINCREMENT,
   run_id   INTEGER NOT NULL REFERENCES automation_run(id) ON DELETE CASCADE,
@@ -1512,6 +1540,10 @@ const COLUMNS = [
   // lays those out from the graph rather than stacking them at the origin.
   ['automation_step', 'pos_x', 'INTEGER'],
   ['automation_step', 'pos_y', 'INTEGER'],
+  // Switched off: the card stays on the canvas, keeps its configuration, and
+  // leads walk past it. The alternative people actually use is deleting the
+  // card, which loses the configuration -- so they don't, and it keeps sending.
+  ['automation_step', 'disabled', 'INTEGER NOT NULL DEFAULT 0'],
   ['leads', 'starred', 'INTEGER NOT NULL DEFAULT 0'],  // flagged for attention
   ['leads', 'starred_at', 'TEXT'],
   ['leads', 'first_response_at', 'TEXT'],          // speed-to-first-contact

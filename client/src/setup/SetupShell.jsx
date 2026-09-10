@@ -265,6 +265,10 @@ export default function SetupShell({ session, orgs = [], activeOrg, onSwitchOrg,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.key]);
 
+  /* Which sections route below themselves. Derived from the same list the
+     routes are, so the two cannot disagree. */
+  const deepKeys = new Set(available.filter((s) => s.deep).map((s) => s.key));
+
   const togglePin = (key) => set('pins', pins.includes(key) ? pins.filter((k) => k !== key) : [...pins, key]);
   const toggleGroup = (key) => set('collapsed', collapsed.includes(key) ? collapsed.filter((k) => k !== key) : [...collapsed, key]);
 
@@ -415,8 +419,12 @@ export default function SetupShell({ session, orgs = [], activeOrg, onSwitchOrg,
               <Routes>
                 <Route path="/setup">
                   <Route index element={<SetupHome session={session} />} />
+                  {/* `deep` sections own everything under their own path and
+                      do their own routing inside; the rest match one level, so
+                      a mistyped URL still falls through to Home below rather
+                      than rendering a screen with nothing on it. */}
                   {available.map(({ key, Component }) => (
-                    <Route key={key} path={key} element={<Component session={session} />} />
+                    <Route key={key} path={deepKeys.has(key) ? `${key}/*` : key} element={<Component session={session} />} />
                   ))}
                   {/* A settings screen this role cannot open is not a 404 — it
                       exists, they may not see it. Home says so rather than the

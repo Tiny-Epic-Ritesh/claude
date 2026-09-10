@@ -6503,142 +6503,510 @@ tr.row-inactive .user-cell strong { color: var(--ink-3); }
 
 /* ============================================================== flow canvas
  *
- * The automation builder's drawing surface (P3-16).
+ * The automation builder (P3-16), rebuilt against n8n.
  *
  * Everything positional is inline on the elements — the canvas computes where a
  * card sits and the edge maths has to agree with it to the pixel, so a
- * stylesheet cannot be a second opinion about that. What lives here is only
- * what the canvas does not calculate: colour, weight, shadow, and the shape of
- * a port.
+ * stylesheet cannot be a second opinion about that. What lives here is colour,
+ * weight, shadow, and the shape of a port.
+ *
+ * Every colour is a token, so dark mode follows without a second definition.
+ * The four note tones reuse the semantic scale rather than inventing four more
+ * colours: a note is sand, sky, moss or rose, which are warn, info, ok and
+ * danger wearing friendlier names — and those already work on both grounds.
  */
 
-.flow-wrap { display: flex; flex-direction: column; gap: 6px; }
+/* ------------------------------------------------------------- the page */
+
+.flow-page {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* The canvas is the point of this screen, so it takes the height that is
+     left rather than the height its contents happen to want. */
+  height: calc(100vh - var(--topbar-h) - 96px);
+  min-height: 460px;
+}
+
+.flow-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.flow-head-name { display: flex; flex-direction: column; margin-right: auto; }
+.flow-head-name strong { font-size: 16px; }
+
+.flow-notice { margin: 0; }
 
 .flow-tools {
   display: flex; align-items: center; justify-content: space-between;
   gap: 8px; flex-wrap: wrap;
 }
 
+.flow-legend { margin: 0; }
+.flow-legend kbd, .flow-cmd-keys kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  border: 1px solid var(--hairline);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--ground-2);
+  font: 500 10px/1.5 var(--sans);
+  color: var(--ink-2);
+}
+
+/* The stage holds the canvas and anything that slides over it. Positioned, so
+   the panel and the drawer can sit against its edges rather than the page's. */
+.flow-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* ---------------------------------------------------------- the surface */
+
 .flow-surface {
   position: relative;
-  overflow: auto;
-  height: min(56vh, 520px);
+  flex: 1;
+  overflow: hidden;              /* panning moves the plane, not a scrollbar */
   border: 1px solid var(--hairline);
   border-radius: var(--r-sm);
-  /* The grid is what makes a drag read as movement rather than a jump; without
-     it a card slides against a flat field and the eye has nothing to measure
-     against. */
+  /* The dot grid is what makes a drag read as movement rather than a jump;
+     without it a card slides against a flat field and the eye has nothing to
+     measure against. */
   background-color: var(--ground-2);
   background-image:
     radial-gradient(circle at 1px 1px, var(--hairline) 1px, transparent 0);
-  background-size: 18px 18px;
-  cursor: grab;
+  background-size: 20px 20px;
+  cursor: default;
   touch-action: none;
 }
+.flow-surface.is-grabby { cursor: grab; }
 .flow-surface.is-panning { cursor: grabbing; }
 
-.flow-plane { position: relative; transform-origin: 0 0; }
+.flow-plane { position: absolute; inset: 0; transform-origin: 0 0; }
+
+/* ---------------------------------------------------------------- edges */
 
 .flow-edges { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
 
 .flow-edge {
   fill: none;
   stroke-width: 1.75;
-  color: var(--ink-4);          /* the arrow marker reads currentColor */
+  color: var(--ink-4);           /* the arrow marker reads currentColor */
   stroke: var(--ink-4);
+  transition: stroke 90ms ease, stroke-width 90ms ease;
 }
 .flow-edge.is-else { stroke: var(--warn); color: var(--warn); stroke-dasharray: 5 4; }
-.flow-edge.is-flow-start { stroke: var(--accent-dark); color: var(--accent-dark); }
+.flow-edge.is-trigger { stroke: var(--accent-dark); color: var(--accent-dark); }
+.flow-edge.is-hot { stroke: var(--accent); color: var(--accent); stroke-width: 2.5; }
 
 /* An exit leading nowhere. Drawn, and drawn as unfinished — a blank space where
    an arrow should be is how a flow that ends silently goes unnoticed. */
-.flow-edge.is-open { stroke-dasharray: 3 4; opacity: 0.75; }
+.flow-edge.is-open { stroke-dasharray: 3 4; opacity: 0.7; }
 
 .flow-edge.is-wiring { stroke: var(--accent); color: var(--accent); stroke-dasharray: 4 3; }
 
+/* An arrow is two pixels wide and nobody can hover two pixels. */
+.flow-edge-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 18;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
 .flow-edge-label {
-  fill: var(--warn); font-size: 10px; font-family: var(--sans);
+  fill: var(--ink-3); font-size: 10px; font-family: var(--sans);
   pointer-events: none; user-select: none;
 }
 
+.flow-edge-tools {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex; gap: 2px; padding: 2px;
+  background: var(--popover-solid);
+  border: 1px solid var(--popover-border);
+  border-radius: var(--r-pill);
+  box-shadow: var(--lift-2);
+  z-index: 5;
+}
+.flow-edge-tools button {
+  display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0;
+  border: 0; border-radius: var(--r-pill);
+  background: transparent; color: var(--ink-3); cursor: pointer;
+}
+.flow-edge-tools button:hover { background: var(--ground-2); color: var(--ink); }
+
+/* ---------------------------------------------------------- the cards */
+
+/* n8n's shape: a square tile holding the icon, with the name written below it
+   rather than squeezed inside. The tile is the hit box and the card's declared
+   height; the name hangs under it and is deliberately not clickable, so text
+   that runs to two lines never changes where the ports are. */
 .flow-node {
   position: absolute;
-  display: flex; flex-direction: column; gap: 2px; justify-content: center;
-  padding: 8px 10px;
-  background: var(--popover);
-  border: 1px solid var(--popover-border);
-  border-radius: var(--r-xs);
-  box-shadow: var(--lift-1);
   cursor: grab;
   user-select: none;
   touch-action: none;
 }
-.flow-node.is-dragging { box-shadow: var(--lift-3); cursor: grabbing; z-index: 3; }
-.flow-node.is-warn { border-color: var(--warn); background: var(--warn-soft); }
+.flow-node.is-dragging { cursor: grabbing; z-index: 4; }
 
-.flow-node-head { display: flex; align-items: center; gap: 5px; overflow: hidden; }
-.flow-node-head strong {
-  font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.flow-node-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-.flow-node-warn { position: absolute; right: 8px; bottom: 6px; color: var(--warn); display: flex; }
-
-.flow-cog {
-  position: absolute; top: 5px; right: 5px;
+.flow-tile {
+  position: relative;
+  width: 100%; height: 100%;
   display: flex; align-items: center; justify-content: center;
-  width: 20px; height: 20px; padding: 0;
+  background: var(--popover);
+  border: 1.5px solid var(--popover-border);
+  border-radius: var(--r-sm);
+  box-shadow: var(--lift-1);
+  color: var(--ink-2);
+  transition: border-color 90ms ease, box-shadow 90ms ease;
+}
+.flow-node:hover .flow-tile { box-shadow: var(--lift-2); }
+.flow-node.is-selected .flow-tile {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft), var(--lift-2);
+}
+.flow-node.is-warn .flow-tile { border-color: var(--warn); background: var(--warn-soft); }
+.flow-node.is-off .flow-tile { opacity: 0.5; border-style: dashed; box-shadow: none; }
+
+/* The trigger is a different shape, not a differently-coloured card. n8n rounds
+   one side of its trigger nodes and it works because shape survives being
+   glanced at, squinted at and printed in black and white. */
+.flow-node.is-trigger .flow-tile {
+  border-radius: var(--r-xl) var(--r-sm) var(--r-sm) var(--r-xl);
+  border-color: var(--accent-dark);
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+}
+
+.flow-node-name {
+  position: absolute;
+  top: 100%; left: 50%;
+  width: 168px;
+  transform: translateX(-50%);
+  padding-top: 7px;
+  text-align: center;
+  pointer-events: none;
+}
+.flow-node-name strong {
+  display: block;
+  font-size: 12.5px; line-height: 1.25; color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.flow-node.is-off .flow-node-name strong { text-decoration: line-through; color: var(--ink-3); }
+.flow-node-sub {
+  display: block;
+  margin-top: 1px;
+  font-size: 11px; line-height: 1.3; color: var(--ink-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* How many leads are standing on this card. The CRM's answer to n8n's execution
+   counts, and the number somebody actually needs when something has gone wrong.
+   Positioned outside the tile so it never covers the icon. */
+.flow-waiting {
+  position: absolute; top: -8px; right: -8px;
+  min-width: 20px; padding: 1px 5px;
+  border-radius: var(--r-pill);
+  background: var(--info); color: #fff;
+  font: 600 10px/1.6 var(--sans); text-align: center;
+}
+.flow-node-warn {
+  position: absolute; bottom: -6px; right: -6px;
+  display: flex; padding: 2px;
+  border-radius: var(--r-pill);
+  background: var(--popover-solid); color: var(--warn);
+  box-shadow: var(--lift-1);
+}
+
+/* The hover toolbar, above the tile. Hidden until pointed at, because five
+   icons on every card is a canvas made of icons. */
+.flow-node-tools {
+  position: absolute;
+  bottom: calc(100% + 6px); left: 50%;
+  transform: translateX(-50%);
+  display: none; gap: 2px; padding: 2px;
+  background: var(--popover-solid);
+  border: 1px solid var(--popover-border);
+  border-radius: var(--r-pill);
+  box-shadow: var(--lift-2);
+  z-index: 6;
+}
+.flow-node:hover .flow-node-tools,
+.flow-node.is-selected .flow-node-tools { display: flex; }
+.flow-node-tools button {
+  display: flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; padding: 0;
   border: 0; border-radius: var(--r-pill);
   background: transparent; color: var(--ink-3); cursor: pointer;
 }
-.flow-cog:hover { background: var(--ground-2); color: var(--ink); }
+.flow-node-tools button:hover { background: var(--ground-2); color: var(--ink); }
+.flow-node-tools button.is-on { color: var(--accent-dark); background: var(--accent-soft); }
 
-/* The dot you drag an arrow out of. Sized for a finger rather than a pixel:
-   a 6px target is a gesture people miss and then blame themselves for. */
+/* ---------------------------------------------------------------- ports */
+
+/* n8n's asymmetry, and it earns its keep: a bar means "things arrive here" and
+   a dot means "things leave here", so which end of a card you are looking at is
+   readable without following the arrow. */
 .flow-port {
   position: absolute;
-  width: 13px; height: 13px; padding: 0;
+  padding: 0;
+  border: 0;
+  cursor: crosshair;
+}
+.flow-port.is-in {
+  left: -3px; top: 50%;
+  width: 5px; height: 18px;
+  transform: translateY(-50%);
+  border-radius: 3px;
+  background: var(--ink-4);
+  cursor: default;
+}
+.flow-port.is-out {
+  right: -7px;
+  width: 13px; height: 13px;
+  transform: translate(50%, -50%);
   border: 2px solid var(--popover);
   border-radius: var(--r-pill);
   background: var(--ink-4);
-  cursor: crosshair;
-  transform: translate(50%, -50%);
-  right: -7px;
 }
-.flow-port:hover { background: var(--accent); transform: translate(50%, -50%) scale(1.25); }
-.flow-port.is-else { background: var(--warn); }
+.flow-port.is-out:hover { background: var(--accent); transform: translate(50%, -50%) scale(1.25); }
+.flow-port.is-out.is-else { background: var(--warn); }
+.flow-node.is-trigger .flow-port.is-out { background: var(--accent-dark); }
 
-.flow-start {
+/* The `+` at the end of a stub. The old canvas drew the stub and stopped, which
+   reported the problem; this repairs it in the same gesture. */
+.flow-plus {
   position: absolute;
+  transform: translate(-50%, -50%);
   display: flex; align-items: center; justify-content: center;
-  border: 1px dashed var(--accent-dark);
-  border-radius: var(--r-pill);
-  background: var(--accent-soft);
-  color: var(--accent-ink);
-  cursor: grab; user-select: none; touch-action: none;
+  width: 22px; height: 22px; padding: 0;
+  border: 1.5px dashed var(--ink-4);
+  border-radius: 6px;
+  background: var(--popover-solid);
+  color: var(--ink-3);
+  cursor: pointer;
+  z-index: 3;
 }
-.flow-start .flow-port { background: var(--accent-dark); right: -7px; top: 50%; }
+.flow-plus:hover { border-color: var(--accent); color: var(--accent-dark); border-style: solid; }
+.flow-plus.is-else { border-color: var(--warn); color: var(--warn); }
+.flow-plus.is-trigger { border-color: var(--accent-dark); color: var(--accent-dark); }
 
-.flow-menu {
+/* ---------------------------------------------------------- sticky notes */
+
+/* Under the cards, always. A note is context for the flow, and one that can
+   cover a card hides the thing it is explaining. */
+.flow-note {
   position: absolute;
-  display: flex; flex-direction: column; gap: 4px; align-items: stretch;
-  padding: 8px;
+  z-index: 1;
+  padding: 10px 11px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-xs);
+  box-shadow: var(--lift-1);
+  cursor: grab;
+  overflow: hidden;
+}
+.flow-note.is-selected { box-shadow: 0 0 0 2px var(--accent-soft), var(--lift-2); }
+.flow-note.is-sand { background: var(--warn-soft); border-color: var(--warn); }
+.flow-note.is-sky { background: var(--info-soft); border-color: var(--info); }
+.flow-note.is-moss { background: var(--ok-soft); border-color: var(--ok); }
+.flow-note.is-rose { background: var(--danger-soft); border-color: var(--danger); }
+
+.flow-note-body {
+  font-size: 12px; line-height: 1.5; color: var(--ink-2);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.flow-note-edit {
+  width: 100%; height: 100%;
+  border: 0; background: transparent; resize: none;
+  font: 12px/1.5 var(--sans); color: var(--ink);
+}
+.flow-note-edit:focus { outline: none; }
+
+.flow-note-tools {
+  position: absolute; top: 4px; right: 4px;
+  display: flex; align-items: center; gap: 3px;
+  padding: 2px 3px;
   background: var(--popover-solid);
   border: 1px solid var(--popover-border);
-  border-radius: var(--r-xs);
-  box-shadow: var(--lift-2);
-  z-index: 4;
+  border-radius: var(--r-pill);
+  box-shadow: var(--lift-1);
+}
+.flow-tone {
+  width: 12px; height: 12px; padding: 0;
+  border: 1px solid var(--hairline); border-radius: var(--r-pill);
+  cursor: pointer;
+}
+.flow-tone.is-on { box-shadow: 0 0 0 2px var(--accent); }
+.flow-tone.is-sand { background: var(--warn); }
+.flow-tone.is-sky { background: var(--info); }
+.flow-tone.is-moss { background: var(--ok); }
+.flow-tone.is-rose { background: var(--danger); }
+
+.flow-note-grip {
+  position: absolute; right: 0; bottom: 0;
+  width: 14px; height: 14px; padding: 0;
+  border: 0; background: transparent;
+  cursor: nwse-resize;
+}
+.flow-note-grip::after {
+  content: '';
+  position: absolute; right: 3px; bottom: 3px;
+  width: 7px; height: 7px;
+  border-right: 2px solid var(--ink-4);
+  border-bottom: 2px solid var(--ink-4);
 }
 
-.modal-xl { width: min(1180px, 100%); }
+/* --------------------------------------------------------- shared button */
 
-@media (max-width: 640px) {
-  .modal-xl { width: 100%; border-radius: 0; min-height: 100%; }
-  /* A drag surface inside a phone-width modal is a scroll trap. The builder
-     offers the list view, which is the same operations without the gesture. */
-  .flow-surface { height: 320px; }
+.flow-icon-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0;
+  border: 0; border-radius: var(--r-pill);
+  background: transparent; color: var(--ink-3); cursor: pointer;
+}
+.flow-icon-btn:hover { background: var(--ground-2); color: var(--ink); }
+
+/* ------------------------------------------------------- the node panel */
+
+.flow-panel,
+.flow-drawer {
+  position: absolute; top: 0; right: 0; bottom: 0;
+  display: flex; flex-direction: column;
+  background: var(--popover-solid);
+  border: 1px solid var(--popover-border);
+  border-radius: var(--r-sm);
+  box-shadow: var(--lift-3);
+  z-index: 8;
+}
+.flow-panel { width: min(340px, 92%); }
+.flow-drawer { width: min(430px, 96%); }
+
+.flow-panel-head,
+.flow-drawer-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
+  padding: 12px 12px 10px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.flow-panel-search {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--ink-3);
+}
+.flow-panel-search input {
+  flex: 1; border: 0; background: transparent; padding: 2px 0;
+  font: 13px var(--sans); color: var(--ink);
+}
+.flow-panel-search input:focus { outline: none; }
+
+.flow-panel-list { flex: 1; overflow-y: auto; padding: 6px 0; }
+.flow-panel-group + .flow-panel-group { margin-top: 4px; }
+.flow-panel-group-name {
+  padding: 6px 14px 3px;
+  font: 600 10px/1.4 var(--sans);
+  letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--ink-4);
+}
+.flow-panel-item {
+  display: flex; align-items: flex-start; gap: 9px;
+  width: 100%; padding: 7px 14px;
+  border: 0; background: transparent;
+  text-align: left; cursor: pointer;
+  color: var(--ink-3);
+}
+.flow-panel-item strong { display: block; font-size: 13px; color: var(--ink); font-weight: 500; }
+.flow-panel-hint { display: block; font-size: 11px; color: var(--ink-3); }
+.flow-panel-item.is-active { background: var(--accent-soft); }
+.flow-panel-item.is-active strong { color: var(--accent-ink); }
+
+.flow-panel-foot {
+  padding: 8px 14px 10px;
+  border-top: 1px solid var(--hairline);
+  margin: 0;
+}
+
+/* ----------------------------------------------------------- the drawer */
+
+.flow-drawer-body { flex: 1; overflow-y: auto; padding: 12px 14px; }
+.flow-drawer-foot {
+  display: flex; justify-content: flex-end; gap: 6px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--hairline);
+}
+
+.flow-checklist {
+  max-height: 190px; overflow-y: auto;
+  padding: 6px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-xs);
+  background: var(--ground-2);
+}
+.flow-check {
+  display: flex; align-items: center; gap: 7px;
+  padding: 2px 0;
+  font-size: 12.5px; color: var(--ink-2);
+  cursor: pointer;
+}
+.flow-check input { margin: 0; }
+
+/* ------------------------------------------------------ the command bar */
+
+.flow-cmd-backdrop {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 14vh;
+  background: rgba(10, 14, 20, 0.34);
+  backdrop-filter: blur(2px);
+}
+.flow-cmd {
+  width: min(520px, 92vw);
+  display: flex; flex-direction: column;
+  max-height: 60vh;
+  background: var(--popover-solid);
+  border: 1px solid var(--popover-border);
+  border-radius: var(--r-sm);
+  box-shadow: var(--lift-3);
+  overflow: hidden;
+}
+.flow-cmd-search {
+  display: flex; align-items: center; gap: 9px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--ink-3);
+}
+.flow-cmd-search input {
+  flex: 1; border: 0; background: transparent;
+  font: 14px var(--sans); color: var(--ink);
+}
+.flow-cmd-search input:focus { outline: none; }
+.flow-cmd-list { overflow-y: auto; padding: 5px 0; }
+.flow-cmd-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  width: 100%; padding: 8px 14px;
+  border: 0; background: transparent;
+  font-size: 13px; color: var(--ink); text-align: left; cursor: pointer;
+}
+.flow-cmd-item.is-active { background: var(--accent-soft); }
+.flow-cmd-keys { display: flex; gap: 3px; }
+
+/* ------------------------------------------------------------ narrow */
+
+@media (max-width: 860px) {
+  /* A drag surface at phone width is a scroll trap, and the panels would cover
+     the canvas they are meant to sit beside. The screen still works — every
+     wiring change is a select in the drawer — it is just not a place to draw. */
+  .flow-page { height: auto; }
+  .flow-surface { height: 60vh; }
+  .flow-panel, .flow-drawer { width: 100%; }
+  .flow-node-name { width: 120px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .flow-port:hover { transform: translate(50%, -50%); }
+  .flow-edge { transition: none; }
+  .flow-tile { transition: none; }
+  .flow-port.is-out:hover { transform: translate(50%, -50%); }
 }

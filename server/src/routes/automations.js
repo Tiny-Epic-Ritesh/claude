@@ -173,6 +173,7 @@ router.get('/:id', requirePermission('admin.rules'), (req, res) => {
   return res.json({
     ...auto,
     steps: all('SELECT * FROM automation_step WHERE automation_id = ? ORDER BY sort_order, id', [auto.id]),
+    stickies: all('SELECT * FROM automation_sticky WHERE automation_id = ? ORDER BY id', [auto.id]),
     problems: validate(auto.id),
     report: report(auto.id),
   });
@@ -358,11 +359,58 @@ router.patch('/:id/steps/:stepId', requirePermission('admin.rules'), (req, res) 
     sets.push(`${column} = ?`);
     params.push(value ?? null);
   }
+  if (req.body.disabled !== undefined) {
+    /* A card with two exits cannot be switched off.
+     *
+     * Walking past an If/Else means picking one of its arms, and there is no
+     * answer to which -- the whole point of the card is that the answer depends
+     * on the lead. n8n allows it and quietly takes the first output; here that
+     * would be a message sent down the compliance arm because somebody was
+     * testing something. Refused, with the reason on the screen. */
+    const exits = STEP_KINDS.find((k) => k.kind === step.kind)?.exits ?? [];
+    if (req.body.disabled && exits.length > 1) {
+      return res.status(400).json({
+        error: 'A card with two exits cannot be switched off — skipping it would have to choose one of them',
+        field: 'disabled',
+      });
+    }
+    sets.push('disabled = ?');
+    params.push(req.body.disabled ? 1 : 0);
+  }
+
   if (!sets.length) return res.json(step);
 
   params.push(step.id);
   run(`UPDATE automation_step SET ${sets.join(', ')} WHERE id = ?`, params);
   return res.json(one('SELECT * FROM automation_step WHERE id = ?', [step.id]));
+});
+
+/**
+ * A copy of a card, beside it and wired to nothing.
+ *
+ * Deliberately not inserted into the chain. A duplicate is made to be changed,
+ * and a copy that silently starts receiving leads before it has been changed is
+ * the same message sent twice.
+ */
+router.post('/:id/steps/:stepId/duplicate', requirePermission('admin.rules'), (req, res) => {
+  const auto = reachable(req, res, req.params.id);
+  if (!auto) return undefined;
+
+  const step = one('SELECT * FROM automation_step WHERE id = ? AND automation_id = ?', [req.params.stepId, auto.id]);
+  if (!step) return res.status(404).json({ error: 'No such step on this automation' });
+
+  const order = one('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM automation_step WHERE automation_id = ?', [auto.id]).n;
+  const info = run(
+    `INSERT INTO automation_step (automation_id, kind, config, label, sort_order, pos_x, pos_y, disabled)
+     VALUES (?,?,?,?,?,?,?,?)`,
+    [
+      auto.id, step.kind, step.config, step.label ? `${step.label} (copy)` : null, order,
+      step.pos_x === null ? null : step.pos_x + 40,
+      step.pos_y === null ? null : step.pos_y + 40,
+      step.disabled,
+    ],
+  );
+  return res.status(201).json(one('SELECT * FROM automation_step WHERE id = ?', [Number(info.lastInsertRowid)]));
 });
 
 /**
@@ -426,6 +474,82 @@ router.patch('/:id/layout', requirePermission('admin.rules'), (req, res) => {
   });
 
   return res.json({ ok: true, saved: positions.filter((p) => mine.has(Number(p.id))).length });
+});
+
+/* --------------------------------------------------------- sticky notes */
+
+const TONES = ['sand', 'sky', 'moss', 'rose'];
+
+const stickyOf = (autoId, id) => one(
+  'SELECT * FROM automation_sticky WHERE id = ? AND automation_id = ?',
+  [id, autoId],
+);
+
+router.post('/:id/stickies', requirePermission('admin.rules'), (req, res) => {
+  const auto = reachable(req, res, req.params.id);
+  if (!auto) return undefined;
+
+  /* A ceiling, because a canvas papered over with notes is a canvas nobody can
+     read the flow on -- and the flow is the thing that runs. */
+  const n = one('SELECT COUNT(*) AS n FROM automation_sticky WHERE automation_id = ?', [auto.id]).n;
+  if (n >= 40) return res.status(400).json({ error: 'That is as many notes as one flow can carry' });
+
+  const info = run(
+    `INSERT INTO automation_sticky (automation_id, body, pos_x, pos_y, w, h, tone, created_by)
+     VALUES (?,?,?,?,?,?,?,?)`,
+    [
+      auto.id,
+      String(req.body?.body ?? '').slice(0, 4000),
+      Math.round(Number(req.body?.pos_x) || 0),
+      Math.round(Number(req.body?.pos_y) || 0),
+      Math.round(Number(req.body?.w) || 260),
+      Math.round(Number(req.body?.h) || 170),
+      TONES.includes(req.body?.tone) ? req.body.tone : 'sand',
+      req.user.id,
+    ],
+  );
+  return res.status(201).json(one('SELECT * FROM automation_sticky WHERE id = ?', [Number(info.lastInsertRowid)]));
+});
+
+router.patch('/:id/stickies/:stickyId', requirePermission('admin.rules'), (req, res) => {
+  const auto = reachable(req, res, req.params.id);
+  if (!auto) return undefined;
+
+  const sticky = stickyOf(auto.id, req.params.stickyId);
+  if (!sticky) return res.status(404).json({ error: 'No such note on this automation' });
+
+  const sets = [];
+  const params = [];
+  if (req.body.body !== undefined) { sets.push('body = ?'); params.push(String(req.body.body).slice(0, 4000)); }
+  if (req.body.tone !== undefined && TONES.includes(req.body.tone)) { sets.push('tone = ?'); params.push(req.body.tone); }
+  for (const column of ['pos_x', 'pos_y', 'w', 'h']) {
+    const value = req.body[column];
+    if (value === undefined || !Number.isFinite(Number(value))) continue;
+    sets.push(`${column} = ?`);
+    /* A note dragged to a negative coordinate is fine -- the canvas has no
+       origin somebody has to respect -- but one sized to nothing is a note that
+       cannot be found again. */
+    params.push(column === 'w' ? Math.max(140, Math.round(Number(value)))
+      : column === 'h' ? Math.max(90, Math.round(Number(value)))
+        : Math.round(Number(value)));
+  }
+  if (!sets.length) return res.json(sticky);
+
+  sets.push("updated_at = datetime('now')");
+  params.push(sticky.id);
+  run(`UPDATE automation_sticky SET ${sets.join(', ')} WHERE id = ?`, params);
+  return res.json(one('SELECT * FROM automation_sticky WHERE id = ?', [sticky.id]));
+});
+
+router.delete('/:id/stickies/:stickyId', requirePermission('admin.rules'), (req, res) => {
+  const auto = reachable(req, res, req.params.id);
+  if (!auto) return undefined;
+
+  const sticky = stickyOf(auto.id, req.params.stickyId);
+  if (!sticky) return res.status(404).json({ error: 'No such note on this automation' });
+
+  run('DELETE FROM automation_sticky WHERE id = ?', [sticky.id]);
+  return res.json({ ok: true });
 });
 
 /* ------------------------------------------------------ going live */

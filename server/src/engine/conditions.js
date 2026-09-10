@@ -283,7 +283,21 @@ export const LIST_OPERATORS = new Set(['in', 'not_in', 'has_any', 'between']);
 
 export const conditionSchema = () => ({
   fields: Object.entries(FIELDS).map(([code, f]) => ({
-    code, label: f.label, type: f.type, operators: operatorsForType(f.type),
+    code,
+    label: f.label,
+    type: f.type,
+    operators: operatorsForType(f.type),
+    /* The lead column behind this field, when there is one.
+     *
+     * A trigger that watches field changes reads `field_history`, which records
+     * column names -- so only a field backed by a plain column can be watched.
+     * `lead_age_days` is computed from created_at and never changes on its own;
+     * offering it as something to watch would be offering a trigger that can
+     * never fire, which looks live and does nothing.
+     *
+     * Null for every computed field, and the builder uses that to decide what
+     * to offer rather than keeping its own list of which is which. */
+    column: f.sql?.match?.(/^l\.(\w+)$/)?.[1] ?? null,
   })),
   operators: Object.entries(OPERATORS).map(([code, o]) => ({
     code,
