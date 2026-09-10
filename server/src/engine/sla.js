@@ -123,7 +123,7 @@ export function sweepSla() {
     const due = t.resolution_due ? new Date(`${t.resolution_due.replace(' ', 'T')}Z`) : null;
     if (!due || now <= due || t.breached) continue;
 
-    run('UPDATE tickets SET breached = 1, updated_at = datetime(\'now\') WHERE id = ?', [t.id]);
+    run('UPDATE tickets SET breached = 1, breached_at = datetime(\'now\'), updated_at = datetime(\'now\') WHERE id = ?', [t.id]);
     breached += 1;
 
     // Escalation: notify the assignee and their manager (BRD §7.10 escalation automation).

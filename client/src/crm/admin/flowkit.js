@@ -68,6 +68,7 @@ export const TRIGGER_ICON = {
   Lead: 'person',
   Activity: 'timeline',
   Task: 'task_alt',
+  Case: 'support_agent',
   User: 'badge',
   Schedule: 'schedule',
   Composition: 'account_tree',

@@ -7,6 +7,7 @@ import { all, one, run, audit, notify } from '../db.js';
 import { can, requireUser, requirePermission, mayUseOrg, activeOrg, reqTicketScope } from '../auth.js';
 import { loadInBook } from '../engine/bookscope.js';
 import { assertValid } from '../engine/validation.js';
+import { recordChange } from '../engine/metadata.js';
 import { applySla, sweepSla, handleStatusChange, slaRemaining, DEFAULT_SLA } from '../engine/sla.js';
 import { send } from '../integrations.js';
 import * as ai from '../ai/index.js';
@@ -383,6 +384,21 @@ router.patch('/:id', async (req, res) => {
   if (!sets.length) return res.json(decorate(ticket));
 
   run(`UPDATE tickets SET ${sets.join(', ')}, updated_at = datetime('now') WHERE id = ?`, [...params, req.params.id]);
+
+  /* What changed, recorded like every other field change in the product.
+   *
+   * Non-negotiable #4 asks for field-change history to be first-class, and a
+   * case was the last object without it. It also makes `ticket.changed` a
+   * trigger that can exist: without this, the only way to notice a ticket had
+   * moved would be `updated_at`, which moves on every reply — and a trigger
+   * that fires on every reply is the 8.5-million-execution shape. */
+  if (status && status !== ticket.status) {
+    recordChange('case', ticket.id, 'status', ticket.status, status, { actorId: req.user.id });
+  }
+  if (category_id !== undefined && Number(category_id) !== ticket.category_id) {
+    recordChange('case', ticket.id, 'category_id', ticket.category_id, category_id, { actorId: req.user.id });
+  }
+
   audit(req.user.id, 'ticket_updated', 'ticket', Number(req.params.id), req.body);
 
   // CSAT goes out on close (BRD §7.10).

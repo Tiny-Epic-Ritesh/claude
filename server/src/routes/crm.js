@@ -1240,20 +1240,48 @@ router.post('/cards/:id/request-product-rm', requirePermission('card.request.pro
   if (!card) return res.status(404).json({ error: 'Card not found' });
 
   const lead = one('SELECT * FROM leads WHERE id = ?', [card.lead_id]);
-  const rms = all("SELECT id FROM users WHERE role = 'product_rm' AND product_type_id = ? AND active = 1", [card.product_type_id]);
+  const rms = all(
+    "SELECT id, name, phone FROM users WHERE role = 'product_rm' AND product_type_id = ? AND active = 1",
+    [card.product_type_id],
+  );
+
+  const body = `${req.user.name} has asked for your involvement on ${lead?.name}. ${req.body.reason || ''}`.trim();
+  let texted = 0;
 
   for (const rm of rms) {
-    notify(rm.id, `Intervention requested — ${card.product_name}`,
-      `${req.user.name} has asked for your involvement on ${lead?.name}. ${req.body.reason || ''}`, `/leads/${card.lead_id}`);
+    notify(rm.id, `Intervention requested — ${card.product_name}`, body, `/leads/${card.lead_id}`);
+
+    /* Q6a. Also by SMS, because a request that waits for the specialist to open
+     * the CRM is a request that waits.
+     *
+     * `userId` and no `leadId`, which is what keeps it off the client's
+     * timeline -- the same shape `notify_owner_sms` uses. A message to a
+     * colleague written against the lead tells the next person who reads that
+     * timeline that the client received it.
+     *
+     * An RM with no number still gets the notification and the task. Refusing
+     * the whole request because one specialist has no mobile on record would be
+     * punishing the wrong person. */
+    if (rm.phone) {
+      send('sms', { to: rm.phone, body, userId: rm.id });
+      texted += 1;
+    }
+
     run("INSERT INTO tasks (title, lead_id, card_id, assignee_id, created_by, due_at, priority) VALUES (?,?,?,?,?,datetime('now','+4 hours'),'High')", [
       `Product RM intervention requested on ${lead?.name} (${card.product_name})`, card.lead_id, card.id, rm.id, req.user.id,
     ]);
   }
-  run('INSERT INTO activities (lead_id, card_id, type, direction, subject, body, user_id) VALUES (?,?,?,?,?,?,?)', [
-    card.lead_id, card.id, 'Note', 'system', 'Product RM intervention requested', req.body.reason || null, req.user.id,
-  ]);
+
+  /* Deliberately no activity on the lead.
+   *
+   * It used to write a system Note against the client, and that is the
+   * mirroring habit non-negotiable #1 exists to stop: the shared Interaction
+   * timeline is what happened *with the client*, and one colleague asking
+   * another for help is not. The record survives in three places that are
+   * better homes for it -- the High-priority task on this lead, the audit row
+   * below, and the card's own history. */
   audit(req.user.id, 'product_rm_requested', 'product_card', card.id, { reason: req.body.reason });
-  res.json({ requested: true, notified: rms.length });
+  res.json({ requested: true, notified: rms.length, texted });
 });
 
 /**

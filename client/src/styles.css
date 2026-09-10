@@ -6156,6 +6156,14 @@ tr.row-inactive .user-cell strong { color: var(--ink-3); }
   cursor: pointer;
 }
 .backlink:hover { text-decoration: underline; }
+
+/* In Setup it sits above the group crumb, on its own line, so the header still
+   reads title-first. Block rather than inline: an inline back control next to
+   the crumb reads as part of the breadcrumb, which is a different promise. */
+.setup-back {
+  display: block;
+  margin-bottom: 4px;
+}
 /* Except where it replaced a real button, which brings its own chrome. */
 .backlink.btn-ghost { padding: revert; border: revert; background: revert; }
 

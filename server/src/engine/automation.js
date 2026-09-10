@@ -63,6 +63,17 @@ export const TRIGGERS = [
   { key: 'task.created', label: 'A task is created', family: 'Task' },
   { key: 'task.overdue', label: 'A task goes overdue', family: 'Task' },
   { key: 'task.completed', label: 'A task is completed', family: 'Task' },
+
+  /* The service queue (A1).
+   *
+   * Cheap because `tickets` carries a `lead_id`: the flow runs on the lead the
+   * case is about, so every existing card works unchanged. A case raised
+   * against a partner rather than a lead simply does not enter, the same rule
+   * activities already follow. */
+  { key: 'ticket.created', label: 'A case is raised', family: 'Case' },
+  { key: 'ticket.changed', label: 'A case changes status or category', family: 'Case' },
+  { key: 'ticket.sla_breached', label: 'A case breaches its SLA', family: 'Case' },
+  { key: 'ticket.resolved', label: 'A case is resolved', family: 'Case' },
   {
     key: 'user.workday_end',
     label: 'A user ends their workday',
@@ -622,6 +633,23 @@ export function detect({ batch = 500 } = {}) {
     since: 'SELECT id, lead_id FROM tasks WHERE id > ? AND lead_id IS NOT NULL ORDER BY id LIMIT ?',
   }, (r) => ({ leadId: r.lead_id }));
 
+  sweep('ticket.created', {
+    max: 'SELECT MAX(id) AS n FROM tickets',
+    since: 'SELECT id, lead_id FROM tickets WHERE id > ? AND lead_id IS NOT NULL ORDER BY id LIMIT ?',
+  }, (r) => ({ leadId: r.lead_id }));
+
+  /* Read from field_history rather than from `tickets.updated_at`, which moves
+     on every reply -- a trigger that fires on every reply to every case is the
+     shape that took one legacy automation to 8.5 million runs. */
+  sweep('ticket.changed', {
+    max: "SELECT MAX(id) AS n FROM field_history WHERE entity = 'case'",
+    since: `SELECT h.id, t.lead_id FROM field_history h
+              JOIN tickets t ON t.id = h.record_id
+             WHERE h.entity = 'case' AND h.field IN ('status', 'category_id')
+               AND h.id > ? AND t.lead_id IS NOT NULL
+             ORDER BY h.id LIMIT ?`,
+  }, (r) => ({ leadId: r.lead_id }));
+
   /* Clock-shaped, not row-shaped: a task does not become overdue by being
      inserted, so there is no larger id to look for. */
   sweepSince('task.overdue', (from) => all(
@@ -637,6 +665,25 @@ export function detect({ batch = 500 } = {}) {
       WHERE lead_id IS NOT NULL AND status IN ('Done', 'Completed')
         AND updated_at > ? AND updated_at <= datetime('now')
       ORDER BY updated_at LIMIT ?`,
+    [from, batch],
+  ));
+
+  /* On its own stamp rather than on `updated_at`. A breach happens once; a
+     breached ticket gets reassigned, replied to and reprioritised afterwards,
+     and every one of those would otherwise look like a fresh breach. */
+  sweepSince('ticket.sla_breached', (from) => all(
+    `SELECT lead_id FROM tickets
+      WHERE lead_id IS NOT NULL AND breached = 1 AND breached_at IS NOT NULL
+        AND breached_at > ? AND breached_at <= datetime('now')
+      ORDER BY breached_at LIMIT ?`,
+    [from, batch],
+  ));
+
+  sweepSince('ticket.resolved', (from) => all(
+    `SELECT lead_id FROM tickets
+      WHERE lead_id IS NOT NULL AND resolved_at IS NOT NULL
+        AND resolved_at > ? AND resolved_at <= datetime('now')
+      ORDER BY resolved_at LIMIT ?`,
     [from, batch],
   ));
 

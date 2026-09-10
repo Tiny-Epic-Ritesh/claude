@@ -64,6 +64,8 @@ const clean = () => {
   run("DELETE FROM activities WHERE subject LIKE 'probe_auto%'");
   run("DELETE FROM tasks WHERE title LIKE 'probe_auto%'");
   run("DELETE FROM attendance_session WHERE note LIKE 'probe_auto%'");
+  run("DELETE FROM field_history WHERE entity = 'case' AND record_id IN (SELECT id FROM tickets WHERE ref LIKE 'probe_auto%')");
+  run("DELETE FROM tickets WHERE ref LIKE 'probe_auto%'");
   run("DELETE FROM automation WHERE name LIKE 'probe_rule%'");
   run("DELETE FROM rules WHERE name LIKE 'probe_rule%'");
 };
@@ -1022,6 +1024,156 @@ await test('completing a task is detected, and the same task is not detected twi
   detect();
   assert.equal(one('SELECT COUNT(*) n FROM automation_run WHERE automation_id = ?', [a.id]).n, runs,
     'the same completed task was detected again on the next tick');
+});
+
+/* --------------------------------------------------- the service queue */
+
+/* A1's cheap half. `tickets` carries a lead_id, so the flow runs on the lead
+   the case is about and every existing card works unchanged.
+
+   Two of these four are about NOT firing, and those are the ones worth the
+   lines: a trigger that fires on every reply to every case is the shape that
+   took one legacy automation to 8.5 million runs. */
+
+const ticket = (patch = {}) => Number(run(
+  `INSERT INTO tickets (ref, subject, priority, status, lead_id, sales_org)
+   VALUES (?, 'probe_auto case', 'Medium', ?, ?, 'BONANZA')`,
+  [`probe_auto-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, patch.status ?? 'Open', patch.lead ?? LEAD],
+).lastInsertRowid);
+
+await test('a case raised on a lead starts a flow', () => {
+  const a = build('probe_auto_case_new', 'ticket.created', [noteAction('case-raised')]);
+  detect();                       // watermark to the current maximum
+  ticket();
+  detect();
+
+  assert(one('SELECT id FROM automation_run WHERE automation_id = ? AND lead_id = ?', [a.id, LEAD]),
+    'a case raised against a lead did not start the flow');
+});
+
+await test('a case with no lead behind it starts nothing', () => {
+  /* A case raised against a partner has no lead to walk through a flow. The
+     same rule activities already follow — it is not an error, there is simply
+     nobody to enter. */
+  const a = build('probe_auto_case_orphan', 'ticket.created', [noteAction('orphan')]);
+  detect();
+  run(`INSERT INTO tickets (ref, subject, priority, status, sales_org)
+       VALUES (?, 'probe_auto orphan case', 'Medium', 'Open', 'BONANZA')`,
+  [`probe_auto-orphan-${Date.now()}`]);
+  detect();
+
+  assert(!one('SELECT id FROM automation_run WHERE automation_id = ?', [a.id]),
+    'a case with no lead entered a flow anyway');
+});
+
+await test('a case changing status starts a flow', () => {
+  const a = build('probe_auto_case_moved', 'ticket.changed', [noteAction('case-moved')]);
+  detect();
+
+  const id = ticket();
+  run(`INSERT INTO field_history (entity, record_id, field, old_value, new_value, source)
+       VALUES ('case', ?, 'status', 'Open', 'In Progress', 'ui')`, [id]);
+  detect();
+
+  assert(one('SELECT id FROM automation_run WHERE automation_id = ? AND lead_id = ?', [a.id, LEAD]),
+    'a case that changed status did not start the flow');
+});
+
+await test('a reply on a case is not a change', () => {
+  /* The trap. `tickets.updated_at` moves on every reply, so a trigger reading
+     it would fire on every message in every conversation. This reads the change
+     history instead, which only records what actually changed. */
+  const a = build('probe_auto_case_reply', 'ticket.changed', [noteAction('should-not-run')]);
+  detect();
+
+  const id = ticket();
+  run("UPDATE tickets SET updated_at = datetime('now') WHERE id = ?", [id]);
+
+  /* The cursor is wound back deliberately, to give a clock-based implementation
+     every chance to find this edit. Reading the change history instead means
+     the clock cursor is not consulted at all — which is the difference being
+     tested, and without this the test passes whichever column the sweep reads. */
+  rewind('ticket.changed', '-5 minutes');
+  detect();
+
+  assert(!one('SELECT id FROM automation_run WHERE automation_id = ?', [a.id]),
+    'touching a case fired the change trigger, so every reply would too');
+});
+
+await test('a case breaching its SLA starts a flow', () => {
+  const a = build('probe_auto_case_breach', 'ticket.sla_breached', [noteAction('breached')]);
+  detect();
+  rewind('ticket.sla_breached', '-1 hours');
+
+  const id = ticket();
+  run("UPDATE tickets SET breached = 1, breached_at = datetime('now', '-10 minutes') WHERE id = ?", [id]);
+  detect();
+
+  assert(one('SELECT id FROM automation_run WHERE automation_id = ? AND lead_id = ?', [a.id, LEAD]),
+    'a breached case did not start the flow');
+});
+
+await test('a breached case that is touched again does not breach twice', () => {
+  /* The second trap, and the reason `breached_at` exists. A breach happens
+     once; a breached ticket is then reassigned, replied to and reprioritised,
+     and on `updated_at` every one of those would look like a fresh breach —
+     which means the client gets the escalation message again. */
+  /* The earlier probe cases are cleared first: they are genuinely breached, and
+     winding the cursor back would sweep them in and count them against this
+     test for a reason that has nothing to do with re-breaching. */
+  run("DELETE FROM tickets WHERE ref LIKE 'probe_auto%'");
+
+  const a = build('probe_auto_case_rebreach', 'ticket.sla_breached', [noteAction('breached-once')]);
+  detect();
+  rewind('ticket.sla_breached', '-1 hours');
+
+  const id = ticket();
+  run("UPDATE tickets SET breached = 1, breached_at = datetime('now', '-10 minutes') WHERE id = ?", [id]);
+  detect();
+  const after = one('SELECT COUNT(*) n FROM automation_run WHERE automation_id = ?', [a.id]).n;
+  assert.equal(after, 1, `the first breach produced ${after} runs`);
+
+  /* Now somebody reassigns it, some minutes after the breach — and the cursor
+     is placed deliberately between the two.
+
+     Without that, both timestamps land in the same second as the watermark and
+     `updated_at > checked_at` is false whichever column the sweep reads, so the
+     test passes for a reason that has nothing to do with the code. It did, and
+     swapping the column for `updated_at` left it green. */
+  run("UPDATE tickets SET assignee_id = NULL, updated_at = datetime('now', '-1 minutes') WHERE id = ?", [id]);
+  run("UPDATE automation_run SET status = 'done', finished_at = datetime('now') WHERE automation_id = ?", [a.id]);
+  rewind('ticket.sla_breached', '-5 minutes');   // after the breach, before the edit
+  detect();
+
+  assert.equal(one('SELECT COUNT(*) n FROM automation_run WHERE automation_id = ?', [a.id]).n, after,
+    'editing a breached case counted as a second breach');
+});
+
+await test('a case being resolved starts a flow', () => {
+  const a = build('probe_auto_case_done', 'ticket.resolved', [noteAction('resolved')]);
+  detect();
+  rewind('ticket.resolved', '-1 hours');
+
+  const id = ticket();
+  run("UPDATE tickets SET status = 'Resolved', resolved_at = datetime('now', '-5 minutes') WHERE id = ?", [id]);
+  detect();
+
+  assert(one('SELECT id FROM automation_run WHERE automation_id = ? AND lead_id = ?', [a.id, LEAD]),
+    'a resolved case did not start the flow');
+});
+
+await test('turning a case trigger on does not sweep the whole queue', () => {
+  /* The same safeguard as every other watermark. Bonanza has a live service
+     desk; starting at zero would enter every lead with a case ever raised. */
+  const id = ticket();
+  run("UPDATE tickets SET status = 'Resolved', resolved_at = datetime('now', '-2 days') WHERE id = ?", [id]);
+  run("DELETE FROM automation_watermark WHERE trigger_type = 'ticket.resolved'");
+
+  const a = build('probe_auto_case_history', 'ticket.resolved', [noteAction('history')]);
+  detect();
+
+  assert(!one('SELECT id FROM automation_run WHERE automation_id = ?', [a.id]),
+    'a case resolved two days ago entered a flow created today');
 });
 
 /* -------------------------------------------------- at regular intervals */

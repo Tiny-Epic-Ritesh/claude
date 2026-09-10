@@ -30,6 +30,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import BackLink from '../components/BackLink.jsx';
 import BrandLogo from '../components/BrandLogo.jsx';
 import { Icon, OrgSwitcher, ThemeToggle } from '../components/ui.jsx';
 import Copilot from '../crm/Copilot.jsx';
@@ -203,6 +204,16 @@ function PageHead({ section }) {
   return (
     <header className="setup-pagehead">
       <div>
+        {/* N-8. On every screen, including the top-level ones.
+         *
+         * It is a real back rather than a link to Setup home: somebody who
+         * reached Field masking from Quick Find, from a lead, or from another
+         * settings screen wants the thing they were doing, not the index. The
+         * index is what it falls back to when there is genuinely nothing
+         * behind — and the label changes to say so, because a control that
+         * reads "Back" and takes you somewhere you have never been is the same
+         * lie in the other direction. */}
+        <BackLink to="/setup" label="Setup" className="setup-back tiny muted" />
         {group && (
           <span className="setup-crumb">
             <Icon name={group.icon} size={13} />

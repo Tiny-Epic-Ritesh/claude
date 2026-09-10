@@ -1618,6 +1618,12 @@ const COLUMNS = [
    * exactly as they always have. */
   ['kyc_journeys', 'journey_version_id', 'INTEGER'],
   ['tickets', 'sla_version_id', 'INTEGER'],
+  /* When the SLA was breached, as opposed to whether it was.
+   *
+   * `breached` is a flag and `updated_at` moves on every edit, so a trigger
+   * watching "breached and recently updated" fires again every time somebody
+   * reassigns a breached ticket. A breach happens once. */
+  ['tickets', 'breached_at', 'TEXT'],
 ];
 
 /**
