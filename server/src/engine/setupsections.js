@@ -25,6 +25,7 @@ export const SETUP_SECTIONS = [
   { key: 'products', label: 'Products', needs: ['admin.products'] },
   { key: 'automations', label: 'Automations', needs: ['admin.rules'] },
   { key: 'rules', label: 'Rule builder', needs: ['admin.rules'] },
+  { key: 'forms', label: 'Capture forms', needs: ['admin.objects'] },
   { key: 'outcomes', label: 'Call outcomes', needs: ['admin.rules'] },
   { key: 'sla', label: 'SLA & categories', needs: ['admin.sla'] },
   { key: 'calendars', label: 'Working calendars', needs: ['admin.sla'] },

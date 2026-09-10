@@ -21,6 +21,10 @@
 
 import { Router } from 'express';
 import { all, one, run, audit, transact, SALES_ORGS, CARD_STATES, ROLES } from '../db.js';
+/* The activity types a person can log by hand. Imported rather than restated:
+   the capture form and the screen that configures it must agree about what
+   forms exist, and two lists is how they stop agreeing. */
+import { MANUAL_TYPES as MANUAL_ACTIVITY_TYPES } from './activities.js';
 import {
   requireUser, requirePermission, orgsFor, mayUseOrg, can, permissionsFor, activeOrg,
 } from '../auth.js';
@@ -1518,6 +1522,117 @@ router.post('/objects/:entity/fields', requirePermission('admin.objects'), (req,
  * on, and a CRM that lets you change a field's type in place is a CRM that
  * silently corrupts the column.
  */
+/* ------------------------------------------------------- capture forms */
+
+/**
+ * The Forms section (P3-13).
+ *
+ * WHAT THIS IS NOT
+ *
+ * It is not a form builder. An activity is already an entity -- `interaction`,
+ * backed by `activities` -- and Object Manager can already add, rename, retire
+ * and reorder its fields. A second field system for the same entity would mean
+ * two places to define a field and two things to keep in step, which is the
+ * shape this product exists to stop repeating.
+ *
+ * So this is a **view** onto `field_def`, filtered to one activity type and
+ * ordered the way the capture form draws it. Everything it writes is a
+ * `field_def` row that Object Manager would have written the same way.
+ */
+router.get('/forms', requirePermission('admin.objects'), (_req, res) => {
+  const fields = fieldsOf('interaction', { includeInactive: true })
+    .filter((f) => f.storage === 'value');
+
+  res.json({
+    /* Every type a person can log by hand. The Call form is the one the ticket
+       names; the others are here because a field configured for "Interaction"
+       has to say which of them it belongs to, and hiding that choice would make
+       the Call form look like the only form there is. */
+    types: MANUAL_ACTIVITY_TYPES,
+    fields: fields.map((f) => ({
+      api_name: f.api_name,
+      label: f.label,
+      type: f.type,
+      required: Boolean(f.required),
+      help_text: f.help_text,
+      active: Boolean(f.active),
+      sort_order: f.sort_order,
+      on_activity_types: (() => {
+        try { const v = JSON.parse(f.on_activity_types ?? 'null'); return Array.isArray(v) ? v : null; }
+        catch { return null; }
+      })(),
+    })),
+  });
+});
+
+/**
+ * Which fields one form carries, and in what order.
+ *
+ * The whole ordered list in one request rather than a PATCH per field: this is
+ * a drag-and-drop list, and eight requests for one gesture is eight chances to
+ * half-apply and leave the order disagreeing with itself.
+ *
+ * The order is `field_def.sort_order`, which is per entity rather than per
+ * form. That is a deliberate simplification: an interaction has a handful of
+ * custom fields, one order across the capture forms is what people expect, and
+ * a per-form ordering table would be a table to maintain for a difference
+ * nobody has asked for.
+ */
+router.patch('/forms/:type', requirePermission('admin.objects'), (req, res) => {
+  const type = req.params.type;
+  if (!MANUAL_ACTIVITY_TYPES.includes(type)) {
+    return res.status(400).json({ error: `"${type}" is not an activity somebody can log` });
+  }
+
+  const order = Array.isArray(req.body?.fields) ? req.body.fields : null;
+  if (!order) return res.status(400).json({ error: 'Send the fields, in the order they should appear' });
+
+  const known = new Map(
+    fieldsOf('interaction', { includeInactive: true })
+      .filter((f) => f.storage === 'value')
+      .map((f) => [f.api_name, f]),
+  );
+
+  const unknown = order.filter((n) => !known.has(n));
+  if (unknown.length) {
+    return res.status(400).json({ error: `No such field on Interaction: ${unknown.join(', ')}` });
+  }
+
+  const before = [...known.values()].map((f) => ({ api_name: f.api_name, on: f.on_activity_types, at: f.sort_order }));
+
+  transact(() => {
+    order.forEach((apiName, i) => {
+      const f = known.get(apiName);
+      const types = new Set(readTypes(f));
+      types.add(type);
+      run('UPDATE field_def SET sort_order = ?, on_activity_types = ? WHERE id = ?',
+        [(i + 1) * 10, JSON.stringify([...types]), f.id]);
+    });
+
+    /* Anything not in the list is off this form -- and off it by having the
+       type removed, never by being deactivated. Taking a field off the Call
+       form must not take it off the Meeting form, and must never destroy the
+       values already stored against it. */
+    for (const f of known.values()) {
+      if (order.includes(f.api_name)) continue;
+      const types = readTypes(f).filter((t) => t !== type);
+      run('UPDATE field_def SET on_activity_types = ? WHERE id = ?', [JSON.stringify(types), f.id]);
+    }
+  });
+
+  auditConfig('forms', type, 'form_updated', before, { fields: order }, req.user.id);
+  return res.json({ ok: true, fields: order });
+});
+
+/** A field's current types, defaulting to every type when it has never said. */
+function readTypes(field) {
+  try {
+    const v = JSON.parse(field.on_activity_types ?? 'null');
+    if (Array.isArray(v)) return v;
+  } catch { /* malformed, treat as unset */ }
+  return [...MANUAL_ACTIVITY_TYPES];
+}
+
 router.patch('/objects/:entity/fields/:apiName', requirePermission('admin.objects'), (req, res) => {
   const field = fieldDef(req.params.entity, req.params.apiName);
   if (!field) return res.status(404).json({ error: 'No such field' });
@@ -1540,7 +1655,18 @@ router.patch('/objects/:entity/fields/:apiName', requirePermission('admin.object
     label, help_text, description, required, default_value,
     read_scope, read_capability, history_tracked, indexed,
     owner_user_id, purpose, retire_at, active, sort_order,
+    /* P3-13. Which capture forms this field appears on, as a JSON array of
+       activity type names. Set here as well as from the Forms section, so a
+       field can be given its forms at the point it is created rather than
+       having to be found again on another screen. */
+    on_activity_types: onTypes,
   } = req.body ?? {};
+
+  if (onTypes !== undefined) {
+    const list = Array.isArray(onTypes) ? onTypes.filter((t) => MANUAL_ACTIVITY_TYPES.includes(t)) : null;
+    run('UPDATE field_def SET on_activity_types = ? WHERE id = ?',
+      [list ? JSON.stringify(list) : null, field.id]);
+  }
 
   run(
     `UPDATE field_def SET

@@ -21,7 +21,7 @@ import { all, one, run, audit } from '../db.js';
 import { requireUser, requirePermission, reqScope } from '../auth.js';
 import { validate } from '../security.js';
 import { applyScore } from '../engine/rules.js';
-import { applyFieldSecurity } from '../engine/metadata.js';
+import { applyFieldSecurity, formFields, setCustomValues, customValues } from '../engine/metadata.js';
 import {
   dispositionsFor, validateDisposition, nextStepAt, applyEffects, dispositionByCode,
 } from '../engine/dispositions.js';
@@ -60,6 +60,13 @@ router.get('/meta', (_req, res) => {
       modes: [...geolocation.PHYSICAL_MODES],
       notice: geolocation.notice(),
     },
+
+    /* The configurable part of the capture form (P3-13).
+     *
+     * Sent per activity type rather than as one list the client filters,
+     * because the client filtering it means the client owning the rule -- and
+     * the same rule is enforced on the write below. One authority. */
+    form_fields: Object.fromEntries(MANUAL_TYPES.map((t) => [t, formFields(t)])),
   });
 });
 
@@ -92,7 +99,14 @@ router.get('/lead/:id', (req, res) => {
   // The interaction split: everyone who can see the lead sees that a call
   // happened and how it went; the notes body, the reason and the recording
   // need ownership or supervision.
-  return res.json(applyFieldSecurity('interaction', rows, req.user, { caps: req.caps }));
+  const visible = applyFieldSecurity('interaction', rows, req.user, { caps: req.caps });
+
+  /* The configured fields, so what an RM typed into the call form is on the
+     timeline rather than only in the database. P3-13's third acceptance point
+     is that the saved activity is visible in the lead's history, and a field
+     that is captured and never shown again fails it in the way nobody notices
+     until somebody goes looking for an answer they typed. */
+  return res.json(visible.map((a) => ({ ...a, custom: customValues('interaction', a.id) })));
 });
 
 /** The signed-in RM's follow-up board — overdue, today, upcoming. */
@@ -114,6 +128,7 @@ router.post('/', requirePermission('lead.contact'), (req, res) => {
     geo = null,
     respect_business_hours = true,
     client_ref = null,
+    custom = null,
   } = req.body;
 
   const invalid = validate(req.body, { type: ['required'], subject: ['max:200'] });
@@ -166,6 +181,25 @@ router.post('/', requirePermission('lead.contact'), (req, res) => {
     return res.status(400).json({ error: `A ${type} activity needs an outcome`, field: 'disposition' });
   }
 
+  /* Required configured fields, checked before anything is written.
+   *
+   * `setCustomValues` validates the values it is given, which is not the same
+   * question: a field left out of the body entirely would pass it. An
+   * administrator who marks a field required means "this activity may not be
+   * logged without it", so the check is over the form rather than over the
+   * payload -- and it happens up here, because a half-written activity with a
+   * follow-up task already created is worse than a refusal. */
+  const onForm = formFields(type);
+  const supplied = custom ?? {};
+  const missing = onForm.filter((f) => f.required
+    && (supplied[f.api_name] == null || supplied[f.api_name] === ''));
+  if (missing.length) {
+    return res.status(400).json({
+      error: `${missing.map((f) => f.label).join(', ')} ${missing.length === 1 ? 'is' : 'are'} required on the ${type} form`,
+      field: missing[0].api_name,
+    });
+  }
+
   let disposition = null;
   if (code) {
     const check = validateDisposition(code, req.body);
@@ -215,6 +249,22 @@ router.post('/', requirePermission('lead.contact'), (req, res) => {
     ],
   );
   const activityId = Number(result.lastInsertRowid);
+
+  /* The configured fields (P3-13). Written through the metadata layer rather
+     than into columns of their own, so a field added in Setup is stored,
+     type-checked, history-tracked and reportable without anybody touching this
+     route again. Required was already checked above; what can still fail here
+     is a picklist value that is no longer offered, and that is worth saying. */
+  if (custom && Object.keys(custom).length) {
+    const wrote = setCustomValues('interaction', activityId, custom, { actorId: req.user.id });
+    if (!wrote.ok) {
+      run('DELETE FROM activities WHERE id = ?', [activityId]);
+      return res.status(400).json({
+        error: Object.values(wrote.errors)[0],
+        field: Object.keys(wrote.errors)[0],
+      });
+    }
+  }
 
   /* ---- score, effects, next step ---- */
 

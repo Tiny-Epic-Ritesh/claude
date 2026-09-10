@@ -1536,6 +1536,14 @@ const COLUMNS = [
   ['leads', 'owner_queue_id', 'INTEGER REFERENCES queues(id) ON DELETE SET NULL'],
   ['leads', 'assigned_at', 'TEXT'],
   ['leads', 'assigned_by_rule', 'INTEGER'],
+  /* Which activity types' capture form this field appears on. JSON array of
+   * type names; null means all of them. Only meaningful on `interaction`.
+   *
+   * P3-13 asks for a configurable phone call form. A field belongs on the Call
+   * form and not necessarily on the Email one, and that is the only axis the
+   * domain actually has -- so it is stored on the field rather than in a
+   * separate form-definition table that would duplicate `field_def`. */
+  ['field_def', 'on_activity_types', 'TEXT'],
   // Where a card sits on the canvas. Null means never placed, and the builder
   // lays those out from the graph rather than stacking them at the origin.
   ['automation_step', 'pos_x', 'INTEGER'],
@@ -2415,6 +2423,14 @@ CREATE TABLE IF NOT EXISTS field_def (
   is_custom    INTEGER NOT NULL DEFAULT 1,
   active       INTEGER NOT NULL DEFAULT 1,
   sort_order   INTEGER NOT NULL DEFAULT 0,
+
+  -- P3-13. Which activity types' capture form this field appears on, as a JSON
+  -- array of type names; null means all of them. Only meaningful on the
+  -- interaction entity. Declared here as well as in COLUMNS because this table
+  -- is created after the migration loop -- an existing database gets the column
+  -- by ALTER, a fresh one gets it from this line.
+  on_activity_types TEXT,
+
   created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
   created_at   TEXT NOT NULL DEFAULT (datetime('now')),
 

@@ -20,7 +20,7 @@ const CHANNEL_LABEL = { whatsapp: 'WhatsApp', sms: 'SMS', email: 'Email' };
 
 export default function ActionModal({ state, session, onClose, onDone, onNotice }) {
   if (!state) return null;
-  const { kind, lead, channel, ids } = state;
+  const { kind, lead, channel, ids, calling, simulated } = state;
 
   const common = { lead, session, onClose, onDone, onNotice };
   const bulk = { ids, onClose, onDone, onNotice };
@@ -29,7 +29,7 @@ export default function ActionModal({ state, session, onClose, onDone, onNotice 
     case 'bulk_owner': return <BulkOwnerModal {...bulk} />;
     case 'bulk_stage': return <BulkStageModal {...bulk} />;
     case 'bulk_message': return <BulkMessageModal {...bulk} channel={channel} />;
-    case 'activity': return <ActivityModal {...common} />;
+    case 'activity': return <ActivityModal {...common} calling={calling} simulated={simulated} />;
     /* Email has its own case: the composer carries attachments, the
        content library and the service/marketing declaration, none of
        which apply to a 160-character SMS. */
@@ -706,13 +706,22 @@ function BulkMessageModal({ ids, channel, onClose, onDone, onNotice }) {
  * disposition matrix, enforces which outcomes need a date or a reason, and
  * creates the follow-up task. It was simply never reachable from here.
  */
-function ActivityModal({ lead, onClose, onDone, onNotice }) {
+function ActivityModal({ lead, onClose, onDone, onNotice, calling = false, simulated = false }) {
   const [detail] = useApi(`/leads/${lead.id}`);
+
+  /* Opened by a dial rather than by a person choosing to log something, so it
+     says which. "Log an activity" on a screen that appeared by itself reads as
+     the CRM interrupting; "You are calling X" reads as the CRM keeping up. */
+  const subtitle = calling
+    ? (simulated
+      ? `${lead.name} · no dialler is connected, so no call was placed — the form still saves`
+      : `Calling ${lead.name} · fill this in while you talk`)
+    : `On ${lead.name}`;
 
   return (
     <Modal
-      title="Log an activity"
-      subtitle={`On ${lead.name}`}
+      title={calling ? 'This call' : 'Log an activity'}
+      subtitle={subtitle}
       onClose={onClose}
       wide
     >

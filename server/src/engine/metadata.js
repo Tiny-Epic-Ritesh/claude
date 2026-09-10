@@ -678,6 +678,42 @@ export function fieldsOf(entity, { includeInactive = false } = {}) {
   );
 }
 
+/**
+ * The custom fields on one activity type's capture form (P3-13).
+ *
+ * A field with no `on_activity_types` appears on every form. That is the right
+ * default: somebody who adds "Competitor mentioned" to Interaction almost
+ * certainly wants it wherever an interaction is captured, and having to opt in
+ * per type would mean a field that is configured and invisible -- which reads
+ * as the feature being broken.
+ *
+ * Derived fields are excluded. A formula or a roll-up is computed, so a form
+ * asking somebody to type one would be asking for a value it will overwrite.
+ */
+export function formFields(activityType) {
+  return fieldsOf('interaction')
+    .filter((f) => f.storage === 'value' && !FIELD_TYPES[f.type]?.derived)
+    .filter((f) => {
+      if (!f.on_activity_types) return true;
+      try {
+        const types = JSON.parse(f.on_activity_types);
+        return !Array.isArray(types) || types.length === 0 || types.includes(activityType);
+      } catch { return true; }
+    })
+    .map((f) => ({
+      api_name: f.api_name,
+      label: f.label,
+      type: f.type,
+      required: Boolean(f.required),
+      help_text: f.help_text,
+      sort_order: f.sort_order,
+      /* Inlined rather than fetched per field by the client: a form with six
+         picklists should not cost the browser six requests before it can be
+         drawn. */
+      values: FIELD_TYPES[f.type]?.values ? picklistValues(f.id).map((v) => ({ value: v.value, label: v.label })) : null,
+    }));
+}
+
 export const fieldDef = (entity, apiName) =>
   one('SELECT * FROM field_def WHERE entity = ? AND api_name = ?', [entity, apiName]);
 

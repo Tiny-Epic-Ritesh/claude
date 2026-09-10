@@ -56,6 +56,15 @@ export function useLeadActions({ session, reload, onError, onNotice }) {
         }
       }
       onNotice?.(parts.join(' '));
+
+      /* P3-13. The call form, opened by the call rather than by the RM
+         remembering to log one afterwards.
+
+         Opened for a simulated dial too, and the modal says so. The alternative
+         -- only opening it once a dialler is connected -- would make the whole
+         feature untestable until CUBE issues a tenant credential, which is
+         exactly the dependency this ticket was pulled out of. */
+      setModal({ kind: 'activity', lead, calling: true, simulated: Boolean(res.simulated) });
     } catch (err) {
       // A refusal here is usually consent or a dead number, and the message
       // says which. It is the RM's problem to act on, not a server fault.

@@ -63,11 +63,94 @@ const OUTCOME_META = {
   Other: { icon: 'more_horiz', cls: 'is-other' },
 };
 
-export default function ActivityComposer({ lead, cards = [], onLogged }) {
+/**
+ * One configured field, drawn as what its type actually is (P3-13).
+ *
+ * The types come from the metadata palette the rest of the product already
+ * uses, so a field added under Setup → Forms renders here without this file
+ * being touched — which is the whole of the ticket's "without a code change".
+ *
+ * A type with no case here falls through to a text box rather than to nothing.
+ * A field that renders as the wrong control is a nuisance; a field that
+ * renders as nothing is a field somebody configured and cannot find.
+ */
+function ConfiguredField({ field, value, invalid, onChange }) {
+  const id = `cf-${field.api_name}`;
+  const common = { id, 'aria-invalid': invalid ? 'true' : undefined };
+
+  const control = () => {
+    switch (field.type) {
+      case 'textarea':
+      case 'richtext':
+        return <textarea {...common} rows={3} value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
+      case 'checkbox':
+        return (
+          <label className="row" style={{ gap: 7, alignItems: 'center' }}>
+            <input {...common} type="checkbox" checked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} />
+            <span className="tiny muted">{field.help_text || 'Tick if it applies'}</span>
+          </label>
+        );
+      case 'picklist':
+        return (
+          <select {...common} value={value ?? ''} onChange={(e) => onChange(e.target.value)}>
+            <option value="">Choose…</option>
+            {(field.values ?? []).map((v) => <option key={v.value} value={v.value}>{v.label}</option>)}
+          </select>
+        );
+      case 'multipicklist':
+        return (
+          <select
+            {...common}
+            multiple
+            value={String(value ?? '').split(',').filter(Boolean)}
+            onChange={(e) => onChange([...e.target.selectedOptions].map((o) => o.value).join(','))}
+          >
+            {(field.values ?? []).map((v) => <option key={v.value} value={v.value}>{v.label}</option>)}
+          </select>
+        );
+      case 'number':
+      case 'currency':
+      case 'percent':
+        return <input {...common} type="number" value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
+      case 'date':
+        return <input {...common} type="date" value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
+      case 'datetime':
+        return <input {...common} type="datetime-local" value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
+      case 'time':
+        return <input {...common} type="time" value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
+      case 'email':
+        return <input {...common} type="email" value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
+      case 'url':
+        return <input {...common} type="url" value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
+      case 'phone':
+        return <input {...common} type="tel" value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
+      default:
+        return <input {...common} value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
+    }
+  };
+
+  return (
+    <div className="field">
+      <label htmlFor={id}>
+        {field.label}{field.required ? ' *' : ''}
+      </label>
+      {control()}
+      {field.help_text && field.type !== 'checkbox' && <p className="hint">{field.help_text}</p>}
+      {invalid && <p className="err-text">{invalid}</p>}
+    </div>
+  );
+}
+
+export default function ActivityComposer({ lead, cards = [], onLogged, autoOpenFor = null }) {
   const [meta, setMeta] = useState(null);
   const [type, setType] = useState('Call');
   const [code, setCode] = useState('');
   const [form, setForm] = useState({});
+  /* The configured fields, kept apart from the built-in ones. Mixing them into
+     `form` would mean a custom field called `body` or `reason` silently
+     overwriting the real one -- and an administrator naming a field `reason`
+     is not a mistake, it is an obvious thing to call a field. */
+  const [custom, setCustom] = useState({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
@@ -159,6 +242,7 @@ export default function ActivityComposer({ lead, cards = [], onLogged }) {
         meeting_mode: form.meeting_mode || undefined,
         meeting_location: form.meeting_location || undefined,
         geo: geo ?? undefined,
+        custom: Object.keys(custom).length ? custom : undefined,
       };
       // datetime-local gives "YYYY-MM-DDTHH:mm"; the API wants a space.
       if (form.follow_up_at) payload.follow_up_at = form.follow_up_at.replace('T', ' ');
@@ -172,6 +256,7 @@ export default function ActivityComposer({ lead, cards = [], onLogged }) {
       setConfirmation(geoNote ? `${res.confirmation} ${geoNote}` : res.confirmation);
       setCode('');
       setForm({});
+      setCustom({});
       onLogged?.(res);
     } catch (e) {
       // Field-level errors mark the input; anything else is a banner.
@@ -349,6 +434,23 @@ export default function ActivityComposer({ lead, cards = [], onLogged }) {
             {fieldErrors.reason && <div className="tiny tone-bad">{fieldErrors.reason}</div>}
           </div>
         )}
+
+        {/* The fields an administrator put on this form, in the order they
+            put them. Between the outcome and the notes deliberately: they are
+            about the conversation, and the notes are the last thing anybody
+            types. */}
+        {(meta.form_fields?.[type] ?? []).map((f) => (
+          <ConfiguredField
+            key={f.api_name}
+            field={f}
+            value={custom[f.api_name]}
+            invalid={fieldErrors[f.api_name]}
+            onChange={(v) => {
+              setCustom((c) => ({ ...c, [f.api_name]: v }));
+              setFieldErrors((e) => ({ ...e, [f.api_name]: null }));
+            }}
+          />
+        ))}
 
         {/* --- always available --- */}
         <div className="field">

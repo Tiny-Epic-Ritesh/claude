@@ -44,6 +44,7 @@ const Database = lazy(() => import('../crm/Database.jsx'));
    default exports, so the module is unwrapped on the way through. */
 const Rules = lazy(() => import('../crm/admin/Rules.jsx').then((m) => ({ default: m.Rules })));
 const Automations = lazy(() => import('../crm/admin/Automations.jsx').then((m) => ({ default: m.Automations })));
+const CaptureForms = lazy(() => import('../crm/admin/CaptureForms.jsx').then((m) => ({ default: m.CaptureForms })));
 const Sla = lazy(() => import('../crm/admin/Sla.jsx').then((m) => ({ default: m.Sla })));
 const Calendars = lazy(() => import('../crm/admin/Calendars.jsx').then((m) => ({ default: m.Calendars })));
 const Journeys = lazy(() => import('../crm/admin/Journeys.jsx').then((m) => ({ default: m.Journeys })));
@@ -186,6 +187,16 @@ export const SECTIONS = [
     blurb: 'What happens automatically when a record changes',
     keywords: ['rule', 'automation', 'trigger', 'workflow', 'assign', 'routing', 'score', 'auto', 'when then'],
     Component: Rules,
+  },
+  {
+    key: 'forms',
+    label: 'Capture forms',
+    group: 'automation',
+    icon: 'edit_note',
+    needs: ['admin.objects'],
+    blurb: 'What an RM is asked for when they log a call, meeting or visit',
+    keywords: ['form', 'phone call form', 'capture', 'activity', 'disposition form', 'fields', 'call form'],
+    Component: CaptureForms,
   },
   {
     key: 'outcomes',
