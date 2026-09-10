@@ -36,8 +36,9 @@ and this table is the mapping.
 
 | Label | Means |
 |---|---|
-| `P3-19` | LAPPS — scriptable custom app framework. **Not started.** |
+| `P3-19` | LAPPS — scriptable custom app framework. **Dropped 10 Sep** in favour of building the native features the LAPPs in use are compensating for. |
 | `OPS-01` | Hand a book over when somebody leaves. Built, commit `56de104`. |
+| `OPS-02` | Automations that run on a **client** rather than a lead. Opened 10 Sep out of A1 — see `P3-16-automation-design.md`. **Not started; needs scoping.** |
 
 ---
 

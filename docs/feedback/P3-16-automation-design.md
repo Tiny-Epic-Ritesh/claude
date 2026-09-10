@@ -290,11 +290,49 @@ discover it at the end.
 
 | # | Question |
 |---|---|
-| **A1** | Do client or ticket events need to trigger automations, or is lead + activity + task + user enough? |
-| **A2** | Split test — defer, or is there a live A/B need? |
+| ~~A1~~ | **Answered 10 Sep** — yes to both, split in two. See below. |
+| ~~A2~~ | **Answered 10 Sep** — confirmed, split test stays deferred. |
 | ~~A3~~ | **Answered 10 Sep** — clean start, then port the ten in §8. |
-| **A4** | Confirm: an automation may hand a lead to the assignment engine but never pick an owner itself. |
-| **A5** | Confirm the trigger list in §2, particularly that "Lead Updated" must name the fields it watches rather than firing on any change. |
+| ~~A4~~ | **Answered 10 Sep** — confirmed. |
+| ~~A5~~ | **Answered 10 Sep** — confirmed. |
+
+### A1, answered — and split in two, because the halves cost differently
+
+**Ticket events: build now.** `tickets` carries a `lead_id`, so `ticket.*` is the
+same shape as `task.created` — the scanner reads the column, the lead enters,
+and every existing card runs unchanged. A ticket with no lead simply does not
+enter, the same rule activities already follow. Four events agreed:
+
+| Trigger | For |
+|---|---|
+| `ticket.created` | Acknowledge to the client, notify the desk |
+| `ticket.sla_breached` | Escalation. Clock-shaped, same machinery as `task.overdue` |
+| `ticket.resolved` | Follow-up, satisfaction check, reopen watch |
+| `ticket.changed` | Routing when a ticket is recategorised or handed between desks |
+
+**Client events: their own piece of work, `OPS-02`.** `clients` is its own table
+— its own owner, status, ledger balance, holdings and `trades_last_year`, with
+`converted_from_lead_id` pointing back. Every card in this engine acts on a
+lead: `leadFacts(lead_id)`, every condition field is `l.something`, every action
+writes to a lead.
+
+Running client journeys through `converted_from_lead_id` was considered and
+rejected: it works only for clients converted inside this system, and the flow
+would read *lead* fields — so a dormancy journey would be deciding "has this
+client traded recently?" against a record that does not hold trades. It would
+look correct on the canvas and read the wrong record, which is the worst
+failure this engine can have.
+
+So `OPS-02` is: a subject on `automation_run` rather than a lead id, a client
+condition vocabulary, and a client path through the actions. Four events agreed
+for it:
+
+| Trigger | Note |
+|---|---|
+| `client.dormant` | No trade in N days. This is what *"June-Aug not traded in Oct-Nov"* is really trying to be. |
+| `client.traded` | First trade, or trading after a quiet period |
+| `client.status_changed` | Active → Dormant → Suspended → Closed, and the compliance messages that go with it |
+| `client.threshold` | Ledger or margin crossing a level. **Depends on the back-office sync being reliable** — to be confirmed before this one is built rather than after. |
 
 ---
 
