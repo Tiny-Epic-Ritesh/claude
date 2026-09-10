@@ -103,6 +103,24 @@ export function useLeadActions({ session, reload, onError, onNotice }) {
       return;
     }
 
+    /* A live product's next move. The header already said "the next move is a
+       review, not a chase" and offered nothing to press; now it does. Ninety
+       days out, because a review scheduled for next week is one somebody moves
+       rather than keeps. */
+    if (action.kind === 'review') {
+      try {
+        await api.post('/tasks', {
+          title: `Review ${step.product ?? 'the product'}`,
+          lead_id: lead.id,
+          card_id: step.card_id ?? null,
+          due_at: new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 19).replace('T', ' '),
+        });
+        onNotice?.(`Review scheduled for ${step.product ?? 'this product'}, due in 90 days.`);
+        reload?.();
+      } catch (err) { onError?.(err.message); }
+      return;
+    }
+
     // Everything else is a screen to open rather than a record to change.
     run(action.kind, lead);
   }

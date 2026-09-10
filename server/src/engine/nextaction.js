@@ -89,9 +89,19 @@ const NEXT = {
     primary: { label: 'Open the KYC journey', kind: 'kyc_view', needs: 'kyc.view' },
   },
   ACTIVE: {
-    headline: 'Nothing to chase — this one is done',
-    why: 'The account is live. Effort is better spent on a product this client does not hold yet.',
-    primary: { label: 'See what else they could hold', kind: 'none' },
+    /* This card used to end at `kind: 'none'`, which meant the label below was
+       written and never rendered -- P3-28's rule strips an action that does
+       nothing, and quite right, but the intent here was always real. Ritesh
+       settled it on 10 September: a live product has two moves, and neither of
+       them is chasing this one. */
+    headline: 'Live — so look at what is next, and at what keeps it',
+    why: 'There is nothing to chase on this product. The hour is better spent on one they do not hold yet, and on a review date, because a live product nobody revisits is how a book goes quiet.',
+    primary: { label: 'See what else they could hold', kind: 'cross_sell' },
+    second: {
+      label: 'Schedule a review',
+      kind: 'review',
+      hint: 'Puts a review task on the lead, due in 90 days.',
+    },
   },
   ON_HOLD: {
     headline: 'Find out whether the reason still stands',
@@ -192,9 +202,11 @@ export function nextStepForLead(cards = [], caps = new Set()) {
 
   const { card, days, step } = scored[0];
 
-  /* An ACTIVE card has nothing outstanding, so advice about it would be noise.
-   * Said explicitly rather than returning null, because "nothing to do here"
-   * is itself worth reading on a record somebody just opened. */
+  /* An ACTIVE card has nothing to chase, and that is worth saying on a record
+   * somebody has just opened rather than returning null.
+   *
+   * What it no longer does is say "the next move is a review" and then offer no
+   * way to make one. The words were already right; the button was missing. */
   if (card.state === 'ACTIVE' && !step.urgent) {
     return {
       product: card.product_name ?? card.product_code,
@@ -203,7 +215,11 @@ export function nextStepForLead(cards = [], caps = new Set()) {
       why: `${card.product_name ?? 'This product'} is active. The next move is a review, not a chase.`,
       urgent: false,
       days_in_state: days,
-      action: null,
+      card_id: card.id,
+      /* The review rather than the cross-sell, because it is the one this
+         sentence names. Offering a different action from the one the copy
+         above it describes is how a header stops being read. */
+      action: step.second?.allowed ? step.second : null,
     };
   }
 

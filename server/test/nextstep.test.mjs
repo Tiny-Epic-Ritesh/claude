@@ -59,17 +59,43 @@ test('every action kind the server emits has somewhere to go', () => {
   }
 });
 
-test('a finished card offers no button at all', () => {
-  /* `none` means there is nothing to chase. Rendering a control for it would be
-     the very defect P3-28 was raised for. */
+test('a live card offers the move its own advice names', () => {
+  /* This used to assert that an Active card offered no button, and that was
+     right while `ACTIVE` had nothing to offer. It did not: the state carried
+     the label "See what else they could hold" all along, with `kind: 'none'`,
+     so P3-28's rule stripped a control that was meant to be real and the panel
+     read "Nothing to chase" for months.
+
+     Ritesh settled it on 10 September. The rule underneath this test was never
+     "Active has no button" -- it was "no button is rendered with nothing behind
+     it", which is asserted separately below and still holds. */
   const done = nextStepForLead([{
     id: 1, product_type_id: 1, product_name: 'Equity & Derivatives',
     state: 'ACTIVE', days_in_state: 3,
   }], new Set(['card.mark.warm', 'kyc.manage', 'kyc.view']));
 
   assert(done, 'an active card produced no advice at all');
-  assert.equal(done.action, null, 'a finished card still offers a button');
-  assert(done.headline, 'the advice lost its headline along with its button');
+  assert(done.headline, 'the advice lost its headline');
+  assert.equal(done.action?.kind, 'review',
+    'the header says the next move is a review and then offers something else, or nothing');
+  assert.equal(done.card_id, 1,
+    'the review has no card to hang on, so the task would name no product');
+});
+
+test('no advice ever offers a button with nothing behind it', () => {
+  /* The rule P3-28 was actually raised for, asserted directly rather than
+     through one state that happened to have no action. */
+  for (const state of ['INACTIVE', 'EXPLORING', 'WARM', 'PRODUCT_RM_ENGAGED',
+    'KYC_IN_PROGRESS', 'ACTIVE', 'ON_HOLD', 'LOST']) {
+    const step = nextStepForLead([{
+      id: 9, product_type_id: 1, product_name: 'Equity & Derivatives',
+      state, days_in_state: 1,
+    }], new Set(['card.mark.warm', 'card.mark.exploring', 'card.request.productrm',
+      'kyc.manage', 'kyc.view']));
+    if (!step?.action) continue;
+    assert.notEqual(step.action.kind, 'none',
+      `${state} offers a button whose kind is "none" — a control that does nothing`);
+  }
 });
 
 test('the advice carries the card it is about', () => {

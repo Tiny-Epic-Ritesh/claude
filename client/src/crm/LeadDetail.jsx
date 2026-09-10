@@ -22,6 +22,10 @@ export default function LeadDetail({ session }) {
   const { id } = useParams();
   const [lead, { loading, error, reload }] = useApi(`/leads/${id}`);
   const [tab, setTab] = useState('cards');
+  /* Lifted out of the products tab: the next-step button in the header opens
+     the not-yet-engaged list, and it cannot reach state that lives inside the
+     tab it is opening. */
+  const [showAllProducts, setShowAllProducts] = useState(false);
   const [inCall, setInCall] = useState(false);
   const [editing, setEditing] = useState(false);
   const [notice, setNotice] = useState(null);
@@ -120,6 +124,10 @@ export default function LeadDetail({ session }) {
                        switches to the tab that already shows it rather than
                        leaving the lead or starting a second journey. */
                     if (lead.next_step.action.kind === 'kyc_view') { setTab('kyc'); return; }
+                    /* Cross-sell is not a record change, it is a place to
+                       look — the products this lead is not on, which sit
+                       collapsed on the products tab. */
+                    if (lead.next_step.action.kind === 'cross_sell') { setTab('cards'); setShowAllProducts(true); return; }
                     actions.nextStep(lead, lead.next_step);
                   }}
                 >
@@ -231,6 +239,7 @@ export default function LeadDetail({ session }) {
 
       {tab === 'cards' && (
           <Cards lead={lead} session={session} reload={reload} onError={setActionError}
+            showAll={showAllProducts} onShowAll={setShowAllProducts}
             onContact={(channel) => actions.run(channel, lead)} />
         )}
       {tab === 'details' && <DetailsTab lead={lead} session={session} onEdit={() => setEditing(true)} />}
@@ -355,9 +364,12 @@ const NEXT_MOVE = {
   LOST: 'Review',
 };
 
-function Cards({ lead, session, reload, onError, onContact }) {
+function Cards({ lead, session, reload, onError, onContact, showAll, onShowAll }) {
   const [open, setOpen] = useState(null);
-  const [showAll, setShowAll] = useState(false);
+  /* Owned by the lead screen rather than here, because the next-step button in
+     the header opens this list and cannot reach state that lives inside the
+     tab it is opening. */
+  const setShowAll = onShowAll;
   const can = (p) => session.permissions.includes(p);
 
   /**
@@ -425,6 +437,7 @@ function Cards({ lead, session, reload, onError, onContact }) {
           onDone={() => { setOpen(null); reload(); }}
           onError={onError}
           onContact={(channel) => { setOpen(null); onContact?.(channel); }}
+          onCrossSell={() => { setOpen(null); setShowAll(true); }}
         />
       )}
     </>

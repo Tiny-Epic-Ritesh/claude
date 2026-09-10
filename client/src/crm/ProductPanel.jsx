@@ -40,7 +40,7 @@ const STATE_BADGE = {
   ON_HOLD: 'badge-amber',
 };
 
-export default function ProductPanel({ cardId, onClose, onDone, onError, onContact }) {
+export default function ProductPanel({ cardId, onClose, onDone, onError, onContact, onCrossSell }) {
   const [d, { loading, error, reload }] = useApi(cardId ? `/cards/${cardId}/detail` : null, [cardId]);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
@@ -74,6 +74,19 @@ export default function ProductPanel({ cardId, onClose, onDone, onError, onConta
           window.open(appUrl(`/dkyc/resume/${d.kyc.resume_token}`), '_blank', 'noopener');
         }
         return undefined;
+      /* Close the panel and open the products the lead is not on. The list is
+         already there, collapsed, a scroll below -- this is the button that
+         admits it exists. */
+      case 'cross_sell':
+        onCrossSell?.();
+        return undefined;
+      case 'review': return act(() => api.post('/tasks', {
+        title: `Review ${d.product_name}`,
+        description: note || null,
+        lead_id: d.lead_id,
+        card_id: d.id,
+        due_at: new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 19).replace('T', ' '),
+      }));
       default: return undefined;
     }
   };
