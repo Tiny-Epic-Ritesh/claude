@@ -132,10 +132,55 @@ They use the same predicates as the sales dashboard and the task list. A
 homepage tile that counts differently from the screen it opens is worse than no
 tile — somebody acts on the larger number and finds the smaller one.
 
-**This is the one where I cannot show you approved the choice first.** The
-ticket says "propose what should occupy the reclaimed space before building it."
-The three tiles are built. If you wanted something else there, it is a small
-change.
+**Ratified 10 September.** The three tiles stand for Superadmin and Admin.
+
+### Q8a, answered — a supervisor gets a different set
+
+A Sales Head opening the same page wants team-shaped numbers, and a supervisor's
+unit is **people, not tasks**. "Four of your eleven RMs are behind" names a
+conversation; "sixty follow-ups are overdue" names a worry. So the Sales
+Supervisor cockpit gets its own four:
+
+| Tile | Counts | Why it is a supervisor's and not an RM's |
+|---|---|---|
+| **RMs behind** | People with an overdue follow-up | The unit is a person, because the action is a conversation |
+| **Unattended over 48h** | Leads with no contact logged | Shared with the RM set, but scoped to the team — this is the leakage number |
+| **Leads with no owner** | Live leads nobody has picked up | An RM cannot see them and an administrator is not watching the pipeline. Only a supervisor clears these, and left alone they age quietly into Cold |
+| **Approvals waiting on you** | Approvals only they can decide | Matters *more* to a supervisor than to the RM it was built for |
+
+**Note on the role.** There is no `sales_head` role in the system; the nearest
+is `sales_supervisor`, which is the only role that has a team. That is where
+this was built. If Sales Head is meant to be a distinct level *above*
+supervisor, that is a role to add, and it belongs in P3-07's configurable tree
+rather than here.
+
+### And a book boundary the supervisor cockpit was not honouring
+
+Building this meant reading that cockpit, and **four of its six numbers counted
+across both businesses** — as did the team scorecard, which names people.
+
+A Bigul supervisor was shown:
+
+| | Saw | Should have seen |
+|---|---:|---:|
+| Warm cards | 9 | 3 |
+| Cards Active | 5 | 3 |
+| Team calls today | both books | Bigul's |
+| **Team performance** | **13 RMs** | **2** |
+
+Eleven of Bonanza's sales staff appeared on a Bigul supervisor's scorecard **by
+name**, with each one's lead count, calls today and conversion rate.
+
+It is the same defect the Admin cockpit had and had already fixed — *"these two
+counted across both books while every other metric beside them went through
+orgCount"* — and this one is worse, because a scorecard reports on individuals.
+
+**An aggregate leaks more quietly than a record does.** Opening somebody else's
+lead is a 403 you notice; a count that is too large is a number you act on.
+`bookscope.test.mjs` exempts `/api/cockpit` as *"aggregate figures, each already
+scoped where it is computed"* — which was an assumption. It is now checked, in
+`test/cockpitscope.test.mjs`, and the check is mutation-verified against the
+original leak.
 
 ---
 

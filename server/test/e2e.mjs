@@ -5445,14 +5445,25 @@ await check('a per-channel withdrawal closes only that channel', async () => {
   await check('an edit is recorded as the business owning that row', async () => {
     const { data: before } = await req('/api/setup/dispositions', { token: T.admin, expect: 200 });
     const row = before.dispositions.find((d) => d.code === 'CALL_PITCH_DONE');
-    eq(row.edited_at, null, 'a shipped row should start unedited');
+    assert(row, 'CALL_PITCH_DONE is missing from the shipped matrix');
 
+    /* Deliberately no "this row starts unedited" precondition.
+     *
+     * It used to have one, and it made this test pass exactly once per
+     * database: it edits the row, and the very next test asserts that a seed
+     * does NOT revert an edit -- which is the whole point of ENH-21c. So the
+     * second run and every run after it failed on the residue of the first.
+     *
+     * The starting state was never what this is named for. What proves an edit
+     * is recorded is that the label changes and the stamp lands, and both are
+     * as true on the tenth run as on the first. */
     const { data } = await req(`/api/setup/dispositions/${row.id}`, {
       method: 'PATCH', token: T.admin, expect: 200,
       body: { label: `Pitch delivered ${RUN}`, hint: 'Say what they pushed back on.' },
     });
     eq(data.label, `Pitch delivered ${RUN}`, 'the label did not change');
     assert(data.edited_at, 'the row was not marked as edited');
+    assert(data.edited_at !== row.edited_at, 'the edit stamp did not move');
   });
 
   await check('re-running the seeder does not revert an edit', async () => {

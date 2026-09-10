@@ -79,6 +79,24 @@ function callsToday(user, active) {
   ).n;
 }
 
+/**
+ * Product cards in one state, in the books this person works in.
+ *
+ * `product_cards` carries no `sales_org` of its own — a card belongs to the
+ * book its lead belongs to — so this joins, the same way `callsToday` does for
+ * activities. Written once because two cockpit tiles were each doing it wrong
+ * in their own way.
+ */
+function cardsInState(user, active, state) {
+  const scope = leadScope(user, 'l', active);
+  return one(
+    `SELECT COUNT(*) n FROM product_cards pc
+       JOIN leads l ON l.id = pc.lead_id
+      WHERE pc.state = ? AND l.deleted_at IS NULL AND ${scope.sql}`,
+    [state, ...scope.params],
+  ).n;
+}
+
 function myLeads(user, active = null) {
   // `active` is the sales org the header switcher is narrowed to. Threading it
   // here rather than at each call site means a new cockpit cannot forget it.
@@ -165,6 +183,43 @@ function unattendedLeads(user, active) {
            WHERE a.lead_id = l.id
              AND a.type IN ('Call','WhatsApp','Email','SMS','Meeting')
              AND a.created_at > datetime('now','-2 days'))`,
+    scope.params,
+  ).n;
+}
+
+/**
+ * How many of this supervisor's people are behind, rather than how many tasks
+ * are.
+ *
+ * The difference is the whole point of a supervisor's homepage. "Sixty
+ * follow-ups overdue" is a number to worry about; "four of your eleven RMs are
+ * behind" is a number to act on, because it names a conversation.
+ */
+function rmsBehind(user, active) {
+  const scope = leadScope(user, 'l', active);
+  return one(
+    `SELECT COUNT(DISTINCT t.assignee_id) n FROM tasks t
+       JOIN leads l ON l.id = t.lead_id
+      WHERE t.status = 'Open' AND t.due_at < datetime('now')
+        AND t.assignee_id IS NOT NULL
+        AND l.deleted_at IS NULL AND ${scope.sql}`,
+    scope.params,
+  ).n;
+}
+
+/**
+ * Live leads nobody owns.
+ *
+ * A supervisor's job and nobody else's: an RM cannot see them to pick them up,
+ * and an administrator is not watching the pipeline. Left alone they age
+ * quietly into the Cold band, which is the one failure mode nobody is paged for.
+ */
+function unownedLeads(user, active) {
+  const scope = leadScope(user, 'l', active);
+  return one(
+    `SELECT COUNT(*) n FROM leads l
+      WHERE l.deleted_at IS NULL AND l.owner_id IS NULL
+        AND l.stage NOT IN ('Won','Lost') AND ${scope.sql}`,
     scope.params,
   ).n;
 }
@@ -331,7 +386,19 @@ const COCKPITS = {
 
   /* ---- P2: Sales Supervisor ------------------------------------------ */
   sales_supervisor: (user, active) => {
-    const team = all("SELECT * FROM users WHERE role IN ('sales_rm','caller','dealer') AND active = 1");
+    /* Scoped, like every other list on this page.
+     *
+     * It was not. A Bigul supervisor was shown all thirteen sales staff -- two
+     * of theirs and eleven of Bonanza's, by name, with each person's lead
+     * count, calls today and conversion rate. The same breach the admin
+     * cockpit above had and had fixed; this one names individuals, which makes
+     * it the worse of the two. */
+    const teamScope = orgScope(user, 'u', active);
+    const team = all(
+      `SELECT * FROM users u
+        WHERE u.role IN ('sales_rm','caller','dealer') AND u.active = 1 AND ${teamScope.sql}`,
+      teamScope.params,
+    );
     const leads = myLeads(user, active);
 
     const scorecard = team.map((rm) => {
@@ -355,10 +422,20 @@ const COCKPITS = {
       metrics: [
         metric('Team leads', leads.length),
         metric('At risk + cold', leads.filter((l) => ['At Risk', 'Cold'].includes(l.age_band)).length, 'ageing alert', 'danger'),
-        metric('Warm cards', one("SELECT COUNT(*) n FROM product_cards WHERE state = 'WARM'").n),
-        metric('Team calls today', one("SELECT COUNT(*) n FROM activities WHERE type = 'Call' AND date(created_at) = date('now')").n),
-        metric('Overdue follow-ups', scorecard.reduce((s, r) => s + r.overdue_tasks, 0), null, 'warn'),
-        metric('Cards Active', one("SELECT COUNT(*) n FROM product_cards WHERE state = 'ACTIVE'").n),
+        /* These two counted every card in the database. A Bigul supervisor's
+           "Warm cards" read nine when three were theirs. Same join the rest of
+           the page uses -- a card belongs to the book its lead belongs to. */
+        metric('Warm cards', cardsInState(user, active, 'WARM')),
+        metric('Team calls today', callsToday(user, active)),
+        metric('Cards Active', cardsInState(user, active, 'ACTIVE')),
+
+        /* Q8a. The chase tiles, in a supervisor's unit rather than an RM's.
+           "Four of your eleven RMs are behind" names a conversation; "sixty
+           follow-ups are overdue" names a worry. */
+        metric('RMs behind', rmsBehind(user, active), 'have overdue follow-ups', 'warn', '/tasks?overdue=true&all=true'),
+        metric('Unattended over 48h', unattendedLeads(user, active), 'No contact logged', 'warn', '/leads?unattended_hours=48'),
+        metric('Leads with no owner', unownedLeads(user, active), 'Nobody has picked these up', 'warn', '/leads?unowned=true'),
+        metric('Approvals waiting on you', approvalsWaiting(user), 'Nobody else can decide these', 'warn', '/approvals'),
       ],
       worklist: { type: 'scorecard', title: 'Team performance', rows: scorecard, secondary: { type: 'leads', title: 'All team leads', rows: leads } },
       actions: ['Reassign lead', 'Approve stage change', 'Escalate', 'RM scorecard', 'Export team report'],

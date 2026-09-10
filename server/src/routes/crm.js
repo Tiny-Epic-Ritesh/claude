@@ -245,6 +245,14 @@ function leadFilter(req) {
     params.push(`-${hours} hours`);
   }
   if (owner_id) { where.push('l.owner_id = ?'); params.push(owner_id); }
+
+  /* Live leads nobody owns. The supervisor cockpit's "Leads with no owner"
+     tile opens this, and a tile that counts one set while the screen behind it
+     lists another is worse than no tile -- somebody acts on the larger number
+     and finds the smaller one. Same predicate on both sides. */
+  if (req.query.unowned === 'true') {
+    where.push("l.owner_id IS NULL AND l.stage NOT IN ('Won','Lost')");
+  }
   if (partner_id) { where.push('l.partner_id = ?'); params.push(partner_id); }
 
   if (card_state) {
