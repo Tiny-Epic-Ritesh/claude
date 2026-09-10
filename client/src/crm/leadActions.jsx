@@ -6,7 +6,7 @@
  */
 
 import { useState } from 'react';
-import { api, appUrl } from '../api.js';
+import { api } from '../api.js';
 import { Icon, Spinner } from '../components/ui.jsx';
 
 /* ------------------------------------------------------- lead actions */
@@ -152,21 +152,25 @@ export function useLeadActions({ session, reload, onError, onNotice }) {
       case 'card': return setModal({ kind: 'card', lead });
       case 'stage': return setModal({ kind: 'stage', lead });
       case 'owner': return setModal({ kind: 'owner', lead });
-      case 'kyc': return startKyc(lead);
+      /* Asks which product first. A KYC journey belongs to a product -- the
+         step list for a demat account is not the one for a PMS mandate -- so
+         starting one from a menu that knows only the lead has to ask.
+         Previously it did not, and every click was a 400. */
+      case 'kyc': return setModal({ kind: 'kyc', lead });
       case 'dialler': return pushToDialler(lead);
-      case 'edit': return setModal({ kind: 'edit', lead });
+      /* The edit form belongs to the record page, which owns the field
+         metadata and the validation rules -- LeadDetail intercepts this key
+         before it reaches here, and the list filters it out entirely.
+         Reaching this line means a caller offered Edit without either, and
+         saying so is better than opening a modal that does not exist. It used
+         to set a kind ActionModals has no case for, which rendered nothing at
+         all. */
+      case 'edit':
+        onError?.('Editing opens on the lead record — open the lead first.');
+        return undefined;
       case 'delete': return setModal({ kind: 'delete', lead });
       default: return undefined;
     }
-  }
-
-  async function startKyc(lead) {
-    try {
-      const j = await api.post('/kyc/journeys', { lead_id: lead.id });
-      window.open(appUrl(`/dkyc/resume/${j.resume_token}`), '_blank', 'noopener');
-      onNotice?.('KYC journey started — the applicant link is open in a new tab.');
-      reload?.();
-    } catch (err) { onError?.(err.message); }
   }
 
   async function pushToDialler(lead) {

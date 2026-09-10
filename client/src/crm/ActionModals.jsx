@@ -11,7 +11,7 @@
  */
 
 import { useState } from 'react';
-import { api, money } from '../api.js';
+import { api, money, appUrl } from '../api.js';
 import { useApi, Modal, Spinner, ErrorBanner, Loading, Icon } from '../components/ui.jsx';
 import ActivityComposer from './ActivityComposer.jsx';
 import EmailComposer from './EmailComposer.jsx';
@@ -45,6 +45,7 @@ export default function ActionModal({ state, session, onClose, onDone, onNotice 
     case 'task': return <TaskModal {...common} />;
     case 'case': return <CaseModal {...common} />;
     case 'card': return <CardModal {...common} />;
+    case 'kyc': return <KycModal {...common} />;
     case 'stage': return <StageModal {...common} />;
     case 'owner': return <OwnerModal {...common} />;
     case 'delete': return <DeleteModal {...common} />;
@@ -172,6 +173,105 @@ function MessageModal({ lead, channel, onClose, onDone, onNotice }) {
           </button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+/* ---------------------------------------------------------------- kyc */
+
+/**
+ * Start a KYC journey, on a product.
+ *
+ * The Actions menu knows the lead and not the product, and a journey is a
+ * journey for a product — the steps for a demat account are not the steps for a
+ * PMS mandate. This used to post the lead alone and fail with the server's own
+ * wording every single time.
+ *
+ * The products the lead is already engaged on come first, because that is
+ * nearly always the answer. The rest are still offered: somebody opening an
+ * account for a product nobody has logged interest in yet is a normal Monday,
+ * and refusing it would send them off to add a product interest first for no
+ * reason.
+ */
+function KycModal({ lead, onClose, onDone, onNotice }) {
+  const [detail] = useApi(`/leads/${lead.id}`);
+  const [cardId, setCardId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const cards = detail?.cards ?? [];
+  const engaged = cards.filter((c) => c.state && !['INACTIVE', 'LOST'].includes(c.state));
+  const rest = cards.filter((c) => !engaged.includes(c));
+
+  /* One engaged product is not a choice. Preselected rather than auto-started:
+     this opens a link the applicant will be sent, and that deserves a press. */
+  const only = engaged.length === 1 ? String(engaged[0].id) : '';
+  const chosen = cardId || only;
+
+  async function start() {
+    setBusy(true);
+    setError(null);
+    try {
+      const j = await api.post('/kyc/journeys', { lead_id: lead.id, card_id: Number(chosen) });
+      window.open(appUrl(`/dkyc/resume/${j.resume_token}`), '_blank', 'noopener');
+      onNotice?.('KYC journey started — the applicant link is open in a new tab.');
+      onDone();
+    } catch (err) { setError(err.message); setBusy(false); }
+  }
+
+  return (
+    <Modal title="Start KYC journey" subtitle={`For ${lead.name}`} onClose={onClose}>
+      {!detail ? <Loading /> : (
+        <>
+          {error && <ErrorBanner error={error} onDismiss={() => setError(null)} />}
+
+          {!cards.length ? (
+            <p>
+              This lead carries no products yet, so there is nothing to open an account for.
+              Add a product interest first.
+            </p>
+          ) : (
+            <>
+              <div className="field">
+                <label htmlFor="kyc-card">Which product</label>
+                <select id="kyc-card" value={chosen} onChange={(e) => setCardId(e.target.value)}>
+                  <option value="">Choose…</option>
+                  {engaged.length > 0 && (
+                    <optgroup label="Already in play">
+                      {engaged.map((c) => (
+                        <option key={c.id} value={c.id}>{c.product_name}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {rest.length > 0 && (
+                    <optgroup label="Not engaged yet">
+                      {rest.map((c) => (
+                        <option key={c.id} value={c.id}>{c.product_name}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+                <p className="hint">
+                  The journey's steps come from the product — a demat account and a PMS mandate ask
+                  for different things.
+                </p>
+              </div>
+
+              <p className="hint">
+                Starting it opens the applicant&apos;s own link in a new tab. That link is what the
+                client uses to finish their KYC, so it is theirs to receive, not yours to complete.
+              </p>
+            </>
+          )}
+
+          <div className="modal-actions">
+            <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+            <button type="button" className="btn btn-primary" disabled={busy || !chosen} onClick={start}>
+              {busy ? <Spinner /> : 'Start the journey'}
+            </button>
+          </div>
+        </>
+      )}
     </Modal>
   );
 }
