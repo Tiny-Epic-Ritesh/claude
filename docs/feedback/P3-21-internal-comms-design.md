@@ -1,10 +1,45 @@
 # P3-21 · Internal communication — design for scoping
 
 **For:** Ritesh · **Date:** 11 September 2026
-**Status:** proposal. Nothing is built. On 10 September you asked to see a
-design with options and costs before scoping this, rather than confirm a scope
-up front — this is that. The ticket's own acceptance clause is *"The module
-design is reviewed with me before implementation begins."*
+**Status:** **scoped 11 September — option C, built in three phases.** On 10
+September you asked to see a design with options and costs before scoping; this
+document was that, and the decisions below are yours from 11 September.
+
+---
+
+## Decisions — 11 September
+
+| Question | Decision | My recommendation had been |
+|---|---|---|
+| Which option | **C — Slack-style** | B |
+| Who may grant a transfer | **Anyone with `lead.reassign` in the book, and the current owner for their own lead — their supervisor is told** | Same |
+| Messaging across the two books | **Allowed where the who-may-message-whom grid opens it** | Refused, superadmins excepted |
+| Monitoring disclosed to users | **Yes — a standing notice** | Same |
+| Who holds the monitor capability | **Admin and superadmin** | Superadmin only |
+| Who may create channels | **Anyone** | Supervisors and admins |
+| Files in messages | **Images and PDFs, up to 10 MB** | Same |
+| Where a transfer is recorded | **The lead's history only, not its timeline** | Same |
+
+**Still open, not blocking phase 1:** what a *lead* escalation means at Bonanza
+(§7 question 5), and how long messages are kept — a question for the compliance
+officer (§7 question 6).
+
+**What the cross-book decision means in the grid.** Each cell of the
+who-may-message-whom grid has three states rather than two: *blocked*, *same
+book*, *any book*. Every cell starts at *same book*. A lead chip is still drawn
+for each reader, so a Bigul user sent a Bonanza lead sees *a lead you cannot
+open* — opening a conversation across the books never opens the records.
+
+## Build plan for C
+
+| Phase | What ships | Days |
+|---|---|---:|
+| **1** | Everything in option B: one-to-one messages, the grid, monitoring with audited reads and the standing notice, freeze and suspend, transfer requests inside a conversation, the header bell and messages panel | ~9 |
+| **2** | Channels — anyone creates, public or private — threads, reactions, @mentions in channels | ~7 |
+| **3** | Files (images and PDFs, 10 MB, in the CRM's own storage), message search, presence, and live push by server-sent events with polling as the fallback | ~8 |
+| | **Total** | **~24** |
+
+Each phase ships on its own and is usable without the next.
 
 ---
 
