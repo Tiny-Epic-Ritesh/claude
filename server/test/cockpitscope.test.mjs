@@ -27,7 +27,7 @@
  */
 
 import { strict as assert } from 'node:assert';
-import { all, one } from '../src/db.js';
+import { all, one, run } from '../src/db.js';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
 
@@ -56,6 +56,19 @@ const TOKEN = await (async () => {
 })();
 
 const auth = { Authorization: `Bearer ${TOKEN}` };
+
+/* A lead in the Bigul Unassigned queue, made BEFORE the cockpit is read.
+   Without it no live lead in either book lacks a person, the "not picked up"
+   tile reads zero, and the test that it matches its screen passes because
+   zero equals zero. It did exactly that. */
+run("DELETE FROM leads WHERE name = 'Cockpit probe queued'");
+const QUEUE = one("SELECT id FROM queues WHERE sales_org = 'BIGUL' AND name LIKE 'Unassigned%'")?.id;
+assert(QUEUE, 'no Bigul Unassigned queue to put the fixture in');
+const QUEUED = Number(run(
+  `INSERT INTO leads (name, mobile, email, source, stage, sales_org, owner_id, owner_queue_id)
+   VALUES ('Cockpit probe queued', '9800000041', 'probe@cockpit.test', 'Referral', 'New', 'BIGUL', NULL, ?)`,
+  [QUEUE],
+).lastInsertRowid);
 
 /* One fetch, reused. The cockpit is a read and does not change under the tests. */
 const COCKPIT = await (async () => {
@@ -132,9 +145,10 @@ await test('team calls today are counted in one book', async () => {
 
 await test("the supervisor's chase tiles are the ones a supervisor needs", async () => {
   /* Q8a. Not the RM's three with bigger numbers: a supervisor's unit is people,
-     and "leads with no owner" is work only they can see and only they clear. */
+     and leads sitting in a queue with no person on them are work only they can
+     see and only they clear. */
   const cockpit = await cockpitFor();
-  for (const label of ['RMs behind', 'Unattended over 48h', 'Leads with no owner', 'Approvals waiting on you']) {
+  for (const label of ['RMs behind', 'Unattended over 48h', 'Not picked up yet', 'Approvals waiting on you']) {
     assert(cockpit.metrics.some((m) => m.label === label), `the supervisor cockpit has no "${label}" tile`);
   }
 });
@@ -144,17 +158,24 @@ await test('every chase tile opens a screen that counts the same set', async () 
      somebody acts on the larger number and finds the smaller one. */
   const cockpit = await cockpitFor();
 
-  const unowned = cockpit.metrics.find((m) => m.label === 'Leads with no owner');
+  const unowned = cockpit.metrics.find((m) => m.label === 'Not picked up yet');
   assert(unowned?.to, 'the unowned tile opens nothing');
 
   const res = await fetch(`${BASE}/api/leads?unowned=true&limit=200`, {
     headers: auth,
   });
   assert.equal(res.status, 200, `the screen behind the tile refused: HTTP ${res.status}`);
-  const listed = (await res.json()).rows ?? [];
+  /* A bare array, not an envelope. Reading `.rows` here is what made this
+     test pass on nothing. */
+  const listed = await res.json();
+  assert(Array.isArray(listed), `the lead list is not an array: ${JSON.stringify(listed).slice(0, 120)}`);
+  assert(unowned.value > 0, 'the tile reads zero, so agreeing with the screen proves nothing');
+  assert(listed.some((l) => l.id === QUEUED), 'the queued fixture is not on the screen behind the tile');
   assert.equal(listed.length, unowned.value,
     `the tile says ${unowned.value} and the screen behind it lists ${listed.length}`);
 });
+
+run('DELETE FROM leads WHERE id = ?', [QUEUED]);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exitCode = failed ? 1 : 0;

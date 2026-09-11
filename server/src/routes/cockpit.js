@@ -208,11 +208,16 @@ function rmsBehind(user, active) {
 }
 
 /**
- * Live leads nobody owns.
+ * Live leads no person has picked up -- in practice, leads sitting in a queue.
  *
- * A supervisor's job and nobody else's: an RM cannot see them to pick them up,
- * and an administrator is not watching the pipeline. Left alone they age
- * quietly into the Cold band, which is the one failure mode nobody is paged for.
+ * Not "unowned": owner is polymorphic, and a queued lead is owned by the queue.
+ *
+ * Not invisible to RMs either. A queue with no members is open to every role
+ * (`queueScopeSql`), and today every queue is, so an RM can see these and claim
+ * them. That is the problem rather than the cure: a lead everyone can see is a
+ * lead nobody is answerable for. The supervisor is the one person whose job is
+ * to notice they are still there. Left alone they age quietly into the Cold
+ * band, which is the one failure mode nobody is paged for.
  */
 function unownedLeads(user, active) {
   const scope = leadScope(user, 'l', active);
@@ -434,7 +439,10 @@ const COCKPITS = {
            follow-ups are overdue" names a worry. */
         metric('RMs behind', rmsBehind(user, active), 'have overdue follow-ups', 'warn', '/tasks?overdue=true&all=true'),
         metric('Unattended over 48h', unattendedLeads(user, active), 'No contact logged', 'warn', '/leads?unattended_hours=48'),
-        metric('Leads with no owner', unownedLeads(user, active), 'Nobody has picked these up', 'warn', '/leads?unowned=true'),
+        /* "Not picked up" rather than "no owner": owner is polymorphic, and a lead
+           sitting in the Unassigned queue is owned -- by the queue. What this
+           counts is work no person has taken yet. */
+        metric('Not picked up yet', unownedLeads(user, active), 'In a queue, with no person on it', 'warn', '/leads?unowned=true'),
         metric('Approvals waiting on you', approvalsWaiting(user), 'Nobody else can decide these', 'warn', '/approvals'),
       ],
       worklist: { type: 'scorecard', title: 'Team performance', rows: scorecard, secondary: { type: 'leads', title: 'All team leads', rows: leads } },

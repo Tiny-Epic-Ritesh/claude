@@ -179,4 +179,10 @@ clean();
 PROBE.cleanup();
 
 console.log(`\n${passed} passed, ${failed} failed`);
-process.exit(failed ? 1 : 0);
+
+// exitCode rather than process.exit(), for the reason bookscope.test.mjs gives:
+// exiting straight after the live HTTP calls tears down libuv handles
+// mid-flight. On Node 24.19 this file died on that assertion every time, after
+// reporting 11 passed -- and being last in the unit chain, it took the
+// end-to-end suite down with it.
+process.exitCode = failed ? 1 : 0;

@@ -145,7 +145,7 @@ Supervisor cockpit gets its own four:
 |---|---|---|
 | **RMs behind** | People with an overdue follow-up | The unit is a person, because the action is a conversation |
 | **Unattended over 48h** | Leads with no contact logged | Shared with the RM set, but scoped to the team — this is the leakage number |
-| **Leads with no owner** | Live leads nobody has picked up | An RM cannot see them and an administrator is not watching the pipeline. Only a supervisor clears these, and left alone they age quietly into Cold |
+| **Not picked up yet** | Live leads in a queue with no person on them | Every RM in the book can see these and claim them, which is exactly why nobody does: a lead everyone can see is a lead nobody is answerable for. The supervisor is the one person whose job is to notice they are still there, and left alone they age quietly into Cold |
 | **Approvals waiting on you** | Approvals only they can decide | Matters *more* to a supervisor than to the RM it was built for |
 
 **Note on the role.** There is no `sales_head` role in the system; the nearest
