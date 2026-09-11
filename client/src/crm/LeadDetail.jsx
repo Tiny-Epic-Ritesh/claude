@@ -1215,9 +1215,9 @@ function DetailsTab({ lead, session, onEdit }) {
                   <div className="history-line">
                     <strong>{h.field_label ?? h.field}</strong>
                     <span className="muted">
-                      {h.old_value ? <s>{h.old_value}</s> : <em>empty</em>}
+                      {h.old_value ? <s>{h.old_label ?? h.old_value}</s> : <em>empty</em>}
                       {' → '}
-                      <strong>{h.new_value ?? '—'}</strong>
+                      <strong>{h.new_label ?? h.new_value ?? '—'}</strong>
                     </span>
                   </div>
                   <div className="tiny muted">

@@ -2522,6 +2522,40 @@ CREATE INDEX IF NOT EXISTS idx_history_field ON field_history(entity, field, cha
 CREATE INDEX IF NOT EXISTS idx_config_audit_at ON config_audit(at DESC);
 `);
 
+/**
+ * Lookup ids that field_history stored as '8.0' rather than '8'.
+ *
+ * node:sqlite binds a JS number as a REAL and the TEXT value columns spelled it
+ * with a decimal point, so every owner change was written as '8.0' -> '9.0':
+ * 717 of 717 lead.owner_id rows on the development database on 11 Sep 2026,
+ * from the lead form and from approved transfers alike, and no row of any other
+ * field. recordChange() writes the digits now; this rewrites what came before,
+ * so the column holds one spelling of an id rather than two.
+ *
+ * Limited to lookup fields, whose values are integer ids by definition, so the
+ * decimal point there can only be the binding and never something a person
+ * typed -- a text field holding '12.0' is left alone. And limited to a value
+ * that is exactly an integer followed by '.0', which is stricter than
+ * GLOB '*.0': that would also take '08.0' or 'v1.0'.
+ *
+ * A no-op on every start after the first. Exported so the test can run it.
+ */
+export function normaliseLookupHistory() {
+  let changed = 0;
+  for (const col of ['old_value', 'new_value']) {
+    changed += Number(db.prepare(
+      `UPDATE field_history SET ${col} = CAST(CAST(${col} AS INTEGER) AS TEXT)
+        WHERE (entity, field) IN (SELECT entity, api_name FROM field_def WHERE type = 'lookup')
+          AND ${col} = CAST(CAST(${col} AS INTEGER) AS TEXT) || '.0'`,
+    ).run().changes);
+  }
+  return changed;
+}
+const lookupHistoryRewritten = normaliseLookupHistory();
+if (lookupHistoryRewritten) {
+  console.log(`[db] rewrote ${lookupHistoryRewritten} field_history lookup id(s) from 'N.0' to 'N'`);
+}
+
 db.exec(`
 /**
  * A saved search is a query, never a membership list.

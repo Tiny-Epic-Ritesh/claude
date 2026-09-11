@@ -978,7 +978,7 @@ export function setCustomValues(entity, recordId, values, { actorId = null, sour
         run(
           `INSERT INTO field_history (entity, record_id, field, old_value, new_value, actor_id, source)
            VALUES (?,?,?,?,?,?,?)`,
-          [entity, recordId, apiName, before, value, actorId, source],
+          [entity, recordId, apiName, historyText(before), historyText(value), actorId, source],
         );
       }
       written.push(apiName);
@@ -990,6 +990,20 @@ export function setCustomValues(entity, recordId, values, { actorId = null, sour
 
 /* ------------------------------------------------------------ history */
 
+/**
+ * A value as field_history should hold it.
+ *
+ * old_value and new_value are TEXT, and node:sqlite binds every JS number as a
+ * REAL, which the column then spells with a decimal point: an owner id of 8 was
+ * stored as '8.0', so the history panel read '8.0 → 9.0' and anything comparing
+ * the value as text against '8' found nothing. An integer goes in as its own
+ * digits. Everything else is bound exactly as before -- strings, nulls and
+ * fractional numbers were never affected.
+ */
+function historyText(value) {
+  return Number.isSafeInteger(value) ? String(value) : value;
+}
+
 /** Record a change to a CORE column. Custom fields are handled above. */
 export function recordChange(entity, recordId, field, oldValue, newValue, { actorId = null, source = 'ui' } = {}) {
   if (String(oldValue ?? '') === String(newValue ?? '')) return false;
@@ -1000,21 +1014,52 @@ export function recordChange(entity, recordId, field, oldValue, newValue, { acto
   run(
     `INSERT INTO field_history (entity, record_id, field, old_value, new_value, actor_id, source)
      VALUES (?,?,?,?,?,?,?)`,
-    [entity, recordId, field, oldValue, newValue, actorId, source],
+    [entity, recordId, field, historyText(oldValue), historyText(newValue), actorId, source],
   );
   return true;
 }
 
-/** The change history for one record, newest first. */
-export const historyFor = (entity, recordId, limit = 100) => all(
-  `SELECT h.*, u.name AS actor_name, f.label AS field_label
-   FROM field_history h
-   LEFT JOIN users u ON u.id = h.actor_id
-   LEFT JOIN field_def f ON f.entity = h.entity AND f.api_name = h.field
-   WHERE h.entity = ? AND h.record_id = ?
-   ORDER BY h.changed_at DESC, h.id DESC LIMIT ?`,
-  [entity, recordId, limit],
-);
+/**
+ * The lookups on an entity that point at a person, read from the table's own
+ * foreign keys. A list kept here would drift, and "every lookup" is wrong:
+ * `partner_id` is a lookup too, and naming it from `users` would put a
+ * stranger's name on the change.
+ */
+function personLookups(entity) {
+  const table = entityDef(entity)?.table_name;
+  if (!table) return [];
+  const toUsers = new Set(all(
+    `SELECT "from" AS col FROM pragma_foreign_key_list(?) WHERE "table" = 'users'`, [table],
+  ).map((k) => k.col));
+  return fieldsOf(entity, { includeInactive: true })
+    .filter((f) => f.type === 'lookup' && toUsers.has(f.api_name))
+    .map((f) => f.api_name);
+}
+
+/**
+ * The change history for one record, newest first.
+ *
+ * A change to a person lookup (owner, assignee) also carries old_label and
+ * new_label, the two people's names, so it reads as a change between people
+ * rather than between ids. Null on every other field, and for an id that no
+ * longer names anyone -- the id is still in the value.
+ */
+export function historyFor(entity, recordId, limit = 100) {
+  const people = personLookups(entity);
+  const isPerson = people.length ? `h.field IN (${people.map(() => '?').join(',')})` : '0';
+  return all(
+    `SELECT h.*, u.name AS actor_name, f.label AS field_label,
+            ou.name AS old_label, nu.name AS new_label
+     FROM field_history h
+     LEFT JOIN users u ON u.id = h.actor_id
+     LEFT JOIN field_def f ON f.entity = h.entity AND f.api_name = h.field
+     LEFT JOIN users ou ON ${isPerson} AND ou.id = h.old_value
+     LEFT JOIN users nu ON ${isPerson} AND nu.id = h.new_value
+     WHERE h.entity = ? AND h.record_id = ?
+     ORDER BY h.changed_at DESC, h.id DESC LIMIT ?`,
+    [...people, ...people, entity, recordId, limit],
+  );
+}
 
 /**
  * Stage entry and exit, derived from history rather than stamped.
