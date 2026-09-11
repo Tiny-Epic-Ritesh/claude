@@ -89,7 +89,7 @@ each has an unanswered open question against it. That is why none is started.
 | P3-16 | Advanced automation builder | Builder design presented before implementation | **Q10** |
 | P3-19 | LAPPS — scriptable custom app framework | Feasibility assessment — value, security model, sandbox — before *any* build | **Q11** |
 | P3-20 | Apps marketplace / connectors | Feasibility assessment naming which connectors are viable this phase | **Q12** |
-| P3-21 | Internal communication module | Module design reviewed before implementation | **Scoped 11 Sep — option C, three phases (~24 days). Phase 1 built 11 Sep.** Decisions and what was built in `P3-21-internal-comms-design.md`. Open: what a lead escalation means; message retention (compliance officer); whether the duplicate warning should offer *Ask them for it*. |
+| P3-21 | Internal communication module | Module design reviewed before implementation | **Scoped 11 Sep — option C, three phases (~24 days). Phase 1 built 11 Sep.** Decisions and what was built in `P3-21-internal-comms-design.md`. RMs may name any lead in their book (Ritesh, 11 Sep) — built as an exact mobile / full-name lookup, audited, own business only. Open: what a lead escalation means; message retention (compliance officer). |
 
 These are the largest items in the document. P3-06 and P3-16 in particular are
 each comparable in size to everything delivered in Round 1.

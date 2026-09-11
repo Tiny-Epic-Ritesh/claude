@@ -82,6 +82,16 @@ router.post('/conversations/:id/read', (req, res) => {
 
 router.post('/message/:id/withdraw', (req, res) => answer(res, M.withdrawMessage(me(req), idOf(req.params.id))));
 
+/* A POST, not a GET, so the mobile number never sits in a URL -- where the
+   access log would keep it. Twenty an hour each: enough for the clients who
+   ring you, not enough to walk a colleague's book one number at a time. */
+const lookingUp = rateLimiter({
+  name: 'lead-lookup', limit: 20, windowMs: 60 * 60_000, by: (req) => `u${req.user?.id ?? req.ip}`,
+});
+router.post('/lookup', lookingUp, (req, res) => answer(res, M.lookupLeads(me(req), {
+  mobile: req.body?.mobile, name: req.body?.name,
+})));
+
 router.post('/transfer', sending, (req, res) => answer(res, M.requestTransfer(me(req), {
   leadId: req.body?.lead_id, toUserId: req.body?.to_user_id, reason: req.body?.reason,
 }), true));

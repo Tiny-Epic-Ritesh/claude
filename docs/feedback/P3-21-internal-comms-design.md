@@ -66,14 +66,25 @@ the card in the thread; the card updating to *Approved* and the lead chip
 turning into *a lead you cannot open* for Priya, because it is no longer hers.
 The lead moved to Anil with one history row and nothing on its timeline.
 
-**One consequence you should decide on.** The design lets somebody ask only for
-a lead they can already open, so the request cannot reveal that a lead exists.
-Under the private floor an RM opens their own book and little else, so today
-the people who can use this are supervisors, and RMs with sight of a desk. The
-realistic trigger — a client rings an RM about a lead somebody else owns — is
-not covered. The natural place for it is the duplicate warning an RM gets when
-they try to create that client: it already knows the lead exists and who owns
-it, so offering *Ask them for it* there reveals nothing new.
+**Asking for a lead you cannot open — decided 11 September.** As first built,
+somebody could ask only for a lead they could already open, which under the
+private floor meant mostly supervisors. I asked whether the duplicate warning
+should offer *Ask them for it*; you chose wider — **an RM may name any lead in
+their book.** Built as the narrowest reading of that:
+
+| | |
+|---|---|
+| How a lead is named | **Look one up** in *Ask for a lead*: the exact 10-digit mobile, or the exact full name. No partial matches, so it cannot be used to browse a colleague's book |
+| What it answers | That the lead exists, who has it, and who could hand it over whom you may message — owner first. **Nothing from the record**: no name back for a mobile, no mobile back for a name, no stage |
+| Where it looks | Your own business only, never the other |
+| What it leaves behind | Every lead found is written to the audit log against the person who looked; a lookup that finds nothing is logged without what was searched for |
+| How often | Twenty lookups an hour each |
+| Asking afterwards | A transfer for a lead you cannot open is accepted only on your own lookup of it in the last 24 hours — so "try every lead id" is refused exactly like a lead that does not exist |
+
+The mobile is sent in the body of the request, never the address, so it does
+not land in the access log. If you want partial-name search after all, it is a
+one-line change — I kept it exact because it is the difference between asking
+about a client and reading a colleague's list.
 
 ---
 

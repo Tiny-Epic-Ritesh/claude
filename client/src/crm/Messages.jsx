@@ -11,9 +11,10 @@
  * what somebody can do: the standing notice that compliance may read this
  * (Ritesh, 11 September), a frozen conversation's reason, and a suspension.
  *
- * A lead is asked for from inside a conversation, of the person in it. The
- * request is a card in the thread that the other person decides on the spot,
- * and it updates in place when they do.
+ * A lead is asked for either inside a conversation, of the person in it, or
+ * from the side panel, of whoever could hand it over. The request is a card
+ * in the thread that the other person decides on the spot, and it updates in
+ * place when they do.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -37,6 +38,7 @@ export default function Messages() {
   const openId = Number(search.get('c')) || null;
   const [list, { error: listError, reload: reloadList }] = useApi('/messages/conversations');
   const [starting, setStarting] = useState(false);
+  const [asking, setAsking] = useState(false);
   const [problem, setProblem] = useState(null);
 
   useEffect(() => {
@@ -44,7 +46,7 @@ export default function Messages() {
     return () => clearInterval(timer);
   }, [reloadList]);
 
-  const choose = (id) => setSearch(id ? { c: String(id) } : {});
+  const choose = useCallback((id) => setSearch(id ? { c: String(id) } : {}), [setSearch]);
 
   if (listError && !list) return <ErrorBanner error={listError} />;
   if (!list) return <Loading label="Opening your messages…" />;
@@ -58,6 +60,8 @@ export default function Messages() {
       choose(opened.id);
     } catch (err) { setProblem(err.message); }
   };
+
+  const suspended = Boolean(list.suspended);
 
   return (
     <>
@@ -73,7 +77,7 @@ export default function Messages() {
 
       <ErrorBanner error={problem} onDismiss={() => setProblem(null)} />
 
-      {list.suspended && (
+      {suspended && (
         <div className="glass notice notice-warn">
           <Icon name="block" />
           <div>
@@ -90,14 +94,14 @@ export default function Messages() {
           {starting ? (
             <PeoplePicker onPick={start} onCancel={() => setStarting(false)} />
           ) : (
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() => setStarting(true)}
-              disabled={Boolean(list.suspended)}
-            >
-              <Icon name="add" size={16} /> New conversation
-            </button>
+            <div className="row wrap" style={{ gap: 6 }}>
+              <button type="button" className="btn btn-sm" onClick={() => setStarting(true)} disabled={suspended}>
+                <Icon name="add" size={16} /> New conversation
+              </button>
+              <button type="button" className="btn-ghost btn-sm" onClick={() => setAsking(true)} disabled={suspended}>
+                <Icon name="swap_horiz" size={16} /> Ask for a lead
+              </button>
+            </div>
           )}
 
           <div className="msg-convos">
@@ -131,8 +135,9 @@ export default function Messages() {
             <Thread
               key={openId}
               id={openId}
-              suspended={Boolean(list.suspended)}
+              suspended={suspended}
               onBack={() => choose(null)}
+              onGo={choose}
               onChanged={reloadList}
               onProblem={setProblem}
             />
@@ -141,6 +146,13 @@ export default function Messages() {
           )}
         </section>
       </div>
+
+      {asking && (
+        <AskForLead
+          onClose={() => setAsking(false)}
+          onDone={(out) => { setAsking(false); reloadList(); choose(out.conversation_id); }}
+        />
+      )}
     </>
   );
 }
@@ -194,7 +206,7 @@ function PeoplePicker({ onPick, onCancel }) {
 
 /* ----------------------------------------------------------- thread */
 
-function Thread({ id, suspended, onBack, onChanged, onProblem }) {
+function Thread({ id, suspended, onBack, onGo, onChanged, onProblem }) {
   const [convo, setConvo] = useState(null);
   const [messages, setMessages] = useState([]);
   const [error, setError] = useState(null);
@@ -273,7 +285,7 @@ function Thread({ id, suspended, onBack, onChanged, onProblem }) {
       </div>
 
       {!frozen && !suspended && (
-        <Composer id={id} other={other} onSent={load} onProblem={onProblem} />
+        <Composer id={id} other={other} onSent={load} onGo={onGo} onProblem={onProblem} />
       )}
     </>
   );
@@ -389,7 +401,7 @@ function TransferCard({ m, onAct }) {
 
 /* ----------------------------------------------------------- composing */
 
-function Composer({ id, other, onSent, onProblem }) {
+function Composer({ id, other, onSent, onGo, onProblem }) {
   const [text, setText] = useState('');
   const [lead, setLead] = useState(null);
   const [picking, setPicking] = useState(false);
@@ -451,7 +463,17 @@ function Composer({ id, other, onSent, onProblem }) {
         </Modal>
       )}
       {asking && (
-        <AskForLead other={other} onClose={() => setAsking(false)} onDone={() => { setAsking(false); onSent(); }} />
+        <AskForLead
+          other={other}
+          onClose={() => setAsking(false)}
+          onDone={(out) => {
+            setAsking(false);
+            onSent();
+            // Asked of somebody else than the person in this conversation: go
+            // to the conversation the request landed in.
+            if (out?.conversation_id && out.conversation_id !== id) onGo?.(out.conversation_id);
+          }}
+        />
       )}
     </div>
   );
@@ -501,25 +523,133 @@ function LeadSearch({ onPick }) {
   );
 }
 
-function AskForLead({ other, onClose, onDone }) {
+/**
+ * Any lead in your own business, by its exact mobile or full name.
+ *
+ * Ritesh, 11 September: an RM may name any lead. The answer is who has it and
+ * who could hand it over -- nothing from the client record -- and the screen
+ * says, before the lookup, that it is recorded against the person looking.
+ */
+function LeadLookup({ onPick }) {
+  const [text, setText] = useState('');
+  const [found, setFound] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const look = async () => {
+    const typed = text.trim();
+    if (!typed) return;
+    setBusy(true);
+    setError(null);
+    setFound(null);
+    try {
+      const digits = typed.replace(/[^0-9]/g, '');
+      const r = await api.post('/messages/lookup', digits.length >= 10 ? { mobile: typed } : { name: typed });
+      setFound(r.matches);
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="stack" style={{ gap: 6 }}>
+      <div className="row" style={{ gap: 6 }}>
+        <input
+          autoFocus
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); look(); } }}
+          placeholder="The full mobile number, or the client's full name"
+          aria-label="Mobile number or full name"
+        />
+        <button type="button" className="btn btn-sm" onClick={look} disabled={busy || !text.trim()}>
+          {busy ? <Spinner /> : 'Look up'}
+        </button>
+      </div>
+      <span className="tiny muted">
+        Exact matches only, in your own business. It tells you who has the lead and nothing else, and
+        the lookup is recorded against your name.
+      </span>
+      {error && <ErrorBanner error={error} />}
+      {found && found.length === 0 && (
+        <span className="tiny muted">No lead in your business has exactly that number or name.</span>
+      )}
+      <div className="msg-pick">
+        {(found ?? []).map((m) => {
+          const blocked = m.mine || Boolean(m.in_queue);
+          let line = `With ${m.owner?.name ?? 'nobody'}`;
+          if (m.mine) line = 'Already yours';
+          else if (m.in_queue) line = `Waiting in ${m.in_queue}`;
+          let sub = `${m.grantors.length} ${m.grantors.length === 1 ? 'person' : 'people'} you can ask`;
+          if (m.in_queue) sub = 'Take it from the queue instead';
+          else if (m.can_open) sub = 'You can already open this one';
+          return (
+            <button key={m.lead_id} type="button" className="msg-convo" disabled={blocked} onClick={() => onPick(m)}>
+              <Icon name="person" size={16} />
+              <span className="msg-convo-body">
+                <strong className="small">{line}</strong>
+                <span className="tiny muted msg-preview">{sub}</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Ask somebody for a lead.
+ *
+ * Inside a conversation it defaults to the person in it; from the side panel,
+ * to whoever has the lead. A lead found by lookup offers only the people who
+ * could hand it over and whom you may message -- the owner first -- because
+ * asking anybody else would be refused.
+ */
+function AskForLead({ other = null, onClose, onDone }) {
+  const [lookingUp, setLookingUp] = useState(false);
   const [lead, setLead] = useState(null);
+  const [targetId, setTargetId] = useState(other?.id ?? null);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+
+  const pickOpenable = (l) => {
+    setLead({
+      id: l.id,
+      label: `${l.name}${l.owner_name ? ` · with ${l.owner_name}` : ''}`,
+      owner: l.owner_id ? { id: l.owner_id, name: l.owner_name } : null,
+      grantors: null,
+    });
+    setTargetId(other?.id ?? l.owner_id ?? null);
+  };
+
+  const pickFound = (m) => {
+    const grantors = m.grantors ?? [];
+    setLead({
+      id: m.lead_id,
+      label: m.owner ? `The lead you looked up · with ${m.owner.name}` : 'The lead you looked up',
+      owner: m.owner,
+      grantors,
+    });
+    setTargetId((grantors.find((g) => g.id === other?.id) ?? grantors[0])?.id ?? null);
+  };
+
+  const people = lead?.grantors ?? [other, lead?.owner].filter(Boolean);
+  const target = people.find((p) => p.id === targetId) ?? null;
 
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      await api.post('/messages/transfer', { lead_id: lead.id, to_user_id: other.id, reason });
-      onDone();
+      const out = await api.post('/messages/transfer', { lead_id: lead.id, to_user_id: targetId, reason });
+      onDone(out);
     } catch (err) { setError(err.message); setBusy(false); }
   };
 
   return (
     <Modal
-      title={`Ask ${other.name} for a lead`}
+      title={other ? `Ask ${other.name} for a lead` : 'Ask for a lead'}
       subtitle="They decide. You are told either way, and a yes moves the lead to you."
       onClose={onClose}
     >
@@ -529,15 +659,40 @@ function AskForLead({ other, onClose, onDone }) {
         <div className="span-2">
           {lead ? (
             <div className="row-between">
-              <span className="msg-chip">
-                <Icon name="person" size={13} /> {lead.name}{lead.owner_name ? ` · with ${lead.owner_name}` : ''}
-              </span>
+              <span className="msg-chip"><Icon name="person" size={13} /> {lead.label}</span>
               <button type="button" className="btn-ghost btn-sm" onClick={() => setLead(null)}>Change</button>
             </div>
           ) : (
-            <LeadSearch onPick={setLead} />
+            <div className="stack" style={{ gap: 8 }}>
+              <div className="inbox-tabs" role="tablist" style={{ padding: 0, border: 0 }}>
+                <button type="button" role="tab" className="inbox-tab" aria-selected={!lookingUp} onClick={() => setLookingUp(false)}>
+                  A lead you can open
+                </button>
+                <button type="button" role="tab" className="inbox-tab" aria-selected={lookingUp} onClick={() => setLookingUp(true)}>
+                  Look one up
+                </button>
+              </div>
+              {lookingUp ? <LeadLookup onPick={pickFound} /> : <LeadSearch onPick={pickOpenable} />}
+            </div>
           )}
         </div>
+
+        {lead && (
+          <label className="span-2">
+            <span>Ask</span>
+            {people.length ? (
+              <select value={targetId ?? ''} onChange={(e) => setTargetId(Number(e.target.value))}>
+                {people.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}{p.is_owner || p.id === lead.owner?.id ? ' (has it now)' : ''}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <small className="muted">Nobody who could hand this lead over is somebody you can message.</small>
+            )}
+          </label>
+        )}
 
         <label className="span-2">
           <span>Why you are asking</span>
@@ -548,13 +703,15 @@ function AskForLead({ other, onClose, onDone }) {
             onChange={(e) => setReason(e.target.value)}
             placeholder="The client rang me directly and wants to stay with me"
           />
-          <small className="muted">{other.name} sees this, so it has to give them a reason to say yes.</small>
+          <small className="muted">
+            {target ? `${target.name} sees this` : 'They see this'}, so it has to give them a reason to say yes.
+          </small>
         </label>
 
         <div className="modal-actions span-2">
           <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn btn-primary" disabled={busy || !lead || !reason.trim()}>
-            {busy ? <Spinner /> : 'Ask'}
+          <button type="submit" className="btn btn-primary" disabled={busy || !lead || !targetId || !reason.trim()}>
+            {busy ? <Spinner /> : target ? `Ask ${target.name}` : 'Ask'}
           </button>
         </div>
       </form>

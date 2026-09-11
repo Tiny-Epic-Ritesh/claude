@@ -388,7 +388,9 @@ export function messagesFor(reader, conversationId, {
  * same words whether or not it exists, so the attach box cannot be used to ask
  * the system which lead ids are real.
  */
-export function send(from, conversationId, { body, leadId = null, kind = 'text', approvalId = null } = {}) {
+export function send(from, conversationId, {
+  body, leadId = null, kind = 'text', approvalId = null, leadVerified = false,
+} = {}) {
   const convo = one('SELECT * FROM conversation WHERE id = ?', [conversationId]);
   if (!convo || !isMember(conversationId, from.id)) {
     return { ok: false, status: 404, error: 'Conversation not found' };
@@ -408,7 +410,11 @@ export function send(from, conversationId, { body, leadId = null, kind = 'text',
     if (refusal) return { ok: false, status: 403, error: refusal };
   }
 
-  if (leadId != null && leadId !== '' && !canSeeLead(from, leadId)) {
+  /* `leadVerified` is set by requestTransfer alone, which has already allowed
+     the lead on the requester's own lookup. The route builds these options
+     itself and never passes it, so the attach box is still limited to leads
+     the sender can open. */
+  if (leadId != null && leadId !== '' && !leadVerified && !canSeeLead(from, leadId)) {
     return { ok: false, status: 404, error: 'Lead not found' };
   }
 
@@ -474,21 +480,24 @@ class Refusal extends Error {
 /**
  * Ask a named person for a lead, inside the conversation the two of you have.
  *
- * The lead has to be one the requester can already open. A lead they cannot
- * open they cannot name -- otherwise the request would tell them it exists,
- * and who could grant it. The refusal for that case is word for word the
- * refusal for a lead that does not exist.
+ * The lead has to be one the requester can already open, or one they looked
+ * up themselves in the last day (lookupLeads, below). Ritesh ruled on 11
+ * September that an RM may name any lead in their book; the lookup is how
+ * they name it, and requiring one is what stops "try every id" from becoming
+ * a way to map a colleague's book. Every other case -- no such lead, the other
+ * business, never looked up -- is refused in the same words.
  */
 export function requestTransfer(requester, { leadId, toUserId, reason } = {}) {
   const notFound = { ok: false, status: 404, error: 'Lead not found' };
   const id = Number(leadId);
-  if (!Number.isInteger(id) || id <= 0 || !canSeeLead(requester, id)) return notFound;
+  if (!Number.isInteger(id) || id <= 0) return notFound;
 
   const lead = one(
     'SELECT id, name, owner_id, owner_queue_id, sales_org FROM leads WHERE id = ? AND deleted_at IS NULL',
     [id],
   );
-  if (!lead) return notFound;
+  if (!lead || !mayUseOrg(requester, lead.sales_org)) return notFound;
+  if (!canSeeLead(requester, id) && !lookedUp(requester.id, id)) return notFound;
 
   if (Number(lead.owner_id) === Number(requester.id)) {
     return { ok: false, status: 409, error: 'This lead is already yours' };
@@ -533,6 +542,7 @@ export function requestTransfer(requester, { leadId, toUserId, reason } = {}) {
          It does not carry the lead's name (rule 2). */
       const sent = send(requester, conversationId, {
         body: String(reason).trim(), leadId: lead.id, kind: 'transfer', approvalId: asked.request.id,
+        leadVerified: true,
       });
       if (!sent.ok) throw new Refusal(sent.status, sent.error);
 
@@ -542,6 +552,105 @@ export function requestTransfer(requester, { leadId, toUserId, reason } = {}) {
     if (err instanceof Refusal) return { ok: false, status: err.status, error: err.message };
     throw err;
   }
+}
+
+/* ------------------------------------------- naming a lead you cannot open */
+
+/** How long a lookup lets you ask for what it found. */
+export const LOOKUP_WINDOW_HOURS = 24;
+
+function lookedUp(userId, leadId) {
+  return Boolean(one(
+    `SELECT 1 FROM audit_log
+      WHERE user_id = ? AND action = 'lead_lookup' AND entity = 'lead' AND entity_id = ?
+        AND created_at >= datetime('now', ?)`,
+    [userId, leadId, `-${LOOKUP_WINDOW_HOURS} hours`],
+  ));
+}
+
+/* The ten digits, whatever was typed around them -- a country code, a leading
+   zero, spaces. Stored mobiles are exactly ten digits, six to nine first. */
+const tenDigits = (v) => {
+  let d = String(v ?? '').replace(/[^0-9]/g, '');
+  if (d.length === 12 && d.startsWith('91')) d = d.slice(2);
+  if (d.length === 11 && d.startsWith('0')) d = d.slice(1);
+  return /^[6-9][0-9]{9}$/.test(d) ? d : null;
+};
+
+/** Who could say yes to handing this lead over, and whom the asker may message. */
+function grantorsFor(asker, lead) {
+  const people = all(`SELECT ${USER_COLUMNS} FROM users WHERE active = 1 AND id != ?`, [asker.id])
+    .filter((u) => canGrantTransfer(u, lead) && !refusalToMessage(asker, u));
+  // The owner first: most requests should go to them.
+  const isOwner = (u) => Number(u.id) === Number(lead.owner_id);
+  people.sort((a, b) => (isOwner(b) - isOwner(a)) || a.name.localeCompare(b.name));
+  return people.slice(0, 10).map((u) => ({ ...publicUser(u), is_owner: isOwner(u) }));
+}
+
+/**
+ * Find a lead in your own book by its exact mobile number or exact full name,
+ * so you can ask for it. Ritesh, 11 September: an RM may name any lead.
+ *
+ * WHAT IT REVEALS, AND WHAT IT DOES NOT
+ *
+ * That the lead exists and who could hand it over -- the ruling accepted that
+ * much. Nothing from the record: no name back for a mobile, no mobile back for
+ * a name, no stage, no products. Exact matches only, so it answers "is the
+ * client ringing me already somebody's?" and cannot be used to browse a
+ * colleague's book. Never across the two businesses.
+ *
+ * Each lead found is written to the audit log against the person who looked,
+ * which is also what lets them ask for it afterwards. A lookup that finds
+ * nothing is logged too, without what was searched for.
+ */
+export function lookupLeads(user, { mobile, name } = {}) {
+  let where;
+  let param;
+  let by;
+  if (String(mobile ?? '').trim()) {
+    param = tenDigits(mobile);
+    if (!param) return { ok: false, status: 400, error: 'Enter the full 10-digit mobile number' };
+    where = 'l.mobile = ?';
+    by = 'mobile';
+  } else if (String(name ?? '').trim()) {
+    param = String(name).trim().split(' ').filter(Boolean).join(' ');
+    if (param.length < 3) return { ok: false, status: 400, error: "Enter the client's full name" };
+    where = 'lower(trim(l.name)) = lower(?)';
+    by = 'name';
+  } else {
+    return { ok: false, status: 400, error: 'Give a mobile number or a full name' };
+  }
+
+  const books = orgsFor(user);
+  if (!books.length) return { ok: true, matches: [] };
+
+  const rows = all(
+    `SELECT l.id, l.owner_id, l.owner_queue_id, l.sales_org, q.name AS queue_name
+       FROM leads l LEFT JOIN queues q ON q.id = l.owner_queue_id
+      WHERE l.deleted_at IS NULL
+        AND l.sales_org IN (${books.map(() => '?').join(',')})
+        AND ${where}
+      ORDER BY l.id LIMIT 5`,
+    [...books, param],
+  );
+
+  if (!rows.length) audit(user.id, 'lead_lookup', 'lead', null, { by, matched: 0 });
+  for (const r of rows) audit(user.id, 'lead_lookup', 'lead', r.id, { by });
+
+  return {
+    ok: true,
+    matches: rows.map((r) => {
+      const owner = r.owner_id ? userRow(r.owner_id) : null;
+      return {
+        lead_id: r.id,
+        mine: Number(r.owner_id) === Number(user.id),
+        can_open: canSeeLead(user, r.id),
+        in_queue: r.owner_queue_id ? (r.queue_name ?? 'a queue') : null,
+        owner: owner ? publicUser(owner) : null,
+        grantors: r.owner_queue_id ? [] : grantorsFor(user, r),
+      };
+    }),
+  };
 }
 
 /* ------------------------------------------------------------ reviewing */

@@ -113,15 +113,18 @@ const DESK = Number(run(
 ).lastInsertRowid);
 run('INSERT INTO team_members (team_id, user_id) VALUES (?,?)', [DESK, B.id]);
 
-const makeLead = (slug, ownerId) => Number(run(
+/* Each with its own mobile, because the lookup below matches on it. */
+const makeLead = (slug, ownerId, mobile, org = 'BONANZA') => Number(run(
   `INSERT INTO leads (name, mobile, email, source, stage, sales_org, owner_id)
-   VALUES (?, '9800000051', ?, 'Referral', 'New', 'BONANZA', ?)`,
-  [`Msg probe ${slug}`, `msg-${slug}@lead.test`, ownerId],
+   VALUES (?, ?, ?, 'Referral', 'New', ?, ?)`,
+  [`Msg probe ${slug}`, mobile, `msg-${slug}@lead.test`, org, ownerId],
 ).lastInsertRowid);
 
-const L_A = makeLead('a-own', A.id);
-const L_B = makeLead('b-one', B.id);
-const L_B2 = makeLead('b-two', B.id);
+const L_A = makeLead('a-own', A.id, '9800000051');
+const L_B = makeLead('b-one', B.id, '9800000052');
+const L_B2 = makeLead('b-two', B.id, '9800000053');
+const L_B3 = makeLead('b-three', B.id, '9800000054');
+makeLead('bigul-side', BIG.id, '9800000055', 'BIGUL');
 
 const call = async (probe, method, path, body) => {
   const res = await fetch(`${BASE}/api${path}`, {
@@ -438,6 +441,71 @@ await test('a lead you cannot open cannot be asked for, and the refusal gives no
   assert.deepEqual(real.body, fake.body, 'a lead that exists is refused differently from one that does not');
 });
 
+/* ------------------------------------------ naming a lead you cannot open */
+
+/* Ritesh, 11 September: an RM may name any lead in their book. These hold the
+   narrow reading of that -- exact matches, one book, nothing from the record,
+   and a request only on a lookup of your own. C can open none of B's leads. */
+const lookup = (probe, body) => call(probe, 'POST', '/messages/lookup', body);
+
+await test('an RM can look up a lead by its exact mobile, and learns only who has it', async () => {
+  const res = await lookup(C, { mobile: '+91 98000 00054' });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.body.matches.length, 1, `found ${res.body.matches.length}`);
+
+  const m = res.body.matches[0];
+  assert.equal(m.lead_id, L_B3);
+  assert.equal(m.can_open, false, 'setup: C should not be able to open this lead');
+  assert.equal(m.owner?.id, B.id, 'the owner is not named');
+  assert(m.grantors.some((g) => g.id === B.id && g.is_owner), 'the owner is not offered as somebody to ask');
+
+  /* The absence that matters: nothing from the client record comes back. */
+  assert.deepEqual(Object.keys(m).sort(), ['can_open', 'grantors', 'in_queue', 'lead_id', 'mine', 'owner'],
+    `the lookup returned more than who has it: ${Object.keys(m).join(', ')}`);
+  /* The lead's own name and email carry "b-three". Not "Msg probe", which the
+     supervisor offered as somebody to ask is also called. */
+  assert(!JSON.stringify(res.body).includes('b-three'), "a mobile lookup handed back the client's name or email");
+
+  assert(one("SELECT 1 FROM audit_log WHERE user_id = ? AND action = 'lead_lookup' AND entity_id = ?", [C.id, L_B3]),
+    'the lookup left no trace');
+});
+
+/* Two tests, not one: with both checks in one, the first to fail hides the
+   second, and a mutation of the book filter could pass unseen. */
+await test('a lookup matches whole names only', async () => {
+  const partial = await lookup(C, { name: 'Msg probe b' });
+  const whole = await lookup(C, { name: '  msg PROBE   b-three ' });
+  assert.equal(partial.body.matches.length, 0, 'part of a name found a lead, which makes this a way to browse');
+  assert.equal(whole.body.matches.length, 1, 'the full name, typed loosely, found nothing');
+});
+
+await test('a lookup never reaches the other business', async () => {
+  const otherBook = await lookup(C, { mobile: '9800000055' });
+  assert.equal(otherBook.status, 200, JSON.stringify(otherBook.body));
+  assert.equal(otherBook.body.matches.length, 0, 'a Bonanza RM found a Bigul lead');
+});
+
+await test('having looked it up, an RM can ask the owner, and the owner can hand it over', async () => {
+  const asked = await call(C, 'POST', '/messages/transfer', {
+    lead_id: L_B3, to_user_id: B.id, reason: 'She rang me this morning',
+  });
+  assert.equal(asked.status, 201, JSON.stringify(asked.body));
+  const yes = await call(B, 'POST', `/approvals/${asked.body.approval.id}/decide`, { approve: true });
+  assert.equal(yes.status, 200, JSON.stringify(yes.body));
+  assert.equal(one('SELECT owner_id FROM leads WHERE id = ?', [L_B3]).owner_id, C.id, 'the lead did not move');
+});
+
+await test('a lookup lets you ask for a day, not for ever', async () => {
+  const found = await lookup(C, { mobile: '9800000051' });
+  assert.equal(found.body.matches[0]?.lead_id, L_A, JSON.stringify(found.body));
+  run(
+    "UPDATE audit_log SET created_at = datetime('now', '-25 hours') WHERE user_id = ? AND action = 'lead_lookup' AND entity_id = ?",
+    [C.id, L_A],
+  );
+  const late = await call(C, 'POST', '/messages/transfer', { lead_id: L_A, to_user_id: A.id, reason: 'x' });
+  assert.equal(late.status, 404, `asked on a lookup more than a day old: HTTP ${late.status}`);
+});
+
 await test('a transfer cannot be raised through the general approvals route', async () => {
   const res = await call(A, 'POST', '/approvals', {
     scope: 'lead_transfer', entity_id: L_A, payload: { to_user_id: A.id }, reason: 'x',
@@ -447,10 +515,15 @@ await test('a transfer cannot be raised through the general approvals route', as
 
 /* ------------------------------------------------------------ plumbing */
 
-await test('reviewing is on the roles screen, and only admin and superadmin hold it', () => {
+await test('reviewing is on the roles screen, and of the shipped roles only admin and superadmin hold it', () => {
   assert(CAPABILITY_CATALOGUE.some((c) => c[0] === 'comms.monitor'), 'comms.monitor cannot be granted on the roles screen');
-  const holders = all("SELECT role_code FROM role_capabilities WHERE capability = 'comms.monitor' ORDER BY role_code")
-    .map((r) => r.role_code);
+  /* Shipped roles only. A role an administrator builds may be given it, and
+     the end-to-end suite builds one by copying admin -- run this file on its
+     own after that suite and the copy is still there. */
+  const holders = all(
+    `SELECT rc.role_code FROM role_capabilities rc JOIN roles r ON r.code = rc.role_code
+      WHERE rc.capability = 'comms.monitor' AND r.is_system = 1 ORDER BY rc.role_code`,
+  ).map((r) => r.role_code);
   assert.deepEqual(holders, ['admin', 'superadmin'], `held by: ${holders.join(', ')}`);
 });
 
