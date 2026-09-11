@@ -1,9 +1,10 @@
 # P3-21 · Internal communication — design for scoping
 
 **For:** Ritesh · **Date:** 11 September 2026
-**Status:** **scoped 11 September — option C, built in three phases.** On 10
-September you asked to see a design with options and costs before scoping; this
-document was that, and the decisions below are yours from 11 September.
+**Status:** **scoped 11 September — option C, in three phases. Phase 1 built 11
+September** (see *Phase 1 — as built*, below). On 10 September you asked to see
+a design with options and costs before scoping; this document was that, and the
+decisions below are yours from 11 September.
 
 ---
 
@@ -34,12 +35,45 @@ open* — opening a conversation across the books never opens the records.
 
 | Phase | What ships | Days |
 |---|---|---:|
-| **1** | Everything in option B: one-to-one messages, the grid, monitoring with audited reads and the standing notice, freeze and suspend, transfer requests inside a conversation, the header bell and messages panel | ~9 |
+| **1** | Everything in option B: one-to-one messages, the grid, monitoring with audited reads and the standing notice, freeze and suspend, transfer requests inside a conversation, the header bell and messages panel — **built 11 September** | ~9 |
 | **2** | Channels — anyone creates, public or private — threads, reactions, @mentions in channels | ~7 |
 | **3** | Files (images and PDFs, 10 MB, in the CRM's own storage), message search, presence, and live push by server-sent events with polling as the fallback | ~8 |
 | | **Total** | **~24** |
 
 Each phase ships on its own and is usable without the next.
+
+## Phase 1 — as built (11 September)
+
+**Where it is.** A single inbox button in the header, on every screen, counting
+unread messages and unread notifications together; **Messages** at `/messages`;
+and **Setup → Communication → Messaging** for the grid and for review.
+
+**Calls I made inside the scope you set** — each is one line to change:
+
+| | What I chose | Why |
+|---|---|---|
+| Notifications | Behind the same header button as messages, on a second tab | Until now a notification was only visible on the homepage. The icon font is subsetted and has no bell, and a new glyph means regenerating the font |
+| Delivery | The badge checks every 30 seconds and on returning to the tab; an open conversation every 5 | No live push without an nginx change |
+| Withdrawing a message | Allowed for 15 minutes; the reviewer still reads the original | “A short window” in the design; the number was mine |
+| A lead in a queue | Cannot be asked for — take it from the queue instead | The queue already lets anyone claim it |
+| A lead that changed hands while the request waited | The approval refuses, and says to decline and ask again | Otherwise a yes from the previous owner would move somebody else's lead |
+| When somebody other than the owner approves | The owner is told the lead was transferred | Nobody should find out by noticing it has gone |
+| Who can be messaged | The people search lists only colleagues the grid lets you message | A name you cannot message is a refusal waiting to happen |
+
+**Verified in the browser** as Priya, Arjun, Anil and Kavita: a conversation
+between two RMs; Anil asking Priya for *Ishita Reddy*; Priya approving it from
+the card in the thread; the card updating to *Approved* and the lead chip
+turning into *a lead you cannot open* for Priya, because it is no longer hers.
+The lead moved to Anil with one history row and nothing on its timeline.
+
+**One consequence you should decide on.** The design lets somebody ask only for
+a lead they can already open, so the request cannot reveal that a lead exists.
+Under the private floor an RM opens their own book and little else, so today
+the people who can use this are supervisors, and RMs with sight of a desk. The
+realistic trigger — a client rings an RM about a lead somebody else owns — is
+not covered. The natural place for it is the duplicate warning an RM gets when
+they try to create that client: it already knows the lead exists and who owns
+it, so offering *Ask them for it* there reveals nothing new.
 
 ---
 

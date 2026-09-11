@@ -89,7 +89,7 @@ each has an unanswered open question against it. That is why none is started.
 | P3-16 | Advanced automation builder | Builder design presented before implementation | **Q10** |
 | P3-19 | LAPPS — scriptable custom app framework | Feasibility assessment — value, security model, sandbox — before *any* build | **Q11** |
 | P3-20 | Apps marketplace / connectors | Feasibility assessment naming which connectors are viable this phase | **Q12** |
-| P3-21 | Internal communication module | Module design reviewed before implementation | **Scoped 11 Sep — option C, three phases (~24 days).** Decisions recorded in `P3-21-internal-comms-design.md`. Open, not blocking phase 1: what a lead escalation means; message retention (compliance officer). |
+| P3-21 | Internal communication module | Module design reviewed before implementation | **Scoped 11 Sep — option C, three phases (~24 days). Phase 1 built 11 Sep.** Decisions and what was built in `P3-21-internal-comms-design.md`. Open: what a lead escalation means; message retention (compliance officer); whether the duplicate warning should offer *Ask them for it*. |
 
 These are the largest items in the document. P3-06 and P3-16 in particular are
 each comparable in size to everything delivered in Round 1.
@@ -223,7 +223,7 @@ those answers turned into work that nobody is blocked on any more.
 | `Q8a` | A Sales Head tile set for the homepage — I propose it, Ritesh confirms | **Done** — `60cb5be`, corrected `c962c1d` |
 | `N-7a` | Group membership grants visibility, on top of the manager chain. Touches the access floor. | **Done** — `b5ad96b` |
 | `A3` | Port the ten flows in `P3-16-automation-design.md` §8 | Needs the definitions out of LeadSquared |
-| `P3-21` | Internal communication — option C, phase 1 first (option B's scope) | Phase 1 ~9 days; phases 2–3 ~15 more |
+| `P3-21` | Internal communication — option C. **Phase 1 done**; next, phase 2: channels, threads, reactions | Phases 2–3 ~15 days |
 | `OPS-02` | Automations that run on a client rather than a lead | Large; needs scoping |
 | `Q10` | Corrections to the automation builder | Unknown until named |
 

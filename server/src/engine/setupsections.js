@@ -33,6 +33,7 @@ export const SETUP_SECTIONS = [
   { key: 'templates', label: 'Templates', needs: ['admin.templates'] },
   { key: 'content', label: 'Content library', needs: ['admin.content'] },
   { key: 'campaigns', label: 'Campaigns', needs: ['campaign.manage'] },
+  { key: 'messaging', label: 'Messaging', needs: ['admin.roles', 'comms.monitor'] },
   { key: 'integrations', label: 'Integrations', needs: null },
   { key: 'webhooks', label: 'Outbound webhooks', needs: ['admin.system'] },
   { key: 'telephony', label: 'Telephony', needs: ['admin.system'] },

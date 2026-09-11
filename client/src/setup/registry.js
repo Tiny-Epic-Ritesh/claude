@@ -57,6 +57,7 @@ const MetaConnector = lazy(() => import('../crm/admin/MetaConnector.jsx').then((
 const Audit = lazy(() => import('../crm/admin/Audit.jsx').then((m) => ({ default: m.Audit })));
 const Residency = lazy(() => import('../crm/admin/Residency.jsx').then((m) => ({ default: m.Residency })));
 const Promotion = lazy(() => import('../crm/admin/Promotion.jsx').then((m) => ({ default: m.Promotion })));
+const MessagingSetup = lazy(() => import('../crm/admin/MessagingSetup.jsx').then((m) => ({ default: m.MessagingSetup })));
 
 /*
  * Six groups, and the labels are as short as they can be and stay honest.
@@ -269,6 +270,19 @@ export const SECTIONS = [
     blurb: 'Outbound sends, their audience and their results',
     keywords: ['campaign', 'blast', 'bulk', 'audience', 'segment', 'send', 'broadcast', 'outbound'],
     Component: Campaigns,
+  },
+  /* P3-21. Either capability opens it, and the screen shows only the half
+     the person can use: the grid needs admin.roles, review needs
+     comms.monitor. */
+  {
+    key: 'messaging',
+    label: 'Messaging',
+    group: 'comms',
+    icon: 'forum',
+    needs: ['admin.roles', 'comms.monitor'],
+    blurb: 'Who may message whom, and reviewing conversations',
+    keywords: ['message', 'chat', 'dm', 'direct message', 'conversation', 'internal communication', 'slack', 'monitor', 'compliance', 'review', 'freeze', 'suspend'],
+    Component: MessagingSetup,
   },
 
   /* --------------------------------------------------------- integrations */

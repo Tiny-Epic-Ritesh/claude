@@ -3,6 +3,7 @@ import { NavLink, Navigate, Route, Routes, useNavigate, useLocation, useSearchPa
 import { api, appUrl, token, ROLE_LABEL } from '../api.js';
 import GhostBar, { hasParentToken, parentName, leaveGhost, ghostReturnTo } from './GhostBar.jsx';
 import Attendance from './Attendance.jsx';
+import Inbox from './Inbox.jsx';
 import { Loading, Icon, Avatar, OrgSwitcher, ThemeToggle } from '../components/ui.jsx';
 import { AppLauncher, TabBar, GlobalSearch, UserMenu } from '../components/AppNav.jsx';
 import { applyOrgAccent } from '../theme.js';
@@ -72,6 +73,7 @@ const KycConsole = screen(() => import('./KycConsole.jsx'));
 const Tasks = screen(() => import('./Tasks.jsx'));
 const Reports = screen(() => import('./Reports.jsx'));
 const Approvals = screen(() => import('./Approvals.jsx'));
+const Messages = screen(() => import('./Messages.jsx'));
 
 /** Warmed on idle, after the shell has painted. Order is not significant. */
 const SCREENS = [
@@ -99,6 +101,7 @@ const SCREENS = [
   Tasks,
   Reports,
   Approvals,
+  Messages,
 ];
 
 /**
@@ -366,6 +369,11 @@ export default function Crm() {
             </NavLink>
           )}
 
+          {/* P3-21. Messages and notifications behind one count, on every
+              screen -- a notification used to be visible on the homepage
+              alone. */}
+          <Inbox />
+
           {/* P3-09. Renders nothing for roles attendance is not asked of, so
               this is not a control an administrator has to look past. */}
           <Attendance />
@@ -429,6 +437,7 @@ export default function Crm() {
             <Route path="/reports" element={<Reports session={session} />} />
             <Route path="/market" element={<MarketTab />} />
             <Route path="/approvals" element={<Approvals />} />
+            <Route path="/messages" element={<Messages />} />
             <Route
               path="/data"
               element={<Suspense fallback={<Loading />}><DataTools session={session} /></Suspense>}
