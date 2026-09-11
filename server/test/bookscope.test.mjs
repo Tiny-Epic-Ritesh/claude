@@ -62,6 +62,7 @@ const MOUNTS = {
   'kyc.js': { internal: '/api/kyc', dkyc: '/dkyc-api' },
   'lists.js': { router: '/api/lists' },
   'market.js': { router: '/api/market', publicIndices: '/public/market' },
+  'messages.js': { router: '/api/messages' },
   'orgs.js': { router: '/api/orgs' },
   'partners.js': { router: '/api/partners' },
   'pipeline.js': { router: '/api/pipeline' },
@@ -161,6 +162,13 @@ const NOT_A_RECORD = {
   '/api/approvals/:id': 'Guarded by inReach() on the record the approval is about.',
   '/api/approvals/history/:entity/:id': 'Guarded by orgOf() on the record asked about.',
   '/api/approvals/scopes/:scope/approvers': 'Who may decide a scope. Configuration.',
+  '/api/messages/conversations/:id/messages': 'A conversation between colleagues, not a client record. '
+    + 'Readable only by its members, and a lead attached to a message is a pointer drawn for each reader '
+    + 'through their own leadScope, so a member outside its book sees a lead they cannot open. '
+    + 'Asserted in messaging.test.mjs.',
+  '/api/messages/monitor/:id': 'A conversation opened by a reviewer. Needs comms.monitor, is refused when '
+    + 'nobody in it works in a book the reviewer covers, and every read is written to the audit log. '
+    + 'Asserted in messaging.test.mjs.',
   '/api/products/:id/brochure': 'The brochure for a product type. Marketing material written to be '
     + 'handed to strangers, and the catalogue it hangs on is firm-wide — so there is no book to '
     + 'cross. It is behind a session, which brochure.test.mjs asserts.',

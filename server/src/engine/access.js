@@ -104,6 +104,7 @@ export const CAPABILITY_CATALOGUE = [
 
   // Sensitive
   ['pii.unmask', 'Unmask client identifiers', 'Compliance', 'Reveal full mobile, email and PAN. Every use is audited.', 1],
+  ['comms.monitor', 'Review internal messages', 'Compliance', 'Read any conversation in their books, freeze one, and stop somebody sending. Every read is audited.', 1],
   /* P3-35. One capability per object, because "may export" is not one
      question. Letting a supervisor take their team's leads out is a normal
      day; letting the same person take every client record out is the

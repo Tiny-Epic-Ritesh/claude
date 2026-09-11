@@ -102,6 +102,10 @@ run("DELETE FROM users WHERE email LIKE 'probe-%@bonanza.test'");
 console.log('Clearing…');
 for (const t of [
   'sessions', 'notifications', 'audit_log', 'rule_runs', 'rules', 'campaigns',
+  /* Messages before approvals: a transfer request is a message pointing at an
+     approval, and both point at leads rebuilt below. The grid and suspensions
+     too -- a seed is a known state, and a pair a test run left closed is not. */
+  'message', 'conversation_member', 'conversation', 'messaging_suspension', 'messaging_policy',
   /* Approvals before the lists and leads they are about.
    *
    * A pending approval survived a reseed and stayed Pending -- still pointing

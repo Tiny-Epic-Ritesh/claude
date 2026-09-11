@@ -8,7 +8,8 @@
  */
 
 import { Router } from 'express';
-import { all, one, run, audit } from '../db.js';
+import { all, one, run, audit, notify } from '../db.js';
+import { recordChange } from '../engine/metadata.js';
 import { requireUser, requirePermission, mayUseOrg } from '../auth.js';
 import { newPartnerCode, issuePortalCredential } from './partners-support.js';
 import { setDefaults as setOwd, isLevel } from '../engine/owd.js';
@@ -19,6 +20,19 @@ import {
 
 const router = Router();
 router.use(requireUser);
+
+/**
+ * Everyone who supervises this person: their manager on the org chart, and the
+ * manager of any active sales group they sit on. Either may be the person who
+ * needs to know, and N-7a is the reminder that they are often not the same.
+ */
+const supervisorsOf = (userId) => all(
+  `SELECT manager_id AS id FROM users WHERE id = ? AND manager_id IS NOT NULL
+   UNION
+   SELECT t.manager_id FROM teams t JOIN team_members tm ON tm.team_id = t.id
+    WHERE tm.user_id = ? AND t.active = 1 AND t.manager_id IS NOT NULL`,
+  [userId, userId],
+).map((r) => Number(r.id));
 
 /**
  * What each approval does once granted.
@@ -121,6 +135,54 @@ const APPLY = {
     }
     return { moved };
   },
+
+  /* P3-21. Checked again now, not only when it was asked: a request can sit
+     for a day, and in that time the lead may have changed hands or the person
+     who asked may have left the book. */
+  lead_transfer: (req, decidedBy) => {
+    const lead = one(
+      'SELECT id, name, owner_id, sales_org FROM leads WHERE id = ? AND deleted_at IS NULL',
+      [req.entity_id],
+    );
+    if (!lead) throw new Error('That lead no longer exists');
+    if (Number(lead.owner_id) !== Number(req.payload?.from_owner_id)) {
+      throw new Error('This lead has changed hands since it was asked for. Decline this request and ask again.');
+    }
+    const to = one(
+      'SELECT id, name, role, sales_org, org_access, active FROM users WHERE id = ?',
+      [Number(req.payload?.to_user_id)],
+    );
+    if (!to || !to.active) throw new Error('The person who asked is no longer active');
+    if (!mayUseOrg(to, lead.sales_org)) throw new Error(`${to.name} no longer works in this lead's book`);
+
+    /* History only, not the timeline -- Ritesh, 11 September, on the Q6a
+       reasoning: who owns a lead is not something the client did. */
+    recordChange('lead', lead.id, 'owner_id', lead.owner_id, to.id, {
+      actorId: decidedBy?.id ?? null, source: 'approval',
+    });
+    run(
+      "UPDATE leads SET owner_id = ?, owner_queue_id = NULL, updated_at = datetime('now') WHERE id = ?",
+      [to.id, lead.id],
+    );
+    audit(decidedBy?.id ?? null, 'lead.reassign', 'lead', lead.id, {
+      from: lead.owner_id, to: to.id, via_approval: req.id,
+    });
+
+    const owner = one('SELECT id, name FROM users WHERE id = ?', [lead.owner_id]);
+    if (owner && Number(decidedBy?.id) === Number(owner.id)) {
+      /* The owner handed it over themselves, so their supervisor is told --
+         Ritesh, 11 September. */
+      for (const sup of supervisorsOf(owner.id)) {
+        if (sup === Number(to.id) || sup === Number(owner.id)) continue;
+        notify(sup, `Lead handed over: ${lead.name}`, `${owner.name} handed ${lead.name} to ${to.name}.`, `/leads/${lead.id}`);
+      }
+    } else if (owner) {
+      /* Somebody else moved it. The person who had it should not find out by
+         noticing it has gone. */
+      notify(owner.id, `Lead transferred: ${lead.name}`, `${lead.name} was transferred to ${to.name}.`, '/approvals');
+    }
+    return { lead_id: lead.id, owner_id: to.id };
+  },
 };
 
 /* ------------------------------------------------------------ reading */
@@ -164,6 +226,11 @@ router.post('/', (req, res) => {
   const { scope, entity_id: entityId, payload, reason } = req.body ?? {};
   const spec = APPROVAL_SCOPES[scope];
   if (!spec) return res.status(400).json({ error: `${scope} is not something that can be approved` });
+  /* Raised from a conversation, where the person asked is named and checked
+     able to grant it. Through here it would reach nobody in particular. */
+  if (spec.targeted) {
+    return res.status(400).json({ error: `A ${spec.label.toLowerCase()} is asked for in a conversation with the person who can grant it` });
+  }
 
   // The requester needs the capability to *ask*, which is the ordinary
   // permission for the action — approval is a second gate, not the only one.

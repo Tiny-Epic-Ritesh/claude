@@ -1624,6 +1624,11 @@ const COLUMNS = [
    * watching "breached and recently updated" fires again every time somebody
    * reassigns a breached ticket. A breach happens once. */
   ['tickets', 'breached_at', 'TEXT'],
+  /* P3-21. A lead transfer is asked of one named person -- the lead's owner,
+     or somebody who can reassign it -- rather than broadcast to every holder
+     of a capability. Here for databases that already have the table; inline
+     in its CREATE for ones that do not yet. */
+  ['approvals', 'target_user_id', 'INTEGER'],
 ];
 
 /**
@@ -2486,7 +2491,7 @@ CREATE TABLE IF NOT EXISTS field_history (
   old_value  TEXT,
   new_value  TEXT,
   actor_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  source     TEXT NOT NULL DEFAULT 'ui',  -- ui | api | automation | import | vendor
+  source     TEXT NOT NULL DEFAULT 'ui',  -- ui | api | automation | import | vendor | approval
   changed_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -2730,10 +2735,69 @@ CREATE TABLE IF NOT EXISTS approvals (
   decided_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
   decision_reason TEXT,
   decided_at      TEXT,
-  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  target_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL  -- P3-21: asked of one named person
 );
 CREATE INDEX IF NOT EXISTS idx_approvals_pending ON approvals(entity, entity_id, status);
 CREATE INDEX IF NOT EXISTS idx_approvals_scope ON approvals(scope, status);
+
+/* ---- Internal messaging (P3-21) ------------------------------------- */
+
+/* A conversation, and who is in it. Members are rows rather than two columns
+   because phase 2 adds channels, and a channel has more than two people. */
+CREATE TABLE IF NOT EXISTS conversation (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind            TEXT NOT NULL DEFAULT 'direct',   -- direct; channel arrives in phase 2
+  created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  frozen_at       TEXT,                             -- a reviewer stopped it
+  frozen_by       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  frozen_reason   TEXT,
+  last_message_at TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS conversation_member (
+  conversation_id INTEGER NOT NULL REFERENCES conversation(id) ON DELETE CASCADE,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  last_read_id    INTEGER NOT NULL DEFAULT 0,       -- the newest message they have seen
+  joined_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (conversation_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_conversation_member_user ON conversation_member(user_id);
+
+/* Messages are never deleted. There is no ON DELETE on the conversation, so
+   removing a conversation that still holds messages fails rather than taking
+   them with it. A sender may withdraw one: withdrawn_at hides it from the
+   other person, and a reviewer still reads the original. */
+CREATE TABLE IF NOT EXISTS message (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id INTEGER NOT NULL REFERENCES conversation(id),
+  sender_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,   -- null for a system line
+  kind            TEXT NOT NULL DEFAULT 'text',                      -- text | transfer | system
+  body            TEXT NOT NULL,
+  lead_id         INTEGER REFERENCES leads(id) ON DELETE SET NULL,   -- a pointer, drawn per reader
+  approval_id     INTEGER REFERENCES approvals(id) ON DELETE SET NULL,
+  withdrawn_at    TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_message_conversation ON message(conversation_id, id);
+
+/* Who may message whom, role to role. A cell with no row reads 'same_book'. */
+CREATE TABLE IF NOT EXISTS messaging_policy (
+  from_role  TEXT NOT NULL,
+  to_role    TEXT NOT NULL,
+  reach      TEXT NOT NULL CHECK (reach IN ('blocked', 'same_book', 'any_book')),
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (from_role, to_role)
+);
+
+/* Somebody whose sending a reviewer has stopped. Reading is unaffected. */
+CREATE TABLE IF NOT EXISTS messaging_suspension (
+  user_id      INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  reason       TEXT NOT NULL,
+  suspended_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  suspended_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);
 
 db.exec(`

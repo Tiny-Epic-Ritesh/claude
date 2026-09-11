@@ -154,6 +154,11 @@ export const PERMISSIONS = {
   // design: nobody may edit it, which is the whole point of keeping it.
   'audit.read':           ['superadmin', 'admin'],
 
+  /* P3-21. Read any conversation in their books, freeze one, stop somebody
+     sending. Ritesh, 11 September: admin and superadmin, until a compliance
+     role exists. Every read is itself written to the audit log. */
+  'comms.monitor':        ['superadmin', 'admin'],
+
   // Reporting
   /* Seeing your own numbers is not a supervisory act.
    *

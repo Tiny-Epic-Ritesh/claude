@@ -118,6 +118,34 @@ export const APPROVAL_SCOPES = {
     why: 'Moves live accounts between people — the relationship, the brokerage they book, '
       + 'and who the client rings all follow the owner.',
   },
+
+  /* P3-21. Asked for in a conversation, of one named person.
+
+     Two things set it apart from the scopes above. It is TARGETED: it goes to
+     the person asked rather than to every holder of a capability, and only
+     they see it waiting. And the lead's current owner may decide it without
+     holding lead.reassign -- Ritesh, 11 September: giving away what you own
+     takes nothing from anyone else, and their supervisor is told. Anyone
+     holding lead.reassign in the lead's book may decide it as well, because
+     they could have reassigned it directly.
+
+     It does not lock the lead. Nothing about it is being approved except who
+     owns it, and the owner should keep working it until it moves. */
+  lead_transfer: {
+    label: 'Lead transfer',
+    entity: 'lead',
+    approver: 'lead.reassign',
+    targeted: true,
+    whoDecides: "the lead's owner, or lead.reassign",
+    mayDecide: (row, user) => {
+      const lead = one('SELECT owner_id FROM leads WHERE id = ?', [row.entity_id]);
+      if (!lead || !user) return false;
+      if (Number(lead.owner_id) === Number(user.id)) return true;
+      return (user.capabilities ?? new Set()).has('lead.reassign');
+    },
+    describe: (r) => `Transfer ${r.payload?.lead_name ?? 'a lead'} to ${r.subject_name}`,
+    why: 'Moves a prospect between people — attribution and incentives follow the owner.',
+  },
 };
 
 /** How many records a bulk action may touch before it needs a second pair of eyes. */
@@ -134,12 +162,15 @@ export const BULK_THRESHOLD = Number(process.env.CRM_BULK_APPROVAL_THRESHOLD ?? 
  * to the same commission is a conversation, not a workflow.
  */
 export function request({
-  scope, entityId, subjectName, payload, reason, requestedBy,
+  scope, entityId, subjectName, payload, reason, requestedBy, targetUserId = null,
 }) {
   const spec = APPROVAL_SCOPES[scope];
   if (!spec) return { ok: false, error: `${scope} is not something that can be approved` };
   if (!reason?.trim()) {
     return { ok: false, error: 'Say why. An approver deciding without a reason is rubber-stamping.' };
+  }
+  if (spec.targeted && !targetUserId) {
+    return { ok: false, error: `A ${spec.label.toLowerCase()} is asked of one named person` };
   }
 
   const pending = one(
@@ -155,18 +186,21 @@ export function request({
   }
 
   const info = run(
-    `INSERT INTO approvals (scope, entity, entity_id, subject_name, payload, reason, requested_by)
-     VALUES (?,?,?,?,?,?,?)`,
+    `INSERT INTO approvals (scope, entity, entity_id, subject_name, payload, reason, requested_by, target_user_id)
+     VALUES (?,?,?,?,?,?,?,?)`,
     [scope, spec.entity, entityId, subjectName ?? null,
-      payload ? JSON.stringify(payload) : null, reason.trim(), requestedBy],
+      payload ? JSON.stringify(payload) : null, reason.trim(), requestedBy, targetUserId],
   );
 
   const row = byId(Number(info.lastInsertRowid));
   audit(requestedBy, 'approval_requested', spec.entity, entityId, { scope, reason });
 
   // Tell everyone who could decide it. An approval nobody knows about is a
-  // record that sits still.
-  for (const u of approversFor(scope)) {
+  // record that sits still. Asked of one person, it is told to that person:
+  // broadcasting a colleague's request to every supervisor is noise, and noise
+  // is what teaches people to stop reading the bell.
+  const tell = targetUserId ? [{ id: targetUserId }] : approversFor(scope);
+  for (const u of tell) {
     notify(u.id, `Approval needed: ${spec.label}`, spec.describe(row), '/approvals');
   }
 
@@ -245,9 +279,8 @@ export function decide(id, { approve, reason, decidedBy, apply }) {
   }
 
   const spec = APPROVAL_SCOPES[req.scope];
-  const caps = decidedBy?.capabilities ?? new Set();
-  if (spec && !caps.has(spec.approver)) {
-    return { ok: false, error: `Deciding this needs ${spec.approver}` };
+  if (spec && !mayDecide(req, decidedBy)) {
+    return { ok: false, error: `Deciding this needs ${spec.whoDecides ?? spec.approver}` };
   }
 
   // Holding the capability is not the same as being in the right book. A
@@ -263,7 +296,8 @@ export function decide(id, { approve, reason, decidedBy, apply }) {
   try {
     return transact(() => {
       let applied = null;
-      if (approve && typeof apply === 'function') applied = apply(req);
+      // The decider too: a transfer records who moved the lead in its history.
+      if (approve && typeof apply === 'function') applied = apply(req, decidedBy);
 
       run(
         `UPDATE approvals SET status = ?, decided_by = ?, decided_at = datetime('now'), decision_reason = ?
@@ -290,6 +324,21 @@ export function decide(id, { approve, reason, decidedBy, apply }) {
     // can be decided again once the underlying problem is fixed.
     return { ok: false, error: `Could not apply the change: ${err.message}` };
   }
+}
+
+/**
+ * Whether this person may decide this request, before the book is checked.
+ *
+ * A capability, for most scopes. A scope may say otherwise -- a lead transfer
+ * can be decided by the lead's owner, who holds no approver capability at all.
+ * Self-approval and the book are checked separately, and hold for every scope
+ * whatever this says.
+ */
+export function mayDecide(row, user) {
+  const spec = APPROVAL_SCOPES[row?.scope];
+  if (!spec || !user) return false;
+  if (spec.mayDecide) return Boolean(spec.mayDecide(row, user));
+  return (user.capabilities ?? new Set()).has(spec.approver);
 }
 
 /** Withdraw your own request. */
@@ -361,10 +410,11 @@ export const inReach = (row, user) => {
 
 export const byId = (id) => {
   const row = one(
-    `SELECT a.*, rq.name AS requested_by_name, dc.name AS decided_by_name
+    `SELECT a.*, rq.name AS requested_by_name, dc.name AS decided_by_name, tg.name AS target_name
      FROM approvals a
      LEFT JOIN users rq ON rq.id = a.requested_by
      LEFT JOIN users dc ON dc.id = a.decided_by
+     LEFT JOIN users tg ON tg.id = a.target_user_id
      WHERE a.id = ?`,
     [id],
   );
@@ -382,7 +432,7 @@ export const byId = (id) => {
 export function queueFor(user) {
   const caps = user?.capabilities ?? new Set();
   const decidable = Object.entries(APPROVAL_SCOPES)
-    .filter(([, s]) => caps.has(s.approver))
+    .filter(([, s]) => !s.targeted && caps.has(s.approver))
     .map(([k]) => k);
 
   const decorate = (rows) => rows.map((r) => {
@@ -395,7 +445,8 @@ export function queueFor(user) {
       summary: spec ? spec.describe(full) : r.scope,
       // Never offer the button — the engine refuses anyway, but showing it and
       // then refusing is worse than not showing it.
-      can_decide: decidable.includes(r.scope) && Number(r.requested_by) !== Number(user.id),
+      can_decide: r.status === 'Pending' && Number(r.requested_by) !== Number(user.id)
+        && mayDecide(full, { ...user, capabilities: caps }),
     };
   });
 
@@ -417,13 +468,24 @@ export function queueFor(user) {
     )
     : [];
 
+  /* A targeted request waits on the person asked, and on nobody else. A
+     supervisor holding lead.reassign could decide one, but is not shown a
+     colleague's request to a colleague. */
+  const targeted = all(
+    `SELECT a.*, u.name AS requested_by_name FROM approvals a
+     LEFT JOIN users u ON u.id = a.requested_by
+     WHERE a.status = 'Pending' AND a.target_user_id = ? AND a.requested_by != ?
+     ORDER BY a.created_at ASC`,
+    [user.id, user.id],
+  );
+
   // Both halves are filtered, not just the queue: "my requests" is listed by
   // requester id, which is already one person, but a user moved between books
   // would otherwise keep seeing what they raised in the old one.
   const here = (rows) => rows.filter((r) => inReach(r, user));
 
   return {
-    waiting_on_me: decorate(here(waiting)),
+    waiting_on_me: decorate(here([...waiting, ...targeted])),
     my_requests: decorate(here(mine)),
   };
 }

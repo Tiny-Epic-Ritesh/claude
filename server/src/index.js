@@ -31,6 +31,7 @@ import setup from './routes/setup.js';
 import market, { publicIndices } from './routes/market.js';
 import advancedSearch from './routes/search-advanced.js';
 import approvals from './routes/approvals.js';
+import messages from './routes/messages.js';
 import clients from './routes/clients.js';
 import lists from './routes/lists.js';
 import email from './routes/email.js';
@@ -306,6 +307,7 @@ app.use('/api/setup', setup);
 app.use('/api/market', market);
 app.use('/api/search-advanced', advancedSearch);
 app.use('/api/approvals', approvals);
+app.use('/api/messages', messages);
 // The login-page strip: four delayed index levels, no session, rate limited
 // like the other unauthenticated surfaces.
 app.use('/public/market', dkycLimiter, publicIndices);
