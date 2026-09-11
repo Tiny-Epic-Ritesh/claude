@@ -89,7 +89,7 @@ each has an unanswered open question against it. That is why none is started.
 | P3-16 | Advanced automation builder | Builder design presented before implementation | **Q10** |
 | P3-19 | LAPPS — scriptable custom app framework | Feasibility assessment — value, security model, sandbox — before *any* build | **Q11** |
 | P3-20 | Apps marketplace / connectors | Feasibility assessment naming which connectors are viable this phase | **Q12** |
-| P3-21 | Internal communication module | Module design reviewed before implementation | **Answered 10 Sep** — Ritesh wants to see a design with options and costs first, rather than confirm a scope up front. Next action is mine. |
+| P3-21 | Internal communication module | Module design reviewed before implementation | **Design presented 11 Sep** — `P3-21-internal-comms-design.md`: three options with costs (A ~3 days, B ~9, C ~5–6 weeks; B recommended). Waiting on Ritesh to scope. |
 
 These are the largest items in the document. P3-06 and P3-16 in particular are
 each comparable in size to everything delivered in Round 1.
@@ -220,10 +220,10 @@ those answers turned into work that nobody is blocked on any more.
 
 | Item | Work | Size |
 |---|---|---|
-| `Q8a` | A Sales Head tile set for the homepage — I propose it, Ritesh confirms | ~1 day |
-| `N-7a` | Group membership grants visibility, on top of the manager chain. Touches the access floor. | 1–2 days |
+| `Q8a` | A Sales Head tile set for the homepage — I propose it, Ritesh confirms | **Done** — `60cb5be`, corrected `c962c1d` |
+| `N-7a` | Group membership grants visibility, on top of the manager chain. Touches the access floor. | **Done** — `b5ad96b` |
 | `A3` | Port the ten flows in `P3-16-automation-design.md` §8 | Needs the definitions out of LeadSquared |
-| `P3-21` | Internal communication — present a design with options and costs | Design first |
+| `P3-21` | Internal communication — present a design with options and costs | **Presented 11 Sep** — waiting on Ritesh to scope |
 | `OPS-02` | Automations that run on a client rather than a lead | Large; needs scoping |
 | `Q10` | Corrections to the automation builder | Unknown until named |
 
