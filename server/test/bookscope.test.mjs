@@ -530,6 +530,84 @@ await test('a new user is created in the creator\'s own book', async () => {
   }
 });
 
+/* ------------------------------------------------ the duplicates screen */
+
+/**
+ * Common Client Master's list of numbers held twice, which asked for the book
+ * in one of its two queries.
+ *
+ * GET /ccm/duplicates finds the mobiles held by more than one lead in the
+ * caller's books -- scoped -- and then fetched the leads behind each mobile by
+ * the number alone. The same person may be a lead in both books (Ritesh, 11 Sep
+ * 2026), so a number duplicated inside Bigul that a Bonanza lead also held came
+ * back with the Bonanza lead in its group: client name, owner, stage and book,
+ * on a Bigul user's screen.
+ *
+ * The Bigul group has to be listed for any of this to mean something, so its
+ * absence fails rather than passes.
+ */
+
+await test('the duplicates screen lists no record from the other book', async () => {
+  const seeded = one("SELECT password FROM users WHERE email = 'admin@bonanza.test'");
+  assert(seeded, 'the seeded administrator is missing, so there is no password hash to borrow');
+
+  const asker = { email: 'bookscope-dupes@bigul.test', name: 'Bookscope Dupes Asker', org: 'BIGUL' };
+  const holder = { email: 'bookscope-dupes@bonanza.test', name: 'Bookscope Dupes Holder', org: 'BONANZA' };
+  const CLIENT = 'Tanvi Dupescope';
+  const emails = [asker.email, holder.email];
+
+  // Leads before users: a lead left pointing at a deleted probe is debris.
+  const clear = () => {
+    run('DELETE FROM leads WHERE owner_id IN (SELECT id FROM users WHERE email IN (?,?))', emails);
+    run('DELETE FROM users WHERE email IN (?,?)', emails);
+  };
+
+  // A number no lead holds, so the group is exactly the three made here.
+  let mobile;
+  do { mobile = `9${String(Math.floor(Math.random() * 1e9)).padStart(9, '0')}`; }
+  while (one('SELECT 1 FROM leads WHERE mobile = ?', [mobile]));
+
+  clear();
+  try {
+    for (const p of [asker, holder]) {
+      p.id = Number(run(
+        `INSERT INTO users (name, email, password, role, sales_org, active)
+         VALUES (?, ?, ?, 'sales_rm', ?, 1)`,
+        [p.name, p.email, seeded.password, p.org],
+      ).lastInsertRowid);
+    }
+    const lead = (org, name, owner) => Number(run(
+      `INSERT INTO leads (sales_org, name, mobile, source, stage, owner_id)
+       VALUES (?, ?, ?, 'Manual', 'New', ?)`,
+      [org, name, mobile, owner],
+    ).lastInsertRowid);
+    const bigulLeads = [lead('BIGUL', 'Bookscope Dupe One', asker.id), lead('BIGUL', 'Bookscope Dupe Two', asker.id)];
+    const bonanzaLead = lead('BONANZA', CLIENT, holder.id);
+
+    const token = await login(asker.email);
+    const res = await fetch(`${BASE}/api/ccm/duplicates`, { headers: { Authorization: `Bearer ${token}` } });
+    const text = await res.text();
+    assert.equal(res.status, 200, `GET /api/ccm/duplicates returned HTTP ${res.status}: ${text.slice(0, 200)}`);
+    const groups = JSON.parse(text);
+
+    const ours = groups.find((g) => g.records.some((r) => bigulLeads.includes(r.id)));
+    assert(ours, 'the Bigul duplicate was not listed at all, so this proves nothing');
+
+    assert(!text.includes(CLIENT), 'a Bigul user was shown the Bonanza client\'s name');
+    assert(!text.includes(holder.name), 'a Bigul user was shown who holds the Bonanza lead');
+    const records = groups.flatMap((g) => g.records);
+    assert(!records.some((r) => r.id === bonanzaLead), `a Bigul user was given the Bonanza lead #${bonanzaLead}`);
+    const crossed = records.filter((r) => r.sales_org !== 'BIGUL');
+    assert.equal(crossed.length, 0,
+      `records from another book: ${crossed.map((r) => `#${r.id} ${r.sales_org}`).join(', ')}`);
+
+    assert.deepEqual(ours.records.map((r) => r.id), bigulLeads, 'the group is not the two Bigul leads');
+    assert.equal(ours.count, ours.records.length, 'the count and the records listed under it disagree');
+  } finally {
+    clear();
+  }
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 
 // exitCode rather than process.exit(): calling exit() straight after the live

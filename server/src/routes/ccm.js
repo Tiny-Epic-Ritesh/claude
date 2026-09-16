@@ -159,12 +159,16 @@ router.get('/duplicates', mayCheckDuplicates, (req, res) => {
   res.json(groups.map((g) => ({
     mobile: maskMobile(g.mobile),
     count: g.n,
+    /* Scoped to the book again, not just the groups. The same person may be a
+       lead in both books, so the number alone also finds the other book's lead
+       -- and with it that client's name, owner and stage. */
     records: all(
       `SELECT l.id, l.name, l.sales_org, l.stage, l.created_at, u.name AS owner_name
          FROM leads l LEFT JOIN users u ON u.id = l.owner_id
         WHERE l.mobile = ? AND l.deleted_at IS NULL
+          AND l.sales_org IN (${orgList})
         ORDER BY l.created_at`,
-      [g.mobile],
+      [g.mobile, ...orgs],
     ),
   })));
 });
