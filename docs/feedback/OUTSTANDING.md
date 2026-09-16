@@ -39,6 +39,7 @@ and this table is the mapping.
 | `P3-19` | LAPPS — scriptable custom app framework. **Dropped 10 Sep** in favour of building the native features the LAPPs in use are compensating for. |
 | `OPS-01` | Hand a book over when somebody leaves. Built, commit `56de104`. |
 | `OPS-02` | Automations that run on a **client** rather than a lead. Opened 10 Sep out of A1 — see `P3-16-automation-design.md`. **Not started; needs scoping.** |
+| `OPS-03` | Field history stored lookup ids as `8.0` rather than `8` -- node:sqlite binds a JS number as a REAL, and the TEXT column spelled it with a decimal point. Fixed 11 Sep, commit `a82074f`: both writers of `field_history` spell an integer, a start-up rewrite corrected the 717 rows already stored, and the lead history panel names the owner instead of showing the id. |
 
 ---
 
