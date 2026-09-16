@@ -226,6 +226,7 @@ those answers turned into work that nobody is blocked on any more.
 | `A3` | Port the ten flows in `P3-16-automation-design.md` §8 | Needs the definitions out of LeadSquared |
 | `P3-21` | Internal communication — option C. **Phase 1 done**; next, phase 2: channels, threads, reactions | Phases 2–3 ~15 days |
 | `OPS-02` | Automations that run on a client rather than a lead | Large; needs scoping |
+| `OPS-03` | Field history stored lookup ids as `8.0` rather than `8` — the writers, the 717 rows already stored, and the history panel, which now names the owner. Found and fixed 11 Sep, outside the 10 Sep set. | **Done** — `a82074f` |
 | `Q10` | Corrections to the automation builder | Unknown until named |
 
 **Still blocked on someone else:** `P3-06` behind `N-4a`, the connectors behind
