@@ -49,11 +49,42 @@ internal.get('/journeys/:id', (req, res) => {
 /** Start a journey from the CRM (RM-initiated), returning the applicant link. */
 internal.post('/journeys', requirePermission('kyc.manage'), (req, res) => {
   const { lead_id, card_id, product_type_id } = req.body;
-  const card = card_id ? one('SELECT * FROM product_cards WHERE id = ?', [card_id]) : null;
+
+  /* Both record ids are read inside the caller's scope, the same shape as
+   * /journeys/:id above and for the same reason: the reply carries the
+   * journey's resume_token, as applicant_url. Unscoped, this route copied
+   * another book's lead mobile and email onto a new journey and handed the
+   * caller a working applicant link into it — and, reached through card_id
+   * instead, flipped that book's card to KYC_IN_PROGRESS on the way past. */
+  const scope = reqScope(req, 'l');
+
+  const lead = lead_id
+    ? one(`SELECT l.* FROM leads l WHERE l.id = ? AND ${scope.sql}`, [lead_id, ...scope.params])
+    : null;
+  if (lead_id && !lead) return res.status(403).json({ error: 'This lead is outside your visibility scope' });
+
+  const card = card_id
+    ? one(`SELECT c.* FROM product_cards c JOIN leads l ON l.id = c.lead_id
+            WHERE c.id = ? AND ${scope.sql}`, [card_id, ...scope.params])
+    : null;
+  if (card_id && !card) return res.status(403).json({ error: 'This card is outside your visibility scope' });
+
   const productId = product_type_id || card?.product_type_id;
   if (!productId) return res.status(400).json({ error: 'product_type_id or card_id is required' });
 
-  const lead = lead_id ? one('SELECT * FROM leads WHERE id = ?', [lead_id]) : null;
+  /* A journey belongs to one book, and the product is what says which — the
+   * ruling /dkyc-api/start already works from. The steps come from this
+   * product's own kyc_journey_steps and the cards from the lead's catalogue,
+   * so a Bonanza lead started on a Bigul product is walked through the other
+   * business's journey definition for something its book does not sell. */
+  const product = one('SELECT id, name, sales_org FROM product_types WHERE id = ?', [Number(productId)]);
+  if (!product) return res.status(400).json({ error: 'That product does not exist' });
+  if (lead && lead.sales_org !== product.sales_org) {
+    return res.status(400).json({
+      error: `${product.name} is a ${product.sales_org} product and ${lead.name} is a ${lead.sales_org} lead`,
+    });
+  }
+
   const journey = kyc.createJourney({
     leadId: lead_id || null,
     cardId: card_id || null,
@@ -61,7 +92,7 @@ internal.post('/journeys', requirePermission('kyc.manage'), (req, res) => {
     mobile: lead?.mobile,
     email: lead?.email,
   });
-  audit(req.user.id, 'kyc_journey_created', 'kyc_journey', journey.id, {});
+  audit(req.user.id, 'kyc_journey_created', 'kyc_journey', journey.id, { sales_org: product.sales_org });
   res.status(201).json({ ...journey, applicant_url: `/dkyc/resume/${journey.resume_token}` });
 });
 
