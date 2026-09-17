@@ -157,7 +157,9 @@ function Review({ review, suspended, act, reload }) {
               {review.conversations.map((c) => (
                 <tr key={c.id} aria-current={c.id === openId ? 'true' : undefined}>
                   <td>
-                    {c.members.map((m) => m.name).join(' and ')}
+                    {c.kind === 'channel'
+                      ? `#${c.name} · ${c.members.length} ${c.members.length === 1 ? 'member' : 'members'}${c.visibility === 'private' ? ' · private' : ''}`
+                      : c.members.map((m) => m.name).join(' and ')}
                     {c.frozen_at && <span className="badge badge-amber" style={{ marginLeft: 6 }}>frozen</span>}
                     <div className="tiny muted">{[...new Set(c.members.map((m) => m.sales_org))].join(' · ')}</div>
                   </td>

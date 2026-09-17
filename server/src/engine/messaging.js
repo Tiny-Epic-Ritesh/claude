@@ -5,8 +5,9 @@
  *
  * One-to-one conversations between colleagues, under a policy an administrator
  * sets, watched by a reviewer who can read, freeze and stop somebody sending.
- * Phase 2 adds channels, which is why a conversation has a `kind` and its
- * members are rows rather than two columns.
+ * Channels (phase 2) are engine/channels.js: who is in one and how they got
+ * there. Everything about the message itself -- threads, reactions, the lead
+ * chip, withdrawing, review -- is here, shared by both kinds.
  *
  * THE THREE RULES THAT MATTER
  *
@@ -224,7 +225,8 @@ const previewOf = (m) => {
 /** This person's conversations, newest first, with what is unread in each. */
 export function conversationsFor(user) {
   const rows = all(
-    `SELECT c.id, c.kind, c.frozen_at, c.frozen_reason, c.last_message_at, c.created_at,
+    `SELECT c.id, c.kind, c.name, c.topic, c.visibility, c.home_org, c.archived_at,
+            c.frozen_at, c.frozen_reason, c.last_message_at, c.created_at,
             me.last_read_id,
             (SELECT COUNT(*) FROM message m
               WHERE m.conversation_id = c.id AND m.id > me.last_read_id
@@ -242,9 +244,12 @@ export function conversationsFor(user) {
       'SELECT id, kind, body, withdrawn_at, sender_id, created_at FROM message WHERE conversation_id = ? ORDER BY id DESC LIMIT 1',
       [c.id],
     );
+    const people = others(c.id, user.id);
     return {
       ...c,
-      with: others(c.id, user.id),
+      // A channel lists its members in its own panel; here, only how many.
+      with: c.kind === 'channel' ? [] : people,
+      member_count: people.length + 1,
       last: last
         ? { id: last.id, at: last.created_at, mine: Number(last.sender_id) === Number(user.id), preview: previewOf(last) }
         : null,
@@ -254,17 +259,34 @@ export function conversationsFor(user) {
 
 export function conversationSummary(conversationId, reader) {
   const c = one(
-    'SELECT id, kind, frozen_at, frozen_reason, created_at FROM conversation WHERE id = ?',
+    `SELECT id, kind, name, topic, visibility, home_org, created_by, archived_at,
+            frozen_at, frozen_reason, created_at
+       FROM conversation WHERE id = ?`,
     [conversationId],
   );
-  return c ? { ...c, with: others(conversationId, reader.id) } : null;
+  if (!c) return null;
+  const members = membersOf(conversationId).map(publicUser);
+  return {
+    ...c,
+    with: members.filter((m) => Number(m.id) !== Number(reader.id)),
+    members: c.kind === 'channel' ? members : undefined,
+    is_creator: Number(c.created_by) === Number(reader.id),
+  };
 }
 
-/** Unread across every conversation, for the header. */
+/**
+ * Unread direct messages, for the header.
+ *
+ * Direct only. A busy channel shows its count in the Messages list; counted
+ * here, the one number everybody watches becomes noise and the direct message
+ * that matters drowns in it. Somebody @mentioned in a channel is sent a
+ * notification, which the header does count.
+ */
 export function unreadFor(userId) {
   const r = one(
     `SELECT COUNT(*) AS messages, COUNT(DISTINCT m.conversation_id) AS conversations
        FROM message m
+       JOIN conversation c ON c.id = m.conversation_id AND c.kind = 'direct'
        JOIN conversation_member me ON me.conversation_id = m.conversation_id AND me.user_id = ?
       WHERE m.id > me.last_read_id AND m.withdrawn_at IS NULL
         AND (m.sender_id IS NULL OR m.sender_id != ?)`,
@@ -333,7 +355,9 @@ function transferCard(approvalId, reader, reviewing) {
 
 /* ------------------------------------------------------------ messages */
 
-function present(m, reader, { chips, fields, original, reviewing }) {
+function present(m, reader, {
+  chips, fields, original, reviewing, reactions, replies, mentioned,
+}) {
   const hidden = Boolean(m.withdrawn_at) && !original;
   return {
     id: m.id,
@@ -347,7 +371,63 @@ function present(m, reader, { chips, fields, original, reviewing }) {
     withdrawn_at: m.withdrawn_at,
     lead: hidden ? null : chipFor(reader, m.lead_id, chips, fields),
     transfer: m.approval_id ? transferCard(m.approval_id, reader, reviewing) : null,
+    parent_id: m.parent_id ?? null,
+    reply_count: replies?.get(m.id)?.count ?? 0,
+    last_reply_at: replies?.get(m.id)?.last ?? null,
+    reactions: hidden ? [] : (reactions?.get(m.id) ?? []),
+    mentions_me: Boolean(mentioned?.has(m.id)),
     created_at: m.created_at,
+  };
+}
+
+/* Reactions on a page of messages, grouped: [{ emoji, count, mine }]. */
+function reactionsOn(ids, readerId) {
+  const out = new Map();
+  if (!ids.length) return out;
+  const rows = all(
+    `SELECT message_id, emoji, COUNT(*) AS n, MAX(user_id = ?) AS mine
+       FROM message_reaction
+      WHERE message_id IN (${ids.map(() => '?').join(',')})
+      GROUP BY message_id, emoji
+      ORDER BY MIN(created_at)`,
+    [readerId, ...ids],
+  );
+  for (const r of rows) {
+    if (!out.has(r.message_id)) out.set(r.message_id, []);
+    out.get(r.message_id).push({ emoji: r.emoji, count: r.n, mine: Boolean(r.mine) });
+  }
+  return out;
+}
+
+/* How many replies each message on a page has, and when the last came. */
+function repliesTo(ids) {
+  const out = new Map();
+  if (!ids.length) return out;
+  for (const r of all(
+    `SELECT parent_id, COUNT(*) AS n, MAX(created_at) AS last FROM message
+      WHERE parent_id IN (${ids.map(() => '?').join(',')}) GROUP BY parent_id`,
+    ids,
+  )) out.set(r.parent_id, { count: r.n, last: r.last });
+  return out;
+}
+
+function contextFor(reader, rows, { original = false, reviewing = false } = {}) {
+  const ids = rows.map((r) => r.id);
+  const mentioned = new Set(ids.length
+    ? all(
+      `SELECT message_id FROM message_mention
+        WHERE user_id = ? AND message_id IN (${ids.map(() => '?').join(',')})`,
+      [reader.id, ...ids],
+    ).map((r) => r.message_id)
+    : []);
+  return {
+    chips: new Map(),
+    fields: maskedFieldsFor(reader.role),
+    original,
+    reviewing,
+    reactions: reactionsOn(ids, reader.id),
+    replies: repliesTo(ids),
+    mentioned,
   };
 }
 
@@ -355,29 +435,54 @@ function present(m, reader, { chips, fields, original, reviewing }) {
  * Messages in a conversation, as this reader may see them.
  *
  * With no `after`, the newest page; with one, everything since -- which is how
- * the open conversation asks for what arrived while it was on screen.
+ * the open conversation asks for what arrived while it was on screen. Thread
+ * replies are left out and counted on their first message instead, unless
+ * `flat` -- which is how a reviewer reads, because a reviewer must see all of
+ * it.
  */
 export function messagesFor(reader, conversationId, {
-  after = 0, limit = 100, original = false, reviewing = false,
+  after = 0, limit = 100, original = false, reviewing = false, flat = false,
 } = {}) {
   const n = Math.min(Math.max(Number(limit) || 100, 1), 200);
   const since = Number(after) || 0;
+  const threads = flat ? '' : 'AND m.parent_id IS NULL';
   const rows = since > 0
     ? all(
       `SELECT m.*, u.name AS sender_name FROM message m LEFT JOIN users u ON u.id = m.sender_id
-        WHERE m.conversation_id = ? AND m.id > ? ORDER BY m.id ASC LIMIT ?`,
+        WHERE m.conversation_id = ? AND m.id > ? ${threads} ORDER BY m.id ASC LIMIT ?`,
       [conversationId, since, n],
     )
     : all(
       `SELECT * FROM (
          SELECT m.*, u.name AS sender_name FROM message m LEFT JOIN users u ON u.id = m.sender_id
-          WHERE m.conversation_id = ? ORDER BY m.id DESC LIMIT ?
+          WHERE m.conversation_id = ? ${threads} ORDER BY m.id DESC LIMIT ?
        ) ORDER BY id ASC`,
       [conversationId, n],
     );
 
-  const ctx = { chips: new Map(), fields: maskedFieldsFor(reader.role), original, reviewing };
+  const ctx = contextFor(reader, rows, { original, reviewing });
   return rows.map((m) => present(m, reader, ctx));
+}
+
+/**
+ * One thread: its first message and every reply, oldest first. Asked with any
+ * message in the thread, so a notification pointing at a reply still opens the
+ * whole of it.
+ */
+export function threadFor(reader, conversationId, messageId) {
+  const m = messageId ? one('SELECT id, parent_id, conversation_id FROM message WHERE id = ?', [messageId]) : null;
+  if (!m || Number(m.conversation_id) !== Number(conversationId)) {
+    return { ok: false, status: 404, error: 'Message not found' };
+  }
+  const rootId = m.parent_id ?? m.id;
+  const rows = all(
+    `SELECT m.*, u.name AS sender_name FROM message m LEFT JOIN users u ON u.id = m.sender_id
+      WHERE m.id = ? OR m.parent_id = ? ORDER BY m.id ASC`,
+    [rootId, rootId],
+  );
+  const ctx = contextFor(reader, rows);
+  const [root, ...replies] = rows.map((r) => present(r, reader, ctx));
+  return { ok: true, root, replies };
 }
 
 /**
@@ -390,6 +495,7 @@ export function messagesFor(reader, conversationId, {
  */
 export function send(from, conversationId, {
   body, leadId = null, kind = 'text', approvalId = null, leadVerified = false,
+  parentId = null, mentions = [],
 } = {}) {
   const convo = one('SELECT * FROM conversation WHERE id = ?', [conversationId]);
   if (!convo || !isMember(conversationId, from.id)) {
@@ -398,6 +504,9 @@ export function send(from, conversationId, {
   if (convo.frozen_at) {
     return { ok: false, status: 409, error: `This conversation is frozen: ${convo.frozen_reason}` };
   }
+  if (convo.archived_at) {
+    return { ok: false, status: 409, error: 'This channel is archived. It can be read, not written to.' };
+  }
 
   const text = String(body ?? '').trim();
   if (!text) return { ok: false, status: 400, error: 'Write something first' };
@@ -405,9 +514,28 @@ export function send(from, conversationId, {
     return { ok: false, status: 400, error: `A message can be at most ${MAX_BODY} characters` };
   }
 
-  for (const other of membersOf(conversationId).filter((m) => Number(m.id) !== Number(from.id))) {
-    const refusal = refusalToMessage(from, other);
-    if (refusal) return { ok: false, status: 403, error: refusal };
+  if (convo.kind === 'channel') {
+    /* In a channel, membership decides who is reached -- Ritesh, 11 September:
+       the grid governs direct messages only. A suspension still stops somebody
+       sending anywhere. */
+    const suspended = suspensionOf(from.id);
+    if (suspended) return { ok: false, status: 403, error: `Your messaging is suspended: ${suspended.reason}` };
+  } else {
+    for (const other of membersOf(conversationId).filter((m) => Number(m.id) !== Number(from.id))) {
+      const refusal = refusalToMessage(from, other);
+      if (refusal) return { ok: false, status: 403, error: refusal };
+    }
+  }
+
+  /* One level of threads: a reply to a reply joins the same thread, so a
+     thread never has to be read as a tree. */
+  let parent = null;
+  if (parentId != null && parentId !== '') {
+    const p = one('SELECT id, parent_id, conversation_id FROM message WHERE id = ?', [Number(parentId)]);
+    if (!p || Number(p.conversation_id) !== Number(conversationId)) {
+      return { ok: false, status: 404, error: 'That message is not in this conversation' };
+    }
+    parent = p.parent_id ?? p.id;
   }
 
   /* `leadVerified` is set by requestTransfer alone, which has already allowed
@@ -419,13 +547,24 @@ export function send(from, conversationId, {
   }
 
   const id = Number(run(
-    `INSERT INTO message (conversation_id, sender_id, kind, body, lead_id, approval_id)
-     VALUES (?,?,?,?,?,?)`,
-    [conversationId, from.id, kind, text, leadId ? Number(leadId) : null, approvalId],
+    `INSERT INTO message (conversation_id, sender_id, kind, body, lead_id, approval_id, parent_id)
+     VALUES (?,?,?,?,?,?,?)`,
+    [conversationId, from.id, kind, text, leadId ? Number(leadId) : null, approvalId, parent],
   ).lastInsertRowid);
   run("UPDATE conversation SET last_message_at = datetime('now') WHERE id = ?", [conversationId]);
   // Your own message is not unread to you.
   markRead(from.id, conversationId, id);
+
+  /* @mentions, in channels. Only members can be mentioned: a name picked for
+     somebody outside would tell them of a conversation they cannot read. */
+  if (convo.kind === 'channel' && Array.isArray(mentions) && mentions.length) {
+    const inside = new Set(membersOf(conversationId).map((m) => Number(m.id)));
+    const named = [...new Set(mentions.map(Number))].filter((u) => inside.has(u) && u !== Number(from.id));
+    for (const u of named) {
+      run('INSERT OR IGNORE INTO message_mention (message_id, user_id) VALUES (?,?)', [id, u]);
+      notify(u, `${from.name} mentioned you in #${convo.name}`, text.slice(0, 140), `/messages?c=${conversationId}`);
+    }
+  }
   return { ok: true, id, conversation_id: conversationId };
 }
 
@@ -664,7 +803,8 @@ export function monitorCanSee(monitor, conversationId) {
 export function monitorList(monitor) {
   const books = new Set(orgsFor(monitor));
   const rows = all(
-    `SELECT c.id, c.kind, c.frozen_at, c.frozen_reason, c.last_message_at, c.created_at,
+    `SELECT c.id, c.kind, c.name, c.visibility, c.home_org, c.archived_at,
+            c.frozen_at, c.frozen_reason, c.last_message_at, c.created_at,
             (SELECT COUNT(*) FROM message m WHERE m.conversation_id = c.id) AS messages
        FROM conversation c
       ORDER BY COALESCE(c.last_message_at, c.created_at) DESC, c.id DESC
@@ -702,7 +842,8 @@ export function monitorRead(monitor, conversationId) {
     ok: true,
     conversation: convo,
     members: members.map(publicUser),
-    messages: messagesFor(monitor, conversationId, { limit: 200, original: true, reviewing: true }),
+    // Flat: a reviewer reads thread replies as well as the main timeline.
+    messages: messagesFor(monitor, conversationId, { limit: 200, original: true, reviewing: true, flat: true }),
   };
 }
 

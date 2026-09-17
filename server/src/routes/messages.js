@@ -11,6 +11,7 @@ import { Router } from 'express';
 import { requireUser } from '../auth.js';
 import { rateLimiter } from '../security.js';
 import * as M from '../engine/messaging.js';
+import * as C from '../engine/channels.js';
 
 const router = Router();
 router.use(requireUser);
@@ -70,7 +71,12 @@ router.get('/conversations/:id/messages', (req, res) => {
 router.post('/conversations/:id/messages', sending, (req, res) => {
   const id = idOf(req.params.id);
   if (!id) return res.status(404).json({ error: 'Conversation not found' });
-  return answer(res, M.send(me(req), id, { body: req.body?.body, leadId: req.body?.lead_id ?? null }), true);
+  return answer(res, M.send(me(req), id, {
+    body: req.body?.body,
+    leadId: req.body?.lead_id ?? null,
+    parentId: req.body?.parent_id ?? null,
+    mentions: Array.isArray(req.body?.mentions) ? req.body.mentions : [],
+  }), true);
 });
 
 router.post('/conversations/:id/read', (req, res) => {
@@ -80,7 +86,14 @@ router.post('/conversations/:id/read', (req, res) => {
   return res.json({ ok: true, ...M.unreadFor(req.user.id) });
 });
 
+router.get('/conversations/:id/thread/:messageId', (req, res) => {
+  const id = idOf(req.params.id);
+  if (!id || !M.isMember(id, req.user.id)) return res.status(404).json({ error: 'Conversation not found' });
+  return answer(res, M.threadFor(me(req), id, idOf(req.params.messageId)));
+});
+
 router.post('/message/:id/withdraw', (req, res) => answer(res, M.withdrawMessage(me(req), idOf(req.params.id))));
+router.post('/message/:id/react', (req, res) => answer(res, C.react(me(req), idOf(req.params.id), req.body?.emoji)));
 
 /* A POST, not a GET, so the mobile number never sits in a URL -- where the
    access log would keep it. Twenty an hour each: enough for the clients who
@@ -95,6 +108,24 @@ router.post('/lookup', lookingUp, (req, res) => answer(res, M.lookupLeads(me(req
 router.post('/transfer', sending, (req, res) => answer(res, M.requestTransfer(me(req), {
   leadId: req.body?.lead_id, toUserId: req.body?.to_user_id, reason: req.body?.reason,
 }), true));
+
+/* ------------------------------------------------------------ channels */
+
+router.get('/channels', (req, res) => res.json(C.browse(me(req))));
+router.post('/channels', sending, (req, res) => answer(res, C.createChannel(me(req), req.body ?? {}), true));
+router.post('/channels/:id/join', (req, res) => answer(res, C.join(me(req), idOf(req.params.id))));
+router.post('/channels/:id/leave', (req, res) => answer(res, C.leave(me(req), idOf(req.params.id))));
+router.get('/channels/:id/candidates', (req, res) => answer(
+  res, C.candidates(me(req), idOf(req.params.id), String(req.query.q ?? '').trim()),
+));
+router.post('/channels/:id/members', (req, res) => answer(
+  res, C.addMember(me(req), idOf(req.params.id), idOf(req.body?.user_id)), true,
+));
+router.delete('/channels/:id/members/:userId', (req, res) => answer(
+  res, C.removeMember(me(req), idOf(req.params.id), idOf(req.params.userId)),
+));
+router.post('/channels/:id/archive', (req, res) => answer(res, C.archive(me(req), idOf(req.params.id))));
+router.post('/channels/:id/unarchive', (req, res) => answer(res, C.unarchive(me(req), idOf(req.params.id))));
 
 /* ------------------------------------------------------------ the grid */
 

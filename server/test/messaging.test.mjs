@@ -52,6 +52,8 @@ const clean = () => {
     ).map((r) => r.id);
     if (convos.length) {
       const cm = convos.map(() => '?').join(',');
+      run(`DELETE FROM message_reaction WHERE message_id IN (SELECT id FROM message WHERE conversation_id IN (${cm}))`, convos);
+      run(`DELETE FROM message_mention WHERE message_id IN (SELECT id FROM message WHERE conversation_id IN (${cm}))`, convos);
       run(`DELETE FROM message WHERE conversation_id IN (${cm})`, convos);
       run(`DELETE FROM conversation_member WHERE conversation_id IN (${cm})`, convos);
       run(`DELETE FROM conversation WHERE id IN (${cm})`, convos);
@@ -511,6 +513,145 @@ await test('a transfer cannot be raised through the general approvals route', as
     scope: 'lead_transfer', entity_id: L_A, payload: { to_user_id: A.id }, reason: 'x',
   });
   assert.equal(res.status, 400, JSON.stringify(res.body));
+});
+
+/* ------------------------------------------------------------ channels */
+
+/* Ritesh, 11 September: anyone opens a channel; a channel mixes the businesses
+   only where the grid opens it both ways; the grid governs direct messages
+   only; any member adds people to a private channel; reactions are any emoji. */
+const channel = (probe, body) => call(probe, 'POST', '/messages/channels', body);
+const listed = async (probe, id) => (await call(probe, 'GET', '/messages/channels')).body.channels.some((c) => c.id === id);
+let PUB;
+let PRIV;
+
+await test('anybody can open a channel, and a public one is listed to its own business only', async () => {
+  const made = await channel(A, { name: 'probe-msg pune desk', topic: 'Walk-ins', visibility: 'public' });
+  assert.equal(made.status, 201, JSON.stringify(made.body));
+  PUB = made.body.id;
+  assert(await listed(B, PUB), 'a colleague in the same business cannot see a public channel');
+  assert(!(await listed(BIG, PUB)), 'a Bigul RM can see the name of a Bonanza channel');
+  const again = await channel(C, { name: '#PROBE-MSG  PUNE DESK', visibility: 'public' });
+  assert.equal(again.status, 409, 'two live channels share a name in one business');
+});
+
+await test('in a channel membership decides: a pair the grid blocks can still talk there', async () => {
+  assert.equal((await call(B, 'POST', `/messages/channels/${PUB}/join`, {})).status, 200);
+  await setCell('blocked');
+  const post = await call(B, 'POST', `/messages/conversations/${PUB}/messages`, { body: 'I can take Saturday' });
+  const direct = await call(B, 'POST', `/messages/conversations/${AB}/messages`, { body: 'and here?' });
+  await setCell('same_book');
+  assert.equal(direct.status, 403, 'setup: the blocked cell did not block the direct message, so this proves nothing');
+  assert.equal(post.status, 201, `the grid blocked a channel post: ${JSON.stringify(post.body)}`);
+});
+
+await test('a private channel is invisible to others, and any member can add a colleague', async () => {
+  const made = await channel(A, { name: 'probe-msg escalations', visibility: 'private' });
+  assert.equal(made.status, 201, JSON.stringify(made.body));
+  PRIV = made.body.id;
+
+  assert(!(await listed(C, PRIV)), 'a private channel is listed to somebody outside it');
+  assert.equal((await call(C, 'POST', `/messages/channels/${PRIV}/join`, {})).status, 404, 'joined a private channel uninvited');
+  assert.equal((await call(C, 'GET', `/messages/conversations/${PRIV}/messages`)).status, 404, 'read a private channel from outside');
+
+  assert.equal((await call(A, 'POST', `/messages/channels/${PRIV}/members`, { user_id: B.id })).status, 201);
+  const byB = await call(B, 'POST', `/messages/channels/${PRIV}/members`, { user_id: C.id });
+  assert.equal(byB.status, 201, `a member who did not open it could not add somebody: ${JSON.stringify(byB.body)}`);
+  assert(one("SELECT 1 FROM audit_log WHERE action = 'channel_member_added' AND entity_id = ? AND user_id = ?", [PRIV, B.id]),
+    'the addition was not recorded');
+});
+
+await test('the other business comes in only where the grid opens it both ways', async () => {
+  const refused = await call(A, 'POST', `/messages/channels/${PUB}/members`, { user_id: BIG.id });
+  assert.equal(refused.status, 403, `a Bigul RM was added to a Bonanza channel by default: HTTP ${refused.status}`);
+  const before = (await call(A, 'GET', `/messages/channels/${PUB}/candidates?q=msg-big`)).body.people ?? [];
+  assert(!before.some((p) => p.id === BIG.id), 'somebody who cannot come in is offered as a candidate');
+
+  await setCell('any_book');
+  const allowed = await call(A, 'POST', `/messages/channels/${PUB}/members`, { user_id: BIG.id });
+  await setCell('same_book');
+  assert.equal(allowed.status, 201, JSON.stringify(allowed.body));
+  const seen = (await call(BIG, 'GET', '/messages/conversations')).body.conversations.some((c) => c.id === PUB);
+  assert(seen, 'somebody added cannot see the channel');
+});
+
+await test('an @mention tells a member, and cannot reach somebody outside the channel', async () => {
+  const sent = await call(A, 'POST', `/messages/conversations/${PRIV}/messages`, {
+    body: 'Can you two look at this?', mentions: [B.id, MON.id],
+  });
+  assert.equal(sent.status, 201, JSON.stringify(sent.body));
+  assert(one("SELECT 1 FROM notifications WHERE user_id = ? AND title LIKE '%mentioned you in #probe-msg escalations'", [B.id]),
+    'the member mentioned was not told');
+  assert(!one("SELECT 1 FROM notifications WHERE user_id = ? AND title LIKE '%mentioned you in%'", [MON.id]),
+    'somebody outside the channel was told of a message in it');
+});
+
+await test('a reply sits in a thread, and a reply to a reply joins the same thread', async () => {
+  const root = await call(A, 'POST', `/messages/conversations/${PRIV}/messages`, { body: 'Who has the Nashik list?' });
+  const r1 = await call(B, 'POST', `/messages/conversations/${PRIV}/messages`, { body: 'I do', parent_id: root.body.id });
+  const r2 = await call(C, 'POST', `/messages/conversations/${PRIV}/messages`, { body: 'Half of it', parent_id: r1.body.id });
+  assert.equal(r2.status, 201, JSON.stringify(r2.body));
+
+  const main = await thread(A, PRIV);
+  assert(!main.some((m) => m.id === r1.body.id || m.id === r2.body.id), 'thread replies are in the main timeline');
+  assert.equal(main.find((m) => m.id === root.body.id)?.reply_count, 2, 'the first message does not count its replies');
+
+  const t = await call(A, 'GET', `/messages/conversations/${PRIV}/thread/${r2.body.id}`);
+  assert.equal(t.status, 200, JSON.stringify(t.body));
+  assert.equal(t.body.root.id, root.body.id, 'a reply to a reply started a thread of its own');
+  assert.deepEqual(t.body.replies.map((m) => m.id), [r1.body.id, r2.body.id]);
+});
+
+await test('any emoji is a reaction, and words are not', async () => {
+  const target = (await thread(A, PRIV)).filter((m) => m.kind === 'text').at(-1);
+  for (const e of ['🦄', '🇮🇳', '👩‍💻', '👍🏽']) {
+    const r = await call(B, 'POST', `/messages/message/${target.id}/react`, { emoji: e });
+    assert.equal(r.status, 200, `${e}: ${JSON.stringify(r.body)}`);
+  }
+  for (const e of ['lol', '', '🦄 nice', '1']) {
+    const r = await call(B, 'POST', `/messages/message/${target.id}/react`, { emoji: e });
+    assert.equal(r.status, 400, `"${e}" was accepted as a reaction`);
+  }
+  await call(B, 'POST', `/messages/message/${target.id}/react`, { emoji: '🦄' }); // a second press takes it off
+
+  const seen = (await thread(A, PRIV)).find((m) => m.id === target.id);
+  assert.deepEqual(seen.reactions.map((r) => r.emoji).sort(), ['🇮🇳', '👍🏽', '👩‍💻'].sort(), JSON.stringify(seen.reactions));
+  assert(seen.reactions.every((r) => r.count === 1 && r.mine === false), "the counts, or whose they are, are wrong");
+});
+
+await test('the header counts direct messages; a busy channel shows only in the list', async () => {
+  const before = (await call(B, 'GET', '/messages/unread')).body.messages;
+  await call(A, 'POST', `/messages/conversations/${PUB}/messages`, { body: 'Standup at ten' });
+  const after = (await call(B, 'GET', '/messages/unread')).body.messages;
+  const row = (await call(B, 'GET', '/messages/conversations')).body.conversations.find((c) => c.id === PUB);
+  assert.equal(after, before, 'a channel post moved the header count');
+  assert(row?.unread > 0, 'the channel shows nothing unread in the list');
+});
+
+await test('a reviewer reads thread replies as well as the main timeline', async () => {
+  const res = await call(MON, 'GET', `/messages/monitor/${PRIV}`);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert(res.body.messages.some((m) => m.parent_id), 'thread replies are hidden from the reviewer');
+});
+
+await test('a suspended person can neither open a channel nor post in one', async () => {
+  await call(MON, 'POST', '/messages/suspensions', { user_id: B.id, reason: 'Pending review' });
+  const make = await channel(B, { name: 'probe-msg b own', visibility: 'public' });
+  const post = await call(B, 'POST', `/messages/conversations/${PUB}/messages`, { body: 'hi' });
+  await call(MON, 'DELETE', `/messages/suspensions/${B.id}`);
+  assert.equal(make.status, 403, `a suspended person opened a channel: HTTP ${make.status}`);
+  assert.equal(post.status, 403, `a suspended person posted in a channel: HTTP ${post.status}`);
+});
+
+await test('an archived channel is read-only, and only the person who opened it archives it', async () => {
+  assert.equal((await call(B, 'POST', `/messages/channels/${PRIV}/archive`, {})).status, 403,
+    'somebody who did not open the channel archived it');
+  const done = await call(A, 'POST', `/messages/channels/${PRIV}/archive`, {});
+  assert.equal(done.status, 200, JSON.stringify(done.body));
+  const post = await call(B, 'POST', `/messages/conversations/${PRIV}/messages`, { body: 'still here?' });
+  const read = await call(B, 'GET', `/messages/conversations/${PRIV}/messages`);
+  assert.equal(post.status, 409, `an archived channel took a message: HTTP ${post.status}`);
+  assert.equal(read.status, 200, 'archiving took away reading');
 });
 
 /* ------------------------------------------------------------ plumbing */

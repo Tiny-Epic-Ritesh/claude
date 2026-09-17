@@ -169,6 +169,11 @@ const NOT_A_RECORD = {
   '/api/messages/monitor/:id': 'A conversation opened by a reviewer. Needs comms.monitor, is refused when '
     + 'nobody in it works in a book the reviewer covers, and every read is written to the audit log. '
     + 'Asserted in messaging.test.mjs.',
+  '/api/messages/conversations/:id/thread/:messageId': 'One thread in a conversation, for its members only; '
+    + 'leads in it are drawn per reader exactly as in the main timeline. Asserted in messaging.test.mjs.',
+  '/api/messages/channels/:id/candidates': 'Colleagues a member could add to a channel. Anybody from the '
+    + 'other business appears only where the grid opens messages both ways (refusalToEnter). '
+    + 'Asserted in messaging.test.mjs.',
   '/api/products/:id/brochure': 'The brochure for a product type. Marketing material written to be '
     + 'handed to strangers, and the catalogue it hangs on is firm-wide — so there is no book to '
     + 'cross. It is behind a session, which brochure.test.mjs asserts.',

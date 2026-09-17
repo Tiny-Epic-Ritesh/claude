@@ -105,6 +105,7 @@ for (const t of [
   /* Messages before approvals: a transfer request is a message pointing at an
      approval, and both point at leads rebuilt below. The grid and suspensions
      too -- a seed is a known state, and a pair a test run left closed is not. */
+  'message_reaction', 'message_mention',
   'message', 'conversation_member', 'conversation', 'messaging_suspension', 'messaging_policy',
   /* Approvals before the lists and leads they are about.
    *

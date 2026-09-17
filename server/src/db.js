@@ -1629,6 +1629,15 @@ const COLUMNS = [
      of a capability. Here for databases that already have the table; inline
      in its CREATE for ones that do not yet. */
   ['approvals', 'target_user_id', 'INTEGER'],
+  /* P3-21 phase 2: channels, and thread replies. Here for databases that
+     already have the tables; inline in their CREATEs for ones that do not. */
+  ['conversation', 'name', 'TEXT'],
+  ['conversation', 'topic', 'TEXT'],
+  ['conversation', 'visibility', 'TEXT'],
+  ['conversation', 'home_org', 'TEXT'],
+  ['conversation', 'archived_at', 'TEXT'],
+  ['conversation', 'archived_by', 'INTEGER'],
+  ['message', 'parent_id', 'INTEGER'],
 ];
 
 /**
@@ -2787,6 +2796,12 @@ CREATE TABLE IF NOT EXISTS conversation (
   frozen_by       INTEGER REFERENCES users(id) ON DELETE SET NULL,
   frozen_reason   TEXT,
   last_message_at TEXT,
+  name            TEXT,                             -- channels: what it is called
+  topic           TEXT,
+  visibility      TEXT,                             -- channels: public | private
+  home_org        TEXT,                             -- channels: the business it belongs to
+  archived_at     TEXT,                             -- channels: read-only from here
+  archived_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
   created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS conversation_member (
@@ -2811,9 +2826,28 @@ CREATE TABLE IF NOT EXISTS message (
   lead_id         INTEGER REFERENCES leads(id) ON DELETE SET NULL,   -- a pointer, drawn per reader
   approval_id     INTEGER REFERENCES approvals(id) ON DELETE SET NULL,
   withdrawn_at    TEXT,
+  parent_id       INTEGER REFERENCES message(id),                    -- a thread reply: its first message
   created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_message_conversation ON message(conversation_id, id);
+CREATE INDEX IF NOT EXISTS idx_message_parent ON message(parent_id);
+
+/* One row per person per emoji per message. Any emoji -- Ritesh, 11 September.
+   No ON DELETE on the message: messages are never deleted. */
+CREATE TABLE IF NOT EXISTS message_reaction (
+  message_id INTEGER NOT NULL REFERENCES message(id),
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  emoji      TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (message_id, user_id, emoji)
+);
+
+/* Who a channel message named, so they are told and it can be shown to them. */
+CREATE TABLE IF NOT EXISTS message_mention (
+  message_id INTEGER NOT NULL REFERENCES message(id),
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (message_id, user_id)
+);
 
 /* Who may message whom, role to role. A cell with no row reads 'same_book'. */
 CREATE TABLE IF NOT EXISTS messaging_policy (

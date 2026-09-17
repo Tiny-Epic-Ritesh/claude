@@ -120,7 +120,7 @@ export default function Inbox() {
                   >
                     <Icon name={c.frozen_at ? 'lock' : 'forum'} size={16} />
                     <span className="inbox-row-body">
-                      <strong className="small">{names(c.with)}</strong>
+                      <strong className="small">{c.kind === 'channel' ? `#${c.name}` : names(c.with)}</strong>
                       <span className="tiny muted">{c.last ? `${c.last.mine ? 'You: ' : ''}${c.last.preview}` : 'No messages yet'}</span>
                     </span>
                     {c.unread > 0 && <span className="badge badge-accent">{c.unread}</span>}

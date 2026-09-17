@@ -31,6 +31,35 @@ book*, *any book*. Every cell starts at *same book*. A lead chip is still drawn
 for each reader, so a Bigul user sent a Bonanza lead sees *a lead you cannot
 open* — opening a conversation across the books never opens the records.
 
+## Phase 2 decisions — 11 September
+
+| Question | Decision | My recommendation had been |
+|---|---|---|
+| Can a channel include both businesses | **Yes, where the grid allows it** | One business per channel |
+| Does the grid apply to channels | **Direct messages only** — in a channel, membership decides who is reached | Same |
+| Reactions | **Any emoji** | A fixed six |
+| Who adds people to a private channel | **Any member**, every addition recorded | Same |
+
+**How I have read the first two together.** A channel belongs to the business
+of the person who created it, and is listed only to that business — a Bigul
+user never sees the name of a Bonanza channel unless somebody adds them. When
+somebody joins or is added, the grid is asked about them and each member they
+share no business with, in both directions, and must answer *both
+businesses*. It is not asked about anybody in the same business, so a pair the
+grid blocks from direct messages can still sit in one channel. The check is
+made when somebody comes in; closing the grid later does not eject anyone —
+a reviewer can freeze the channel.
+
+**Calls I am making inside that** — each one line to change:
+
+| | |
+|---|---|
+| Threads | One level: a reply to a reply joins the same thread. In channels and direct messages alike |
+| @mentions | Only members can be mentioned; each is sent a notification that links to the channel |
+| The header count | Direct messages and notifications only. A busy channel shows its unread count in the Messages list, not in the header — otherwise the one number everyone watches becomes noise |
+| Archiving | The person who created a channel can archive it, which makes it read-only; so can a reviewer |
+| Leaving | Anyone can leave; the creator can also remove somebody |
+
 ## Build plan for C
 
 | Phase | What ships | Days |
