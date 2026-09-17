@@ -560,7 +560,7 @@ function Thread({ id, suspended, onBack, onGo, onLeft, onChanged, onProblem }) {
         <Composer
           id={id}
           other={other}
-          members={channel ? convo.members : null}
+          members={channel ? convo.with : null}
           onSent={load}
           onGo={onGo}
           onProblem={onProblem}
@@ -623,7 +623,7 @@ function ThreadPanel({ conversationId, messageId, convo, canWrite, onClose, onCh
             <Composer
               id={conversationId}
               parentId={data.root.id}
-              members={convo.kind === 'channel' ? convo.members : null}
+              members={convo.kind === 'channel' ? convo.with : null}
               onSent={() => { load(); onChanged(); }}
               onProblem={onProblem}
             />
