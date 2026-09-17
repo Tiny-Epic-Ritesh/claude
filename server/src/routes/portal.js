@@ -13,6 +13,7 @@ import { portalLeadScope } from '../auth.js';
 import { applySla } from '../engine/sla.js';
 import { LMS_MODULES } from './partners.js';
 import { generateCards } from './crm.js';
+import { leastLoadedRm } from '../engine/assignment.js';
 import { kycStatusSql } from '../engine/kycstatus.js';
 
 const router = Router();
@@ -82,22 +83,40 @@ router.post('/referrals', (req, res) => {
   if (!name?.trim()) return res.status(400).json({ error: 'Client name is required' });
   if (!mobile || !/^[6-9]\d{9}$/.test(String(mobile))) return res.status(400).json({ error: 'A valid 10-digit mobile number is required' });
 
-  const existing = one('SELECT id, partner_id FROM leads WHERE mobile = ? AND deleted_at IS NULL', [mobile]);
+  /* A referral lands in the partner's own book (Ritesh, 11 Sep 2026) -- they
+     sell for one of the two businesses, and that is the one they are referring
+     into. Everything below is asked of that book and no other. */
+  const org = req.partner.sales_org;
+
+  /* Matched within the book, never across it: the same person can be a lead in
+     both businesses, so a match in the other one is a different relationship
+     and not this partner's duplicate.
+
+     The refusal names the partner's own book and never the other. It told a
+     Bigul partner "already registered with Bonanza", which both misnames their
+     business and answers a question about the other book's client list -- a
+     partner is not a CRM user and has no standing to learn that a number is on
+     someone else's books. */
+  const existing = one(
+    'SELECT id, partner_id FROM leads WHERE mobile = ? AND sales_org = ? AND deleted_at IS NULL',
+    [mobile, org],
+  );
   if (existing) {
+    const book = one('SELECT name FROM sales_orgs WHERE code = ?', [org])?.name ?? org;
     return res.status(409).json({
       error: existing.partner_id === req.partner.id
         ? 'You have already referred this client.'
-        : 'This client is already registered with Bonanza.',
+        : `This client is already registered with ${book}.`,
     });
   }
 
-  // Round-robin to the least-loaded Sales RM.
-  const owner = one("SELECT id FROM users WHERE role = 'sales_rm' AND active = 1 ORDER BY (SELECT COUNT(*) FROM leads WHERE owner_id = users.id) LIMIT 1");
+  // Round-robin to the least-loaded Sales RM in that same book.
+  const owner = leastLoadedRm(org);
 
   const result = run(
-    `INSERT INTO leads (name, mobile, email, city, source, stage, owner_id, partner_id)
-     VALUES (?,?,?,?,?,'New',?,?)`,
-    [name, mobile, email || null, city || null, `Partner referral — ${req.partner.name}`, owner?.id || null, req.partner.id],
+    `INSERT INTO leads (sales_org, name, mobile, email, city, source, stage, owner_id, partner_id)
+     VALUES (?,?,?,?,?,?,'New',?,?)`,
+    [org, name, mobile, email || null, city || null, `Partner referral — ${req.partner.name}`, owner, req.partner.id],
   );
   const leadId = Number(result.lastInsertRowid);
   generateCards(leadId);
@@ -116,10 +135,10 @@ router.post('/referrals', (req, res) => {
   run('INSERT INTO activities (partner_id, lead_id, type, direction, subject, body) VALUES (?,?,?,?,?,?)', [
     req.partner.id, leadId, 'Partner Activity', 'inbound', 'Lead referred via Partner Portal', note || null,
   ]);
-  if (owner?.id) notify(owner.id, 'New partner referral', `${name} referred by ${req.partner.name}.`, `/leads/${leadId}`);
+  if (owner) notify(owner, 'New partner referral', `${name} referred by ${req.partner.name}.`, `/leads/${leadId}`);
   if (req.partner.owner_id) notify(req.partner.owner_id, 'Partner sourced a lead', `${req.partner.name} referred ${name}.`, `/partners/${req.partner.id}`);
 
-  audit(null, 'partner_referral', 'lead', leadId, { partner_id: req.partner.id });
+  audit(null, 'partner_referral', 'lead', leadId, { partner_id: req.partner.id, sales_org: org });
   res.status(201).json({ lead_id: leadId, message: 'Referral received. Your RM will pick it up shortly.' });
 });
 

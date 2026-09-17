@@ -12,6 +12,7 @@ import { requireUser, requirePermission, reqScope } from '../auth.js';
 import * as kyc from '../engine/kyc.js';
 import { digilockerFetch, pennyDrop, esign, sendOtp, verifyOtp, DEMO_OTP } from '../integrations.js';
 import { generateCards } from './crm.js';
+import { leastLoadedRm } from '../engine/assignment.js';
 import * as ai from '../ai/index.js';
 import { kycStatusSql, kycStatusFor } from '../engine/kycstatus.js';
 
@@ -131,8 +132,22 @@ dkyc.post('/start', (req, res) => {
   const { product_type_id, mobile } = req.body;
   if (!product_type_id) return res.status(400).json({ error: 'Please choose a product to continue' });
 
-  // Recognise an existing lead by mobile so the journey attaches to the CRM record.
-  const lead = mobile ? one('SELECT * FROM leads WHERE mobile = ? AND deleted_at IS NULL', [mobile]) : null;
+  /* The product decides the book (Ritesh, 11 Sep 2026).
+   *
+   * This is a public journey with no session to carry a book, and the
+   * catalogue is per business — so the product the applicant chose is the only
+   * thing here that says which of the two they are talking to. A product that
+   * does not exist names no book, and is refused rather than guessed at. */
+  const product = one('SELECT id, sales_org FROM product_types WHERE id = ?', [Number(product_type_id)]);
+  if (!product) return res.status(400).json({ error: 'Please choose a product to continue' });
+
+  /* Recognise an existing lead by mobile so the journey attaches to the CRM
+     record — within the product's book, never across it. The same person can be
+     a lead in both businesses, and attaching a Bigul application to their
+     Bonanza record puts a public resume token on the other book's lead. */
+  const lead = mobile
+    ? one('SELECT * FROM leads WHERE mobile = ? AND sales_org = ? AND deleted_at IS NULL', [mobile, product.sales_org])
+    : null;
   const card = lead ? one('SELECT * FROM product_cards WHERE lead_id = ? AND product_type_id = ?', [lead.id, product_type_id]) : null;
 
   const journey = kyc.createJourney({
@@ -233,18 +248,27 @@ function ensureLead(journey) {
   const name = [f.first_name, f.last_name].filter(Boolean).join(' ')
     || f.account_holder || f.father_spouse || `DKYC applicant ${journey.id}`;
 
+  /* The same book the journey was started in, read from the product rather
+     than carried along, so the answer cannot drift from /start's. The column
+     is NOT NULL on the product, so this is missing only if the product itself
+     is gone — and a journey with no book gets no lead rather than a Bonanza
+     one by default. */
+  const org = one('SELECT sales_org FROM product_types WHERE id = ?', [journey.product_type_id])?.sales_org;
+  if (!org) return;
+
   const existing = f.mobile || journey.applicant_mobile
-    ? one('SELECT * FROM leads WHERE mobile = ? AND deleted_at IS NULL', [f.mobile || journey.applicant_mobile])
+    ? one('SELECT * FROM leads WHERE mobile = ? AND sales_org = ? AND deleted_at IS NULL',
+      [f.mobile || journey.applicant_mobile, org])
     : null;
 
   let leadId = existing?.id;
   if (!leadId) {
-    const owner = one("SELECT id FROM users WHERE role = 'sales_rm' AND active = 1 ORDER BY (SELECT COUNT(*) FROM leads WHERE owner_id = users.id) LIMIT 1");
+    const owner = leastLoadedRm(org);
     const result = run(
-      `INSERT INTO leads (name, mobile, email, pan, city, state, source, stage, owner_id)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
-      [name, f.mobile || journey.applicant_mobile || null, f.email || journey.applicant_email || null, f.pan || null,
-        f.city || null, f.state || null, 'DKYC Portal', 'Qualified', owner?.id || null],
+      `INSERT INTO leads (sales_org, name, mobile, email, pan, city, state, source, stage, owner_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [org, name, f.mobile || journey.applicant_mobile || null, f.email || journey.applicant_email || null, f.pan || null,
+        f.city || null, f.state || null, 'DKYC Portal', 'Qualified', owner],
     );
     leadId = Number(result.lastInsertRowid);
     generateCards(leadId);
@@ -260,7 +284,7 @@ function ensureLead(journey) {
     leadId, card?.id ?? null, 'KYC Event', 'inbound', 'Self-service KYC completed',
     'Applicant completed the DKYC journey without assistance.',
   ]);
-  audit(null, 'dkyc_lead_created', 'lead', leadId, { journey_id: journey.id });
+  audit(null, 'dkyc_lead_created', 'lead', leadId, { journey_id: journey.id, sales_org: org });
 }
 
 /** Only what the applicant is allowed to see — no CRM internals. */

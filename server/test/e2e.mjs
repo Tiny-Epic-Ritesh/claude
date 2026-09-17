@@ -3623,7 +3623,19 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
   await check('deactivating someone holding live work warns before orphaning it', async () => {
     // Silently orphaning a book is how leads go missing after someone leaves.
     const { data: users } = await req('/api/setup/users', { token: T.admin, expect: 200 });
-    const holder = users.users.find((u) => u.lead_count > 0 && u.active && u.role !== 'admin');
+
+    /* Somebody whose book has a lead still open. The refusal counts open leads
+       only -- Won and Lost are not live work -- while lead_count counts every
+       lead a person holds, so "the first user with a lead" is not this check's
+       fixture. It used to coincide with it: while an unrouted lead went to the
+       lightest RM firm-wide, the first holder by name happened to be sent an
+       open one during the run. OPS-05 counts that load inside the lead's book,
+       the lead goes to someone else, and that holder's book is all closed. */
+    let holder = null;
+    for (const u of users.users.filter((x) => x.lead_count > 0 && x.active && x.role !== 'admin')) {
+      const { data: held } = await req(`/api/leads?owner_id=${u.id}&limit=200`, { token: T.admin, expect: 200 });
+      if ((held.leads ?? held).some((l) => !['Won', 'Lost'].includes(l.stage))) { holder = u; break; }
+    }
     assert(holder, 'no user with live leads to test with');
 
     const { data } = await req(`/api/setup/users/${holder.id}/active`, {

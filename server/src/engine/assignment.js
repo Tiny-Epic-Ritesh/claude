@@ -24,6 +24,7 @@
  */
 
 import { all, one, run, audit, notify } from '../db.js';
+import { orgsFor } from '../auth.js';
 import { evaluate, fromLegacy } from './conditions.js';
 
 /* ------------------------------------------------------------ matching */
@@ -127,6 +128,40 @@ function leastLoaded(team) {
   const cursor = team.rr_cursor % tied.length;
   run('UPDATE teams SET rr_cursor = ? WHERE id = ?', [(cursor + 1) % tied.length, team.id]);
   return tied[cursor].user_id;
+}
+
+/**
+ * The least-loaded Sales RM in one book.
+ *
+ * For the two doors that let a lead in without a routing rule to run: a
+ * self-service DKYC applicant and a partner referral. Both used to ask for the
+ * least-loaded `sales_rm` in the firm, and on a shared database that puts the
+ * other business's desk in the running — a Bigul applicant could land on a
+ * Bonanza RM who cannot open the record, so the lead sits in a book nobody is
+ * watching.
+ *
+ * Eligibility is `orgsFor` rather than `sales_org = ?` in SQL: an RM who
+ * carries a book in both businesses holds the second one through `org_access`,
+ * and asking the definition beats keeping a second copy of it here that can
+ * quietly disagree with it.
+ *
+ * Load is counted inside the book too (Ritesh, 11 Sep 2026): a two-book RM's
+ * Bonanza leads are not a reason to keep Bigul work away from them. Deleted
+ * leads are not load.
+ */
+export function leastLoadedRm(org) {
+  if (!org) return null;
+
+  const candidates = all(
+    `SELECT u.id, u.role, u.sales_org, u.org_access,
+            (SELECT COUNT(*) FROM leads l
+              WHERE l.owner_id = u.id AND l.sales_org = ? AND l.deleted_at IS NULL) AS book_load
+     FROM users u
+     WHERE u.role = 'sales_rm' AND u.active = 1
+     ORDER BY book_load, u.id`,
+    [org],
+  );
+  return candidates.find((u) => orgsFor(u).includes(org))?.id ?? null;
 }
 
 /** Resolve a team to one person using the team's own strategy. */
