@@ -31,6 +31,7 @@ import { orgsFor } from '../auth.js';
 import {
   isMember, membersOf, reachFor, suspensionOf, refusalToMessage, monitorCanSee, MONITORING_NOTICE,
 } from './messaging.js';
+import { announce } from './messagelive.js';
 
 const NAME_MIN = 2;
 const NAME_MAX = 60;
@@ -167,6 +168,7 @@ export function join(user, channelId) {
     systemLine(c.id, `${user.name} joined`);
     audit(user.id, 'channel_joined', 'conversation', c.id, {});
   });
+  announce(c.id, 'members');
   return { ok: true, id: c.id, joined: true };
 }
 
@@ -191,6 +193,7 @@ export function addMember(actor, channelId, userId) {
     audit(actor.id, 'channel_member_added', 'conversation', c.id, { user_id: person.id });
     notify(person.id, `${actor.name} added you to #${c.name}`, c.topic ?? null, `/messages?c=${c.id}`);
   });
+  announce(c.id, 'members');
   return { ok: true };
 }
 
@@ -342,5 +345,6 @@ export function react(user, messageId, emoji) {
   } else {
     run('INSERT INTO message_reaction (message_id, user_id, emoji) VALUES (?,?,?)', [m.id, user.id, e]);
   }
+  announce(m.conversation_id, 'reaction', { message_id: m.id });
   return { ok: true, reacted: !there };
 }

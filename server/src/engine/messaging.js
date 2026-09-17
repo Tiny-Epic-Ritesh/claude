@@ -35,6 +35,8 @@ import { maskRecord } from '../security.js';
 import { maskedFieldsFor } from './masking.js';
 import { auditConfig } from './metadata.js';
 import { request as requestApproval, byId as approvalById, mayDecide } from './approvals.js';
+import { announce } from './messagelive.js';
+import { filesOn, attach as attachFile } from './messagefiles.js';
 
 /* ----------------------------------------------------------- constants */
 
@@ -57,6 +59,46 @@ const userRow = (id) => (id ? one(`SELECT ${USER_COLUMNS} FROM users WHERE id = 
 const publicUser = ({ id, name, role, sales_org: salesOrg }) => ({ id, name, role, sales_org: salesOrg });
 
 const roleNames = () => new Map(all('SELECT code, name FROM roles').map((r) => [r.code, r.name]));
+
+/* ----------------------------------------------------------- presence */
+
+/** Somebody counts as here if a request of theirs landed this recently. */
+export const PRESENT_MINUTES = 5;
+
+/**
+ * Who is about, from the sessions table -- Ritesh, 16 September: a dot and a
+ * last-seen, for people you share a conversation with.
+ *
+ * Read from `sessions.last_seen_at`, which every request already updates, so
+ * this watches nobody: it is the same fact the idle timeout runs on, and it is
+ * shown only to people already in a conversation with them.
+ */
+export function presenceFor(userIds) {
+  const ids = [...new Set((userIds ?? []).map(Number).filter(Boolean))];
+  const out = new Map();
+  if (!ids.length) return out;
+
+  for (const r of all(
+    `SELECT user_id, MAX(last_seen_at) AS seen FROM sessions
+      WHERE kind = 'crm' AND user_id IN (${ids.map(() => '?').join(',')})
+      GROUP BY user_id`,
+    ids,
+  )) {
+    const minutes = r.seen
+      ? one("SELECT (julianday('now') - julianday(?)) * 1440 AS m", [r.seen]).m
+      : null;
+    out.set(r.user_id, {
+      online: minutes != null && minutes <= PRESENT_MINUTES,
+      last_seen_at: r.seen ?? null,
+    });
+  }
+  return out;
+}
+
+const withPresence = (people) => {
+  const seen = presenceFor(people.map((p) => p.id));
+  return people.map((p) => ({ ...p, ...(seen.get(p.id) ?? { online: false, last_seen_at: null }) }));
+};
 
 /* ------------------------------------------------------------- policy */
 
@@ -219,6 +261,7 @@ export function openDirect(from, toUserId) {
 const previewOf = (m) => {
   if (m.withdrawn_at) return 'Message withdrawn';
   if (m.kind === 'transfer') return 'Asked for a lead';
+  if (!m.body) return 'Sent a file';
   return m.body.length > 80 ? `${m.body.slice(0, 79)}…` : m.body;
 };
 
@@ -265,7 +308,7 @@ export function conversationSummary(conversationId, reader) {
     [conversationId],
   );
   if (!c) return null;
-  const members = membersOf(conversationId).map(publicUser);
+  const members = withPresence(membersOf(conversationId).map(publicUser));
   return {
     ...c,
     with: members.filter((m) => Number(m.id) !== Number(reader.id)),
@@ -356,7 +399,7 @@ function transferCard(approvalId, reader, reviewing) {
 /* ------------------------------------------------------------ messages */
 
 function present(m, reader, {
-  chips, fields, original, reviewing, reactions, replies, mentioned,
+  chips, fields, original, reviewing, reactions, replies, mentioned, files,
 }) {
   const hidden = Boolean(m.withdrawn_at) && !original;
   return {
@@ -375,6 +418,7 @@ function present(m, reader, {
     reply_count: replies?.get(m.id)?.count ?? 0,
     last_reply_at: replies?.get(m.id)?.last ?? null,
     reactions: hidden ? [] : (reactions?.get(m.id) ?? []),
+    file: hidden ? null : (files?.get(m.id) ?? null),
     mentions_me: Boolean(mentioned?.has(m.id)),
     created_at: m.created_at,
   };
@@ -428,6 +472,7 @@ function contextFor(reader, rows, { original = false, reviewing = false } = {}) 
     reactions: reactionsOn(ids, reader.id),
     replies: repliesTo(ids),
     mentioned,
+    files: filesOn(ids),
   };
 }
 
@@ -495,7 +540,7 @@ export function threadFor(reader, conversationId, messageId) {
  */
 export function send(from, conversationId, {
   body, leadId = null, kind = 'text', approvalId = null, leadVerified = false,
-  parentId = null, mentions = [],
+  parentId = null, mentions = [], fileId = null,
 } = {}) {
   const convo = one('SELECT * FROM conversation WHERE id = ?', [conversationId]);
   if (!convo || !isMember(conversationId, from.id)) {
@@ -509,7 +554,8 @@ export function send(from, conversationId, {
   }
 
   const text = String(body ?? '').trim();
-  if (!text) return { ok: false, status: 400, error: 'Write something first' };
+  // A file on its own is a message; words on their own are too.
+  if (!text && !fileId) return { ok: false, status: 400, error: 'Write something first' };
   if (text.length > MAX_BODY) {
     return { ok: false, status: 400, error: `A message can be at most ${MAX_BODY} characters` };
   }
@@ -546,14 +592,28 @@ export function send(from, conversationId, {
     return { ok: false, status: 404, error: 'Lead not found' };
   }
 
+  /* Checked before the message exists, so a message never lands claiming a
+     file it cannot have. */
+  if (fileId != null && fileId !== '') {
+    const f = one('SELECT id, conversation_id, uploaded_by, message_id FROM message_file WHERE id = ?', [Number(fileId)]);
+    if (!f
+      || Number(f.conversation_id) !== Number(conversationId)
+      || Number(f.uploaded_by) !== Number(from.id)
+      || f.message_id != null) {
+      return { ok: false, status: 404, error: 'File not found' };
+    }
+  }
+
   const id = Number(run(
     `INSERT INTO message (conversation_id, sender_id, kind, body, lead_id, approval_id, parent_id)
      VALUES (?,?,?,?,?,?,?)`,
     [conversationId, from.id, kind, text, leadId ? Number(leadId) : null, approvalId, parent],
   ).lastInsertRowid);
   run("UPDATE conversation SET last_message_at = datetime('now') WHERE id = ?", [conversationId]);
+  if (fileId != null && fileId !== '') attachFile(fileId, id, from, conversationId);
   // Your own message is not unread to you.
   markRead(from.id, conversationId, id);
+  announce(conversationId, 'message', { message_id: id, parent_id: parent });
 
   /* @mentions, in channels. Only members can be mentioned: a name picked for
      somebody outside would tell them of a conversation they cannot read. */
@@ -592,6 +652,7 @@ export function withdrawMessage(user, messageId) {
 
   run("UPDATE message SET withdrawn_at = datetime('now') WHERE id = ?", [m.id]);
   audit(user.id, 'message_withdrawn', 'conversation', m.conversation_id, { message_id: m.id });
+  announce(m.conversation_id, 'withdrawn', { message_id: m.id });
   return { ok: true };
 }
 
@@ -792,6 +853,80 @@ export function lookupLeads(user, { mobile, name } = {}) {
   };
 }
 
+/* -------------------------------------------------------------- search */
+
+const SNIPPET = 70;
+
+/* The words either side of the hit, so a result reads as a sentence rather
+   than as a row. */
+function snippetOf(body, term) {
+  const at = body.toLowerCase().indexOf(term.toLowerCase());
+  if (at < 0) return body.slice(0, SNIPPET * 2);
+  const from = Math.max(0, at - SNIPPET);
+  const to = Math.min(body.length, at + term.length + SNIPPET);
+  return `${from > 0 ? '…' : ''}${body.slice(from, to)}${to < body.length ? '…' : ''}`;
+}
+
+/**
+ * Find a message.
+ *
+ * Ritesh, 16 September: as well as your own conversations, search reaches the
+ * public channels of your own business that you have not joined -- the Slack
+ * answer. It does not reach a private channel you are not in, or anything in
+ * the other business, and a result from a channel you are not in says so:
+ * reading the rest of it means joining, which is a thing the channel records.
+ *
+ * LIKE rather than a full-text index. At this size it is a scan of a few
+ * thousand rows on an indexed conversation; FTS5 is available in this build
+ * and is the upgrade when message volume makes that false.
+ */
+export function searchMessages(user, q, { limit = 40 } = {}) {
+  const term = String(q ?? '').replace(/[%_]/g, '').trim();
+  if (term.length < 2) return { ok: true, term, results: [] };
+
+  const books = orgsFor(user);
+  const rows = all(
+    `SELECT m.id, m.conversation_id, m.body, m.created_at, m.sender_id, m.parent_id,
+            u.name AS sender_name,
+            c.kind, c.name AS channel_name, c.visibility, c.archived_at,
+            EXISTS (SELECT 1 FROM conversation_member cm
+                     WHERE cm.conversation_id = c.id AND cm.user_id = ?) AS joined
+       FROM message m
+       JOIN conversation c ON c.id = m.conversation_id
+       LEFT JOIN users u ON u.id = m.sender_id
+      WHERE m.withdrawn_at IS NULL
+        AND m.kind IN ('text', 'transfer')
+        AND m.body LIKE ?
+        AND (
+          EXISTS (SELECT 1 FROM conversation_member mine
+                   WHERE mine.conversation_id = c.id AND mine.user_id = ?)
+          OR (c.kind = 'channel' AND c.visibility = 'public'
+              AND c.home_org IN (${books.map(() => '?').join(',') || "''"}))
+        )
+      ORDER BY m.id DESC
+      LIMIT ?`,
+    [user.id, `%${term}%`, user.id, ...books, Math.min(Math.max(Number(limit) || 40, 1), 100)],
+  );
+
+  return {
+    ok: true,
+    term,
+    results: rows.map((r) => ({
+      message_id: r.id,
+      conversation_id: r.conversation_id,
+      kind: r.kind,
+      channel_name: r.channel_name,
+      archived: Boolean(r.archived_at),
+      joined: Boolean(r.joined),
+      with: r.kind === 'channel' ? [] : others(r.conversation_id, user.id),
+      sender_name: r.sender_name,
+      snippet: snippetOf(r.body, term),
+      parent_id: r.parent_id,
+      created_at: r.created_at,
+    })),
+  };
+}
+
 /* ------------------------------------------------------------ reviewing */
 
 /** A conversation is in a reviewer's reach when anybody in it works in a book they cover. */
@@ -871,6 +1006,7 @@ export function freeze(monitor, conversationId, reason) {
     audit(monitor.id, 'conversation_frozen', 'conversation', conversationId, { reason: text });
     for (const m of membersOf(conversationId)) notify(m.id, 'A conversation was frozen', text, '/messages');
   });
+  announce(conversationId, 'frozen');
   return { ok: true };
 }
 
@@ -887,6 +1023,7 @@ export function unfreeze(monitor, conversationId) {
     systemLine(conversationId, 'Unfrozen by compliance');
     audit(monitor.id, 'conversation_unfrozen', 'conversation', conversationId, {});
   });
+  announce(conversationId, 'unfrozen');
   return { ok: true };
 }
 

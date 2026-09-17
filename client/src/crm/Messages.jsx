@@ -19,9 +19,14 @@ import { api, dateTime, parseTs, ROLE_LABEL } from '../api.js';
 import {
   useApi, useDismiss, Loading, ErrorBanner, Empty, Modal, Spinner, Icon, Avatar,
 } from '../components/ui.jsx';
+import { useMessageStream } from './messageStream.js';
 
 const THREAD_POLL_MS = 5_000;
 const LIST_POLL_MS = 30_000;
+/* While the live stream is connected the timers only guard against a missed
+   event, so they slow right down. */
+const THREAD_POLL_LIVE_MS = 60_000;
+const LIST_POLL_LIVE_MS = 120_000;
 const WITHDRAW_MS = 15 * 60 * 1000;
 
 /* Any emoji may be a reaction (Ritesh, 16 September); these are the ones a
@@ -47,10 +52,11 @@ export default function Messages() {
   const [browsing, setBrowsing] = useState(false);
   const [problem, setProblem] = useState(null);
 
+  const live = useMessageStream(() => reloadList());
   useEffect(() => {
-    const timer = setInterval(() => { if (!document.hidden) reloadList(); }, LIST_POLL_MS);
+    const timer = setInterval(() => { if (!document.hidden) reloadList(); }, live ? LIST_POLL_LIVE_MS : LIST_POLL_MS);
     return () => clearInterval(timer);
-  }, [reloadList]);
+  }, [reloadList, live]);
 
   const choose = useCallback((id) => setSearch(id ? { c: String(id) } : {}), [setSearch]);
 
@@ -100,6 +106,7 @@ export default function Messages() {
       <div className={`msg-layout ${openId ? 'is-open' : ''}`}>
         <aside className="card msg-side">
           <p className="msg-notice"><Icon name="shield" size={15} /> {list.notice}</p>
+          <MessageSearch onOpen={open} onProblem={setProblem} />
 
           {starting ? (
             <PeoplePicker onPick={start} onCancel={() => setStarting(false)} />
@@ -407,7 +414,10 @@ function MembersPanel({ convo, onClose, onChanged, onLeft, onProblem }) {
                 <Avatar name={p.name} size={26} seed={String(p.id)} />
                 <span>
                   <strong className="small">{p.name}{others.has(p.id) ? '' : ' (you)'}</strong>
-                  <span className="tiny muted" style={{ display: 'block' }}>{ROLE_LABEL[p.role] || p.role} · {p.sales_org}</span>
+                  <span className="tiny muted msg-head-meta">
+                    {others.has(p.id) && <PresenceDot person={p} />}
+                    <span>{others.has(p.id) ? `${presenceText(p)} · ` : ''}{ROLE_LABEL[p.role] || p.role} · {p.sales_org}</span>
+                  </span>
                 </span>
               </span>
               {convo.is_creator && others.has(p.id) && (
@@ -479,11 +489,12 @@ function Thread({ id, suspended, onBack, onGo, onLeft, onChanged, onProblem }) {
     } catch (err) { setError(err.message); }
   }, [id, onChanged]);
 
+  const live = useMessageStream((event) => { if (event.conversation_id === id) load(); });
   useEffect(() => {
     load();
-    const timer = setInterval(() => { if (!document.hidden) load(); }, THREAD_POLL_MS);
+    const timer = setInterval(() => { if (!document.hidden) load(); }, live ? THREAD_POLL_LIVE_MS : THREAD_POLL_MS);
     return () => clearInterval(timer);
-  }, [load]);
+  }, [load, live]);
 
   // Down to the newest, but only when something new arrived -- never on a poll
   // that changed nothing, which would yank somebody reading further up.
@@ -523,7 +534,12 @@ function Thread({ id, suspended, onBack, onGo, onLeft, onChanged, onProblem }) {
               <span>{convo.topic || (convo.visibility === 'private' ? 'Private channel' : 'Public channel')}</span>
             </div>
           ) : (
-            other && <div className="tiny muted">{ROLE_LABEL[other.role] || other.role} · {other.sales_org}</div>
+            other && (
+              <div className="tiny muted msg-head-meta">
+                <PresenceDot person={other} />
+                <span>{presenceText(other)} · {ROLE_LABEL[other.role] || other.role} · {other.sales_org}</span>
+              </div>
+            )
           )}
         </div>
         {channel && (
@@ -599,11 +615,12 @@ function ThreadPanel({ conversationId, messageId, convo, canWrite, onClose, onCh
     catch (err) { onProblem(err.message); }
   }, [conversationId, messageId, onProblem]);
 
+  const live = useMessageStream((event) => { if (event.conversation_id === conversationId) load(); });
   useEffect(() => {
     load();
-    const timer = setInterval(() => { if (!document.hidden) load(); }, THREAD_POLL_MS);
+    const timer = setInterval(() => { if (!document.hidden) load(); }, live ? THREAD_POLL_LIVE_MS : THREAD_POLL_MS);
     return () => clearInterval(timer);
-  }, [load]);
+  }, [load, live]);
 
   const act = async (fn) => {
     onProblem(null);
@@ -646,6 +663,7 @@ function MessageRow({ m, onAct, reactable, onOpenThread }) {
   return (
     <div className={`msg-bubble ${m.mine ? 'is-mine' : ''} ${m.withdrawn ? 'is-withdrawn' : ''} ${m.mentions_me ? 'is-mentioned' : ''}`}>
       {m.withdrawn ? 'Message withdrawn' : m.body}
+      {m.file && <FileView file={m.file} />}
       {m.lead && <LeadChip lead={m.lead} />}
 
       {m.reactions?.length > 0 && (
@@ -706,6 +724,144 @@ function ReactionPicker({ onPick, onClose }) {
         <button type="submit" className="btn-sm" disabled={!other.trim()}>Add</button>
       </form>
       <span className="tiny muted">On Windows, press the Windows key and full stop for every emoji.</span>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------- presence */
+
+const ago = (s) => {
+  const minutes = Math.round((Date.now() - sentAt(s)) / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${plural(minutes, 'minute', 'minutes')} ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${plural(hours, 'hour', 'hours')} ago`;
+  return `${plural(Math.round(hours / 24), 'day', 'days')} ago`;
+};
+
+/* Ritesh, 16 September: a dot and a last-seen, for people you share a
+   conversation with. "Not seen yet" for somebody who has never signed in,
+   rather than a time that would imply they have. */
+const presenceText = (p) => {
+  if (p.online) return 'Online';
+  return p.last_seen_at ? `Last seen ${ago(p.last_seen_at)}` : 'Not seen yet';
+};
+
+function PresenceDot({ person }) {
+  const words = presenceText(person);
+  return <span className={`msg-presence ${person.online ? 'is-online' : ''}`} title={words} aria-label={words} role="img" />;
+}
+
+/* -------------------------------------------------------------- files */
+
+const sizeOf = (n) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+/**
+ * An image shown in place, a PDF as a chip that opens it.
+ *
+ * Fetched with the session rather than put in an `src`: the file route needs
+ * the Authorization header, and a plain image tag cannot send one. The object
+ * URL is let go when the message leaves the screen.
+ */
+function FileView({ file }) {
+  const [src, setSrc] = useState(null);
+  const [problem, setProblem] = useState(null);
+
+  useEffect(() => {
+    if (!file.is_image) return undefined;
+    let url = null;
+    let live = true;
+    api.blob(`/messages/files/${file.id}`)
+      .then((b) => { if (live) { url = URL.createObjectURL(b); setSrc(url); } })
+      .catch((err) => { if (live) setProblem(err.message); });
+    return () => { live = false; if (url) URL.revokeObjectURL(url); };
+  }, [file.id, file.is_image]);
+
+  const openIt = async () => {
+    try {
+      const b = await api.blob(`/messages/files/${file.id}`);
+      const url = URL.createObjectURL(b);
+      window.open(url, '_blank', 'noopener');
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) { setProblem(err.message); }
+  };
+
+  if (file.is_image) {
+    return (
+      <button type="button" className="msg-image" onClick={openIt} title={`${file.filename} · ${sizeOf(file.size)}`}>
+        {src ? <img src={src} alt={file.filename} /> : <span className="tiny muted">{problem ?? 'Loading the image…'}</span>}
+      </button>
+    );
+  }
+  return (
+    <button type="button" className="msg-chip msg-file" onClick={openIt}>
+      <Icon name="picture_as_pdf" size={14} /> {file.filename} · {sizeOf(file.size)}
+      {problem && <span className="tiny"> — {problem}</span>}
+    </button>
+  );
+}
+
+/* ------------------------------------------------------------- search */
+
+/**
+ * Search your conversations, and the public channels of your own business
+ * you have not joined -- Ritesh, 16 September. A result from one of those says
+ * so, and opening it joins you, which the channel records.
+ */
+function MessageSearch({ onOpen, onProblem }) {
+  const [q, setQ] = useState('');
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    let live = true;
+    const term = q.trim();
+    if (term.length < 2) { setData(null); return undefined; }
+    const timer = setTimeout(() => {
+      api.get(`/messages/search?q=${encodeURIComponent(term)}`)
+        .then((r) => { if (live) setData(r); })
+        .catch((err) => { if (live) onProblem(err.message); });
+    }, 300);
+    return () => { live = false; clearTimeout(timer); };
+  }, [q, onProblem]);
+
+  const go = async (r) => {
+    if (!r.joined) {
+      try { await api.post(`/messages/channels/${r.conversation_id}/join`, {}); }
+      catch (err) { onProblem(err.message); return; }
+    }
+    setQ('');
+    setData(null);
+    onOpen(r.conversation_id);
+  };
+
+  return (
+    <div className="msg-search">
+      <div className="msg-search-box">
+        <Icon name="search" size={15} />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search messages" aria-label="Search messages" />
+        {q && (
+          <button type="button" className="msg-chip-x" aria-label="Clear the search" onClick={() => setQ('')}>
+            <Icon name="close" size={13} />
+          </button>
+        )}
+      </div>
+      {data && (
+        <div className="msg-pick msg-search-results">
+          {data.results.length === 0 && <span className="tiny muted">Nothing matches that.</span>}
+          {data.results.map((r) => (
+            <button key={r.message_id} type="button" className="msg-convo" onClick={() => go(r)}>
+              <span className="msg-convo-body">
+                <span className="row-between" style={{ gap: 6 }}>
+                  <strong className="small">{r.kind === 'channel' ? `#${r.channel_name}` : names(r.with)}</strong>
+                  {!r.joined && <span className="badge">Join to read</span>}
+                </span>
+                <span className="tiny msg-search-snippet">{r.snippet}</span>
+                <span className="tiny muted">{r.sender_name ? `${r.sender_name} · ` : ''}{dateTime(r.created_at)}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -791,6 +947,9 @@ function Composer({ id, other = null, members = null, parentId = null, onSent, o
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [named, setNamed] = useState(() => new Map());
+  const [file, setFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const picker = useRef(null);
 
   /* @mentions, in channels only: who the `@` at the end could be. */
   const typed = members ? MENTION_AT_END.exec(text)?.[1] ?? null : null;
@@ -803,18 +962,34 @@ function Composer({ id, other = null, members = null, parentId = null, onSent, o
     setNamed((m) => new Map(m).set(p.name, p.id));
   };
 
+  /* Uploaded when chosen, so a file that is refused -- too big, not really a
+     PDF -- says so before anybody writes the message around it. */
+  const pickFile = async (e) => {
+    const chosen = e.target.files?.[0];
+    e.target.value = '';
+    if (!chosen) return;
+    setUploading(true);
+    onProblem(null);
+    try {
+      const out = await api.upload(`/messages/conversations/${id}/files`, chosen);
+      setFile(out.file);
+    } catch (err) { onProblem(err.message); }
+    finally { setUploading(false); }
+  };
+
   const send = async () => {
-    if (!text.trim() || busy) return;
+    if ((!text.trim() && !file) || busy) return;
     setBusy(true);
     onProblem(null);
     try {
       // Only the names still in the message when it is sent.
       const mentions = [...named].filter(([n]) => text.includes(`@${n}`)).map(([, uid]) => uid);
       await api.post(`/messages/conversations/${id}/messages`, {
-        body: text, lead_id: lead?.id ?? null, parent_id: parentId, mentions,
+        body: text, lead_id: lead?.id ?? null, parent_id: parentId, mentions, file_id: file?.id ?? null,
       });
       setText('');
       setLead(null);
+      setFile(null);
       setNamed(new Map());
       onSent();
     } catch (err) { onProblem(err.message); }
@@ -825,6 +1000,14 @@ function Composer({ id, other = null, members = null, parentId = null, onSent, o
 
   return (
     <div className="msg-compose">
+      {file && (
+        <span className="msg-chip">
+          <Icon name={file.is_image ? 'upload' : 'picture_as_pdf'} size={13} /> {file.filename} · {sizeOf(file.size)}
+          <button type="button" className="msg-chip-x" aria-label="Remove the file" onClick={() => setFile(null)}>
+            <Icon name="close" size={13} />
+          </button>
+        </span>
+      )}
       {lead && (
         <span className="msg-chip">
           <Icon name="person" size={13} /> {lead.name}
@@ -854,6 +1037,16 @@ function Composer({ id, other = null, members = null, parentId = null, onSent, o
       />
       <div className="row-between" style={{ gap: 8 }}>
         <div className="row wrap" style={{ gap: 6 }}>
+          <input
+            ref={picker}
+            type="file"
+            hidden
+            accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"
+            onChange={pickFile}
+          />
+          <button type="button" className="btn-ghost btn-sm" onClick={() => picker.current?.click()} disabled={uploading || Boolean(file)}>
+            {uploading ? <Spinner /> : <Icon name="upload" size={16} />} Add a file
+          </button>
           <button type="button" className="btn-ghost btn-sm" onClick={() => setPicking(true)}>
             <Icon name="attach_file" size={16} /> Attach a lead
           </button>
@@ -864,7 +1057,7 @@ function Composer({ id, other = null, members = null, parentId = null, onSent, o
           )}
           <span className="tiny muted">Enter sends · Shift+Enter for a new line</span>
         </div>
-        <button type="button" className="btn btn-primary btn-sm" onClick={send} disabled={busy || !text.trim()}>
+        <button type="button" className="btn btn-primary btn-sm" onClick={send} disabled={busy || uploading || (!text.trim() && !file)}>
           {busy ? <Spinner /> : <><Icon name="send" size={16} /> Send</>}
         </button>
       </div>

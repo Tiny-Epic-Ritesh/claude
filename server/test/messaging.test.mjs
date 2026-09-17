@@ -52,6 +52,7 @@ const clean = () => {
     ).map((r) => r.id);
     if (convos.length) {
       const cm = convos.map(() => '?').join(',');
+      run(`DELETE FROM message_file WHERE conversation_id IN (${cm})`, convos);
       run(`DELETE FROM message_reaction WHERE message_id IN (SELECT id FROM message WHERE conversation_id IN (${cm}))`, convos);
       run(`DELETE FROM message_mention WHERE message_id IN (SELECT id FROM message WHERE conversation_id IN (${cm}))`, convos);
       run(`DELETE FROM message WHERE conversation_id IN (${cm})`, convos);
@@ -652,6 +653,225 @@ await test('an archived channel is read-only, and only the person who opened it 
   const read = await call(B, 'GET', `/messages/conversations/${PRIV}/messages`);
   assert.equal(post.status, 409, `an archived channel took a message: HTTP ${post.status}`);
   assert.equal(read.status, 200, 'archiving took away reading');
+});
+
+/* --------------------------------------------------- files, phase 3 */
+
+/* Ritesh, 11 September: images and PDFs, up to 10 MB. The bytes live in the
+   database, and what arrives has to be the kind of file it claims to be. */
+
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]);
+const PDF = Buffer.from('%PDF-1.4 a pretend factsheet');
+
+const upload = async (probe, conversationId, filename, bytes) => {
+  const res = await fetch(`${BASE}/api/messages/conversations/${conversationId}/files`, {
+    method: 'POST',
+    headers: { ...probe.headers, 'Content-Type': 'application/octet-stream', 'X-Filename': filename },
+    body: bytes,
+  });
+  let json = null;
+  try { json = await res.json(); } catch { json = null; }
+  return { status: res.status, body: json };
+};
+
+const fetchFile = async (probe, id) => {
+  const res = await fetch(`${BASE}/api/messages/files/${id}`, { headers: probe.headers });
+  const bytes = res.status === 200 ? (await res.arrayBuffer()).byteLength : 0;
+  return { status: res.status, type: res.headers.get('content-type'), nosniff: res.headers.get('x-content-type-options'), bytes };
+};
+
+await test('a file is sent, and opened only by the people in the conversation', async () => {
+  const up = await upload(A, AB, 'factsheet.pdf', PDF);
+  assert.equal(up.status, 201, JSON.stringify(up.body));
+  const fileId = up.body.file.id;
+
+  const sent = await call(A, 'POST', `/messages/conversations/${AB}/messages`, {
+    body: 'The one I mentioned', file_id: fileId,
+  });
+  assert.equal(sent.status, 201, JSON.stringify(sent.body));
+
+  const theirs = (await thread(B, AB)).find((m) => m.id === sent.body.id);
+  assert.equal(theirs.file?.filename, 'factsheet.pdf', JSON.stringify(theirs.file));
+  assert.equal(theirs.file.is_image, false);
+
+  const member = await fetchFile(B, fileId);
+  assert.equal(member.status, 200, `a member could not open it: HTTP ${member.status}`);
+  assert.equal(member.type, 'application/pdf');
+  assert.equal(member.nosniff, 'nosniff', 'the bytes go out without nosniff');
+  assert.equal(member.bytes, PDF.length);
+
+  assert.equal((await fetchFile(C, fileId)).status, 404, 'somebody outside the conversation opened the file');
+
+  const before = one("SELECT COUNT(*) n FROM audit_log WHERE action = 'message_file_reviewed' AND user_id = ?", [MON.id]).n;
+  assert.equal((await fetchFile(MON, fileId)).status, 200, 'a reviewer could not open it');
+  assert.equal(
+    one("SELECT COUNT(*) n FROM audit_log WHERE action = 'message_file_reviewed' AND user_id = ?", [MON.id]).n,
+    before + 1,
+    "the reviewer's read of a file left no trace",
+  );
+});
+
+await test('a file has to be the kind of file it says it is', async () => {
+  const renamed = await upload(A, AB, 'photo.png', Buffer.from('MZ this is not a picture'));
+  assert.equal(renamed.status, 400, `a renamed file was accepted: HTTP ${renamed.status}`);
+  assert(/does not start like/.test(renamed.body.error), renamed.body.error);
+
+  const wrongKind = await upload(A, AB, 'installer.exe', PNG);
+  assert.equal(wrongKind.status, 400, 'an executable was accepted');
+
+  const image = await upload(A, AB, 'shot.png', PNG);
+  assert.equal(image.status, 201, JSON.stringify(image.body));
+  assert.equal(image.body.file.is_image, true);
+
+  const huge = Buffer.concat([PDF, Buffer.alloc(10 * 1024 * 1024)]);
+  const tooBig = await upload(A, AB, 'huge.pdf', huge);
+  assert.equal(tooBig.status, 400, `a file over the limit was accepted: HTTP ${tooBig.status}`);
+  assert(/larger than 10 MB/.test(tooBig.body?.error ?? ''), JSON.stringify(tooBig.body));
+});
+
+await test('a file cannot be sent twice, or by somebody else', async () => {
+  const up = await upload(A, AB, 'once.png', PNG);
+  const first = await call(A, 'POST', `/messages/conversations/${AB}/messages`, { body: 'here', file_id: up.body.file.id });
+  assert.equal(first.status, 201, JSON.stringify(first.body));
+  const again = await call(A, 'POST', `/messages/conversations/${AB}/messages`, { body: 'again', file_id: up.body.file.id });
+  assert.equal(again.status, 404, 'the same file was attached to a second message');
+
+  const mine = await upload(A, AB, 'mine.png', PNG);
+  const stolen = await call(B, 'POST', `/messages/conversations/${AB}/messages`, { body: 'not mine', file_id: mine.body.file.id });
+  assert.equal(stolen.status, 404, "somebody else's upload was attached to a message");
+});
+
+/* -------------------------------------------------- search, phase 3 */
+
+/* Ritesh, 16 September: search also reaches the public channels of your own
+   business that you have not joined. Not private ones, and not the other
+   business. */
+
+await test('search reaches your conversations and public channels you have not joined', async () => {
+  const word = 'zarvanix';
+  const open = await channel(A, { name: 'probe-msg open desk', visibility: 'public' });
+  await call(A, 'POST', `/messages/conversations/${open.body.id}/messages`, { body: `${word} in the open channel` });
+
+  const vault = await channel(A, { name: 'probe-msg vault', visibility: 'private' });
+  await call(A, 'POST', `/messages/conversations/${vault.body.id}/messages`, { body: `${word} in the private one` });
+
+  const acrossTheBook = await channel(BIG, { name: 'probe-msg bigul desk', visibility: 'public' });
+  await call(BIG, 'POST', `/messages/conversations/${acrossTheBook.body.id}/messages`, { body: `${word} in Bigul` });
+
+  const ac = await call(C, 'POST', '/messages/conversations', { user_id: A.id });
+  await call(A, 'POST', `/messages/conversations/${ac.body.id}/messages`, { body: `${word} between us` });
+
+  const found = (await call(C, 'GET', `/messages/search?q=${word}`)).body.results;
+  const ids = found.map((r) => r.conversation_id);
+
+  assert(ids.includes(ac.body.id), 'search missed a conversation the searcher is in');
+  assert(ids.includes(open.body.id), 'search missed a public channel in the searcher own business');
+  assert.equal(found.find((r) => r.conversation_id === open.body.id).joined, false,
+    'a public channel the searcher has not joined is reported as joined');
+  assert(!ids.includes(vault.body.id), 'search reached a private channel the searcher is not in');
+  assert(!ids.includes(acrossTheBook.body.id), 'search reached the other business');
+  assert(found.every((r) => r.snippet.includes(word)), 'a result came back without the words that matched');
+});
+
+await test('a withdrawn message is not searchable', async () => {
+  const word = 'quixolate';
+  const sent = await call(A, 'POST', `/messages/conversations/${AB}/messages`, { body: `${word} said in haste` });
+  assert.equal((await call(B, 'GET', `/messages/search?q=${word}`)).body.results.length, 1);
+  await call(A, 'POST', `/messages/message/${sent.body.id}/withdraw`, {});
+  assert.equal((await call(B, 'GET', `/messages/search?q=${word}`)).body.results.length, 0,
+    'a withdrawn message still comes back in search');
+});
+
+/* ------------------------------------------------ presence, phase 3 */
+
+await test('presence says who is about, and says nothing about somebody who never signed in', async () => {
+  const seen = (await call(A, 'GET', `/messages/conversations/${AB}/messages`)).body.conversation.with[0];
+  assert.equal(seen.id, B.id);
+  assert.equal(seen.online, true, `somebody who just made a request reads as away: ${JSON.stringify(seen)}`);
+  assert(seen.last_seen_at, 'no last seen time');
+
+  /* The supervisor exists and has never signed in: a dot that says nothing is
+     better than one that implies they are away from their desk.
+
+     A channel of its own, because #pune walk-ins holds a Bigul member by now
+     and the door refuses anybody the grid does not open across the two -- the
+     rule working, and nothing to do with presence. */
+  const room = await channel(A, { name: 'probe-msg presence', visibility: 'private' });
+  assert.equal(room.status, 201, JSON.stringify(room.body));
+  const added = await call(A, 'POST', `/messages/channels/${room.body.id}/members`, { user_id: SUP });
+  assert.equal(added.status, 201, JSON.stringify(added.body));
+  const inChannel = (await call(A, 'GET', `/messages/conversations/${room.body.id}/messages`)).body.conversation.members
+    .find((m) => m.id === SUP);
+  assert(inChannel, 'the supervisor was not added to the channel');
+  assert.equal(inChannel.online, false);
+  assert.equal(inChannel.last_seen_at, null);
+
+  /* And the case that decides whether the dot means anything: somebody who was
+     here two hours ago is shown as away, with the time. Without this a dot
+     that always reads online passes, because a person with no session at all
+     falls back to away whatever the rule says. */
+  run(
+    "INSERT INTO sessions (token, user_id, kind, expires_at, last_seen_at) VALUES (?, ?, 'crm', datetime('now', '+1 day'), datetime('now', '-2 hours'))",
+    [`probe-msg-stale-${SUP}`, SUP],
+  );
+  const later = (await call(A, 'GET', `/messages/conversations/${room.body.id}/messages`)).body.conversation.members
+    .find((m) => m.id === SUP);
+  assert.equal(later.online, false, 'somebody last seen two hours ago reads as online');
+  assert(later.last_seen_at, 'somebody who has been here has no last seen time');
+});
+
+/* ---------------------------------------------------- live, phase 3 */
+
+const streamOf = async (probe) => {
+  const ctrl = new AbortController();
+  const res = await fetch(`${BASE}/api/messages/stream`, { headers: probe.headers, signal: ctrl.signal });
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let seen = '';
+  /* One outstanding read, carried across the loop. Racing a fresh read against
+     a timer each time loses chunks: the abandoned read stays queued, and the
+     stream hands the next chunk to it rather than to the read after it. That
+     cost an hour -- curl showed the event on the wire while this saw only the
+     retry line. */
+  let pending = null;
+  const pump = async (ms) => {
+    const until = Date.now() + ms;
+    while (Date.now() < until && !seen.includes('event: change')) {
+      if (!pending) {
+        pending = reader.read()
+          .then((r) => { pending = null; return r; })
+          .catch(() => { pending = null; return { value: undefined }; });
+      }
+      const chunk = await Promise.race([pending, new Promise((r) => { setTimeout(() => r(null), 300); })]);
+      if (chunk?.value) seen += decoder.decode(chunk.value);
+    }
+    return seen;
+  };
+  return { res, pump, stop: () => ctrl.abort() };
+};
+
+await test('the live stream carries a message to the people in the conversation', async () => {
+  const live = await streamOf(A);
+  assert.equal(live.res.status, 200, `the stream refused: HTTP ${live.res.status}`);
+  assert((live.res.headers.get('content-type') ?? '').startsWith('text/event-stream'), live.res.headers.get('content-type'));
+  assert.equal(live.res.headers.get('x-accel-buffering'), 'no', 'nothing tells the proxy to stop buffering');
+
+  await live.pump(500); // the retry line, sent as soon as it connects
+  await call(B, 'POST', `/messages/conversations/${AB}/messages`, { body: 'live ping' });
+  const seen = await live.pump(6000);
+  live.stop();
+
+  assert(seen.includes('event: change'), `no event arrived: ${JSON.stringify(seen.slice(0, 160))}`);
+  assert(seen.includes(`"conversation_id":${AB}`), seen.slice(0, 200));
+});
+
+await test('the live stream carries nothing from a conversation you are not in', async () => {
+  const live = await streamOf(C);
+  await live.pump(500);
+  await call(B, 'POST', `/messages/conversations/${AB}/messages`, { body: 'not for C' });
+  const seen = await live.pump(3000);
+  live.stop();
+  assert(!seen.includes('event: change'), `an outsider was sent an event: ${JSON.stringify(seen.slice(0, 160))}`);
 });
 
 /* ------------------------------------------------------------ plumbing */

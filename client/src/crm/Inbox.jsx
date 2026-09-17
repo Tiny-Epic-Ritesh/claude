@@ -12,15 +12,17 @@
  * subsetted and has no bell, and two badges side by side is one more thing to
  * read than the question needs.
  *
- * Polled, not pushed. Live push needs the proxy to pass upgrade headers, which
- * is an nginx change and ruled out; every thirty seconds, and on returning to
- * the tab, is quick enough for a colleague and costs the server nothing.
+ * Pushed where it can be, polled where it cannot. The count moves the moment a
+ * message arrives, over the shared server-sent-event stream (messageStream.js);
+ * notifications are not on that stream and still arrive on the thirty-second
+ * timer, which also covers a stream that never connects.
  */
 
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, dateTime } from '../api.js';
 import { Icon, useDismiss } from '../components/ui.jsx';
+import { useMessageStream } from './messageStream.js';
 
 const POLL_MS = 30_000;
 
@@ -46,6 +48,9 @@ export default function Inbox() {
       setNotes(n ?? []);
     } catch { /* see above */ }
   }, []);
+
+  // A new message moves the count at once; notifications still arrive by the timer.
+  useMessageStream(() => refresh());
 
   useEffect(() => {
     refresh();

@@ -2842,6 +2842,26 @@ CREATE TABLE IF NOT EXISTS message_reaction (
   PRIMARY KEY (message_id, user_id, emoji)
 );
 
+/* A file on a message: images and PDFs to 10 MB (Ritesh, 11 September).
+   The bytes live here, as they do for a product brochure -- one place to
+   back up, and the file stays wherever the database is, which for client
+   data that may not leave India is the question that matters.
+
+   message_id is null between the upload and the message that carries it;
+   an upload nobody sent is swept a day later. */
+CREATE TABLE IF NOT EXISTS message_file (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id INTEGER NOT NULL REFERENCES conversation(id),
+  message_id      INTEGER REFERENCES message(id),
+  uploaded_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  filename        TEXT NOT NULL,
+  mime            TEXT NOT NULL,
+  size            INTEGER NOT NULL,
+  bytes           BLOB NOT NULL,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_message_file_message ON message_file(message_id);
+
 /* Who a channel message named, so they are told and it can be shown to them. */
 CREATE TABLE IF NOT EXISTS message_mention (
   message_id INTEGER NOT NULL REFERENCES message(id),

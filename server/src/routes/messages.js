@@ -7,11 +7,13 @@
  * permission set granting either to one named person works.
  */
 
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { requireUser } from '../auth.js';
 import { rateLimiter } from '../security.js';
 import * as M from '../engine/messaging.js';
 import * as C from '../engine/channels.js';
+import * as F from '../engine/messagefiles.js';
+import { listen } from '../engine/messagelive.js';
 
 const router = Router();
 router.use(requireUser);
@@ -35,6 +37,13 @@ const sending = rateLimiter({
 const answer = (res, out, created = false) => (out.ok
   ? res.status(created ? 201 : 200).json(out)
   : res.status(out.status ?? 400).json({ error: out.error }));
+
+/* The wire format: a retry hint, then `event:` and `data:` lines, each
+   record ended by a blank line. */
+const BREAK = '\n\n';
+const RETRY = 'retry: 5000' + BREAK;
+const EVENT = 'event: change' + '\n' + 'data: ';
+const BEAT = ': keep-alive' + BREAK;
 
 const idOf = (v) => {
   const n = Number(v);
@@ -76,6 +85,7 @@ router.post('/conversations/:id/messages', sending, (req, res) => {
     leadId: req.body?.lead_id ?? null,
     parentId: req.body?.parent_id ?? null,
     mentions: Array.isArray(req.body?.mentions) ? req.body.mentions : [],
+    fileId: req.body?.file_id ?? null,
   }), true);
 });
 
@@ -108,6 +118,75 @@ router.post('/lookup', lookingUp, (req, res) => answer(res, M.lookupLeads(me(req
 router.post('/transfer', sending, (req, res) => answer(res, M.requestTransfer(me(req), {
   leadId: req.body?.lead_id, toUserId: req.body?.to_user_id, reason: req.body?.reason,
 }), true));
+
+/* --------------------------------------------------------------- files */
+
+/* Raw bytes rather than a multipart form, as the brochure upload does: one
+   route, no parsing dependency, and the browser can send the file as it is.
+   The ceiling here is a little above the engine's, so a file just over the
+   limit is refused in our own words rather than by the body parser. */
+router.post(
+  '/conversations/:id/files',
+  express.raw({ type: '*/*', limit: F.MAX_BYTES + 4096 }),
+  (req, res) => answer(res, F.upload(me(req), idOf(req.params.id), req.body, req.get('X-Filename')), true),
+);
+
+/**
+ * The bytes.
+ *
+ * Inline, so an image shows in the conversation and a PDF opens in a tab, and
+ * with `nosniff` and a filename so nothing uploaded can be served as something
+ * that runs. Not cached by any shared cache: this is client-adjacent material
+ * behind a session.
+ */
+router.get('/files/:id', (req, res) => {
+  const out = F.bytesFor(me(req), idOf(req.params.id));
+  if (!out.ok) return res.status(out.status).json({ error: out.error });
+  res.set({
+    'Content-Type': out.file.mime,
+    'Content-Length': String(out.file.size),
+    'Content-Disposition': `inline; filename="${out.file.filename.replace(/"/g, '')}"`,
+    'X-Content-Type-Options': 'nosniff',
+    'Cache-Control': 'private, max-age=0, no-store',
+  });
+  return res.send(out.file.bytes);
+});
+
+/* -------------------------------------------------------------- search */
+
+router.get('/search', (req, res) => res.json(M.searchMessages(me(req), req.query.q, { limit: req.query.limit })));
+
+/* --------------------------------------------------------------- live */
+
+/**
+ * One long response, a line per change (P3-21 phase 3).
+ *
+ * `no-transform` and `X-Accel-Buffering: no` ask any proxy in front not to sit
+ * on the bytes -- which is what makes this work without the nginx change a
+ * WebSocket would need. A comment every 25 seconds keeps an idle stream from
+ * being closed as dead, and the screens keep polling, slowly, so a stream that
+ * never arrives costs a slower refresh rather than a page that silently stops.
+ */
+router.get('/stream', (req, res) => {
+  res.set({
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.flushHeaders?.();
+  res.write(RETRY);
+
+  // Membership is asked per event rather than cached: somebody added to a
+  // channel while the stream is open should start hearing it at once.
+  const stop = listen((event) => {
+    if (!M.isMember(event.conversation_id, req.user.id)) return;
+    res.write(EVENT + JSON.stringify(event) + BREAK);
+  });
+  const beat = setInterval(() => res.write(BEAT), 25_000);
+
+  req.on('close', () => { clearInterval(beat); stop(); res.end(); });
+});
 
 /* ------------------------------------------------------------ channels */
 

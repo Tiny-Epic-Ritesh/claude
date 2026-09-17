@@ -2,7 +2,7 @@
 
 **For:** Ritesh · **Date:** 11 September 2026
 **Status:** **scoped 11 September — option C, in three phases. Phase 1 built 11
-September, phase 2 built 17 September** (see *Phase 1 — as built*, below). On 10 September you asked to see
+September, phases 2 and 3 built 17 September** (see *Phase 1 — as built*, below). On 10 September you asked to see
 a design with options and costs before scoping; this document was that, and the
 decisions below are yours from 11 September.
 
@@ -66,7 +66,7 @@ a reviewer can freeze the channel.
 |---|---|---:|
 | **1** | Everything in option B: one-to-one messages, the grid, monitoring with audited reads and the standing notice, freeze and suspend, transfer requests inside a conversation, the header bell and messages panel — **built 11 September** | ~9 |
 | **2** | Channels — anyone creates, public or private — threads, reactions, @mentions in channels -- **built 17 September** | ~7 |
-| **3** | Files (images and PDFs, 10 MB, in the CRM's own storage), message search, presence, and live push by server-sent events with polling as the fallback | ~8 |
+| **3** | Files (images and PDFs, 10 MB, in the CRM's own storage), message search, presence, and live push by server-sent events with polling as the fallback -- **built 17 September** | ~8 |
 | | **Total** | **~24** |
 
 Each phase ships on its own and is usable without the next.
@@ -114,6 +114,32 @@ The mobile is sent in the body of the request, never the address, so it does
 not land in the access log. If you want partial-name search after all, it is a
 one-line change — I kept it exact because it is the difference between asking
 about a client and reading a colleague's list.
+
+## Phase 3 — as built (17 September)
+
+**Decided 16 September:** search also reaches the public channels of your own
+business that you have not joined; presence is a dot plus a last-seen time, for
+people you share a conversation with.
+
+| | What was built |
+|---|---|
+| Files | Images (PNG, JPEG, GIF, WebP) and PDFs to 10 MB. Stored as bytes in the database, as product brochures already are, so a file lives wherever the database does. The **extension and the file's first bytes must agree**, so a renamed executable is refused. Served with `nosniff`, never as a page. Readable by the people in the conversation and by a reviewer, whose read is audited. A file can be attached to one message, by the person who uploaded it; an upload nobody sends is swept after a day |
+| Search | Your conversations, plus public channels in your own business you have not joined -- a result from one of those says *Join to read*, and opening it joins you. Never a private channel you are not in, never the other business, never a withdrawn message. A plain text match for now; the full-text index this build supports is the upgrade when volume calls for it |
+| Presence | Read from the time of each person's last request, which the session already records -- nothing new is watched. *Online* is a request in the last 5 minutes; otherwise *Last seen 2 hours ago*, or *Not seen yet* for somebody who has never signed in |
+| Live | Server-sent events: a new message, reaction, withdrawal, freeze or member change reaches the people in that conversation at once. One stream per browser tab, shared by the header and the Messages screen, read with `fetch` so the session token never goes into a URL. While it is connected the screens barely poll; if it drops, they go back to polling, so a broken stream costs speed, not correctness |
+
+**One thing to check when this reaches production.** The stream is built to
+pass through a proxy without the nginx change a WebSocket would need: it asks
+not to be buffered (`X-Accel-Buffering: no`) and sends a keep-alive every 25
+seconds. If the production proxy ignores that header or closes idle responses
+sooner than 25 seconds, messages still arrive -- by polling, a few seconds late
+-- rather than live. Opening Messages in two browsers and watching one update
+the other is the whole test.
+
+**Also worth knowing:** the event bus lives in the server's memory, so it
+reaches people connected to the same server process. That is this deployment.
+A second instance behind a load balancer would need a shared channel between
+them -- the same note the permission cache already carries.
 
 ---
 

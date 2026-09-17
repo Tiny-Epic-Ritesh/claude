@@ -171,6 +171,9 @@ const NOT_A_RECORD = {
     + 'Asserted in messaging.test.mjs.',
   '/api/messages/conversations/:id/thread/:messageId': 'One thread in a conversation, for its members only; '
     + 'leads in it are drawn per reader exactly as in the main timeline. Asserted in messaging.test.mjs.',
+  '/api/messages/files/:id': 'A file somebody sent in a conversation. Served only to a member of that '
+    + 'conversation, or to a reviewer whose books it falls in -- and that read is audited. '
+    + 'Asserted in messaging.test.mjs.',
   '/api/messages/channels/:id/candidates': 'Colleagues a member could add to a channel. Anybody from the '
     + 'other business appears only where the grid opens messages both ways (refusalToEnter). '
     + 'Asserted in messaging.test.mjs.',
