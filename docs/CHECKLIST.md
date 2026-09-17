@@ -3078,3 +3078,35 @@ DELETE action. It is not the cause: `DELETE FROM users` handles the chain,
 including when the manager sorts first. It was disproved directly before the
 real cause was found, and it is recorded here because a confident wrong
 explanation is worth remembering as such.
+
+
+## The duplicate guard named the other book's client - 11 Sep 2026
+
+_Found 11 Sep while building P3-21; committed 16 Sep._ `POST /leads` checked a
+new lead's mobile against every lead in the firm, before it had worked out which
+book the lead was for, and refused with `Mobile already belongs to lead #412
+(Rohan Gupta)`. A Bigul RM who typed a Bonanza client's number was told that
+client's name and lead number. Inside one book, any RM could turn a colleague's
+client's number into a name.
+
+The check is asked within the lead's own book now, once the book is settled -
+the same person can be a Bonanza lead and a Bigul lead (Ritesh, 11 Sep; the rule
+the Meta webhook and the import wizard already followed). Inside the book the
+refusal names the client and the lead only to somebody who could open it;
+anybody else is told who holds it, which is what the P3-21 ruling lets an RM
+learn, and pointed at Messages. The old bulk import had the same firm-wide query
+and asks within its book too.
+
+A trade-off, chosen: naming the holder in the refusal is neither audited nor
+rate-limited the way the P3-21 lookup is, so a refused create tells an RM who
+holds a number without leaving a lookup row behind.
+
+`test/leadduplicates.test.mjs`, six tests. Proved by five mutations - putting
+back the original code, asking either check across both books, telling the
+client's name to an RM who cannot open the lead, and never telling the owner
+which lead it is - each fails the tests aimed at it.
+
+Not fixed here, filed as separate tasks: `GET /ccm/duplicates` listing each
+group's records without a book filter (since fixed as `OPS-06`, commit
+`7f0e213`, whose subject reads `OPS-05` from an id collision), and DKYC and
+partner referrals matching mobiles across both books (`OPS-05`).

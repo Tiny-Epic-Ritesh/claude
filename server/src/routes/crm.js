@@ -758,17 +758,46 @@ router.post('/leads', requirePermission('lead.create'), (req, res) => {
     });
   }
 
-  // Duplicate guard on mobile — the single most common import defect.
-  if (mobile) {
-    const dupe = one('SELECT id, name FROM leads WHERE mobile = ? AND deleted_at IS NULL', [mobile]);
-    if (dupe) return res.status(409).json({ error: `Mobile already belongs to lead #${dupe.id} (${dupe.name})`, duplicate_id: dupe.id });
-  }
-
   // The lead belongs to a business. A caller may nominate one when they work in
   // both, but only from their own entitlement — never an org they cannot see.
+  // Settled before the duplicate check, because that check is asked of this book.
   const org = req.body.sales_org || activeOrg(req) || req.user.sales_org || 'BONANZA';
   if (!mayUseOrg(req.user, org)) {
     return res.status(403).json({ error: `You cannot create leads in ${org}.` });
+  }
+
+  /* Duplicate guard on mobile — the single most common import defect.
+
+     Asked within the book, never across it. The same person can be a Bonanza
+     lead and a Bigul lead (Ritesh, 11 Sep 2026 — the rule the Meta webhook and
+     the import wizard already follow). It used to ask the whole firm before the
+     book was even known, and answered a Bigul RM with the Bonanza client's name
+     and lead number.
+
+     Inside the book the refusal says what P3-21 lets an RM learn: that the lead
+     exists and who holds it. The client's name and the lead number go only to
+     somebody who could open the lead anyway. */
+  if (mobile) {
+    const dupe = one(
+      'SELECT id, name, owner_id, owner_queue_id FROM leads WHERE mobile = ? AND sales_org = ? AND deleted_at IS NULL',
+      [mobile, org],
+    );
+    if (dupe) {
+      const scope = reqScope(req, 'l');
+      const opens = one(`SELECT 1 v FROM leads l WHERE l.id = ? AND ${scope.sql}`, [dupe.id, ...scope.params]);
+      if (opens) {
+        return res.status(409).json({ error: `Mobile already belongs to lead #${dupe.id} (${dupe.name})`, duplicate_id: dupe.id });
+      }
+      const holder = ownerOf(dupe);
+      return res.status(409).json({
+        error: holder?.type === 'queue'
+          ? `This mobile is already on a lead waiting in the ${holder.name} queue.`
+          : holder
+            ? `This mobile is already on a lead held by ${holder.name}. Ask them for it in Messages.`
+            : 'This mobile is already on a lead in this book that nobody holds yet.',
+        held_by: holder ? { type: holder.type, id: holder.id, name: holder.name } : null,
+      });
+    }
   }
 
   const result = run(
@@ -1117,7 +1146,9 @@ router.post('/leads/import', requirePermission('lead.create'), (req, res) => {
   for (const [i, r] of rows.entries()) {
     if (!r.name?.trim()) { report.invalid.push({ row: i + 1, reason: 'Missing name' }); continue; }
     if (r.mobile && !/^[6-9]\d{9}$/.test(String(r.mobile).trim())) { report.invalid.push({ row: i + 1, reason: 'Invalid mobile' }); continue; }
-    if (r.mobile && one('SELECT id FROM leads WHERE mobile = ? AND deleted_at IS NULL', [String(r.mobile).trim()])) {
+    /* Within the book, as on create: the same mobile in the other business is
+       another relationship, not a duplicate of this one. */
+    if (r.mobile && one('SELECT id FROM leads WHERE mobile = ? AND sales_org = ? AND deleted_at IS NULL', [String(r.mobile).trim(), importOrg])) {
       report.duplicates.push({ row: i + 1, mobile: r.mobile }); continue;
     }
     report.valid += 1;
