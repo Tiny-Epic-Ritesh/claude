@@ -65,7 +65,7 @@ a reviewer can freeze the channel.
 | Phase | What ships | Days |
 |---|---|---:|
 | **1** | Everything in option B: one-to-one messages, the grid, monitoring with audited reads and the standing notice, freeze and suspend, transfer requests inside a conversation, the header bell and messages panel — **built 11 September** | ~9 |
-| **2** | Channels — anyone creates, public or private — threads, reactions, @mentions in channels | ~7 |
+| **2** | Channels — anyone creates, public or private — threads, reactions, @mentions in channels -- **built 17 September** | ~7 |
 | **3** | Files (images and PDFs, 10 MB, in the CRM's own storage), message search, presence, and live push by server-sent events with polling as the fallback | ~8 |
 | | **Total** | **~24** |
 
