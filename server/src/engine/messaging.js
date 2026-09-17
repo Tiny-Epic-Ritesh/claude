@@ -515,7 +515,7 @@ export function send(from, conversationId, {
   }
 
   if (convo.kind === 'channel') {
-    /* In a channel, membership decides who is reached -- Ritesh, 11 September:
+    /* In a channel, membership decides who is reached -- Ritesh, 16 September:
        the grid governs direct messages only. A suspension still stops somebody
        sending anywhere. */
     const suspended = suspensionOf(from.id);

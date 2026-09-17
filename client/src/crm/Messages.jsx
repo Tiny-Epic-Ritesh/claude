@@ -24,7 +24,7 @@ const THREAD_POLL_MS = 5_000;
 const LIST_POLL_MS = 30_000;
 const WITHDRAW_MS = 15 * 60 * 1000;
 
-/* Any emoji may be a reaction (Ritesh, 11 September); these are the ones a
+/* Any emoji may be a reaction (Ritesh, 16 September); these are the ones a
    thumb reaches for, and anything else is typed or picked from the keyboard. */
 const QUICK_REACTIONS = ['👍', '✅', '👀', '🙏', '❤️', '😂'];
 

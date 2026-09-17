@@ -7,7 +7,7 @@
  * engine/messaging.js, shared with direct messages. This file is who is in a
  * channel and how they got there, and the reaction itself.
  *
- * RITESH'S DECISIONS, 11 SEPTEMBER
+ * RITESH'S DECISIONS, 16 SEPTEMBER
  *
  *   Anyone may open a channel.
  *   A channel may mix both businesses, where the grid allows it.
@@ -109,7 +109,7 @@ export function refusalToEnter(person, channelId) {
 
 /* ---------------------------------------------------------- opening one */
 
-/** Anyone may open a channel -- Ritesh, 11 September. */
+/** Anyone may open a channel -- Ritesh, 16 September. */
 export function createChannel(user, { name, topic, visibility = 'public', home_org: homeOrg } = {}) {
   const suspended = suspensionOf(user.id);
   if (suspended) return { ok: false, status: 403, error: `Your messaging is suspended: ${suspended.reason}` };
@@ -170,7 +170,7 @@ export function join(user, channelId) {
   return { ok: true, id: c.id, joined: true };
 }
 
-/** Any member may add somebody -- Ritesh, 11 September. Every addition is recorded. */
+/** Any member may add somebody -- Ritesh, 16 September. Every addition is recorded. */
 export function addMember(actor, channelId, userId) {
   const c = channelRow(channelId);
   if (!c || !isMember(c.id, actor.id)) return notFound;
@@ -285,7 +285,7 @@ export function unarchive(actor, channelId) {
 /* ---------------------------------------------------------- reactions */
 
 /*
- * Any emoji -- Ritesh, 11 September -- and nothing that is not one.
+ * Any emoji -- Ritesh, 16 September -- and nothing that is not one.
  *
  * "An emoji" is: something pictographic or a flag, with no letters, digits or
  * spaces in it. That lets through skin tones, flags and joined sequences like

@@ -2,7 +2,7 @@
 
 **For:** Ritesh · **Date:** 11 September 2026
 **Status:** **scoped 11 September — option C, in three phases. Phase 1 built 11
-September** (see *Phase 1 — as built*, below). On 10 September you asked to see
+September, phase 2 built 17 September** (see *Phase 1 — as built*, below). On 10 September you asked to see
 a design with options and costs before scoping; this document was that, and the
 decisions below are yours from 11 September.
 
@@ -31,7 +31,7 @@ book*, *any book*. Every cell starts at *same book*. A lead chip is still drawn
 for each reader, so a Bigul user sent a Bonanza lead sees *a lead you cannot
 open* — opening a conversation across the books never opens the records.
 
-## Phase 2 decisions — 11 September
+## Phase 2 decisions — 16 September
 
 | Question | Decision | My recommendation had been |
 |---|---|---|
