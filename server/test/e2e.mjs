@@ -155,6 +155,19 @@ const need = (value, what) => {
 const mob = (n) => `9${RUN}${n}`.slice(0, 10);
 const mail = (who) => `${who}.${RUN}@e2e.local`;
 
+/* The database file the server under test writes, found the way src/db.js
+   finds it: CRM_DATA_DIR when set, else server/data. A hardcoded server/data
+   made the two at-rest checks fail on any relocated database -- ENOENT for the
+   PAN check, "no WAL" for the credentials one -- with the server correct. */
+async function dbFile() {
+  const { fileURLToPath } = await import('node:url');
+  const { dirname, join, resolve } = await import('node:path');
+  const dir = process.env.CRM_DATA_DIR
+    ? resolve(process.env.CRM_DATA_DIR)
+    : join(dirname(fileURLToPath(import.meta.url)), '..', 'data');
+  return join(dir, 'bonanza.db');
+}
+
 /* ================================================================ tests */
 
 async function run() {
@@ -2220,9 +2233,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
 
   await check('PAN is not recoverable from the raw database file', async () => {
     const { readFileSync } = await import('node:fs');
-    const { fileURLToPath } = await import('node:url');
-    const { dirname, join } = await import('node:path');
-    const dbPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'data', 'bonanza.db');
+    const dbPath = await dbFile();
 
     // Write a lead with a known PAN, then look for it in the file on disk.
     const pan = 'ZZTOP1234Z';
@@ -2236,9 +2247,8 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
 
   await check('stored credentials are not recoverable from the database file', async () => {
     const { readFileSync, existsSync } = await import('node:fs');
-    const { fileURLToPath } = await import('node:url');
-    const { dirname, join, basename } = await import('node:path');
-    const dbPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'data', 'bonanza.db');
+    const { basename } = await import('node:path');
+    const dbPath = await dbFile();
 
     // Use a password that appears nowhere else, so a hit is unambiguous.
     const secret = `Zx9-${RUN}-QuetzalPassphrase`;
