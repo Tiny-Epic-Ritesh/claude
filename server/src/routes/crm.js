@@ -515,10 +515,12 @@ export const BULK_FIELDS = [
 router.get('/leads/bulk/options', requirePermission('lead.edit'), (req, res) => {
   const orgs = orgsFor(req.user);
 
-  /* Owner only for someone who may reassign (OPS-11). The write refuses it
-     without lead.reassign, and offering it anyway is the dialog-versus-write
-     disagreement this route exists to prevent. */
-  const offered = BULK_FIELDS.filter((f) => f.key !== 'owner_id' || can(req.user.role, 'lead.reassign'));
+  /* Owner only for someone who may reassign (OPS-11), and Stage only for
+     someone who may change a stage (OPS-12). The write refuses each without its
+     capability, and offering it anyway is the dialog-versus-write disagreement
+     this route exists to prevent. */
+  const offered = BULK_FIELDS.filter((f) => (f.key !== 'owner_id' || can(req.user.role, 'lead.reassign'))
+    && (f.key !== 'stage' || can(req.user.role, 'lead.stage.change')));
 
   const fields = offered.map((f) => {
     if (f.values) return f;
@@ -578,6 +580,14 @@ router.post('/leads/bulk/field', requirePermission('lead.edit'), (req, res) => {
   if (known.values && !known.free && known.kind !== 'user'
       && value !== null && !known.values.includes(value)) {
     return res.status(400).json({ error: `"${value}" is not a value ${known.label} accepts`, field: 'value' });
+  }
+
+  /* Nor is the stage (OPS-12). PATCH /leads/:id and POST /lists/:id/bulk/stage
+     both require lead.stage.change, which Sales RMs and dealers do not hold;
+     taken here on lead.edit, an RM could set leads to Won in bulk that PATCH
+     would not let them move one at a time. */
+  if (field === 'stage' && !can(req.user.role, 'lead.stage.change')) {
+    return res.status(403).json({ error: 'Stage changes require a Sales Supervisor or Admin', required: 'lead.stage.change' });
   }
 
   /* The owner is not an ordinary field (OPS-11). Taken on lead.edit alone, which

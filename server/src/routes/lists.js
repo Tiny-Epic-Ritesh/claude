@@ -116,7 +116,7 @@ function enrichedSchema() {
 
 /* --------------------------------------------------------------- meta */
 
-router.get('/meta', (_req, res) => res.json({
+router.get('/meta', (req, res) => res.json({
   kinds: LIST_KINDS.map((k) => ({
     code: k, label: KIND_LABEL[k], help: KIND_HELP[k], snapshot: isSnapshot(k),
     /* Stated rather than assumed, so the interface preselects what the API
@@ -138,8 +138,9 @@ router.get('/meta', (_req, res) => res.json({
   columns: COLUMN_CHOICES,
   /* Which fields a bulk edit may set. Stated here rather than repeated in the
      interface, so a dialog cannot offer a field the route will refuse. Labels
-     and values come from the schema above, which is where they already live. */
-  bulk_editable: [...BULK_EDITABLE],
+     and values come from the schema above, which is where they already live.
+     Stage only for someone who may change a stage (OPS-12). */
+  bulk_editable: [...BULK_EDITABLE].filter((f) => f !== 'stage' || can(req.user.role, 'lead.stage.change')),
 }));
 
 /* --------------------------------------------------------------- list */
@@ -777,6 +778,11 @@ router.post('/:id/bulk/field', requirePermission('lead.edit'), (req, res) => {
       error: `"${field}" cannot be set in bulk`,
       fix: `Bulk editing is limited to: ${[...BULK_EDITABLE].join(', ')}.`,
     });
+  }
+  /* A stage is set by POST /:id/bulk/stage, which requires lead.stage.change;
+     through this route it took lead.edit alone (OPS-12). */
+  if (field === 'stage' && !can(req.user.role, 'lead.stage.change')) {
+    return res.status(403).json({ error: 'Stage changes require a Sales Supervisor or Admin', required: 'lead.stage.change' });
   }
 
   const value = req.body?.value ?? null;
