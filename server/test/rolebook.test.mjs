@@ -30,6 +30,7 @@ import { all, one, run } from '../src/db.js';
 import { orgsFor, mayUseOrg } from '../src/auth.js';
 import { leastLoadedForRole } from '../src/engine/assignment.js';
 import { runAction, leadFacts } from '../src/engine/rules.js';
+import { assignToQueue, claimFromQueue, workIn } from '../src/engine/queues.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
@@ -53,6 +54,7 @@ const clean = () => {
   run("DELETE FROM ticket_categories WHERE name LIKE 'probe_rolebook%'");
   run("DELETE FROM activities WHERE lead_id IN (SELECT id FROM leads WHERE name LIKE 'probe_rolebook%')");
   run("DELETE FROM leads WHERE name LIKE 'probe_rolebook%'");
+  run("DELETE FROM queues WHERE code LIKE 'probe_rolebook%'");
   run('DELETE FROM users WHERE role = ?', [ROLE]);
 };
 
@@ -256,6 +258,44 @@ await test('a card with no role named still reports itself unrun', () => {
      log to go and staff a desk rather than fix the card. */
   assert.equal(result.skipped, 'no role named on the card');
   assert.equal(ownerOf(lead), null);
+});
+
+/* ------------------------------------------- a queued lead has one owner */
+
+await test('a queued lead the card assigns leaves the queue', () => {
+  /* OPS-09. Owner is polymorphic -- a person or a queue, never both. The card
+     set owner_id and left owner_queue_id alone, so a queued lead it handed to
+     the desk stayed on the queue's worklist as well as landing in its new
+     owner's book, and a claim only asks whether a lead is in a queue: anyone
+     the queue admits could take it back off the person it was given to.
+
+     A queue of this file's own, because the seeded ones hold real backlog and
+     their worklist stops at a hundred rows -- a lead missing from it proves
+     nothing there. */
+  clean();
+  const picked = addDeskMember('bonanza', 'BONANZA');
+  const other = addDeskMember('other', 'BONANZA');
+  loadWith(other, 'BONANZA', 1);
+
+  const queue = Number(run(
+    'INSERT INTO queues (code, name, entity, sales_org) VALUES (?,?,?,?)',
+    ['probe_rolebook_queue', 'probe_rolebook queue', 'lead', 'BONANZA'],
+  ).lastInsertRowid);
+  const lead = addLead('queued', 'BONANZA');
+  assignToQueue(lead, queue);
+  assert(workIn(queue).some((w) => w.id === lead), 'fixture: the lead is not in the queue');
+
+  const result = assignQueue(lead);
+  assert(!result.skipped, `skipped: ${result.skipped}`);
+
+  const row = one('SELECT owner_id, owner_queue_id FROM leads WHERE id = ?', [lead]);
+  assert.equal(row.owner_id, picked, 'fixture: the idle desk member was not the one picked');
+  assert.equal(row.owner_queue_id, null, 'the lead belongs to a person and is still in the queue');
+  assert(!workIn(queue).some((w) => w.id === lead), 'the assigned lead is still on the queue worklist');
+
+  const claim = claimFromQueue(lead, userRow(other));
+  assert(!claim.ok, 'somebody else claimed the lead out of the queue from under its new owner');
+  assert.equal(ownerOf(lead), picked);
 });
 
 /* ----------------------------------------- the same rule, on the case route */

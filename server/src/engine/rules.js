@@ -321,7 +321,12 @@ export function runAction(action, facts, { dryRun }) {
       if (!candidateId) {
         return { ...describe, skipped: `nobody active on the ${action.params.role} desk in ${lead.sales_org}` };
       }
-      run('UPDATE leads SET owner_id = ? WHERE id = ?', [candidateId, lead.id]);
+      /* Out of any queue in the same statement, as assignLead does: owner is a
+         person or a queue, never both, and a lead holding both sits on the
+         queue's worklist and in its new owner's book at once -- where anyone the
+         queue admits can claim it back off them. assigned_at is not stamped
+         here; it stays the routing engine's mark, and nothing reads it. */
+      run('UPDATE leads SET owner_id = ?, owner_queue_id = NULL WHERE id = ?', [candidateId, lead.id]);
       break;
     }
     /* One shared timeline, so an automation writes an activity the same way a
