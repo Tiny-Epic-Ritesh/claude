@@ -618,6 +618,10 @@ router.post('/leads/bulk/field', requirePermission('lead.edit'), (req, res) => {
     });
   }
 
+  /* Owner is a User or a Queue, never both (OPS-10): a lead given to a person
+     leaves its queue in the same statement. Setting no owner leaves it be. */
+  const leavesQueue = field === 'owner_id' && value != null && value !== '';
+
   let changed = 0;
   let unchanged = 0;
   for (const t of targets) {
@@ -625,7 +629,7 @@ router.post('/leads/bulk/field', requirePermission('lead.edit'), (req, res) => {
        put a change on its history and move its last-modified for a change that
        did not happen. */
     if (String(t.current ?? '') === String(value ?? '')) { unchanged += 1; continue; }
-    run(`UPDATE leads SET ${field} = ? WHERE id = ?`, [value, t.id]);
+    run(`UPDATE leads SET ${field} = ?${leavesQueue ? ', owner_queue_id = NULL' : ''} WHERE id = ?`, [value, t.id]);
     audit(req.user.id, 'lead.bulk.field', 'lead', t.id, { field, from: t.current, to: value, mode });
     changed += 1;
   }
@@ -959,6 +963,13 @@ router.patch('/leads/:id', (req, res) => {
       params.push(raw ? blindIndex(String(raw).toUpperCase()) : null);
     }
   }
+  /* A lead given to a person leaves its queue, in the same statement -- an
+     owner is a User or a Queue, never both (OPS-10). Left set, the lead stayed
+     on the queue's worklist beside the person's, `ownerOf` still named the
+     queue, and anyone the queue admits could claim it off the person it was
+     given to. Clearing the person (owner_id null) is not a reassignment and
+     leaves the queue alone. */
+  if (body.owner_id != null && body.owner_id !== '') sets.push('owner_queue_id = NULL');
   // Custom fields declared in Setup, validated by the metadata layer. Their
   // cascade and requiredness are enforced there, so an API caller gets the same
   // rules the form does.

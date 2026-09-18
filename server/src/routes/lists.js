@@ -889,7 +889,12 @@ router.post('/:id/bulk/reassign', requirePermission('lead.reassign'), (req, res)
     const lead = one('SELECT id, owner_id, sales_org FROM leads WHERE id = ?', [id]);
     // Never move a lead into a business its new owner does not work in.
     if (!lead || lead.sales_org !== owner.sales_org) continue;
-    run("UPDATE leads SET owner_id = ?, updated_at = datetime('now') WHERE id = ?", [ownerId, id]);
+    // Out of any queue in the same statement, as the approved path does
+    // (OPS-10): a lead is owned by a person or a queue, never both.
+    run(
+      "UPDATE leads SET owner_id = ?, owner_queue_id = NULL, updated_at = datetime('now') WHERE id = ?",
+      [ownerId, id],
+    );
     // One row per record: "who was moved, and by whom" must stay answerable.
     audit(req.user.id, 'lead.reassign', 'lead', id, { from: lead.owner_id, to: ownerId, via_list: list.id });
     moved += 1;
