@@ -3,7 +3,7 @@
  */
 
 import { Router } from 'express';
-import { all, one, run, audit, notify, daysSince, ageBand, AGE_BANDS, CARD_COLOUR, LEAD_STAGES, CARD_STATES } from '../db.js';
+import { all, one, run, audit, notify, daysSince, ageBand, AGE_BANDS, CARD_COLOUR, CARD_STATES } from '../db.js';
 import { can, requireUser, requirePermission, reqScope, isReadOnlyOnLeads, unmaskRequested, maskFor, orgsFor, activeOrg, mayUseOrg } from '../auth.js';
 import { owdGrant } from '../engine/owd.js';
 import { encryptField, decryptField, maskRecord, maskRecords, validate, blindIndex } from '../security.js';
@@ -28,7 +28,7 @@ import {
 } from '../engine/queues.js';
 import {
   applyFieldSecurity, entityDef, fieldsOf, picklistValues, customValues,
-  setCustomValues, recordChange, historyFor, FIELD_TYPES,
+  setCustomValues, recordChange, historyFor, FIELD_TYPES, leadStages, stageRefusal,
 } from '../engine/metadata.js';
 
 const router = Router();
@@ -495,7 +495,8 @@ router.get('/leads/import/runs/:id', requirePermission('lead.create'), (req, res
  * feature anybody asked for.
  */
 export const BULK_FIELDS = [
-  { key: 'stage', label: 'Stage', values: LEAD_STAGES },
+  /* Its values are the Stage picklist, read when asked (OPS-13). */
+  { key: 'stage', label: 'Stage', kind: 'stage' },
   { key: 'source', label: 'Source' },
   { key: 'city', label: 'City' },
   { key: 'state', label: 'State' },
@@ -524,6 +525,7 @@ router.get('/leads/bulk/options', requirePermission('lead.edit'), (req, res) => 
 
   const fields = offered.map((f) => {
     if (f.values) return f;
+    if (f.kind === 'stage') return { ...f, values: leadStages() };
 
     if (f.kind === 'user') {
       return {
@@ -589,6 +591,9 @@ router.post('/leads/bulk/field', requirePermission('lead.edit'), (req, res) => {
   if (field === 'stage' && !can(req.user.role, 'lead.stage.change')) {
     return res.status(403).json({ error: 'Stage changes require a Sales Supervisor or Admin', required: 'lead.stage.change' });
   }
+  /* And only to a stage the Stage picklist holds (OPS-13). */
+  const badStage = field === 'stage' ? stageRefusal(value) : null;
+  if (badStage) return res.status(400).json({ error: badStage, field: 'value' });
 
   /* The owner is not an ordinary field (OPS-11). Taken on lead.edit alone, which
      Sales RMs and dealers hold, this route moved up to 5,000 leads when PATCH
@@ -986,6 +991,14 @@ router.patch('/leads/:id', (req, res) => {
   // Stage and owner are supervisor-gated (BRD §3.2).
   if (body.stage !== undefined && body.stage !== lead.stage && !can(req.user.role, 'lead.stage.change')) {
     return res.status(403).json({ error: 'Stage changes require a Sales Supervisor or Admin', required: 'lead.stage.change' });
+  }
+  /* Who may change a stage was checked; what to was not, and any text was
+     stored (OPS-13). The Stage picklist in Setup decides. A lead re-sent with
+     the stage it already has is not a change, so a value since retired from
+     the picklist does not block saving the rest of the record. */
+  if (body.stage !== undefined && body.stage !== lead.stage) {
+    const badStage = stageRefusal(body.stage);
+    if (badStage) return res.status(400).json({ error: badStage, field: 'stage' });
   }
   if (body.owner_id !== undefined && Number(body.owner_id) !== lead.owner_id && !can(req.user.role, 'lead.reassign')) {
     return res.status(403).json({ error: 'Reassignment requires a Sales Supervisor or Admin', required: 'lead.reassign' });
@@ -1937,7 +1950,8 @@ router.get('/meta', (req, res) => {
   const placeholders = orgs.map(() => '?').join(',') || 'NULL';
 
   res.json({
-    stages: LEAD_STAGES,
+    // The Stage picklist, which Setup edits and every stage write checks (OPS-13).
+    stages: leadStages(),
     card_states: CARD_STATES,
     card_colours: CARD_COLOUR,
     products: all(

@@ -14,7 +14,8 @@
  */
 
 import { Router } from 'express';
-import { all, one, run, audit, notify, LEAD_STAGES } from '../db.js';
+import { all, one, run, audit, notify } from '../db.js';
+import { leadStages, stageRefusal } from '../engine/metadata.js';
 import {
   requireUser, requirePermission, reqScope, activeOrg, orgsFor, can,
 } from '../auth.js';
@@ -124,7 +125,8 @@ router.get('/meta', (req, res) => res.json({
     default: k === DEFAULT_KIND,
   })),
   default_kind: DEFAULT_KIND,
-  stages: LEAD_STAGES,
+  // The Stage picklist, which Setup edits and every stage write checks (OPS-13).
+  stages: leadStages(),
   bulk_cap: BULK_CAP,
   /* The 27 fields and their operators, so a builder can be driven by the same
      definitions the query compiler uses. The engine has always supported nested
@@ -786,6 +788,10 @@ router.post('/:id/bulk/field', requirePermission('lead.edit'), (req, res) => {
   }
 
   const value = req.body?.value ?? null;
+  /* Only to a stage the Stage picklist holds: this route checked that the
+     field was on its list and stored any text as a stage (OPS-13). */
+  const badStage = field === 'stage' ? stageRefusal(value) : null;
+  if (badStage) return res.status(400).json({ error: badStage, field: 'value' });
   const ids = memberIds(list, req);
   let changed = 0;
   let unchanged = 0;
@@ -915,9 +921,11 @@ router.post('/:id/bulk/stage', requirePermission('lead.stage.change'), (req, res
   const list = loadList(req);
   if (!list || !mayReadList(list, req.user)) return res.status(404).json({ error: 'List not found' });
 
+  /* The stages are the Stage picklist's, which Setup edits (OPS-13), rather
+     than the six written into the code. */
   const stage = req.body?.stage;
-  if (!LEAD_STAGES.includes(stage)) {
-    return res.status(400).json({ error: `Stage must be one of: ${LEAD_STAGES.join(', ')}` });
+  if (stageRefusal(stage)) {
+    return res.status(400).json({ error: `Stage must be one of: ${leadStages().join(', ')}` });
   }
 
   const ids = memberIds(list, req);

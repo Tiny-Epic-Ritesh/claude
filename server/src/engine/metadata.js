@@ -729,6 +729,35 @@ export function picklistValues(fieldId, controllingValue = null) {
 }
 
 /**
+ * The stages a lead may be put in: the active values of the Stage picklist.
+ *
+ * An administrator edits that list in Setup, and it decides (Ritesh, 18 Sep
+ * 2026, OPS-13) -- not the six written into `LEAD_STAGES`. It is seeded with
+ * the same six (`CORE_PICKLISTS`), so the two agree until somebody changes it.
+ * Stage is a core column, so `setCustomValues` below never checks it; every
+ * route that writes a stage asks `stageRefusal` instead, and every dialog that
+ * offers one offers this list.
+ */
+export function leadStages() {
+  const f = fieldDef('lead', 'stage');
+  return f ? picklistValues(f.id).map((v) => String(v.value)) : [];
+}
+
+/**
+ * Why `value` may not be a lead's stage, or null when it may.
+ *
+ * In `setCustomValues`'s words, so a refused stage reads like any other
+ * refused picklist value. Blank is refused too: the column is NOT NULL, and a
+ * blank stage died on the constraint as a server error instead.
+ */
+export function stageRefusal(value) {
+  if (value == null || value === '') return 'Stage is required';
+  const allowed = leadStages();
+  if (allowed.length && !allowed.includes(String(value))) return `"${value}" is not a permitted value for Stage`;
+  return null;
+}
+
+/**
  * How many live records hold each value of a picklist, including values no
  * longer offered.
  *
