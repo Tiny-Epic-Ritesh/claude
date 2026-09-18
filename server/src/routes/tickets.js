@@ -276,14 +276,24 @@ router.post('/', requirePermission('ticket.create'), async (req, res) => {
      read, so assigning across the book leaves the case stranded. Unassigned in
      the right book beats assigned in the wrong one, so there is no fallback to
      just anybody. */
-  const assignee = one(
-    `SELECT id FROM users
+  /* The book test is `mayUseOrg` -- the same definition the gate above used to
+     refuse the author, and the one `orgsFor` actually implements.
+
+     It was `sales_org = ? OR org_access LIKE ?`, which reads like the same rule
+     and is not. `org_access` *replaces* a user's own book rather than adding to
+     it, so someone moved off this desk by their access list still matched on
+     `sales_org` and still drew cases they could no longer open. The `LIKE` is
+     the second half of the problem: it is a substring test against the JSON
+     text, so it answers for any org code that happens to sit inside another. */
+  const assignee = all(
+    `SELECT id, role, sales_org, org_access,
+            (SELECT COUNT(*) FROM tickets
+              WHERE assignee_id = users.id AND status NOT IN ('Resolved','Closed')) AS open_load
+      FROM users
       WHERE role = ? AND active = 1
-        AND (sales_org = ? OR org_access LIKE ?)
-      ORDER BY (SELECT COUNT(*) FROM tickets WHERE assignee_id = users.id AND status NOT IN ('Resolved','Closed'))
-      LIMIT 1`,
-    [category?.auto_assign_role ?? 'customer_care', org, `%${org}%`],
-  );
+      ORDER BY open_load, id`,
+    [category?.auto_assign_role ?? 'customer_care'],
+  ).find((u) => mayUseOrg(u, org)) ?? null;
 
   const result = run(
     `INSERT INTO tickets (subject, description, priority, category_id, lead_id, card_id, partner_id, channel, assignee_id, created_by, status, sales_org)

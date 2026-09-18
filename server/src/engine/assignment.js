@@ -131,37 +131,51 @@ function leastLoaded(team) {
 }
 
 /**
- * The least-loaded Sales RM in one book.
+ * The least-loaded holder of one role, inside one book.
  *
- * For the two doors that let a lead in without a routing rule to run: a
- * self-service DKYC applicant and a partner referral. Both used to ask for the
- * least-loaded `sales_rm` in the firm, and on a shared database that puts the
- * other business's desk in the running — a Bigul applicant could land on a
- * Bonanza RM who cannot open the record, so the lead sits in a book nobody is
- * watching.
+ * Bonanza and Bigul share a database and each has its own desk for every role,
+ * so "the least-loaded sales_rm" has no answer until you say which book. Asked
+ * without one, the other business's desk is in the running — a Bigul lead can
+ * land on a Bonanza user who cannot open the record, so it sits in a book
+ * nobody is watching. Three callers had that shape: the DKYC and
+ * partner-referral doors (`leastLoadedRm`, below) and the `assign_queue`
+ * automation action, which names an arbitrary role.
  *
- * Eligibility is `orgsFor` rather than `sales_org = ?` in SQL: an RM who
- * carries a book in both businesses holds the second one through `org_access`,
- * and asking the definition beats keeping a second copy of it here that can
- * quietly disagree with it.
+ * Eligibility is `orgsFor` rather than `sales_org = ?` in SQL: someone who
+ * carries both books holds the second through `org_access`, which *replaces*
+ * their own book rather than adding to it, and asking the definition beats
+ * keeping a second copy of it here that can quietly disagree with it.
  *
  * Load is counted inside the book too (Ritesh, 11 Sep 2026): a two-book RM's
  * Bonanza leads are not a reason to keep Bigul work away from them. Deleted
- * leads are not load.
+ * leads are not load. Settled ones are -- which `leastLoaded` above does not
+ * count; kept as OPS-05 shipped it rather than changed in passing.
+ *
+ * Nobody eligible in the book returns null, never somebody from the other
+ * business: unassigned in the right book beats assigned in the wrong one.
  */
-export function leastLoadedRm(org) {
-  if (!org) return null;
+export function leastLoadedForRole(role, org) {
+  if (!role || !org) return null;
 
   const candidates = all(
     `SELECT u.id, u.role, u.sales_org, u.org_access,
             (SELECT COUNT(*) FROM leads l
               WHERE l.owner_id = u.id AND l.sales_org = ? AND l.deleted_at IS NULL) AS book_load
      FROM users u
-     WHERE u.role = 'sales_rm' AND u.active = 1
+     WHERE u.role = ? AND u.active = 1
      ORDER BY book_load, u.id`,
-    [org],
+    [org, role],
   );
   return candidates.find((u) => orgsFor(u).includes(org))?.id ?? null;
+}
+
+/**
+ * The least-loaded Sales RM in one book, for the two doors that let a lead in
+ * without a routing rule to run: a self-service DKYC applicant and a partner
+ * referral.
+ */
+export function leastLoadedRm(org) {
+  return leastLoadedForRole('sales_rm', org);
 }
 
 /** Resolve a team to one person using the team's own strategy. */

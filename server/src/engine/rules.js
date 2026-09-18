@@ -14,7 +14,7 @@ import { checkConsent } from './consent.js';
 import { isSnapshot } from './leadlists.js';
 /* The one place an owner is chosen. An action hands the lead over; it does not
    pick, for the reason set out on the distribute_lead case below. */
-import { assignLead } from './assignment.js';
+import { assignLead, leastLoadedForRole } from './assignment.js';
 
 /* -------------------------------------------------------------- scoring */
 
@@ -302,12 +302,26 @@ export function runAction(action, facts, { dryRun }) {
     }
     case 'assign_queue': {
       if (!action.params.role) return { ...describe, skipped: 'no role named on the card' };
-      const candidate = one(
-        'SELECT id FROM users WHERE role = ? AND active = 1 ORDER BY (SELECT COUNT(*) FROM leads WHERE owner_id = users.id) LIMIT 1',
-        [action.params.role],
-      );
-      if (!candidate) return { ...describe, skipped: `nobody active on the ${action.params.role} desk` };
-      run('UPDATE leads SET owner_id = ? WHERE id = ?', [candidate.id, lead.id]);
+
+      /* A role names a desk, but both businesses have one of each desk and they
+         share a database -- so the role alone was selecting across the book
+         boundary, and the lead's own book is what decides which desk is meant.
+         Handing a Bigul lead to a Bonanza-only user does not misassign it, it
+         hides it: the owner cannot open the record and nobody else is looking.
+
+         No book on the lead means no desk can be chosen. The column is NOT NULL
+         with a default, so this is a lead built in memory rather than read back
+         -- and guessing a book for it is how the record ends up in the wrong
+         one permanently. */
+      if (!lead.sales_org) {
+        return { ...describe, skipped: 'the lead carries no book, so there is no desk to hand it to' };
+      }
+
+      const candidateId = leastLoadedForRole(action.params.role, lead.sales_org);
+      if (!candidateId) {
+        return { ...describe, skipped: `nobody active on the ${action.params.role} desk in ${lead.sales_org}` };
+      }
+      run('UPDATE leads SET owner_id = ? WHERE id = ?', [candidateId, lead.id]);
       break;
     }
     /* One shared timeline, so an automation writes an activity the same way a
