@@ -139,11 +139,13 @@ const booksOf = (u) => {
   return u.sales_org ? [u.sales_org] : [];
 };
 
-/** Who should get the next unrouted lead in this book, asked before it lands. */
+/** Who should get the next unrouted lead in this book, asked before it lands.
+    Load is open leads in that book: settled ones are finished work (OPS-08). */
 const expectedOwner = (org) => all(
   `SELECT u.id, u.sales_org, u.org_access,
           (SELECT COUNT(*) FROM leads l
-            WHERE l.owner_id = u.id AND l.sales_org = ? AND l.deleted_at IS NULL) AS book_load
+            WHERE l.owner_id = u.id AND l.sales_org = ? AND l.deleted_at IS NULL
+              AND l.stage NOT IN ('Won', 'Lost')) AS book_load
    FROM users u
    WHERE u.role = 'sales_rm' AND u.active = 1
    ORDER BY book_load, u.id`,

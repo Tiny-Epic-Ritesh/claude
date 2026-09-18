@@ -182,11 +182,7 @@ await test('load is counted inside the book, so a second book is not a penalty',
 
 await test('deleted leads are not load', () => {
   /* A lead in the recycle bin is nobody's work. Counting it keeps new work
-     away from whoever has been tidying their book.
-
-     Settled leads are deliberately not tested either way. The helper counts
-     Won and Lost as load, as OPS-05 shipped it, and `leastLoaded` in the same
-     file does not -- that is a ruling to ask for, not something to pin here. */
+     away from whoever has been tidying their book. */
   clean();
   Object.assign(DESK, {
     bigul: addDeskMember('bigul', 'BIGUL'),
@@ -199,6 +195,48 @@ await test('deleted leads are not load', () => {
   assert.equal(
     leastLoadedForRole(ROLE, 'BIGUL'), DESK.both,
     'deleted leads were counted as work in hand',
+  );
+});
+
+await test('won and lost leads are not load', () => {
+  /* Ruled 18 Sep: settled leads are finished work, as `leastLoaded` has always
+     counted them. Counting them sends new work away from whoever closes the
+     most. Each stage is checked on its own, so a rule that drops only one of
+     them does not pass. */
+  for (const stage of ['Won', 'Lost']) {
+    clean();
+    Object.assign(DESK, {
+      bigul: addDeskMember('bigul', 'BIGUL'),
+      both: addDeskMember('both', 'BONANZA', ['BONANZA', 'BIGUL']),
+    });
+
+    loadWith(DESK.both, 'BIGUL', 4, { stage });
+    loadWith(DESK.bigul, 'BIGUL', 1);    // the only open lead on the desk
+
+    assert.equal(
+      leastLoadedForRole(ROLE, 'BIGUL'), DESK.both,
+      `${stage} leads were counted as work in hand`,
+    );
+  }
+});
+
+await test('open leads at any other stage are load', () => {
+  /* The other half: a rule that stopped counting everything would pass the
+     test above. In Progress is the last stage before a lead settles. The
+     loaded member is created first, so on a tie -- which is what counting
+     nothing produces -- the lower id picks them and this fails. */
+  clean();
+  Object.assign(DESK, {
+    both: addDeskMember('both', 'BONANZA', ['BONANZA', 'BIGUL']),
+    bigul: addDeskMember('bigul', 'BIGUL'),
+  });
+
+  loadWith(DESK.both, 'BIGUL', 2, { stage: 'In Progress' });
+  loadWith(DESK.bigul, 'BIGUL', 1);
+
+  assert.equal(
+    leastLoadedForRole(ROLE, 'BIGUL'), DESK.bigul,
+    'leads still being worked were not counted as load',
   );
 });
 

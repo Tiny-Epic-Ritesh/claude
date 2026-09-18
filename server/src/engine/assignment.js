@@ -148,8 +148,9 @@ function leastLoaded(team) {
  *
  * Load is counted inside the book too (Ritesh, 11 Sep 2026): a two-book RM's
  * Bonanza leads are not a reason to keep Bigul work away from them. Deleted
- * leads are not load. Settled ones are -- which `leastLoaded` above does not
- * count; kept as OPS-05 shipped it rather than changed in passing.
+ * leads are not load, and nor are settled ones (Ritesh, 18 Sep 2026): Won and
+ * Lost are finished work, which is how `leastLoaded` above has always counted.
+ * OPS-05 shipped this helper counting them; OPS-08 asked for the ruling.
  *
  * Nobody eligible in the book returns null, never somebody from the other
  * business: unassigned in the right book beats assigned in the wrong one.
@@ -160,7 +161,8 @@ export function leastLoadedForRole(role, org) {
   const candidates = all(
     `SELECT u.id, u.role, u.sales_org, u.org_access,
             (SELECT COUNT(*) FROM leads l
-              WHERE l.owner_id = u.id AND l.sales_org = ? AND l.deleted_at IS NULL) AS book_load
+              WHERE l.owner_id = u.id AND l.sales_org = ? AND l.deleted_at IS NULL
+                AND l.stage NOT IN ('Won', 'Lost')) AS book_load
      FROM users u
      WHERE u.role = ? AND u.active = 1
      ORDER BY book_load, u.id`,
