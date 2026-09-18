@@ -83,12 +83,13 @@ angles. Building them separately would produce four screens for one job.
 | ID | Title | Blocked by |
 |---|---|---|
 | P3-44 | CUBE telephony end-to-end verification (`Bonanza_APITest`) | The tenant UserID and password |
-| P3-13 | Phone call form (configurable disposition form) | P3-44 |
-| P3-14 | Call recording, transcription and AI call summary | P3-44, P3-13 |
+| P3-13 | Phone call form (configurable disposition form) | ~~P3-44~~ **Built 10 Sep without it** (`5dda2c3`): the form is a CRM object |
+| P3-14 | Call recording, transcription and AI call summary | P3-44 |
 
 P3-44 is the verification that the pipeline works at all. Until a call can be
 placed through CUBE and a recording come back, P3-13 and P3-14 cannot be
-honestly built or tested.
+honestly built or tested. **10 Sep:** P3-13 turned out not to need a call -- the disposition form is
+configured in the CRM -- and was built. P3-44 and P3-14 still wait on the credential.
 
 ### 3b · The five large builds — none started, each gated on your approval
 
@@ -178,12 +179,12 @@ the affected tickets are built.
 | Q5 | P3-10 | `location.js` — "Ritesh settled this on 4 Sep: the activity saves regardless" |
 | Q7 | P3-38 | `columns.js` — "Ritesh settled the mandatory set on 4 Sep: the lead's name and nothing else" |
 
-**Still mine rather than yours — these two need ratifying:**
+**Shipped on my judgement, then ratified by Ritesh on 10 Sep:**
 
 | # | Ticket | What I decided without you |
 |---|---|---|
-| Q6 | P3-28 | The action behind each AI summary button |
-| Q8 | P3-27 | The three tiles that replaced the homepage activity log |
+| Q6 | P3-28 | The action behind each AI summary button -- **ratified**, eight of nine as built; the Active state gained its two buttons (`4bf5fb7`) |
+| Q8 | P3-27 | The three tiles that replaced the homepage activity log -- **ratified**, kept as built; closes P3-27 |
 
 Both are described in `DELIVERABLES.md`. The code shipped on my judgement where
 the ticket asked for yours.
@@ -195,7 +196,7 @@ the ticket asked for yours.
 | # | ID | Title | Round | Why not done |
 |---|---|---|---|---|
 | 1 | P3-44 | CUBE end-to-end verification | 3 | Credential |
-| 2 | P3-13 | Phone call form | 3 | Blocked by P3-44 |
+| 2 | P3-13 | Phone call form | 3 | **Built** 10 Sep (`5dda2c3`) |
 | 3 | P3-14 | Recording, transcription, AI summary | 3 | Blocked by P3-44 |
 | 4 | P3-06 | Reports module | 3 | Design approval — Q9 |
 | 5 | P3-16 | Automation builder | 3 | Design approval — Q10 |
@@ -261,8 +262,8 @@ those answers turned into work that nobody is blocked on any more.
 | # | Question |
 |---|---|
 | ~~N-1~~ | **Resolved** — handover is `OPS-01`; `P3-19` stays LAPPS. |
-| **N-2** | Of the ten acceptance clauses in section 4, which did you actually receive? I will re-send any you did not. |
-| **N-3** | Q6 and Q8 shipped on my judgement where the ticket asked for yours. Ratify or correct them — both are in `DELIVERABLES.md`. Q1, Q2, Q5 and Q7 are resolved. |
+| ~~N-2~~ | **Closed 10 Sep**, by me rather than by an answer: `DELIVERABLES.md` reproduces all ten in full, so it is the re-send. |
+| ~~N-3~~ | **Answered 10 Sep — both ratified.** Q6 eight of nine as built, with the Active state's two buttons added (`4bf5fb7`); Q8 kept as built. |
 | ~~N-7 / N-7a~~ | **Answered 10 Sep — yes.** There are supervisors outside the reporting line, so group membership must grant visibility on top of the manager chain. Work item against P3-07. |
 | ~~N-8~~ | **Answered 10 Sep — everywhere in Setup**, top-level screens included. Ritesh chose consistency over the narrower recommendation. |
 | ~~N-9~~ | **Answered 10 Sep — yes**, folded into the next browser session rather than run as a standalone task. |
