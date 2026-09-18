@@ -33,6 +33,7 @@ export default function BulkUpdate({ selected, total, query, onClose, onDone }) 
   const [limit, setLimit] = useState('');
   const [field, setField] = useState('');
   const [value, setValue] = useState('');
+  const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [done, setDone] = useState(null);
@@ -47,9 +48,16 @@ export default function BulkUpdate({ selected, total, query, onClose, onDone }) 
   const overCount = mode === 'first' && limit !== '' && Number(limit) > total;
   const noCount = mode === 'first' && (limit === '' || Number(limit) < 1);
 
+  /* A change of owner over the threshold becomes a request (OPS-11), and the
+     server will not raise one without a reason. The count here is an upper
+     bound: leads already with that owner, or in another business, do not move. */
+  const count = mode === 'ids' ? selected.length : mode === 'all' ? total : Number(limit) || 0;
+  const needsApproval = field === 'owner_id' && count >= (options?.bulk_threshold ?? 25);
+
   const ready = field && !overCount && !noCount
     && (mode !== 'ids' || selected.length > 0)
-    && value !== '';
+    && value !== ''
+    && (!needsApproval || reason.trim() !== '');
 
   const apply = async () => {
     setBusy(true);
@@ -58,6 +66,7 @@ export default function BulkUpdate({ selected, total, query, onClose, onDone }) 
       const body = { field, value, mode };
       if (mode === 'ids') body.ids = selected;
       if (mode === 'first') body.limit = Number(limit);
+      if (needsApproval) body.reason = reason;
 
       const out = await api.post(`/leads/bulk/field${query ? `?${query}` : ''}`, body);
       setDone(out);
@@ -65,6 +74,21 @@ export default function BulkUpdate({ selected, total, query, onClose, onDone }) 
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
   };
+
+  if (done?.approval_required) {
+    return (
+      <Modal title="Waiting for approval" onClose={onClose}>
+        <p>{done.message}</p>
+        <p className="tiny muted">
+          Nothing has moved yet. It is on the Approvals queue for somebody who can decide it.
+          {done.skipped > 0 && ` ${done.skipped} lead${done.skipped === 1 ? ' is' : 's are'} in another business and will not move.`}
+        </p>
+        <div className="row" style={{ justifyContent: 'flex-end' }}>
+          <button className="btn-primary" onClick={onClose}>Close</button>
+        </div>
+      </Modal>
+    );
+  }
 
   if (done) {
     return (
@@ -75,8 +99,9 @@ export default function BulkUpdate({ selected, total, query, onClose, onDone }) 
           <div className="importsum-cell"><strong>{done.matched}</strong><span>Matched</span></div>
         </div>
         <p className="muted">
-          {chosen?.label ?? done.field} set to <strong>{String(done.value)}</strong>.
+          {chosen?.label ?? done.field} set to <strong>{done.owner ?? String(done.value)}</strong>.
           {done.unchanged > 0 && ' Leads already holding that value were left alone, so their history is unchanged.'}
+          {done.skipped > 0 && ` ${done.skipped} lead${done.skipped === 1 ? ' was' : 's were'} skipped — a different business from the new owner.`}
         </p>
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button className="btn-primary" onClick={onClose}>Close</button>

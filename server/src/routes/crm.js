@@ -17,6 +17,7 @@ import { checkConsent, contactability } from '../engine/consent.js';
 import { assertValid } from '../engine/validation.js';
 import { derivedValues, describeFormula, describeRollup } from '../engine/formulas.js';
 import { assignLead } from '../engine/assignment.js';
+import { request as requestApproval, BULK_THRESHOLD } from '../engine/approvals.js';
 import { metricsFor } from '../engine/metrics.js';
 import { kycStatusSql, kycStatusFor } from '../engine/kycstatus.js';
 import { nextAction, nextStepForLead } from '../engine/nextaction.js';
@@ -514,7 +515,12 @@ export const BULK_FIELDS = [
 router.get('/leads/bulk/options', requirePermission('lead.edit'), (req, res) => {
   const orgs = orgsFor(req.user);
 
-  const fields = BULK_FIELDS.map((f) => {
+  /* Owner only for someone who may reassign (OPS-11). The write refuses it
+     without lead.reassign, and offering it anyway is the dialog-versus-write
+     disagreement this route exists to prevent. */
+  const offered = BULK_FIELDS.filter((f) => f.key !== 'owner_id' || can(req.user.role, 'lead.reassign'));
+
+  const fields = offered.map((f) => {
     if (f.values) return f;
 
     if (f.kind === 'user') {
@@ -546,6 +552,8 @@ router.get('/leads/bulk/options', requirePermission('lead.edit'), (req, res) => 
   res.json({
     fields,
     max: 5000,
+    // A change of owner at or above this many leads is sent for approval.
+    bulk_threshold: BULK_THRESHOLD,
     note: 'A bulk update applies to the leads you can see, and is recorded against each one.',
   });
 });
@@ -570,6 +578,24 @@ router.post('/leads/bulk/field', requirePermission('lead.edit'), (req, res) => {
   if (known.values && !known.free && known.kind !== 'user'
       && value !== null && !known.values.includes(value)) {
     return res.status(400).json({ error: `"${value}" is not a value ${known.label} accepts`, field: 'value' });
+  }
+
+  /* The owner is not an ordinary field (OPS-11). Taken on lead.edit alone, which
+     Sales RMs and dealers hold, this route moved up to 5,000 leads when PATCH
+     /leads/:id would not move one: no lead.reassign, no bulk_reassign approval
+     above BULK_THRESHOLD, and no check that the new owner was an active person
+     in the lead's book. Each is now the rule POST /lists/:id/bulk/reassign
+     applies. A blank owner is refused there too. */
+  const reassigning = field === 'owner_id';
+  let owner = null;
+  if (reassigning) {
+    if (!can(req.user.role, 'lead.reassign')) {
+      return res.status(403).json({ error: 'Reassignment requires a Sales Supervisor or Admin', required: 'lead.reassign' });
+    }
+    owner = /^\d+$/.test(String(value))
+      ? one('SELECT id, name, sales_org FROM users WHERE id = ? AND active = 1', [Number(value)])
+      : null;
+    if (!owner) return res.status(400).json({ error: 'Choose an active user', field: 'value' });
   }
 
   /* The same filter the screen is showing. Every mode narrows this rather than
@@ -608,7 +634,7 @@ router.post('/leads/bulk/field', requirePermission('lead.edit'), (req, res) => {
   }
 
   const targets = all(
-    `SELECT l.id, l.${field} AS current FROM leads l WHERE ${where} ORDER BY l.id${bound ? ' LIMIT ?' : ''}`,
+    `SELECT l.id, l.${field} AS current, l.sales_org FROM leads l WHERE ${where} ORDER BY l.id${bound ? ' LIMIT ?' : ''}`,
     bound ? [...args, bound] : args,
   );
 
@@ -618,30 +644,70 @@ router.post('/leads/bulk/field', requirePermission('lead.edit'), (req, res) => {
     });
   }
 
+  if (reassigning) {
+    /* Never into a business the new owner does not work in: those leads are
+       skipped and counted, as the list route skips them. Only a lead that would
+       actually change hands counts towards the threshold. */
+    const moving = targets.filter((t) => t.sales_org === owner.sales_org && Number(t.current) !== owner.id);
+
+    if (moving.length >= BULK_THRESHOLD) {
+      const out = requestApproval({
+        scope: 'bulk_reassign',
+        entityId: owner.id,
+        subjectName: owner.name,
+        payload: { lead_ids: moving.map((t) => t.id), owner_id: owner.id },
+        reason: req.body?.reason,
+        requestedBy: req.user.id,
+      });
+      if (!out.ok) return res.status(400).json(out);
+
+      return res.status(202).json({
+        ok: true,
+        approval_required: true,
+        request_id: out.request.id,
+        field,
+        value: owner.id,
+        owner: owner.name,
+        mode,
+        matched: targets.length,
+        requested: moving.length,
+        skipped: targets.filter((t) => t.sales_org !== owner.sales_org).length,
+        threshold: BULK_THRESHOLD,
+        message: `${moving.length} leads is over the ${BULK_THRESHOLD} that one person may move alone. `
+          + 'It is waiting for approval.',
+      });
+    }
+  }
+
   /* Owner is a User or a Queue, never both (OPS-10): a lead given to a person
      leaves its queue in the same statement. Setting no owner leaves it be. */
   const leavesQueue = field === 'owner_id' && value != null && value !== '';
+  const written = reassigning ? owner.id : value;
 
   let changed = 0;
   let unchanged = 0;
+  let skipped = 0;
   for (const t of targets) {
+    if (reassigning && t.sales_org !== owner.sales_org) { skipped += 1; continue; }
     /* A row already holding the value is left alone. Writing it anyway would
        put a change on its history and move its last-modified for a change that
        did not happen. */
-    if (String(t.current ?? '') === String(value ?? '')) { unchanged += 1; continue; }
-    run(`UPDATE leads SET ${field} = ?${leavesQueue ? ', owner_queue_id = NULL' : ''} WHERE id = ?`, [value, t.id]);
-    audit(req.user.id, 'lead.bulk.field', 'lead', t.id, { field, from: t.current, to: value, mode });
+    if (String(t.current ?? '') === String(written ?? '')) { unchanged += 1; continue; }
+    run(`UPDATE leads SET ${field} = ?${leavesQueue ? ', owner_queue_id = NULL' : ''} WHERE id = ?`, [written, t.id]);
+    audit(req.user.id, 'lead.bulk.field', 'lead', t.id, { field, from: t.current, to: written, mode });
     changed += 1;
   }
 
   return res.json({
     ok: true,
     field,
-    value,
+    value: written,
+    ...(owner ? { owner: owner.name } : {}),
     mode,
     matched: targets.length,
     changed,
     unchanged,
+    skipped,
     total,
   });
 });
