@@ -21,9 +21,19 @@ decisions below are yours from 11 September.
 | Files in messages | **Images and PDFs, up to 10 MB** | Same |
 | Where a transfer is recorded | **The lead's history only, not its timeline** | Same |
 
-**Still open, not blocking phase 1:** what a *lead* escalation means at Bonanza
-(§7 question 5), and how long messages are kept — a question for the compliance
-officer (§7 question 6).
+**Both answered on 6 October.**
+
+*How long messages are kept (§7 question 6):* **everything is kept — messages
+and attachments, with nothing deleted.** That is what the module already does,
+so there is nothing to build and no retention setting to add. Withdrawn
+messages stay readable by a reviewer, as before.
+
+*What a lead escalation means (§7 question 5):* **raise it to your manager,
+and it climbs if it is ignored.** An RM raises a lead with a reason; it goes to
+their supervisor; unanswered within a set time it climbs to the Sales Head, a
+role added on the same day; it closes with an outcome and is recorded in the
+lead's history rather than on the client-facing timeline, as the transfer is.
+Still to build.
 
 **What the cross-book decision means in the grid.** Each cell of the
 who-may-message-whom grid has three states rather than two: *blocked*, *same
