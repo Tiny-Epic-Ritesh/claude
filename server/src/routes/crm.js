@@ -28,7 +28,8 @@ import {
 } from '../engine/queues.js';
 import {
   applyFieldSecurity, entityDef, fieldsOf, picklistValues, customValues,
-  setCustomValues, recordChange, historyFor, FIELD_TYPES, leadStages, stageRefusal,
+  setCustomValues, recordChange, historyFor, FIELD_TYPES,
+  leadStages, columnPicklist, columnRefusal, LEAD_PICKLIST_COLUMNS,
 } from '../engine/metadata.js';
 
 const router = Router();
@@ -495,8 +496,9 @@ router.get('/leads/import/runs/:id', requirePermission('lead.create'), (req, res
  * feature anybody asked for.
  */
 export const BULK_FIELDS = [
-  /* Its values are the Stage picklist, read when asked (OPS-13). */
-  { key: 'stage', label: 'Stage', kind: 'stage' },
+  /* Stage, Source, Language and Risk profile take their values from their
+     picklist in Setup, read when asked (OPS-13, OPS-14). */
+  { key: 'stage', label: 'Stage' },
   { key: 'source', label: 'Source' },
   { key: 'city', label: 'City' },
   { key: 'state', label: 'State' },
@@ -525,7 +527,11 @@ router.get('/leads/bulk/options', requirePermission('lead.edit'), (req, res) => 
 
   const fields = offered.map((f) => {
     if (f.values) return f;
-    if (f.kind === 'stage') return { ...f, values: leadStages() };
+    /* A column the Setup picklist governs offers that list, and only that list
+       (OPS-13 for Stage, OPS-14 for Source, Language and Risk profile). It used
+       to offer whatever values were already in use, which is how a typo on one
+       lead became a choice on the dialog for every other. */
+    if (LEAD_PICKLIST_COLUMNS.includes(f.key)) return { ...f, values: columnPicklist('lead', f.key) };
 
     if (f.kind === 'user') {
       return {
@@ -591,9 +597,11 @@ router.post('/leads/bulk/field', requirePermission('lead.edit'), (req, res) => {
   if (field === 'stage' && !can(req.user.role, 'lead.stage.change')) {
     return res.status(403).json({ error: 'Stage changes require a Sales Supervisor or Admin', required: 'lead.stage.change' });
   }
-  /* And only to a stage the Stage picklist holds (OPS-13). */
-  const badStage = field === 'stage' ? stageRefusal(value) : null;
-  if (badStage) return res.status(400).json({ error: badStage, field: 'value' });
+  /* And only to a value its own picklist in Setup holds, for each column one
+     governs: Stage (OPS-13), Source, Language and Risk profile (OPS-14). A
+     field with no picklist -- City, State -- is not checked here. */
+  const refusal = columnRefusal('lead', field, value);
+  if (refusal) return res.status(400).json({ error: refusal, field: 'value' });
 
   /* The owner is not an ordinary field (OPS-11). Taken on lead.edit alone, which
      Sales RMs and dealers hold, this route moved up to 5,000 leads when PATCH
@@ -833,6 +841,15 @@ router.post('/leads', requirePermission('lead.create'), (req, res) => {
   });
   if (invalid) return res.status(400).json(invalid);
 
+  /* The picklist columns are checked on creation as they are on edit (OPS-14),
+     so a new lead cannot start out holding a Source nobody can choose. Stage is
+     not here: a new lead starts at the column default. */
+  for (const column of LEAD_PICKLIST_COLUMNS) {
+    if (column === 'stage' || req.body[column] === undefined) continue;
+    const refusal = columnRefusal('lead', column, req.body[column]);
+    if (refusal) return res.status(400).json({ error: refusal, field: column });
+  }
+
   /* Validation rules apply to creation as well as to edits. A rule that only
      ran on update would be satisfied by importing the offending record. */
   const created = assertValid('lead', { patch: req.body });
@@ -993,12 +1010,14 @@ router.patch('/leads/:id', (req, res) => {
     return res.status(403).json({ error: 'Stage changes require a Sales Supervisor or Admin', required: 'lead.stage.change' });
   }
   /* Who may change a stage was checked; what to was not, and any text was
-     stored (OPS-13). The Stage picklist in Setup decides. A lead re-sent with
-     the stage it already has is not a change, so a value since retired from
-     the picklist does not block saving the rest of the record. */
-  if (body.stage !== undefined && body.stage !== lead.stage) {
-    const badStage = stageRefusal(body.stage);
-    if (badStage) return res.status(400).json({ error: badStage, field: 'stage' });
+     stored -- Stage (OPS-13), then Source, Language and Risk profile (OPS-14),
+     each of which has a picklist in Setup that decides. A field re-sent with
+     the value it already has is not a change, so a value since retired from a
+     picklist does not block saving the rest of the record. */
+  for (const column of LEAD_PICKLIST_COLUMNS) {
+    if (body[column] === undefined || String(body[column] ?? '') === String(lead[column] ?? '')) continue;
+    const refusal = columnRefusal('lead', column, body[column]);
+    if (refusal) return res.status(400).json({ error: refusal, field: column });
   }
   if (body.owner_id !== undefined && Number(body.owner_id) !== lead.owner_id && !can(req.user.role, 'lead.reassign')) {
     return res.status(403).json({ error: 'Reassignment requires a Sales Supervisor or Admin', required: 'lead.reassign' });

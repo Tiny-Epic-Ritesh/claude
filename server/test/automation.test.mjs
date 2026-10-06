@@ -105,11 +105,28 @@ const build = (name, triggerType, steps, { status = 'active', org = 'BONANZA', c
 /* risk_profile is the marker, because update_lead deliberately whitelists
    stage, score and risk_profile only -- an automation must not write a derived
    field like kyc_status, which would be overwritten on the next read. Using
-   `source` here failed for exactly that reason, which is the whitelist working. */
-const noteAction = (subject) => ({
-  kind: 'action',
-  config: { type: 'update_lead', params: { field: 'risk_profile', value: subject } },
-});
+   `source` here failed for exactly that reason, which is the whitelist working.
+
+   Since OPS-14 a card may only write a value the field's picklist in Setup
+   holds, so each marker is registered as one for the run and removed in the
+   teardown below. Registering it here rather than listing the markers in one
+   place keeps them with the tests that use them. */
+const MARKERS = new Set();
+const riskFieldId = one("SELECT id FROM field_def WHERE entity = 'lead' AND api_name = 'risk_profile'").id;
+const noteAction = (subject) => {
+  if (!MARKERS.has(subject)) {
+    MARKERS.add(subject);
+    run(`INSERT INTO picklist_value (field_id, value, label, sort_order) VALUES (?,?,?,900)
+         ON CONFLICT(field_id, value) DO UPDATE SET active = 1`, [riskFieldId, subject, subject]);
+  }
+  return {
+    kind: 'action',
+    config: { type: 'update_lead', params: { field: 'risk_profile', value: subject } },
+  };
+};
+const dropMarkers = () => {
+  for (const value of MARKERS) run('DELETE FROM picklist_value WHERE field_id = ? AND value = ?', [riskFieldId, value]);
+};
 const marker = () => one('SELECT risk_profile FROM leads WHERE id = ?', [LEAD]).risk_profile;
 
 /* -------------------------------------------------------- the vocabulary */
@@ -1806,6 +1823,7 @@ await test('a sub-automation card pointing at a paused flow is not ready to run'
 });
 
 clean();
+dropMarkers();
 PROBE.cleanup();
 
 console.log(`\n${passed} passed, ${failed} failed`);

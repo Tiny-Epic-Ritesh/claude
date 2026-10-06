@@ -15,7 +15,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
-import { leadStages, stageRefusal } from '../engine/metadata.js';
+import { leadStages, stageRefusal, columnRefusal } from '../engine/metadata.js';
 import {
   requireUser, requirePermission, reqScope, activeOrg, orgsFor, can,
 } from '../auth.js';
@@ -788,10 +788,11 @@ router.post('/:id/bulk/field', requirePermission('lead.edit'), (req, res) => {
   }
 
   const value = req.body?.value ?? null;
-  /* Only to a stage the Stage picklist holds: this route checked that the
-     field was on its list and stored any text as a stage (OPS-13). */
-  const badStage = field === 'stage' ? stageRefusal(value) : null;
-  if (badStage) return res.status(400).json({ error: badStage, field: 'value' });
+  /* Only to a value the field's own picklist in Setup holds: this route checked
+     that the field was on its editable list and then stored any text at all --
+     as a stage (OPS-13), and as a Source, Language or Risk profile (OPS-14). */
+  const refusal = columnRefusal('lead', field, value);
+  if (refusal) return res.status(400).json({ error: refusal, field: 'value' });
   const ids = memberIds(list, req);
   let changed = 0;
   let unchanged = 0;

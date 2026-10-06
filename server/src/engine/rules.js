@@ -15,7 +15,7 @@ import { isSnapshot } from './leadlists.js';
 /* The one place an owner is chosen. An action hands the lead over; it does not
    pick, for the reason set out on the distribute_lead case below. */
 import { assignLead, leastLoadedForRole } from './assignment.js';
-import { stageRefusal } from './metadata.js';
+import { columnRefusal } from './metadata.js';
 
 /* -------------------------------------------------------------- scoring */
 
@@ -286,11 +286,12 @@ export function runAction(action, facts, { dryRun }) {
             : 'no field chosen on the card',
         };
       }
-      /* A card is held to the Stage picklist like any other writer (OPS-13):
-         one naming a stage Setup has retired, or never had, reports why and
-         changes nothing. */
-      const badStage = action.params.field === 'stage' ? stageRefusal(action.params.value) : null;
-      if (badStage) return { ...describe, skipped: badStage };
+      /* A card is held to the field's picklist like any other writer -- Stage
+         (OPS-13) and Risk profile (OPS-14), the two of the three it may write
+         that have one. A card naming a value Setup has retired, or never had,
+         reports why and changes nothing. */
+      const refusal = columnRefusal('lead', action.params.field, action.params.value);
+      if (refusal) return { ...describe, skipped: refusal };
       run(`UPDATE leads SET ${action.params.field} = ? WHERE id = ?`, [action.params.value, lead.id]);
       break;
     }

@@ -3231,7 +3231,10 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
   await check('a lead is never left without an owner', async () => {
     const { data } = await req('/api/leads', {
       method: 'POST', token: T.admin, expect: 201,
-      body: { name: 'Unmatched Source Probe', mobile: omob(7), source: 'Carrier Pigeon' },
+      /* A real source off the Setup picklist: since OPS-14 a Source the
+         picklist does not hold is refused, and this check is about the owner,
+         not the source. */
+      body: { name: 'Unmatched Source Probe', mobile: omob(7), source: 'IPO enquiry' },
     });
     assert(data.owner_id, 'a lead with no matching rule was left unowned');
   });

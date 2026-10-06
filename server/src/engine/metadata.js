@@ -729,33 +729,48 @@ export function picklistValues(fieldId, controllingValue = null) {
 }
 
 /**
- * The stages a lead may be put in: the active values of the Stage picklist.
+ * The values a core picklist COLUMN may hold: its field's active values, as an
+ * administrator edits them in Setup.
  *
- * An administrator edits that list in Setup, and it decides (Ritesh, 18 Sep
- * 2026, OPS-13) -- not the six written into `LEAD_STAGES`. It is seeded with
- * the same six (`CORE_PICKLISTS`), so the two agree until somebody changes it.
- * Stage is a core column, so `setCustomValues` below never checks it; every
- * route that writes a stage asks `stageRefusal` instead, and every dialog that
- * offers one offers this list.
+ * Setup decides, not a list written into the code -- Ritesh, 18 September 2026,
+ * for Stage (OPS-13) and then for Source, Language and Risk profile (OPS-14).
+ * `setCustomValues` below already checks a custom field's picklist, but it
+ * skips core columns, which is why these two exist: every route that writes one
+ * asks `columnRefusal`, and every dialog that offers one offers this list.
+ *
+ * A field that is not a picklist has no list, and nothing to check.
  */
-export function leadStages() {
-  const f = fieldDef('lead', 'stage');
-  return f ? picklistValues(f.id).map((v) => String(v.value)) : [];
+export function columnPicklist(entity, apiName) {
+  const f = fieldDef(entity, apiName);
+  if (!f || (f.type !== 'picklist' && f.type !== 'multipicklist')) return [];
+  return picklistValues(f.id).map((v) => String(v.value));
 }
 
 /**
- * Why `value` may not be a lead's stage, or null when it may.
+ * Why `value` may not go into that column, or null when it may.
  *
- * In `setCustomValues`'s words, so a refused stage reads like any other
- * refused picklist value. Blank is refused too: the column is NOT NULL, and a
- * blank stage died on the constraint as a server error instead.
+ * In `setCustomValues`'s words, so a refused core value reads like a refused
+ * custom one. Blank is refused only where the field is required: Stage is
+ * (the column is NOT NULL, and a blank one died on the constraint as a server
+ * error), Source, Language and Risk profile are not.
  */
-export function stageRefusal(value) {
-  if (value == null || value === '') return 'Stage is required';
-  const allowed = leadStages();
-  if (allowed.length && !allowed.includes(String(value))) return `"${value}" is not a permitted value for Stage`;
+export function columnRefusal(entity, apiName, value) {
+  const f = fieldDef(entity, apiName);
+  if (!f || (f.type !== 'picklist' && f.type !== 'multipicklist')) return null;
+  if (value == null || value === '') return f.required ? `${f.label} is required` : null;
+  const allowed = picklistValues(f.id).map((v) => String(v.value));
+  if (allowed.length && !allowed.includes(String(value))) {
+    return `"${value}" is not a permitted value for ${f.label}`;
+  }
   return null;
 }
+
+/** The lead columns somebody may set and a picklist governs (OPS-13, OPS-14). */
+export const LEAD_PICKLIST_COLUMNS = ['stage', 'source', 'language', 'risk_profile'];
+
+/** Stage, by the names OPS-13 gave it. */
+export const leadStages = () => columnPicklist('lead', 'stage');
+export const stageRefusal = (value) => columnRefusal('lead', 'stage', value);
 
 /**
  * How many live records hold each value of a picklist, including values no

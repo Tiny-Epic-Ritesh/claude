@@ -42,6 +42,21 @@ const call = async (method, path, body) => {
   return { status: res.status, body: await res.json().catch(() => null) };
 };
 
+/* Source is this file's scratch field: it writes a marker, counts the rows
+   that carry it, and puts the originals back. Since OPS-14 a Source has to be
+   one the picklist in Setup holds, so the markers are registered as values for
+   the run and removed at the end -- the rule itself is tested in
+   test/leadpicklists.test.mjs. */
+const MARKERS = ['Probe', 'Probe first', 'Probe all', 'Should not happen', 'Crossed the book', 'Same', 'Probe audit'];
+const sourceFieldId = one("SELECT id FROM field_def WHERE entity = 'lead' AND api_name = 'source'").id;
+for (const value of MARKERS) {
+  run(`INSERT INTO picklist_value (field_id, value, label, sort_order) VALUES (?,?,?,900)
+       ON CONFLICT(field_id, value) DO UPDATE SET active = 1`, [sourceFieldId, value, value]);
+}
+const dropMarkers = () => {
+  for (const value of MARKERS) run('DELETE FROM picklist_value WHERE field_id = ? AND value = ?', [sourceFieldId, value]);
+};
+
 /* Restored afterwards, because this suite writes to real seeded leads and the
    files that run after it read them. */
 const snapshot = all("SELECT id, source, stage FROM leads WHERE deleted_at IS NULL AND sales_org = 'BONANZA'");
@@ -213,6 +228,8 @@ await test('every changed lead is recorded individually', async () => {
 });
 
 await restore();
+
+dropMarkers();
 
 /* Give the borrowed administrator back, so it does not turn up in every
    owner and assignee picker in the app. */
