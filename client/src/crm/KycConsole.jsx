@@ -91,6 +91,15 @@ export default function KycConsole({ session }) {
                     {j.verification?.waiting_on && (
                       <div className="tiny muted">waiting on {j.verification.waiting_on}</div>
                     )}
+                    {/* An objection is recoverable work, so it says what for.
+                        A column reading "Objection" and nothing else is the
+                        legacy tenant's problem restated. */}
+                    {j.objection && (
+                      <div className="tiny" title={j.objection.text}>
+                        back with the applicant
+                        {j.objection.rounds > 1 ? ` · round ${j.objection.rounds}` : ''}
+                      </div>
+                    )}
                   </td>
                   <td><Progress pct={j.progress_pct} /></td>
                   <td className="num small">{j.seconds_on_step ? mins(j.seconds_on_step) : '—'}</td>

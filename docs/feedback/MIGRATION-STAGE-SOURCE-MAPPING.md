@@ -213,11 +213,10 @@ Bigul shares most of the above. These are the ones it has and Bonanza does not:
    review, internally verified, custodian verified. **Built 12 Oct**, as
    recommended: a `VERIFICATION` step with three outcomes, so "waiting on the
    custodian" is visible rather than inferred. See section 5.
-2. **"Under objection" is not the same as rejected.** An objection is "fix this
-   and resubmit"; rejection ends it. The CRM's `kyc_status` has Rejected but no
-   objection. *Recommendation:* add **Objection** to the status list, with the
-   objection text, because the whole *APPLICATION RESUBMITTED* loop depends on
-   telling the two apart.
+2. ~~**"Under objection" is not the same as rejected.**~~ An objection is "fix
+   this and resubmit"; rejection ends it. **Built 12 Oct**, as recommended —
+   and it turned out the CRM could produce neither status: Rejected was on the
+   list and unreachable. See section 5.
 3. **"Funds transferred" and "first business" are client facts, not lead
    stages.** *Recommendation:* record them on the client — first funding date
    and first trade date — which also gives OPS-02's dormancy automations
@@ -272,6 +271,22 @@ written.** 7 and 8 can still follow.
 - **Section 2b — the 16-value source list** is what a new database seeds.
 - **Answer 2 — DSA, Business Associate and Franchise** are now values of
   `partner.partner_model`, so a partner referral records which kind.
+- **Answer 6 and section 3d gap 2 — Objection.** An objection is now a state
+  of its own: `kyc_status` can read **Objection**, and — for the first time —
+  **Rejected**, which the list has always offered and nothing could produce. A
+  lead the portal had rejected read "In Progress", and so did one under
+  objection, which is exactly why the distinction lived in lead stages.
+  Either side may raise one: the eKYC portal reports them by webhook, and a
+  reviewer at Bonanza can send an application back from the lead's KYC rail,
+  with the reason required and the step optional. Naming a step puts the
+  applicant back on exactly that step with their resume link working and a
+  banner saying what to fix; naming none keeps the application here for a
+  reviewer to decide. **The resubmission loop:** when they correct it, the
+  journey goes straight back to verification and the review restarts at "under
+  review" — they are not asked to redo the steps after the objected one, and an
+  application that was internally verified before the objection is not still
+  internally verified after it. Rounds are counted, so "this is the third time"
+  is answerable.
 - **Section 3d gap 1 — the verification step.** The KYC journey has a
   seventeenth step, `VERIFICATION`, with the three outcomes the legacy tenant
   kept as lead stages: under review, internally verified, custodian verified.
@@ -293,8 +308,6 @@ own change, and none of them is blocked on you:
   "Fresh Insurance" → an Insurance product card, and the 78.7% with no source
   → blank. They belong in the import step that maps an unknown legacy value,
   which is the remaining half of `OPS-14`.
-- **Answer 6 — Objection.** A `kyc_status` of its own, the objection text, and
-  the resubmission loop back into the journey.
 - **Section 3d gaps 3 to 5** — first-funding and first-trade on the client;
   shifting and reactivation as journey types; the partner journey and ARN on
   the partner record. The doc says to size these before promising them, and

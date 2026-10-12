@@ -104,6 +104,35 @@ internal.post('/journeys/:id/assist', requirePermission('kyc.manage'), (req, res
 internal.get('/verification-outcomes', (_req, res) => res.json({ outcomes: kyc.VERIFICATION_OUTCOMES }));
 
 /**
+ * Send an application back to the applicant (gap 2 of the migration mapping).
+ *
+ * Scoped exactly as the verification route below: with a lead, to that lead's
+ * book; without one, kyc.manage alone, because a self-service journey is in
+ * neither book until it completes.
+ */
+internal.post('/journeys/:id/objection', requirePermission('kyc.manage'), (req, res) => {
+  const id = Number(req.params.id);
+  const journey = one('SELECT * FROM kyc_journeys WHERE id = ?', [id]);
+  if (!journey) return res.status(404).json({ error: 'Journey not found' });
+
+  if (journey.lead_id) {
+    const scope = reqScope(req, 'l');
+    const visible = one(`SELECT 1 v FROM leads l WHERE l.id = ? AND ${scope.sql}`,
+      [journey.lead_id, ...scope.params]);
+    if (!visible) return res.status(403).json({ error: 'This journey is outside your visibility scope' });
+  }
+
+  const out = kyc.raiseObjection(id, {
+    text: req.body?.text,
+    stepCode: req.body?.step_code ?? null,
+    userId: req.user.id,
+    source: 'crm',
+  });
+  if (out.error) return res.status(400).json(out);
+  return res.json(out);
+});
+
+/**
  * Record how far verification has got (gap 1 of the migration mapping).
  *
  * Book-scoped like `/journeys/:id`, and for the same reason: a journey belongs
@@ -386,5 +415,12 @@ function publicView(j) {
         waits: s.waits === true,
       })),
     stall: j.stall ? { stalled: j.stall.stalled, seconds_on_step: j.stall.seconds_on_step, timer_s: j.stall.timer_s } : null,
+    /* What has to be fixed, in the applicant's own words-to-read. The reason
+       is the whole point of an objection -- "there is a problem with your
+       application" with no sentence after it is why people ring the branch.
+       Who raised it and how many rounds there have been stay internal. */
+    objection: j.status === 'Objection'
+      ? { text: j.objection_text, step: j.objection_step }
+      : null,
   };
 }

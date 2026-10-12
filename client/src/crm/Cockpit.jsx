@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, money, rupees, shortDate, dateTime, mins, STATE_LABEL, ROLE_LABEL } from '../api.js';
-import { useApi, Loading, ErrorBanner, Stat, Empty, CardStrip, AgeBadge, PriorityBadge, Progress, Tabs, Icon } from '../components/ui.jsx';
+import { useApi, Loading, ErrorBanner, Stat, Empty, CardStrip, AgeBadge, PriorityBadge, Progress, Tabs, Icon, kycBadge } from '../components/ui.jsx';
 import Dashboard from './Dashboard.jsx';
 
 /**
@@ -249,7 +249,7 @@ function CardRows({ rows, navigate }) {
             <td><AgeBadge band={c.age_band} days={c.age_days} /></td>
             <td className="small">
               {c.kyc_status
-                ? <span className={`badge ${c.kyc_status === 'Stalled' || c.kyc_status === 'Abandoned' ? 'badge-red' : c.kyc_status === 'Complete' ? 'badge-green' : 'badge-blue'}`}>{c.kyc_status}</span>
+                ? <span className={kycBadge(c.kyc_status)}>{c.kyc_status}</span>
                 : <span className="muted">—</span>}
             </td>
             <td className="small muted">{c.last_card_activity ? shortDate(c.last_card_activity) : '—'}</td>

@@ -790,7 +790,7 @@ CREATE TABLE IF NOT EXISTS kyc_journeys (
   applicant_mobile TEXT,
   applicant_email TEXT,
   resume_token    TEXT UNIQUE,          -- lets the applicant resume the DKYC journey
-  status          TEXT NOT NULL DEFAULT 'Not Started', -- Not Started / In Progress / Stalled / Abandoned / Complete
+  status          TEXT NOT NULL DEFAULT 'Not Started', -- Not Started / In Progress / Objection / Stalled / Abandoned / Complete
   current_step    TEXT,
   segments        TEXT,                 -- JSON: chosen trading segments
   form_data       TEXT,                 -- JSON: everything captured so far
@@ -1668,6 +1668,23 @@ const COLUMNS = [
      the 15-20 minute promise is about their sitting and not about how long the
      paperwork afterwards takes. */
   ['kyc_journeys', 'applicant_done_at', 'TEXT'],
+  /* An objection is "fix this and resubmit"; a rejection ends it, and the whole
+     APPLICATION RESUBMITTED loop in the legacy tenant depends on telling the
+     two apart (gap 2 of docs/feedback/MIGRATION-STAGE-SOURCE-MAPPING.md).
+     `objection_step` is the step the applicant is sent back to, null when the
+     objection names no particular one; `objection_source` is 'portal' or
+     'crm', because both may raise one (Ritesh, 12 Oct). */
+  ['kyc_journeys', 'objection_text', 'TEXT'],
+  ['kyc_journeys', 'objection_step', 'TEXT'],
+  ['kyc_journeys', 'objection_at', 'TEXT'],
+  ['kyc_journeys', 'objection_by', 'INTEGER'],
+  ['kyc_journeys', 'objection_source', 'TEXT'],
+  ['kyc_journeys', 'objection_rounds', "INTEGER NOT NULL DEFAULT 0"],
+  /* The portal's stage in OUR vocabulary, beside the raw one it sent. Without
+     it the derived status could not tell an objection or a rejection from any
+     other portal stage: both read "In Progress", and Rejected was a value
+     KYC_STATUSES offered that nothing could ever produce. */
+  ['leads', 'kyc_portal_state', 'TEXT'],
   ['tickets', 'sla_version_id', 'INTEGER'],
   /* When the SLA was breached, as opposed to whether it was.
    *

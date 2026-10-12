@@ -366,7 +366,20 @@ export function submitStep(journeyId, stepCode, payload) {
   );
 
   const idx = steps.findIndex((s) => s.code === stepCode);
-  const next = steps.slice(idx + 1).find((s) => stepApplies(s, form));
+
+  /* The next step that applies AND is not already finished.
+   *
+   * "Not already finished" is what makes a resubmission work. An objection
+   * sends the applicant back to one step; everything after it is still done,
+   * and walking forward from there would ask them to re-enter their nominee,
+   * segments, selfie and signature because an address line was wrong. On a
+   * first pass through nothing ahead is done, so this is the same answer the
+   * plain search gave. */
+  const finished = new Set(
+    all("SELECT step_code FROM kyc_journey_progress WHERE journey_id = ? AND status = 'done'", [journeyId])
+      .map((r) => r.step_code),
+  );
+  const next = steps.slice(idx + 1).find((s) => stepApplies(s, form) && !finished.has(s.code));
 
   // Steps that turned out not to apply are marked skipped, not left pending.
   for (const s of steps.slice(idx + 1)) {
@@ -397,11 +410,19 @@ export function submitStep(journeyId, stepCode, payload) {
  * for review is work, and nothing else would have said so.
  */
 function handedOver(journeyId, step) {
+  /* Set rather than defaulted: a journey can arrive here more than once now.
+     An objection sends it back to the applicant, and when they return the
+     review starts again at the beginning -- an application that was
+     internally verified before the objection is not still internally verified
+     after it. The objection itself is cleared, except for the count, which is
+     how "this is the third time" stays answerable. */
   run(
     `UPDATE kyc_journeys SET
-       applicant_done_at    = COALESCE(applicant_done_at, datetime('now')),
-       verification_outcome = COALESCE(verification_outcome, 'UNDER_REVIEW'),
-       verification_at      = COALESCE(verification_at, datetime('now'))
+       applicant_done_at    = datetime('now'),
+       verification_outcome = 'UNDER_REVIEW',
+       verification_at      = datetime('now'),
+       objection_text = NULL, objection_step = NULL, objection_at = NULL,
+       objection_by = NULL, objection_source = NULL
      WHERE id = ?`,
     [journeyId],
   );
@@ -410,9 +431,13 @@ function handedOver(journeyId, step) {
     audit(null, 'kyc_submitted_for_verification', 'kyc_journey', journeyId, { step: step.code });
     return;
   }
+  const again = (journey.objection_rounds ?? 0) > 0;
   run('INSERT INTO activities (lead_id, card_id, type, direction, subject, body, user_id) VALUES (?,?,?,?,?,?,NULL)', [
-    journey.lead_id, journey.card_id, 'KYC Event', 'system', 'Application submitted for verification',
-    `The applicant finished every step they own. "${step.label}" is with Bonanza for review.`,
+    journey.lead_id, journey.card_id, 'KYC Event', 'system',
+    again ? 'Application resubmitted for verification' : 'Application submitted for verification',
+    again
+      ? `The applicant corrected what was objected to. "${step.label}" is back with Bonanza, round ${journey.objection_rounds + 1}.`
+      : `The applicant finished every step they own. "${step.label}" is with Bonanza for review.`,
   ]);
   const card = journey.card_id ? one('SELECT * FROM product_cards WHERE id = ?', [journey.card_id]) : null;
   const lead = one('SELECT * FROM leads WHERE id = ?', [journey.lead_id]);
@@ -420,6 +445,114 @@ function handedOver(journeyId, step) {
     `${lead?.name} has submitted everything. The application is waiting on Bonanza's review.`,
     `/leads/${journey.lead_id}`);
   audit(null, 'kyc_submitted_for_verification', 'kyc_journey', journeyId, { step: step.code });
+}
+
+/**
+ * Send an application back to the applicant with something to fix.
+ *
+ * An objection is not a rejection. A rejection ends the application; an
+ * objection says "this one thing is wrong, correct it and send it back", and
+ * the legacy tenant carried both as lead stages (APPLICATION UNDER OBJECTION,
+ * APPLICATION RESUBMITTED) precisely because the CRM could not hold the
+ * difference -- gap 2 of docs/feedback/MIGRATION-STAGE-SOURCE-MAPPING.md.
+ *
+ * Either side may raise one (Ritesh, 12 Oct): the external eKYC portal reports
+ * them by webhook, and a reviewer at Bonanza can raise one by hand. `source`
+ * records which, because "the portal bounced this" and "our own reviewer
+ * bounced this" are different facts about the same application.
+ *
+ * Naming a step is optional but is what makes the objection actionable: with
+ * one, the applicant goes back to exactly that step and their resume link
+ * works again; without one the application stays with Bonanza and somebody has
+ * to say what happens next.
+ */
+export function raiseObjection(journeyId, { text, stepCode = null, userId = null, source = 'crm' } = {}) {
+  const journey = one('SELECT * FROM kyc_journeys WHERE id = ?', [journeyId]);
+  if (!journey) return { error: 'Journey not found' };
+  if (journey.status === 'Complete') {
+    return { error: 'This application is already complete. Reopening a finished account is not an objection.' };
+  }
+  if (journey.status === 'Abandoned') {
+    return { error: 'This application was abandoned. Take it over before objecting to it.' };
+  }
+
+  /* An objection with no reason is one the applicant cannot act on, and the
+     whole point of the state is that it is recoverable. */
+  const reason = String(text ?? '').trim();
+  if (!reason) return { error: 'Say what has to be fixed', field: 'objection_text' };
+
+  const steps = journeyStepsFor(journey.product_type_id, journey.journey_version_id);
+  const waiting = steps.find((s) => s.waits);
+  if (!waiting) return { error: 'This journey has no verification step.' };
+
+  /* Only once the applicant has handed it over. Before that they are still
+     filling the form in, and there is nothing yet to object to. */
+  if (journey.current_step !== waiting.code && journey.status !== 'Objection') {
+    const at = steps.find((s) => s.code === journey.current_step);
+    return { error: `The applicant has not submitted yet — this journey is at "${at?.label ?? journey.current_step}".` };
+  }
+
+  let back = null;
+  if (stepCode) {
+    back = steps.find((s) => s.code === stepCode);
+    if (!back) return { error: `"${stepCode}" is not a step of this journey`, field: 'objection_step' };
+    if (back.waits) {
+      return { error: 'Verification is not a step the applicant can redo. Name the step that has to be corrected.', field: 'objection_step' };
+    }
+    /* And a step this applicant actually has. The conditional ones -- bank
+       proof after a failed penny drop, income proof above ten lakh -- are in
+       every journey definition but apply to only some applicants. Sending
+       somebody back to one they never saw strands them: it is not in the step
+       list their portal renders, so they would open their resume link to a
+       screen with no form on it. */
+    if (!stepApplies(back, readForm(journey))) {
+      return {
+        error: `"${back.label}" is not part of this applicant's journey, so they cannot redo it.`,
+        field: 'objection_step',
+      };
+    }
+  }
+
+  run(
+    `UPDATE kyc_journeys SET
+       status = 'Objection', current_step = ?,
+       objection_text = ?, objection_step = ?, objection_at = datetime('now'),
+       objection_by = ?, objection_source = ?, objection_rounds = objection_rounds + 1,
+       verification_outcome = NULL, verification_at = NULL
+     WHERE id = ?`,
+    [back?.code ?? waiting.code, reason, back?.code ?? null, userId, source, journeyId],
+  );
+
+  /* Verification goes back to pending. It has not been passed, and leaving it
+     active would let somebody record an outcome on an application that is
+     sitting with the applicant. */
+  run(
+    "UPDATE kyc_journey_progress SET status = 'pending', completed_at = NULL WHERE journey_id = ? AND step_code = ?",
+    [journeyId, waiting.code],
+  );
+  if (back) {
+    run(
+      `UPDATE kyc_journey_progress SET status = 'active', entered_at = datetime('now'), completed_at = NULL
+        WHERE journey_id = ? AND step_code = ?`,
+      [journeyId, back.code],
+    );
+  }
+
+  if (journey.lead_id) {
+    run('INSERT INTO activities (lead_id, card_id, type, direction, subject, body, user_id) VALUES (?,?,?,?,?,?,?)', [
+      journey.lead_id, journey.card_id, 'KYC Event', 'system',
+      back ? `Objection raised on "${back.label}"` : 'Objection raised',
+      `${reason}${source === 'portal' ? ' (raised by the eKYC portal)' : ''}`,
+      userId,
+    ]);
+    const lead = one('SELECT * FROM leads WHERE id = ?', [journey.lead_id]);
+    const card = journey.card_id ? one('SELECT * FROM product_cards WHERE id = ?', [journey.card_id]) : null;
+    notify(card?.product_rm_id ?? lead?.owner_id, 'KYC objection',
+      `${lead?.name} — ${reason}`, `/leads/${journey.lead_id}`);
+  }
+  audit(userId, 'kyc_objection', 'kyc_journey', journeyId, { source, step: back?.code ?? null, rounds: (journey.objection_rounds ?? 0) + 1 });
+
+  return { journey: getJourney(journeyId) };
 }
 
 /**
@@ -454,9 +587,34 @@ export function recordVerification(journeyId, outcome, userId = null) {
   const steps = journeyStepsFor(journey.product_type_id, journey.journey_version_id);
   const waiting = steps.find((s) => s.waits);
   if (!waiting) return { error: 'This journey has no verification step.' };
-  if (journey.current_step !== waiting.code) {
+  /* Recording an outcome on an objected application withdraws the objection:
+     it is how a reviewer undoes one they raised by mistake, or closes one that
+     was settled on a phone call rather than through the portal. The count
+     stays, so the rounds are still on the record. */
+  const withdrawing = journey.status === 'Objection';
+  if (!withdrawing && journey.current_step !== waiting.code) {
     const at = steps.find((s) => s.code === journey.current_step);
     return { error: `The applicant has not finished yet — this journey is at "${at?.label ?? journey.current_step}".` };
+  }
+  if (withdrawing) {
+    run(
+      `UPDATE kyc_journeys SET status = 'In Progress', current_step = ?,
+         objection_text = NULL, objection_step = NULL, objection_at = NULL,
+         objection_by = NULL, objection_source = NULL
+       WHERE id = ?`,
+      [waiting.code, journeyId],
+    );
+    run(
+      `UPDATE kyc_journey_progress SET status = 'active', entered_at = datetime('now')
+        WHERE journey_id = ? AND step_code = ?`,
+      [journeyId, waiting.code],
+    );
+    if (journey.objection_step) {
+      run(
+        "UPDATE kyc_journey_progress SET status = 'done', completed_at = datetime('now') WHERE journey_id = ? AND step_code = ?",
+        [journeyId, journey.objection_step],
+      );
+    }
   }
 
   const was = journey.verification_outcome;
@@ -613,6 +771,17 @@ export function kycHealth(productTypeId = null) {
          could not answer: is this ours to move, or the depository's? */
       verification: outcome && r.status !== 'Complete'
         ? { outcome: outcome.code, label: outcome.label, waiting_on: outcome.waiting_on, since: r.verification_at }
+        : null,
+      /* Back with the applicant, and why. A column reading "Objection" with
+         nothing beside it is the legacy tenant's problem restated. */
+      objection: r.status === 'Objection'
+        ? {
+          text: r.objection_text,
+          step: r.objection_step,
+          since: r.objection_at,
+          source: r.objection_source,
+          rounds: r.objection_rounds ?? 0,
+        }
         : null,
       age_days: daysSince(r.created_at),
     };

@@ -318,6 +318,15 @@ function Journey() {
     );
   }
 
+  /* Sent back, with no step named.
+   *
+   * The portal raises objections without saying which of our steps is wrong,
+   * so there is nothing for the applicant to fill in yet -- but there IS
+   * something to tell them, and the reason is the whole point of an objection.
+   * Saying "being verified" here would be the version that makes people ring
+   * the branch. */
+  if (journey.objection && (!step || step.waits)) return <Objected journey={journey} />;
+
   /* The applicant's part is over.
    *
    * The step they are on is one they cannot fill in -- Bonanza reviews the
@@ -441,6 +450,18 @@ function Journey() {
           {overTimer && (
             <div className="warnbox">
               Taking longer than usual on this step? Call <strong>022-6153-0000</strong> and we will complete it with you.
+            </div>
+          )}
+          {/* Why they are back on a step they already did. Without this the
+              resume link reopens a filled-in form for no stated reason, which
+              reads as the application having been lost. */}
+          {journey.objection && (
+            <div className="warnbox">
+              <strong>One thing needs correcting.</strong> {journey.objection.text}
+              <div className="tiny" style={{ marginTop: 4 }}>
+                Everything else you sent is saved. Correct this step and your application goes
+                straight back for checking.
+              </div>
             </div>
           )}
 
@@ -594,6 +615,37 @@ function Field({ field, value, onChange, onSendOtp }) {
 }
 
 /* ----------------------------------------------------------------- done */
+
+/**
+ * Sent back, with no step for the applicant to redo.
+ *
+ * They are told what is wrong and that somebody will call: an objection the
+ * portal raised names a reason, not one of our steps, so there is nothing to
+ * put in front of them until a reviewer decides what has to change.
+ */
+function Objected({ journey }) {
+  return (
+    <div className="portal-body">
+      <section className="glass section-card outcome-card">
+        <span className="outcome-icon material-symbols-rounded is-paused" aria-hidden>help</span>
+        <h1>We need to check one thing</h1>
+        <p className="muted">{journey.objection?.text}</p>
+        <p>
+          Nothing you sent has been lost, and your application has not been rejected.
+          A Bonanza representative will call you to put this right.
+        </p>
+
+        <div className="notice" style={{ textAlign: 'left', width: '100%' }}>
+          <span className="material-symbols-rounded" aria-hidden>call</span>
+          <div>
+            Want to sort it now? Call <strong>022-6153-0000</strong> and quote application reference{' '}
+            <code>{String(journey.resume_token).slice(0, 8).toUpperCase()}</code>.
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
 
 /**
  * Everything is in, and somebody else is holding it.

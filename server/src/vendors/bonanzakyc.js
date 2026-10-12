@@ -120,6 +120,14 @@ const STAGE_MAP = {
   esign: 'eSign', nsdl: 'eSign',
   complete: 'Complete', completed: 'Complete', activated: 'Complete', ucc: 'Complete',
   rejected: 'Rejected', failed: 'Rejected',
+  /* The two the legacy tenant carried as lead stages, and the pair the whole
+     resubmission loop turns on: an objection is "fix this and send it back",
+     a rejection is the end. Mapping an objection to Rejected -- which is what
+     an unlisted stage falling through to 'In Progress' very nearly did -- would
+     take a recoverable application off the follow-up list for good. */
+  objection: 'Objection', under_objection: 'Objection', objected: 'Objection',
+  application_under_objection: 'Objection',
+  resubmitted: 'Resubmitted', application_resubmitted: 'Resubmitted',
 };
 
 export function normaliseStatus(payload) {
@@ -132,6 +140,10 @@ export function normaliseStatus(payload) {
     raw_stage: rawStage || null,
     complete: STAGE_MAP[key] === 'Complete',
     rejected: STAGE_MAP[key] === 'Rejected',
+    /* Separate flags rather than one "terminal" one: an objection is acted on
+       (the applicant is sent back to a step) and a rejection is recorded. */
+    objection: STAGE_MAP[key] === 'Objection',
+    resubmitted: STAGE_MAP[key] === 'Resubmitted',
     client_code: payload?.client_code || payload?.ucc || payload?.clientCode || null,
     crm_ref: payload?.crm_ref || null,
     mobile: payload?.mobile ? String(payload.mobile).replace(/\D/g, '').slice(-10) : null,

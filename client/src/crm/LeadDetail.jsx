@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, money, rupees, shortDate, dateTime, mins, STATE_LABEL, ROLE_LABEL, appUrl } from '../api.js';
 import { checkField, checkAll, fieldErrorsFrom } from '../fieldRules.js';
-import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, AgeBadge, PriorityBadge, Progress, CardDot, Icon } from '../components/ui.jsx';
+import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, AgeBadge, PriorityBadge, Progress, CardDot, Icon, kycBadge } from '../components/ui.jsx';
 import ActivityComposer from './ActivityComposer.jsx';
 import InCall from './InCall.jsx';
 import ProductCard from '../components/ProductCard.jsx';
@@ -89,7 +89,7 @@ export default function LeadDetail({ session }) {
             <span>· {lead.language}</span>
             <span className="badge">{lead.stage}</span>
             <AgeBadge band={lead.age_band} days={lead.age_days} />
-            <span className={`badge ${lead.kyc_status === 'Complete' ? 'badge-green' : ['Stalled', 'Abandoned'].includes(lead.kyc_status) ? 'badge-red' : ''}`}>
+            <span className={kycBadge(lead.kyc_status)}>
               KYC: {lead.kyc_status}
             </span>
             {lead.open_tickets > 0 && <span className="badge badge-red">{lead.open_tickets} open ticket</span>}
@@ -773,6 +773,63 @@ function KycTab({ lead, session, reload, onError }) {
   );
 }
 
+/**
+ * Send it back, and say what for.
+ *
+ * The reason is required by the server and asked for here rather than
+ * confirmed afterwards: an objection with no sentence in it is one the
+ * applicant cannot act on. Naming a step is optional — with one, the applicant
+ * gets their link back and goes straight to it; without one, the application
+ * stays here for somebody to decide.
+ */
+function ObjectionForm({ journey, busy, onRaise }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  const [stepCode, setStepCode] = useState('');
+
+  /* Only the steps this applicant actually has, and only ones they can fill
+     in. The server refuses the rest, so offering them would be a dialog that
+     disagrees with the write. */
+  const redoable = (journey.steps ?? []).filter((s) => s.applies && !s.waits && (s.fields ?? []).length);
+
+  if (!open) {
+    return (
+      <button type="button" className="btn btn-sm" style={{ marginTop: 8 }} onClick={() => setOpen(true)}>
+        Send it back with a correction
+      </button>
+    );
+  }
+
+  return (
+    <div className="stack" style={{ marginTop: 10 }}>
+      <label>
+        What has to be fixed?
+        <textarea
+          rows={2} value={text} onChange={(e) => setText(e.target.value)}
+          placeholder="The address proof is unreadable — please upload it again."
+        />
+      </label>
+      <label>
+        Which step should they redo?
+        <select value={stepCode} onChange={(e) => setStepCode(e.target.value)}>
+          <option value="">Nothing — keep it with us</option>
+          {redoable.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
+        </select>
+      </label>
+      <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpen(false)}>Cancel</button>
+        <button
+          type="button" className="btn btn-sm btn-danger"
+          disabled={busy || !text.trim()}
+          onClick={() => onRaise(text.trim(), stepCode)}
+        >
+          Raise the objection
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function JourneyCard({ journey, canManage, onError, reload, setCoach, busy, setBusy }) {
   const [full, { reload: reloadJourney }] = useApi(`/kyc/journeys/${journey.id}`);
   /* The outcomes come from the server rather than a list repeated here, so the
@@ -789,6 +846,15 @@ function JourneyCard({ journey, canManage, onError, reload, setCoach, busy, setB
     setBusy(true);
     try {
       await api.post(`/kyc/journeys/${journey.id}/verification`, { outcome });
+      reloadJourney();
+      reload();
+    } catch (err) { onError(err.message); } finally { setBusy(false); }
+  }
+
+  async function raise(text, stepCode) {
+    setBusy(true);
+    try {
+      await api.post(`/kyc/journeys/${journey.id}/objection`, { text, step_code: stepCode || null });
       reloadJourney();
       reload();
     } catch (err) { onError(err.message); } finally { setBusy(false); }
@@ -834,6 +900,32 @@ function JourneyCard({ journey, canManage, onError, reload, setCoach, busy, setB
       </div>
 
       <div className="card-body">
+        {full.status === 'Objection' && (
+          <div className="glass notice notice-warn">
+            <Icon name="warning" size={16} />
+            <div>
+              <p>
+                <strong>Sent back to the applicant{full.objection_step ? ` at "${full.steps.find((s) => s.code === full.objection_step)?.label ?? full.objection_step}"` : ''}.</strong>{' '}
+                {full.objection_text}
+              </p>
+              <p className="tiny muted">
+                {full.objection_source === 'portal' ? 'Raised by the eKYC portal' : 'Raised at Bonanza'}
+                {full.objection_at ? ` on ${full.objection_at.slice(0, 10)}` : ''}
+                {full.objection_rounds > 1 ? ` · round ${full.objection_rounds}` : ''}
+                {'. '}
+                This is not a rejection — the application comes back for checking once it is corrected.
+              </p>
+              {canManage && (
+                <button
+                  type="button" className="btn btn-sm" disabled={busy}
+                  onClick={() => record('UNDER_REVIEW')}
+                >
+                  Withdraw the objection
+                </button>
+              )}
+            </div>
+          </div>
+        )}
         {waiting && (
           <div className="glass notice">
             <div>
@@ -856,6 +948,12 @@ function JourneyCard({ journey, canManage, onError, reload, setCoach, busy, setB
                       </button>
                     ))}
                 </div>
+              )}
+              {canManage && (
+                <ObjectionForm
+                  journey={full} busy={busy}
+                  onRaise={(text, stepCode) => raise(text, stepCode)}
+                />
               )}
               {!canManage && <p className="tiny muted">Only a Product RM or supervisor can record verification.</p>}
             </div>

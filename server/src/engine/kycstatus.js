@@ -56,13 +56,29 @@ export const kycStatusSql = (alias = 'l') => `
       WHERE j.lead_id = ${alias}.id
       ORDER BY CASE j.status
         WHEN 'Complete'    THEN 0
-        WHEN 'In Progress' THEN 1
-        WHEN 'Stalled'     THEN 2
-        WHEN 'Abandoned'   THEN 3
-        ELSE 4 END, j.id DESC
+        /* Further than In Progress: the applicant finished everything and was
+           sent back for one thing, which is a later state than still filling
+           the form in. It ranks below Complete because it is not done.
+
+           A BLOCK comment, not a line one: this whole fragment is collapsed to
+           a single line by the .replace below, and a "--" comment would then
+           comment out the rest of the statement -- which it did, and SQLite
+           reported it as "incomplete input". */
+        WHEN 'Objection'   THEN 1
+        WHEN 'In Progress' THEN 2
+        WHEN 'Stalled'     THEN 3
+        WHEN 'Abandoned'   THEN 4
+        ELSE 5 END, j.id DESC
       LIMIT 1),
     CASE
       WHEN ${alias}.client_code IS NOT NULL THEN 'Complete'
+      /* Read from the stage mapped into our own vocabulary, not from the raw
+         string the portal sent: an objection and a rejection are the two
+         outcomes that have to be told apart, and both used to read
+         "In Progress" -- Rejected was a status KYC_STATUSES offered and
+         nothing could produce. */
+      WHEN ${alias}.kyc_portal_state = 'Objection' THEN 'Objection'
+      WHEN ${alias}.kyc_portal_state = 'Rejected' THEN 'Rejected'
       WHEN ${alias}.kyc_portal_stage IS NOT NULL THEN 'In Progress'
     END,
     'Not Started'
@@ -88,5 +104,5 @@ export const withKycStatus = (lead) =>
 
 /** Every value the derived status can take, for pickers and validation. */
 export const KYC_STATUSES = [
-  'Not Started', 'In Progress', 'Stalled', 'Abandoned', 'Complete', 'Rejected',
+  'Not Started', 'In Progress', 'Objection', 'Stalled', 'Abandoned', 'Complete', 'Rejected',
 ];

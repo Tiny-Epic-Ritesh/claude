@@ -2577,6 +2577,35 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
       eq(lead.client_code, `BZ${RUN}`, 'the client code was not recorded');
     });
 
+    await check('the portal can say objection, and it is not rejection', async () => {
+      /* The pair the whole resubmission loop turns on, and the CRM could hold
+         neither: both read "In Progress", because the derived status only knew
+         whether a portal stage existed at all (gap 2 of the migration
+         mapping). What is checked here is the live path -- signature, mapping,
+         and what gets stored. Which status each produces is checked in
+         test/kycobjection.test.mjs, on a lead with no client code to outrank
+         it; this lead already has one from the callback above. */
+      const { data: objection } = await req('/api/webhooks/bonanza-kyc/status', {
+        method: 'POST', headers: signed(HOOK), expect: 200,
+        body: {
+          crm_ref: `LEAD-${REF.leadId}`, stage: 'under_objection',
+          remarks: 'Address proof is unreadable', mobile: mob(1),
+        },
+      });
+      eq(objection.stage, 'Objection', 'an objection was mapped to something else');
+
+      const { data: lead } = await req(`/api/leads/${REF.leadId}`, { token: T.admin, expect: 200 });
+      eq(lead.kyc_portal_state, 'Objection', 'the mapped stage was not stored beside the raw one');
+      eq(lead.kyc_portal_stage, 'under_objection', 'the portal\'s own words were not kept');
+
+      const { data: rejection } = await req('/api/webhooks/bonanza-kyc/status', {
+        method: 'POST', headers: signed(HOOK), expect: 200,
+        body: { crm_ref: `LEAD-${REF.leadId}`, stage: 'rejected', reason: 'Name mismatch', mobile: mob(1) },
+      });
+      eq(rejection.stage, 'Rejected', 'a rejection was mapped to something else');
+      assert(rejection.stage !== 'Objection', 'a rejection was read as a recoverable objection');
+    });
+
     await check('an unknown portal stage does not mark the journey complete', async () => {
       const { data } = await req('/api/webhooks/bonanza-kyc/status', {
         method: 'POST', headers: signed(HOOK), expect: 200,

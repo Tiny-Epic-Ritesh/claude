@@ -108,6 +108,28 @@ export function useApi(path, deps = []) {
   return [data, { loading, error, reload, setData, total }];
 }
 
+/**
+ * What a KYC status looks like.
+ *
+ * One map rather than a ternary chain repeated per screen. There were three,
+ * each with its own idea of the vocabulary, and the two statuses added on
+ * 12 October -- Objection and Rejected, neither of which the derived status
+ * could produce before -- would have rendered colourless on all three.
+ *
+ * Objection is amber and not red on purpose: it is recoverable work, which is
+ * the entire distinction the state exists to carry. Rejected is the red one.
+ */
+const KYC_TONE = {
+  Complete: 'badge-green',
+  Objection: 'badge-amber',
+  Rejected: 'badge-red',
+  Stalled: 'badge-red',
+  Abandoned: 'badge-red',
+  'In Progress': 'badge-blue',
+};
+
+export const kycBadge = (status) => `badge ${KYC_TONE[status] ?? ''}`.trim();
+
 export const Spinner = () => <span className="spinner" aria-label="Loading" />;
 
 export function Loading({ label = 'Loading…' }) {

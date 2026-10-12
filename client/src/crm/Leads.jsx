@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { api, money, shortDate, STATE_LABEL } from '../api.js';
-import { useApi, Icon, Loading, ErrorBanner, Empty, Modal, Spinner, CardStrip, AgeBadge } from '../components/ui.jsx';
+import { useApi, Icon, Loading, ErrorBanner, Empty, Modal, Spinner, CardStrip, AgeBadge, kycBadge } from '../components/ui.jsx';
 import ColumnChooser from '../components/ColumnChooser.jsx';
 import ActionMenu, { BulkBar } from '../components/ActionMenu.jsx';
 import ActionModal from './ActionModals.jsx';
@@ -104,7 +104,7 @@ const LEAD_COLUMNS = {
   source: { cls: 'small', render: (l) => l.source || '—' },
   language: { cls: 'small muted', render: (l) => l.language || '—' },
   risk_profile: { cls: 'small', render: (l) => l.risk_profile || '—' },
-  kyc_status: { cls: 'small', render: (l) => (l.kyc_status ? <span className="badge">{l.kyc_status}</span> : '—') },
+  kyc_status: { cls: 'small', render: (l) => (l.kyc_status ? <span className={kycBadge(l.kyc_status)}>{l.kyc_status}</span> : '—') },
   client_code: { cls: 'small mono', render: (l) => l.client_code || '—' },
   created_at: { cls: 'tiny muted', render: (l) => shortDate(l.created_at) },
   updated_at: { cls: 'tiny muted', render: (l) => shortDate(l.updated_at) },

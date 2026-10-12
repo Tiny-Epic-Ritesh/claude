@@ -28,6 +28,7 @@ import { saveMessage } from '../engine/metaads.js';
 import { applyScore } from '../engine/rules.js';
 import { assignLead } from '../engine/assignment.js';
 import { kycStatusSql, kycStatusFor } from '../engine/kycstatus.js';
+import * as kyc from '../engine/kyc.js';
 import { resolveLead } from '../engine/callmatch.js';
 
 const router = Router();
@@ -235,11 +236,18 @@ router.post('/bonanza-kyc/status', guard('bonanza_kyc', bonanzakyc.verifyWebhook
     return res.json({ ok: true, matched: false });
   }
 
-  // The portal's own stage is kept; the lead's KYC status is derived from it
-  // and from any internal journey rather than mirrored here.
+  /* The portal's own stage is kept; the lead's KYC status is derived from it
+     and from any internal journey rather than mirrored here.
+
+     Both the raw stage and the one mapped into our vocabulary are stored. The
+     raw one is the audit trail -- what the portal actually said -- and the
+     mapped one is what the derived status reads, because an objection and a
+     rejection have to be told apart and matching raw strings in SQL would
+     break the first time the portal reworded one. */
   run(
-    'UPDATE leads SET kyc_portal_stage = ?, kyc_external_ref = ?, client_code = COALESCE(?, client_code) WHERE id = ?',
-    [status.raw_stage, crmRef || null, status.client_code, lead.id],
+    `UPDATE leads SET kyc_portal_stage = ?, kyc_portal_state = ?, kyc_external_ref = ?,
+       client_code = COALESCE(?, client_code) WHERE id = ?`,
+    [status.raw_stage, status.stage || null, crmRef || null, status.client_code, lead.id],
   );
 
   run(
@@ -247,8 +255,43 @@ router.post('/bonanza-kyc/status', guard('bonanza_kyc', bonanzakyc.verifyWebhook
     [lead.id, 'KYC Event', 'system', `eKYC portal: ${status.stage || status.raw_stage}`, status.reason || null],
   );
 
+  /* An objection from the portal is acted on, not just filed.
+   *
+   * Where the lead has a CRM journey, the objection goes onto it -- that is
+   * what sends the applicant back to a step, makes their resume link work
+   * again and puts the application in a state the CRM can report. Where there
+   * is no journey (the portal ran the whole KYC), the mapped stage above is
+   * enough on its own for the derived status to read Objection.
+   *
+   * The portal does not tell us which step is wrong, only why, so no step is
+   * named: the application stays with Bonanza and a reviewer decides what the
+   * applicant has to redo. Guessing a step from free text would send somebody
+   * back to re-enter the wrong thing. */
+  if (status.objection || status.resubmitted) {
+    const journey = one(
+      `SELECT id FROM kyc_journeys WHERE lead_id = ? AND status NOT IN ('Complete','Abandoned')
+        ORDER BY id DESC LIMIT 1`,
+      [lead.id],
+    );
+    if (journey) {
+      const out = status.objection
+        ? kyc.raiseObjection(journey.id, {
+          text: status.reason || 'The eKYC portal raised an objection without giving a reason.',
+          source: 'portal',
+        })
+        : kyc.recordVerification(journey.id, 'UNDER_REVIEW', null);
+      if (out.error) {
+        audit(null, 'kyc_portal_objection_ignored', 'kyc_journey', journey.id,
+          { stage: status.raw_stage, reason: out.error });
+      }
+    }
+  }
+
   if (status.complete && lead.owner_id) {
     notify(lead.owner_id, 'KYC complete', `${lead.name} — account opened${status.client_code ? ` (${status.client_code})` : ''}`, `/leads/${lead.id}`);
+  }
+  if (status.objection && lead.owner_id) {
+    notify(lead.owner_id, 'KYC objection', `${lead.name} — ${status.reason || 'the portal raised an objection'}`, `/leads/${lead.id}`);
   }
   if (status.rejected && lead.owner_id) {
     notify(lead.owner_id, 'KYC rejected', `${lead.name} — ${status.reason || 'rejected at the portal'}`, `/leads/${lead.id}`);
