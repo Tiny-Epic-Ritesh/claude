@@ -115,6 +115,45 @@ async function token() {
   return cached.token;
 }
 
+/**
+ * Ask CUBE whether the credentials we hold actually work.
+ *
+ * For the Setup screen: an administrator who has just pasted a username and
+ * password wants to know now, not on the first agent's first call. It asks for
+ * a token, which is the one call that proves the tenant credentials and nothing
+ * else -- no number is dialled and no campaign is touched.
+ *
+ * The cached token is dropped first, or a test after a password change would
+ * pass on the strength of the old one.
+ *
+ * Never returns the credentials, and the message is CUBE's own words.
+ */
+export async function checkCredentials() {
+  resetToken();
+  if (!cfg.configured) {
+    return { ok: false, configured: false, simulated: true, message: 'No CUBE server, username and password are set yet.' };
+  }
+  try {
+    const { data, simulated } = await request('/QuickCall61AuthToken/AuthToken/', {
+      UserID: cfg.user,
+      Password: cfg.password,
+    }, { authenticated: false, attempts: 1 });
+
+    if (simulated) {
+      return { ok: false, configured: true, simulated: true, message: 'Simulation is forced on, so CUBE was not called.' };
+    }
+    if (!data?.Token) {
+      return { ok: false, configured: true, simulated: false, message: data?.Message || 'CUBE answered without a token.' };
+    }
+    return { ok: true, configured: true, simulated: false, message: 'CUBE accepted the credentials.' };
+  } catch (err) {
+    /* The vendor's message, not a stack: an administrator reads this. */
+    return { ok: false, configured: true, simulated: false, message: err?.message || 'CUBE could not be reached.' };
+  } finally {
+    resetToken();
+  }
+}
+
 /* -------------------------------------------------------- the transport */
 
 /**

@@ -48,6 +48,7 @@ export default function Telephony() {
       )}
 
       <Connection state={data.connection} />
+      <Credentials rows={data.credentials ?? []} onSaved={done} onError={setProblem} />
       <Queues data={data} onSaved={done} onError={setProblem} />
       <Agents agents={data.agents} onSaved={done} onError={setProblem} />
     </section>
@@ -86,10 +87,108 @@ function Connection({ state }) {
       {!live && (
         <p className="tiny muted" style={{ margin: '10px 0 0' }}>
           Calls are simulated end to end: the request body is built exactly as CUBE
-          would receive it, and answered by a local stub. Set the CUBE credentials on
-          the server to go live — nothing here changes when you do.
+          would receive it, and answered by a local stub. Fill in the connection below
+          to go live — nothing else here changes when you do.
         </p>
       )}
+    </div>
+  );
+}
+
+/* --------------------------------------------------------- credentials
+ *
+ * The box an administrator pastes CUBE's credentials into. They used to live
+ * only in the server's environment file, so connecting the dialler needed a
+ * deployment and somebody with shell access — and a rotated password left the
+ * dialler down until one could be arranged.
+ *
+ * A secret is write-only on purpose. The field stays empty on every visit and
+ * the line underneath says whether something is stored, who stored it and when.
+ * Nothing shows it again, so a screenshot of this page gives away nothing.
+ */
+function Credentials({ rows, onSaved, onError }) {
+  const [form, setForm] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [tested, setTested] = useState(null);
+
+  if (!rows.length) return null;
+  const set = (name) => (e) => setForm((f) => ({ ...f, [name]: e.target.value }));
+  const touched = Object.keys(form).filter((k) => form[k] !== undefined);
+
+  const save = async (e) => {
+    e.preventDefault();
+    setBusy(true); setTested(null);
+    try {
+      await api.post('/setup/dialler/credentials', form);
+      setForm({});
+      onSaved('CUBE connection saved.');
+    } catch (err) { onError(err.message); } finally { setBusy(false); }
+  };
+
+  const test = async () => {
+    setBusy(true); setTested(null);
+    try { setTested(await api.post('/setup/dialler/test', {})); }
+    catch (err) { onError(err.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <div>
+          <h2>CUBE connection</h2>
+          <span className="tiny muted">
+            Stored encrypted in this CRM, on your own server. A password is never shown again.
+          </span>
+        </div>
+      </div>
+
+      <form className="stack" style={{ gap: 12 }} onSubmit={save}>
+        {rows.map((r) => (
+          <div className="field" key={r.name}>
+            <label htmlFor={`cube-${r.name}`}>{r.label}</label>
+            <input
+              id={`cube-${r.name}`}
+              type={r.secret ? 'password' : 'text'}
+              autoComplete="off"
+              value={form[r.name] ?? (r.secret ? '' : r.value ?? '')}
+              placeholder={r.secret && r.set ? '•••••••• — stored' : ''}
+              onChange={set(r.name)}
+            />
+            <span className="tiny muted">
+              {r.help}
+              {r.set && (
+                <>
+                  {' '}
+                  {r.from_environment
+                    ? '· Currently coming from the server environment; anything you save here replaces it.'
+                    : `· Stored${r.updated_by_name ? ` by ${r.updated_by_name}` : ''}${r.updated_at ? ` on ${r.updated_at.slice(0, 10)}` : ''}.`}
+                </>
+              )}
+            </span>
+          </div>
+        ))}
+
+        <div className="row" style={{ gap: 8 }}>
+          <button type="submit" className="btn" disabled={busy || !touched.length}>
+            {busy ? <Spinner /> : <Icon name="key" size={16} />} Save connection
+          </button>
+          <button type="button" className="btn-ghost" onClick={test} disabled={busy}>
+            <Icon name="cable" size={16} /> Test connection
+          </button>
+        </div>
+
+        <p className="tiny muted" style={{ margin: 0 }}>
+          Leave a field blank to keep what is stored. Clearing one falls back to the
+          server environment, if that is set.
+        </p>
+
+        {tested && (
+          <div className={`glass notice ${tested.ok ? 'notice-ok' : 'notice-warn'}`}>
+            <Icon name={tested.ok ? 'check_circle' : 'error'} size={16} />
+            <span>{tested.message}</span>
+          </div>
+        )}
+      </form>
     </div>
   );
 }

@@ -82,7 +82,7 @@ angles. Building them separately would produce four screens for one job.
 
 | ID | Title | Blocked by |
 |---|---|---|
-| P3-44 | CUBE telephony end-to-end verification (`Bonanza_APITest`) | The tenant UserID and password |
+| P3-44 | CUBE telephony end-to-end verification (`Bonanza_APITest`) | The tenant UserID and password. There is now a box for them in Setup → Telephony (12 Oct), so this needs no deployment -- only the credential and a host that resolves |
 | P3-13 | Phone call form (configurable disposition form) | ~~P3-44~~ **Built 10 Sep without it** (`5dda2c3`): the form is a CRM object |
 | P3-14 | Call recording, transcription and AI call summary | P3-44 |
 
@@ -269,4 +269,4 @@ those answers turned into work that nobody is blocked on any more.
 | ~~N-9~~ | **Answered 10 Sep — yes**, folded into the next browser session rather than run as a standalone task. |
 | ~~N-4~~ | **Resolved** — order approved: automation, then connectors, then reports, then internal comms, with LAPPS challenged. `P3-16-automation-design.md` is with you for approval. |
 | ~~N-5~~ | **Resolved** — one connectors build, absorbing P2-14, P2-23, P2-25 and P3-20. |
-| **N-6** | Are the CUBE tenant credentials available yet? Three tickets sit behind them. |
+| **N-6** | Are the CUBE tenant credentials available yet? **Answered 6 Oct -- a test credential is fine to start with, and Ritesh asked for somewhere to paste it rather than an `.env` file.** Built 12 Oct: Setup → Telephony now has a **CUBE connection** box for the server, tenant username, password, default campaign and callback secret. Stored encrypted in the CRM on Bonanza's own server, write-only (a secret is never shown again), audited, and with a Test connection button that asks CUBE for a token and dials nobody. What is set there wins over the environment, which still works as the fallback. Still waiting on the credential itself and a host that resolves -- `uat-raphsody.in` has no DNS record. |

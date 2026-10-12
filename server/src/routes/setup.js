@@ -34,6 +34,10 @@ import {
   invalidate, explainAccess, dataScope, CAPABILITY_CATALOGUE,
 } from '../engine/access.js';
 import { vendorStatus } from '../vendors/config.js';
+import {
+  statusOf as vendorSettingStatus, setValue as setVendorSetting, valueOf as vendorSettingValue,
+} from '../vendors/store.js';
+import { checkCredentials as checkQuickcall } from '../vendors/quickcall.js';
 import { snapshot } from '../engine/versioning.js';
 import { sendCsv } from '../engine/csv.js';
 import {
@@ -2862,6 +2866,39 @@ router.delete('/field-masking/fields/:field', requirePermission('admin.users'), 
  * two screens is how the two drift apart.
  */
 
+/**
+ * The CUBE connection itself, settable from this screen (N-6).
+ *
+ * The credentials used to live only in `server/.env`, so connecting CUBE meant
+ * a deployment and somebody with shell access -- and a vendor rotating a
+ * password left the dialler down until one could be arranged. They are stored
+ * in the CRM now, encrypted, and what is set here wins over the environment.
+ *
+ * A secret is write-only: the screen is told that it is set, by whom and when,
+ * and never what it is. The server URL and the default campaign are not
+ * secrets, so those are shown.
+ */
+const QUICKCALL_SETTINGS = [
+  { name: 'base_url', label: 'CUBE server', secret: false, env: 'CUBE_QUICKCALL_URL', help: 'For example https://raphsody.in. The UAT host has no DNS entry, so a test deployment needs the host CUBE gives you.' },
+  { name: 'user', label: 'Tenant username', secret: true, env: 'CUBE_QUICKCALL_USER', help: "The tenant's API credential, not an agent's login." },
+  { name: 'password', label: 'Tenant password', secret: true, env: 'CUBE_QUICKCALL_PASSWORD', help: 'Stored encrypted. It is never shown again, here or anywhere else.' },
+  { name: 'campaign', label: 'Default campaign', secret: false, env: 'CUBE_QUICKCALL_CAMPAIGN', help: 'Used when a lead does not name its own. Must be a campaign CUBE actually has.' },
+  { name: 'webhook_secret', label: 'Callback secret', secret: true, env: 'CUBE_QUICKCALL_WEBHOOK_SECRET', help: 'The shared secret CUBE presents on its Save Call callback. Without it call events are refused.' },
+];
+
+const quickcallSettingStatus = () => {
+  const rows = vendorSettingStatus(
+    'quickcall',
+    QUICKCALL_SETTINGS.map((s) => ({ name: s.name, label: s.label, help: s.help, secret: s.secret })),
+    Object.fromEntries(QUICKCALL_SETTINGS.map((s) => [s.name, process.env[s.env] || ''])),
+  );
+  /* A setting that is not a secret is shown, so the screen can display which
+     server and campaign are in use rather than only that something is. */
+  return rows.map((r) => (r.secret
+    ? r
+    : { ...r, value: vendorSettingValue('quickcall', r.name) ?? process.env[QUICKCALL_SETTINGS.find((s) => s.name === r.name).env] ?? null }));
+};
+
 /** Everything the telephony screen needs, in one call. */
 router.get('/dialler', requirePermission('admin.system'), (req, res) => {
   const orgs = orgsFor(req.user);
@@ -2869,6 +2906,7 @@ router.get('/dialler', requirePermission('admin.system'), (req, res) => {
 
   res.json({
     connection: vendorStatus().quickcall,
+    credentials: quickcallSettingStatus(),
     campaigns: all(
       `SELECT c.*, pt.name AS product_name
        FROM dialler_campaigns c
@@ -2892,6 +2930,49 @@ router.get('/dialler', requirePermission('admin.system'), (req, res) => {
     products: all('SELECT id, name FROM product_types ORDER BY name'),
     orgs,
   });
+});
+
+/**
+ * Store the CUBE connection settings.
+ *
+ * Only the fields actually sent are touched, so saving the server URL does not
+ * wipe a password nobody retyped. A field sent blank is cleared, which falls
+ * back to the environment rather than leaving the vendor half-configured.
+ *
+ * The configuration audit records which setting changed, by whom and when --
+ * never the value, not even the old one.
+ */
+router.post('/dialler/credentials', requirePermission('admin.system'), (req, res) => {
+  const body = req.body ?? {};
+  const known = new Map(QUICKCALL_SETTINGS.map((s) => [s.name, s]));
+  const unknown = Object.keys(body).filter((k) => !known.has(k));
+  if (unknown.length) {
+    return res.status(400).json({ error: `Not a CUBE setting: ${unknown.join(', ')}`, allowed: [...known.keys()] });
+  }
+
+  const changed = [];
+  for (const [name, spec] of known) {
+    if (body[name] === undefined) continue;
+    const { cleared } = setVendorSetting('quickcall', name, body[name], { secret: spec.secret, actorId: req.user.id });
+    changed.push({ name, cleared });
+    auditConfig('integration', `quickcall.${name}`, cleared ? 'cleared' : 'updated',
+      null, { set: !cleared }, req.user.id);
+  }
+  if (!changed.length) return res.status(400).json({ error: 'Nothing to save' });
+
+  return res.json({ ok: true, changed, credentials: quickcallSettingStatus(), connection: vendorStatus().quickcall });
+});
+
+/**
+ * Ask CUBE whether what we hold works, now rather than on the first call.
+ *
+ * It fetches a token and throws it away: no number is dialled, no campaign is
+ * touched, and the credentials never appear in the answer.
+ */
+router.post('/dialler/test', requirePermission('admin.system'), async (req, res) => {
+  const out = await checkQuickcall();
+  audit(req.user.id, 'integration.test', 'vendor', null, { vendor: 'quickcall', ok: out.ok });
+  res.json(out);
 });
 
 router.post('/dialler/campaigns', requirePermission('admin.system'), (req, res) => {

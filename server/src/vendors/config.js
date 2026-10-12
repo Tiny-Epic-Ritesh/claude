@@ -17,10 +17,21 @@
  * vendor changing a host must never require a code change.
  */
 
+import { valueOf } from './store.js';
+
 const env = (key, fallback = null) => {
   const v = process.env[key];
   return v === undefined || v === '' ? fallback : v;
 };
+
+/**
+ * What an administrator set in Setup, falling back to the environment.
+ *
+ * Setup wins, because somebody who has just pasted a credential on a screen
+ * expects it to be the one used. The environment still works untouched for a
+ * deployment that has always used it.
+ */
+const stored = (vendor, name, key, fallback = null) => valueOf(vendor, name) ?? env(key, fallback);
 
 const flag = (key, fallback = false) => {
   const v = env(key);
@@ -44,10 +55,10 @@ export const quickcall = {
    * plausible real Indian mobiles. Set CUBE_QUICKCALL_URL explicitly instead,
    * and only for a deployment meant to place live calls.
    */
-  baseUrl: env('CUBE_QUICKCALL_URL', 'https://uat-raphsody.in'),
+  get baseUrl() { return stored('quickcall', 'base_url', 'CUBE_QUICKCALL_URL', 'https://uat-raphsody.in'); },
   /** Tenant credentials for AuthToken. Not an agent's credentials. */
-  user: env('CUBE_QUICKCALL_USER'),
-  password: env('CUBE_QUICKCALL_PASSWORD'),
+  get user() { return stored('quickcall', 'user', 'CUBE_QUICKCALL_USER'); },
+  get password() { return stored('quickcall', 'password', 'CUBE_QUICKCALL_PASSWORD'); },
   /**
    * Default campaign, used when a lead does not name its own.
    *
@@ -61,13 +72,13 @@ export const quickcall = {
    * rejects the call naming a campaign it does not have. The real values are
    * still outstanding from Cube — see §5 of the reference doc.
    */
-  campaign: env('CUBE_QUICKCALL_CAMPAIGN', 'BONANZA_CRM'),
+  get campaign() { return stored('quickcall', 'campaign', 'CUBE_QUICKCALL_CAMPAIGN', 'BONANZA_CRM'); },
   /**
    * Shared secret QuickCall presents on its Save Call callback. We refuse
    * unsigned call events rather than trusting anything that reaches the URL:
    * a webhook that writes to the activity timeline is an authenticated endpoint.
    */
-  webhookSecret: env('CUBE_QUICKCALL_WEBHOOK_SECRET'),
+  get webhookSecret() { return stored('quickcall', 'webhook_secret', 'CUBE_QUICKCALL_WEBHOOK_SECRET'); },
   get configured() { return Boolean(this.baseUrl && this.user && this.password); },
 };
 

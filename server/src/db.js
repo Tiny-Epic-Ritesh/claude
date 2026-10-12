@@ -905,6 +905,34 @@ CREATE TABLE IF NOT EXISTS dialler_campaigns (
 );
 
 /*
+ * A vendor's own settings, set from Setup rather than from the server's
+ * environment.
+ *
+ * Until now every credential lived in server/.env, which means an
+ * administrator cannot connect a vendor without a deployment and somebody with
+ * shell access. That is the wrong gate: connecting CUBE is configuration, and
+ * the firm's own administrator should do it on a screen (N-6, and the first
+ * piece of the connectors work).
+ *
+ * secret = 1 means the value is never sent back to any screen or API -- the
+ * screen is told only that it is set, by whom and when. Secrets are encrypted
+ * at rest with the same key as a PAN, so the database file alone does not hand
+ * somebody the dialler.
+ *
+ * The environment still works and is the fallback: a value set here wins, and a
+ * deployment that has always used .env keeps running untouched.
+ */
+CREATE TABLE IF NOT EXISTS vendor_setting (
+  vendor     TEXT NOT NULL,                  -- 'quickcall', 'aisensy', ...
+  name       TEXT NOT NULL,                  -- 'user', 'password', 'base_url', ...
+  value      TEXT NOT NULL,                  -- encrypted when secret = 1
+  secret     INTEGER NOT NULL DEFAULT 1,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (vendor, name)
+);
+
+/*
  * Validation rules — a save the business refuses.
  *
  * The condition describes what is WRONG, and the save is refused when it
