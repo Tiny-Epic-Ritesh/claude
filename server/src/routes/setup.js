@@ -3037,7 +3037,7 @@ router.delete('/field-masking/fields/:field', requirePermission('admin.users'), 
  * secrets, so those are shown.
  */
 const QUICKCALL_SETTINGS = [
-  { name: 'base_url', label: 'CUBE server', secret: false, env: 'CUBE_QUICKCALL_URL', help: 'For example https://raphsody.in. The UAT host has no DNS entry, so a test deployment needs the host CUBE gives you.' },
+  { name: 'base_url', label: 'CUBE server', secret: false, env: 'CUBE_QUICKCALL_URL', help: 'The API host, for example https://raphsody.in — the token endpoint sits at /QuickCall61AuthToken/AuthToken/ under it. NOT the agent popup host (cubehosted.net): that serves the softphone and answers 404 to every API path. Verified against the test tenant on 12 Oct 2026.' },
   { name: 'user', label: 'Tenant username', secret: true, env: 'CUBE_QUICKCALL_USER', help: "The tenant's API credential, not an agent's login." },
   { name: 'password', label: 'Tenant password', secret: true, env: 'CUBE_QUICKCALL_PASSWORD', help: 'Stored encrypted. It is never shown again, here or anywhere else.' },
   { name: 'campaign', label: 'Default campaign', secret: false, env: 'CUBE_QUICKCALL_CAMPAIGN', help: 'Used when a lead does not name its own. Must be a campaign CUBE actually has.' },
