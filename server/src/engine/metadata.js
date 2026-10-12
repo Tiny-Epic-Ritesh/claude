@@ -419,13 +419,23 @@ const CORE_PICKLISTS = {
   'lead.risk_profile': [
     ['Conservative', 'Conservative'], ['Moderate', 'Moderate'], ['Aggressive', 'Aggressive'],
   ],
+  /* Sixteen, agreed with Ritesh on 12 October against what the two tenants
+     actually record. Bonanza's nineteen live values collapse into nine of
+     these -- google is Google Ads; Organic, Organic Search, Direct and Direct
+     Traffic are all Website; fb, ig and whatsapp are three channels written in
+     lower case; DSA, BA, Franchise, Partner Client and New Leads for DSA are
+     all Partner referral plus a kind of partner, which belongs on the partner
+     record. See docs/feedback/MIGRATION-STAGE-SOURCE-MAPPING.md. */
   'lead.source': [
-    ['Website', 'Website'], ['Bigul app', 'Bigul app'], ['DKYC Portal', 'DKYC Portal'],
+    ['Website', 'Website'], ['DKYC Portal', 'DKYC Portal'], ['Bigul app', 'Bigul app'],
     ['Google Ads', 'Google Ads'], ['Facebook Lead Ads', 'Facebook Lead Ads'],
-    ['Campaign — WhatsApp', 'Campaign — WhatsApp'], ['Webinar', 'Webinar'],
+    ['Instagram Lead Ads', 'Instagram Lead Ads'],
+    ['Campaign — WhatsApp', 'Campaign — WhatsApp'], ['Campaign — other', 'Campaign — other'],
+    ['Webinar', 'Webinar'], ['Walk-in branch', 'Walk-in branch'],
+    ['Outbound call', 'Outbound call'],
     ['Partner referral', 'Partner referral'],
     ['Referral — existing client', 'Referral — existing client'],
-    ['Walk-in branch', 'Walk-in branch'], ['IPO enquiry', 'IPO enquiry'],
+    ['IPO enquiry', 'IPO enquiry'],
     ['Manual', 'Manual'], ['Import', 'Import'],
   ],
   /* The seven a person may log, then the five the system writes itself.
@@ -498,10 +508,16 @@ const CORE_PICKLISTS = {
   'task.kind': [
     ['follow_up', 'Follow-up'], ['meeting', 'Meeting'], ['retry', 'Retry'],
   ],
+  /* DSA, Business Associate and Franchise were added on 12 October. The
+     legacy tenants record them as lead SOURCES -- "DSA", "BA", "Franchise" --
+     which makes "how many leads did DSAs send us" a text search rather than a
+     question about partners. Here the source is Partner referral and the kind
+     lives on the partner. */
   'partner.partner_model': [
     ['Associate', 'Associate'], ['Remisier', 'Remisier'],
     ['Authorised Person', 'Authorised Person'], ['Agent', 'Agent'],
     ['Trainee Entrepreneur', 'Trainee Entrepreneur'],
+    ['DSA', 'DSA'], ['Business Associate', 'Business Associate'], ['Franchise', 'Franchise'],
   ],
   'partner.state_code': [
     ['PROSPECT', 'Prospect'], ['QUALIFYING', 'Qualifying'], ['ONBOARDING', 'Onboarding'],
@@ -717,14 +733,26 @@ export function formFields(activityType) {
 export const fieldDef = (entity, apiName) =>
   one('SELECT * FROM field_def WHERE entity = ? AND api_name = ?', [entity, apiName]);
 
-/** Picklist values, narrowed by the controlling field's current value. */
-export function picklistValues(fieldId, controllingValue = null) {
+/**
+ * Picklist values, narrowed by the controlling field's current value and, when
+ * a business is named, by the business the value belongs to.
+ *
+ * `sales_org` on a value is null for everything the product seeds, which means
+ * both businesses. An administrator may give a value to one of them (Ritesh,
+ * 12 Oct 2026): the two LeadSquared tenants keep different stage and source
+ * lists, and one CRM serves both books. Asking without an org returns every
+ * value, which is what a screen that is not about one record wants.
+ */
+export function picklistValues(fieldId, controllingValue = null, org = null) {
   const rows = all(
     'SELECT * FROM picklist_value WHERE field_id = ? AND active = 1 ORDER BY sort_order, label',
     [fieldId],
   );
-  if (controllingValue == null) return rows;
-  return rows.filter((v) => v.controlling_value == null
+  const inBook = org == null
+    ? rows
+    : rows.filter((v) => v.sales_org == null || String(v.sales_org) === String(org));
+  if (controllingValue == null) return inBook;
+  return inBook.filter((v) => v.controlling_value == null
     || String(v.controlling_value).toLowerCase() === String(controllingValue).toLowerCase());
 }
 
@@ -739,11 +767,16 @@ export function picklistValues(fieldId, controllingValue = null) {
  * asks `columnRefusal`, and every dialog that offers one offers this list.
  *
  * A field that is not a picklist has no list, and nothing to check.
+ *
+ * `org` narrows the list to one business. Pass the RECORD's business when
+ * checking a write and the READER's business when filling a dialog -- those
+ * are different questions, and conflating them is how a Bonanza RM is offered
+ * a value their own lead will refuse.
  */
-export function columnPicklist(entity, apiName) {
+export function columnPicklist(entity, apiName, org = null) {
   const f = fieldDef(entity, apiName);
   if (!f || (f.type !== 'picklist' && f.type !== 'multipicklist')) return [];
-  return picklistValues(f.id).map((v) => String(v.value));
+  return picklistValues(f.id, null, org).map((v) => String(v.value));
 }
 
 /**
@@ -754,23 +787,30 @@ export function columnPicklist(entity, apiName) {
  * (the column is NOT NULL, and a blank one died on the constraint as a server
  * error), Source, Language and Risk profile are not.
  */
-export function columnRefusal(entity, apiName, value) {
+export function columnRefusal(entity, apiName, value, org = null) {
   const f = fieldDef(entity, apiName);
   if (!f || (f.type !== 'picklist' && f.type !== 'multipicklist')) return null;
   if (value == null || value === '') return f.required ? `${f.label} is required` : null;
-  const allowed = picklistValues(f.id).map((v) => String(v.value));
-  if (allowed.length && !allowed.includes(String(value))) {
-    return `"${value}" is not a permitted value for ${f.label}`;
-  }
-  return null;
+
+  const allowed = picklistValues(f.id, null, org).map((v) => String(v.value));
+  if (!allowed.length || allowed.includes(String(value))) return null;
+
+  /* A value that exists but belongs to the other business gets its own
+     sentence. "Not a permitted value" would send an administrator looking for
+     a value that is right there on the list -- just not on this book's. */
+  const elsewhere = org != null
+    && picklistValues(f.id).some((v) => String(v.value) === String(value));
+  return elsewhere
+    ? `"${value}" is a ${f.label} for another business, not for ${org}`
+    : `"${value}" is not a permitted value for ${f.label}`;
 }
 
 /** The lead columns somebody may set and a picklist governs (OPS-13, OPS-14). */
 export const LEAD_PICKLIST_COLUMNS = ['stage', 'source', 'language', 'risk_profile'];
 
 /** Stage, by the names OPS-13 gave it. */
-export const leadStages = () => columnPicklist('lead', 'stage');
-export const stageRefusal = (value) => columnRefusal('lead', 'stage', value);
+export const leadStages = (org = null) => columnPicklist('lead', 'stage', org);
+export const stageRefusal = (value, org = null) => columnRefusal('lead', 'stage', value, org);
 
 /**
  * How many live records hold each value of a picklist, including values no
@@ -796,7 +836,7 @@ export function valueUsage(entity, apiName, orgs = null) {
   if (!def?.table_name || !field) return null;
 
   const defined = all(
-    'SELECT value, label, active FROM picklist_value WHERE field_id = ? ORDER BY sort_order, label',
+    'SELECT value, label, active, sales_org FROM picklist_value WHERE field_id = ? ORDER BY sort_order, label',
     [field.id],
   );
 
@@ -845,6 +885,8 @@ export function valueUsage(entity, apiName, orgs = null) {
     label: v.label,
     active: v.active === 1,
     defined: true,
+    /* Null means both businesses, which is what everything seeded is. */
+    sales_org: v.sales_org ?? null,
     records: counts.get(String(v.value)) ?? 0,
   }));
 

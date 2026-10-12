@@ -30,6 +30,14 @@ const slug = (label) => String(label).trim();
 
 export default function PicklistValues({ entity, field, onClose, onSaved }) {
   const [usage, { loading }] = useApi(`/setup/objects/${entity}/fields/${field.api_name}/value-usage`);
+  /* Whether this field's values may belong to one business — the server's
+     answer, not a second copy of the list. Ritesh, 12 October: the two
+     LeadSquared tenants keep different stage and source lists and one CRM
+     serves both books. Only the core lead picklists honour it, because only
+     they are asked by business on every write and every picker. */
+  const perBook = usage?.per_book === true;
+  const [orgList] = useApi(perBook ? '/orgs' : null);
+  const orgs = orgList?.orgs ?? [];
   const [rows, setRows] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -60,7 +68,7 @@ export default function PicklistValues({ entity, field, onClose, onSaved }) {
     setRows(next);
   };
 
-  const add = () => setRows([...current, { value: '', label: '', records: 0, is_default: 0, isNew: true }]);
+  const add = () => setRows([...current, { value: '', label: '', records: 0, is_default: 0, sales_org: null, isNew: true }]);
 
   const remove = (i) => setRows(current.filter((_, j) => j !== i));
 
@@ -80,6 +88,7 @@ export default function PicklistValues({ entity, field, onClose, onSaved }) {
           is_default: r.is_default ? 1 : 0,
           controlling_value: r.controlling_value ?? null,
           colour: r.colour ?? null,
+          ...(perBook ? { sales_org: r.sales_org ?? null } : {}),
         }));
 
       await api.put(`/setup/objects/${entity}/fields/${field.api_name}/values`, {
@@ -169,12 +178,15 @@ export default function PicklistValues({ entity, field, onClose, onSaved }) {
         <p className="tiny muted" style={{ margin: 0 }}>
           The order here is the order they appear in every picker.
           Record counts are for the businesses you work in.
+          {perBook && ' A value set to one business is offered, and accepted, only on that business’s records.'}
         </p>
 
         <table className="field-table">
           <thead>
             <tr>
-              <th>Label</th><th>Stored as</th><th className="num">Records</th><th>Default</th><th />
+              <th>Label</th><th>Stored as</th>
+              {perBook && <th>Business</th>}
+              <th className="num">Records</th><th>Default</th><th />
             </tr>
           </thead>
           <tbody>
@@ -196,6 +208,35 @@ export default function PicklistValues({ entity, field, onClose, onSaved }) {
                     ? <span className="tiny muted">set from the label</span>
                     : <code className="api-name"><Icon name="lock" size={12} />{r.value}</code>}
                 </td>
+                {perBook && (
+                  <td>
+                    {/* Blank means both. The two LeadSquared tenants keep
+                        different stage and source lists, and this is where
+                        that difference is expressed.
+
+                        A value belonging to a business this administrator does
+                        not work in is shown and not offered: the save carries
+                        the whole list, so the row has to be here, and the
+                        server refuses a change to another book either way. */}
+                    {r.sales_org && !orgs.some((o) => o.code === r.sales_org)
+                      ? (
+                        <span className="tiny muted">
+                          <Icon name="lock" size={12} />
+                          {r.sales_org}
+                        </span>
+                      )
+                      : (
+                        <select
+                          value={r.sales_org ?? ''}
+                          onChange={(e) => set(i, { sales_org: e.target.value || null })}
+                          aria-label={`Business for ${r.label || `value ${i + 1}`}`}
+                        >
+                          <option value="">Both businesses</option>
+                          {orgs.map((o) => <option key={o.code} value={o.code}>{o.name}</option>)}
+                        </select>
+                      )}
+                  </td>
+                )}
                 <td className="num">{(countOf(r.value) || 0).toLocaleString('en-IN')}</td>
                 <td>
                   <button

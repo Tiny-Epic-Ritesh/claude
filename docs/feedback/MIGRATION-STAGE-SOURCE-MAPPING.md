@@ -1,8 +1,10 @@
 # Migrating stages and sources — a proposal
 
-**Written 12 October 2026, for Ritesh to approve or correct.** Nothing is built
-from this yet. It proposes the lists the new CRM should hold, and what every
-value in LeadSquared becomes when it is brought across.
+**Written 12 October 2026, for Ritesh to approve or correct.** It proposes the
+lists the new CRM should hold, and what every value in LeadSquared becomes when
+it is brought across. Questions 1 to 6 in section 4 were answered the same day
+("yes to all six"); section 5 says which parts of that are built and which are
+not.
 
 Read with `BONANZA-TENANT-AUDIT.md` (where the Bonanza numbers come from) and
 `stages.md` (the Bigul stage analysis, which reached the same conclusion from
@@ -246,4 +248,44 @@ sized before they are promised.
 | 7 | Are shifting and reactivation worth modelling as journeys now, or later? | Later, but sized now |
 | 8 | Anything in the mapping tables above that is simply wrong? | — |
 
-Answer 1 to 6 and the mapping is ready to build against. 7 and 8 can follow.
+**All six answered 12 Oct — yes to each, with my recommendation taken as
+written.** 7 and 8 can still follow.
+
+---
+
+## 5 · What is built, and what is not
+
+**Built 12 Oct.**
+
+- **Answer 5 — one list per business.** A picklist value now belongs to one
+  business or to both. Setup → Objects → a field's values has a **Business**
+  column, blank meaning both. Stage, Source, Language and Risk profile on the
+  lead honour it; every other picklist keeps one list for both books and the
+  save refuses to contradict that. Every writer is held to the record's own
+  business — creating a lead, editing one, the bulk field update (a selection
+  spanning both books is refused whole, naming the business that does not hold
+  the value), a list's bulk field and bulk stage, and an automation card — and
+  every picker, dialog, stage list and filter builder offers the reader's
+  business and not the other one. A value belonging to the other book is shown
+  and not editable, and saving a list leaves it alone rather than locking that
+  administrator out of their own.
+- **Section 2b — the 16-value source list** is what a new database seeds.
+- **Answer 2 — DSA, Business Associate and Franchise** are now values of
+  `partner.partner_model`, so a partner referral records which kind.
+
+**Not built yet.** Each is a decision that lands at migration time or needs its
+own change, and none of them is blocked on you:
+
+- **Answers 1, 3 and 4** are import-mapping rules: "Self" → DKYC portal,
+  "Fresh Insurance" → an Insurance product card, and the 78.7% with no source
+  → blank. They belong in the import step that maps an unknown legacy value,
+  which is the remaining half of `OPS-14`.
+- **Answer 6 — Objection.** A `kyc_status` of its own, the objection text, and
+  the resubmission loop back into the journey.
+- **Section 3d gaps 1 and 3 to 5** — a `VERIFICATION` journey step with its
+  three outcomes; first-funding and first-trade on the client; shifting and
+  reactivation as journey types; the partner journey and ARN on the partner
+  record.
+- **The lists themselves.** Nothing has been migrated. The values above are the
+  shape; Bonanza's 30 stages and 19 sources and Bigul's own are still only in
+  the tables in sections 2c and 3b.

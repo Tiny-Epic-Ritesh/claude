@@ -290,7 +290,7 @@ export function runAction(action, facts, { dryRun }) {
          (OPS-13) and Risk profile (OPS-14), the two of the three it may write
          that have one. A card naming a value Setup has retired, or never had,
          reports why and changes nothing. */
-      const refusal = columnRefusal('lead', action.params.field, action.params.value);
+      const refusal = columnRefusal('lead', action.params.field, action.params.value, lead.sales_org);
       if (refusal) return { ...describe, skipped: refusal };
       run(`UPDATE leads SET ${action.params.field} = ? WHERE id = ?`, [action.params.value, lead.id]);
       break;

@@ -15,7 +15,9 @@
 
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
-import { leadStages, stageRefusal, columnRefusal } from '../engine/metadata.js';
+import {
+  leadStages, stageRefusal, columnRefusal, picklistValues,
+} from '../engine/metadata.js';
 import {
   requireUser, requirePermission, reqScope, activeOrg, orgsFor, can,
 } from '../auth.js';
@@ -94,8 +96,13 @@ function memberCount(list, req) {
  * an administrator edits them. Joining the two here means the builder offers
  * the same values the pickers on a lead offer — a filter written against a
  * value nobody can select is a filter that matches nothing.
+ *
+ * Which is why this takes a business. From 12 October a value may belong to one
+ * of the two books, so the values a Bonanza RM can select are not the ones a
+ * Bigul RM can -- and a builder offering both breaks the promise above in the
+ * direction nobody notices: the filter is accepted, runs, and matches nothing.
  */
-function enrichedSchema() {
+function enrichedSchema(org = null) {
   const schema = conditionSchema();
   return {
     ...schema,
@@ -106,10 +113,8 @@ function enrichedSchema() {
         [f.code],
       );
       if (!def) return f;
-      const values = all(
-        'SELECT value, label FROM picklist_value WHERE field_id = ? AND active = 1 ORDER BY sort_order, label',
-        [def.id],
-      );
+      const values = picklistValues(def.id, null, org)
+        .map((v) => ({ value: v.value, label: v.label }));
       return values.length ? { ...f, values } : f;
     }),
   };
@@ -125,14 +130,15 @@ router.get('/meta', (req, res) => res.json({
     default: k === DEFAULT_KIND,
   })),
   default_kind: DEFAULT_KIND,
-  // The Stage picklist, which Setup edits and every stage write checks (OPS-13).
-  stages: leadStages(),
+  // The Stage picklist for this reader's business (OPS-13, per business from
+  // 12 Oct), which Setup edits and every stage write checks.
+  stages: leadStages(activeOrg(req) || req.user.sales_org),
   bulk_cap: BULK_CAP,
   /* The 27 fields and their operators, so a builder can be driven by the same
      definitions the query compiler uses. The engine has always supported nested
      AND/OR groups over all of them; nothing exposed the catalogue, so the only
      filter anybody could express through the interface was a single stage. */
-  schema: enrichedSchema(),
+  schema: enrichedSchema(activeOrg(req) || req.user.sales_org),
   /* What a snapshot costs to make, stated where it is made. */
   snapshot_default_days: DEFAULT_SNAPSHOT_DAYS,
   default_expiry: defaultExpiry(),
@@ -791,7 +797,9 @@ router.post('/:id/bulk/field', requirePermission('lead.edit'), (req, res) => {
   /* Only to a value the field's own picklist in Setup holds: this route checked
      that the field was on its editable list and then stored any text at all --
      as a stage (OPS-13), and as a Source, Language or Risk profile (OPS-14). */
-  const refusal = columnRefusal('lead', field, value);
+  /* The list's own business decides which values are permitted: a list belongs
+     to one book, and so do its members. */
+  const refusal = columnRefusal('lead', field, value, list.sales_org);
   if (refusal) return res.status(400).json({ error: refusal, field: 'value' });
   const ids = memberIds(list, req);
   let changed = 0;
@@ -925,8 +933,8 @@ router.post('/:id/bulk/stage', requirePermission('lead.stage.change'), (req, res
   /* The stages are the Stage picklist's, which Setup edits (OPS-13), rather
      than the six written into the code. */
   const stage = req.body?.stage;
-  if (stageRefusal(stage)) {
-    return res.status(400).json({ error: `Stage must be one of: ${leadStages().join(', ')}` });
+  if (stageRefusal(stage, list.sales_org)) {
+    return res.status(400).json({ error: `Stage must be one of: ${leadStages(list.sales_org).join(', ')}` });
   }
 
   const ids = memberIds(list, req);

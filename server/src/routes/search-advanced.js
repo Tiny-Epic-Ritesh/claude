@@ -17,6 +17,7 @@ import { Router } from 'express';
 import { all, one, run, audit } from '../db.js';
 import {
   requireUser, requirePermission, reqScope, reqClientScope, reqTicketScope, orgsFor, maskFor, can,
+  activeOrg,
 } from '../auth.js';
 import { maskRecords } from '../security.js';
 import {
@@ -279,10 +280,14 @@ router.get('/fields/:entity', requireSearchable, (req, res) => {
       type: f.type,
       custom: f.custom,
       operators: operatorsFor(f.type),
-      // Picklist values so the value box becomes a dropdown rather than a
-      // free-text field the user has to guess the spelling for.
+      /* Picklist values so the value box becomes a dropdown rather than a
+         free-text field the user has to guess the spelling for -- and this
+         reader's values, because a value may belong to one of the two books.
+         Offering the other book's would build a search that is accepted, runs,
+         and matches nothing. */
       values: def && (def.type === 'picklist' || def.type === 'multipicklist')
-        ? picklistValues(def.id).map((v) => ({ value: v.value, label: v.label }))
+        ? picklistValues(def.id, null, activeOrg(req) || req.user.sales_org)
+          .map((v) => ({ value: v.value, label: v.label }))
         : undefined,
     };
   });

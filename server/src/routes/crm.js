@@ -531,7 +531,11 @@ router.get('/leads/bulk/options', requirePermission('lead.edit'), (req, res) => 
        (OPS-13 for Stage, OPS-14 for Source, Language and Risk profile). It used
        to offer whatever values were already in use, which is how a typo on one
        lead became a choice on the dialog for every other. */
-    if (LEAD_PICKLIST_COLUMNS.includes(f.key)) return { ...f, values: columnPicklist('lead', f.key) };
+    /* The reader's business, because this fills a dialog rather than checking
+       a record: a Bonanza RM is offered Bonanza's values. */
+    if (LEAD_PICKLIST_COLUMNS.includes(f.key)) {
+      return { ...f, values: columnPicklist('lead', f.key, activeOrg(req) || req.user.sales_org) };
+    }
 
     if (f.kind === 'user') {
       return {
@@ -597,11 +601,10 @@ router.post('/leads/bulk/field', requirePermission('lead.edit'), (req, res) => {
   if (field === 'stage' && !can(req.user.role, 'lead.stage.change')) {
     return res.status(403).json({ error: 'Stage changes require a Sales Supervisor or Admin', required: 'lead.stage.change' });
   }
-  /* And only to a value its own picklist in Setup holds, for each column one
-     governs: Stage (OPS-13), Source, Language and Risk profile (OPS-14). A
-     field with no picklist -- City, State -- is not checked here. */
-  const refusal = columnRefusal('lead', field, value);
-  if (refusal) return res.status(400).json({ error: refusal, field: 'value' });
+  /* A blank or a value no business holds is refused before the set is even
+     read; the per-business check needs the leads and happens below. */
+  const refusalAnywhere = columnRefusal('lead', field, value);
+  if (refusalAnywhere) return res.status(400).json({ error: refusalAnywhere, field: 'value' });
 
   /* The owner is not an ordinary field (OPS-11). Taken on lead.edit alone, which
      Sales RMs and dealers hold, this route moved up to 5,000 leads when PATCH
@@ -665,6 +668,16 @@ router.post('/leads/bulk/field', requirePermission('lead.edit'), (req, res) => {
     return res.status(400).json({
       error: `That is ${targets.length.toLocaleString('en-IN')} leads — the most one update may carry is 5,000.`,
     });
+  }
+
+  /* The two businesses keep different stage and source lists, and one
+     selection can hold leads from both. The value has to be permitted in
+     every business represented, or the same call would write a valid value to
+     some leads and an invalid one to others -- so it is refused whole, naming
+     the business that does not hold it. */
+  for (const org of new Set(targets.map((t) => t.sales_org))) {
+    const refusal = columnRefusal('lead', field, value, org);
+    if (refusal) return res.status(400).json({ error: refusal, field: 'value', sales_org: org });
   }
 
   if (reassigning) {
@@ -846,7 +859,7 @@ router.post('/leads', requirePermission('lead.create'), (req, res) => {
      not here: a new lead starts at the column default. */
   for (const column of LEAD_PICKLIST_COLUMNS) {
     if (column === 'stage' || req.body[column] === undefined) continue;
-    const refusal = columnRefusal('lead', column, req.body[column]);
+    const refusal = columnRefusal('lead', column, req.body[column], activeOrg(req) || req.user.sales_org);
     if (refusal) return res.status(400).json({ error: refusal, field: column });
   }
 
@@ -980,8 +993,17 @@ router.get('/meta/fields/:entity', (req, res) => {
           ? describeRollup(req.params.entity, (() => { try { return JSON.parse(f.rollup); } catch { return null; } })())
           : undefined,
       is_custom: Boolean(f.is_custom),
+      /* By business, because a value may belong to one of the two books from
+         12 Oct. This catalogue draws the lead form and the stage dialogs, and
+         the write refuses the other book's value -- a picker offering one is
+         the dialog-versus-write disagreement `/leads/bulk/options` exists to
+         prevent, arriving through the form instead. The caller says which book
+         by passing `?org=`; a form bound to one record passes that record's,
+         and everything else gets the reader's own. A forged org gains nothing,
+         because activeOrg only honours a book this user already holds. */
       values: (f.type === 'picklist' || f.type === 'multipicklist')
-        ? picklistValues(f.id).map((v) => ({ value: v.value, label: v.label }))
+        ? picklistValues(f.id, null, activeOrg(req) || req.user.sales_org)
+          .map((v) => ({ value: v.value, label: v.label }))
         : undefined,
     }));
 
@@ -1016,7 +1038,9 @@ router.patch('/leads/:id', (req, res) => {
      picklist does not block saving the rest of the record. */
   for (const column of LEAD_PICKLIST_COLUMNS) {
     if (body[column] === undefined || String(body[column] ?? '') === String(lead[column] ?? '')) continue;
-    const refusal = columnRefusal('lead', column, body[column]);
+    /* Checked against THIS lead's business: the two books keep different
+       stage and source lists (Ritesh, 12 Oct 2026). */
+    const refusal = columnRefusal('lead', column, body[column], lead.sales_org);
     if (refusal) return res.status(400).json({ error: refusal, field: column });
   }
   if (body.owner_id !== undefined && Number(body.owner_id) !== lead.owner_id && !can(req.user.role, 'lead.reassign')) {
@@ -1969,8 +1993,9 @@ router.get('/meta', (req, res) => {
   const placeholders = orgs.map(() => '?').join(',') || 'NULL';
 
   res.json({
-    // The Stage picklist, which Setup edits and every stage write checks (OPS-13).
-    stages: leadStages(),
+    // The Stage picklist for this reader's business, which Setup edits and
+    // every stage write checks (OPS-13, and per business from 12 Oct).
+    stages: leadStages(activeOrg(req) || req.user.sales_org),
     card_states: CARD_STATES,
     card_colours: CARD_COLOUR,
     products: all(

@@ -138,7 +138,12 @@ test('the filter catalogue reaches the interface', () => {
      express was a single stage — which is why the real work happened in Excel. */
   const schema = conditionSchema();
   assert(schema.fields.length >= 25, `only ${schema.fields.length} fields offered`);
-  assert(/schema: enrichedSchema\(\)/.test(routes), 'the schema is no longer served to the builder');
+  /* Argument-agnostic on purpose. What this guards is that the route still
+     serves the catalogue at all; what it takes is a separate decision, and it
+     takes a business now -- a value may belong to one of the two books, so the
+     builder has to be told whose values to offer (12 Oct). Pinning the empty
+     call made that change read as a regression. */
+  assert(/schema: enrichedSchema\(/.test(routes), 'the schema is no longer served to the builder');
   for (const f of schema.fields) {
     assert(f.operators?.length, `"${f.label}" has no operators, so it cannot be filtered on`);
   }

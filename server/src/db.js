@@ -1355,6 +1355,17 @@ CREATE INDEX IF NOT EXISTS idx_tasks_assignee   ON tasks(assignee_id);
  * call id worth de-duplicating on, and the eKYC portal attributes by shortcode.
  */
 const COLUMNS = [
+  /* Which business a picklist value belongs to. NULL means both, which is what
+     every value seeded by the product is and what every value written before
+     this column existed becomes.
+
+     The two LeadSquared tenants keep different lists -- Bonanza has 30 lead
+     stages and 19 live sources, Bigul its own -- and the firm runs one CRM
+     over both books (Ritesh, 12 Oct 2026). A value may therefore belong to one
+     business, and the same dropdown reads differently on a Bonanza lead and a
+     Bigul one. Only the core lead picklists use it today; see
+     LEAD_PICKLIST_COLUMNS in engine/metadata.js. */
+  ['picklist_value', 'sales_org', 'TEXT'],
   ['users', 'phone_extension', 'TEXT'],        // QuickCall rings this first
   ['users', 'cti_agent_id', 'TEXT'],           // agent id as known to QuickCall
   ['users', 'kyc_shortcode', 'TEXT'],          // RM attribution on the eKYC portal
@@ -2496,6 +2507,11 @@ CREATE TABLE IF NOT EXISTS picklist_value (
   is_default  INTEGER NOT NULL DEFAULT 0,
   active      INTEGER NOT NULL DEFAULT 1,
   sort_order  INTEGER NOT NULL DEFAULT 0,
+  -- Which business this value belongs to. NULL means both, which is what every
+  -- value the product seeds is. Declared in COLUMNS too, for a database that
+  -- predates it; this table is created after that migration loop has run, so a
+  -- fresh one has to carry the column itself.
+  sales_org   TEXT,
   UNIQUE (field_id, value)
 );
 

@@ -69,7 +69,7 @@ import {
 import { explainVisibility } from '../engine/sharing.js';
 import {
   entities, entityDef, fieldsOf, fieldDef, picklistValues, valueUsage, historyFor,
-  stageDurations, auditConfig, typeOf, FIELD_TYPES,
+  stageDurations, auditConfig, typeOf, FIELD_TYPES, LEAD_PICKLIST_COLUMNS,
 } from '../engine/metadata.js';
 import {
   validateFormula, validateRollup, describeFormula, describeRollup, catalogue,
@@ -2263,7 +2263,14 @@ router.get('/objects/:entity/derivable', requirePermission('admin.objects'), (re
 router.get('/objects/:entity/fields/:apiName/value-usage', requirePermission('admin.objects'), (req, res) => {
   const rows = valueUsage(req.params.entity, req.params.apiName, orgsFor(req.user));
   if (!rows) return res.status(404).json({ error: 'No such picklist' });
-  return res.json({ values: rows });
+  /* Whether a value here may belong to one business. Said by the server rather
+     than worked out again in the browser: the screen offering the column and
+     the route accepting it have to agree, and a second copy of the list is how
+     they stop agreeing. */
+  return res.json({
+    values: rows,
+    per_book: req.params.entity === 'lead' && LEAD_PICKLIST_COLUMNS.includes(req.params.apiName),
+  });
 });
 
 /** Picklist values, including the cascade. */
@@ -2288,6 +2295,47 @@ router.put('/objects/:entity/fields/:apiName/values', requirePermission('admin.o
      picker takes whichever sorts first, which is nobody's choice. */
   if (values.filter((v) => v.is_default).length > 1) {
     return res.status(400).json({ error: 'Only one value can be the default', field: 'is_default' });
+  }
+
+  /* A value may belong to one business (Ritesh, 12 Oct 2026): the two
+     LeadSquared tenants keep different stage and source lists and one CRM
+     serves both books. Null means both, which is what everything seeded is.
+     Only the core lead picklists honour it -- every writer and every dialog
+     for those asks by business -- so accepting it anywhere else would store a
+     setting that quietly does nothing. */
+  const perBook = req.params.entity === 'lead' && LEAD_PICKLIST_COLUMNS.includes(req.params.apiName);
+  const stored = new Map(before.map((v) => [String(v.value), v.sales_org ?? null]));
+  for (const v of values) {
+    const org = v.sales_org ?? null;
+    const held = stored.get(String(v.value ?? v.label)) ?? null;
+
+    /* Refused on the field, not on the change: a column that keeps one list
+       for both businesses has no row that may legitimately carry a business,
+       so a non-null one is always somebody asking for something this field
+       cannot do -- whatever is in the database today. */
+    if (org !== null && !perBook) {
+      return res.status(400).json({
+        error: `${field.label} keeps one list for both businesses`,
+        fix: 'Only Stage, Source, Language and Risk profile can hold a value for one business.',
+      });
+    }
+
+    /* A row whose business is exactly what it already was is nobody's
+       decision. Judging it would lock a Bonanza administrator out of the
+       Source list the moment Bigul had a value of its own, because this screen
+       saves the whole list and that payload carries Bigul's rows back with it.
+       Moving one into or out of a book IS a decision, and takes the rights to
+       that book at both ends -- taking a value out of Bigul changes Bigul's
+       list as surely as putting one in. */
+    if (org === held) continue;
+    for (const book of [held, org]) {
+      if (book && !mayUseOrg(req.user, book)) {
+        return res.status(403).json({
+          error: `You cannot change a value for ${book}`,
+          fix: 'Leave the other business’s values as they are.',
+        });
+      }
+    }
   }
 
   /* Retiring a value that records already hold is allowed — it is often exactly
@@ -2315,15 +2363,15 @@ router.put('/objects/:entity/fields/:apiName/values', requirePermission('admin.o
     run('UPDATE picklist_value SET active = 0 WHERE field_id = ?', [field.id]);
     values.forEach((v, i) => {
       run(
-        `INSERT INTO picklist_value (field_id, value, label, controlling_value, colour, is_default, active, sort_order)
-         VALUES (?,?,?,?,?,?,1,?)
+        `INSERT INTO picklist_value (field_id, value, label, controlling_value, colour, is_default, active, sort_order, sales_org)
+         VALUES (?,?,?,?,?,?,1,?,?)
          ON CONFLICT(field_id, value) DO UPDATE SET
            label = excluded.label, controlling_value = excluded.controlling_value,
            colour = excluded.colour, is_default = excluded.is_default,
-           active = 1, sort_order = excluded.sort_order`,
+           active = 1, sort_order = excluded.sort_order, sales_org = excluded.sales_org`,
         [
           field.id, v.value ?? v.label, v.label ?? v.value, v.controlling_value ?? null,
-          v.colour ?? null, v.is_default ? 1 : 0, i,
+          v.colour ?? null, v.is_default ? 1 : 0, i, v.sales_org ?? null,
         ],
       );
     });

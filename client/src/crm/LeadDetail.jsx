@@ -845,7 +845,11 @@ function JourneyCard({ journey, canManage, onError, reload, setCoach, busy, setB
  * how it works.
  */
 function EditLead({ lead, session, onClose, onSaved }) {
-  const [meta] = useApi('/meta/fields/lead');
+  /* This lead's business, not the reader's. A value may belong to one of the
+     two books, and the form has to offer what this record can actually hold --
+     a superadmin working across both would otherwise be shown their home
+     book's sources while editing the other one's lead. */
+  const [meta] = useApi(`/meta/fields/lead?org=${lead.sales_org ?? ''}`);
   const [refs] = useApi('/meta');
   /**
    * The record is fetched again, unmasked, for the form only.
@@ -1137,7 +1141,7 @@ function EditLead({ lead, session, onClose, onSaved }) {
  * second apart.
  */
 function DetailsTab({ lead, session, onEdit }) {
-  const [meta] = useApi('/meta/fields/lead');
+  const [meta] = useApi(`/meta/fields/lead?org=${lead.sales_org ?? ''}`);
   const can = (p) => session.permissions.includes(p);
 
   if (!meta) return <Loading />;

@@ -472,7 +472,9 @@ function CardModal({ lead, onClose, onDone, onNotice }) {
 /* -------------------------------------------------------------- stage */
 
 function StageModal({ lead, onClose, onDone, onNotice }) {
-  const [meta] = useApi('/meta/fields/lead');
+  /* This lead's business: the two books keep different stage lists, and the
+     write is held to the lead's own. */
+  const [meta] = useApi(`/meta/fields/lead?org=${lead.sales_org ?? ''}`);
   const [stage, setStage] = useState(lead.stage ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
