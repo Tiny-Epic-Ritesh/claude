@@ -107,6 +107,35 @@ ticket by hand, which is why a ticket cannot be trusted to find its lead.
 non-negotiable in `CLAUDE.md`. And `Category` appears twice — default and
 custom.
 
+### The knowledge base is empty — all five portals
+
+Read portal by portal, 12 October:
+
+| Portal | Categories | Articles | **Published** |
+|---|---:|---:|---:|
+| Bonanza Portfolio Limited | 5 | 14 | **0** |
+| Bigul | 0 | 0 | **0** |
+| Assisted Broking | 0 | 0 | **0** |
+| Mutual Fund | 0 | 0 | **0** |
+| Partner Experience Desk | 0 | 0 | **0** |
+
+**Not one published article in the whole account.** Bonanza's fourteen are all
+drafts, sitting in Freshdesk's own sample structure — *Getting started with us*,
+*Your account*, *Your documents*, *Files and folders*, *Premium club*, *Trial
+FAQs* — with three drafts last edited **five years ago** ("Professional plan",
+"Bulk downloading", "Business plan"). That is the out-of-the-box demo content,
+never replaced.
+
+So the two live portals let customers raise and track tickets, and offer them
+nothing to self-serve with. Every question becomes a ticket, which is part of
+why there are 34,442 of them.
+
+**What this changes:** there is **no content to migrate**. Stage 3 below is
+therefore a ticket-raising and tracking portal, not a content project — and a
+knowledge base, if you want one, is a *new* capability rather than a
+replacement. Five years of nobody writing one is also worth reading as a
+signal about how much appetite there is to maintain it.
+
 ---
 
 ## 3 · What is broken, and why the queue is unworked
@@ -229,10 +258,17 @@ threading, the 17 mailboxes, and routing rules expressed as *data* — a table o
 address → group → product → SLA — rather than 129 branches. This is what
 actually replaces Freshdesk for the agents.
 
-**Stage 3 — the customer-facing half.** Portal and knowledge base, per product,
-replacing the two live portals. The biggest build, and the one where Freshdesk
-has years of polish worth respecting. Worth doing last, and worth considering
-whether it stays on Freshdesk for a while even after stages 1 and 2 land.
+**Stage 3 — the customer-facing half.** The two live portals, per product: a
+customer registers, raises a ticket and tracks it. Smaller than it first looked,
+because there is no knowledge base to carry across — see section 2. Still the
+biggest of the three, and still the place where Freshdesk has polish worth
+respecting, so it is worth considering whether the portals stay on Freshdesk
+for a while even after stages 1 and 2 land.
+
+A knowledge base is a separate question from the migration. Nobody has written
+one in five years, so I would not assume it is wanted; if it is, the ticket
+data itself is the best possible source for what the first twenty articles
+should say.
 
 **What not to port:** the 129 rules. Of the live ones, almost all are
 "keyword → group" or "address → group", which is a routing table the support
@@ -243,8 +279,8 @@ at all.
 
 ## 7 · What I need from you
 
-1. **Does the knowledge base have real content?** I did not open Solutions. If
-   there are hundreds of published articles, stage 3 grows a content migration.
+1. ~~Does the knowledge base have real content?~~ **Answered by reading it:
+   no. Zero published articles across all five portals.** Nothing to migrate.
 2. **Is the LeadSquared ↔ Freshdesk integration live?** There is a
    `leadsquaredcheck` ticket field. If tickets are syncing to LSQ today, that
    link has to be re-pointed, not dropped.
