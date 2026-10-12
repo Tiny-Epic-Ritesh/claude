@@ -137,33 +137,119 @@ Bonanza Group, Team of Ashutosh, and several named after a manager.
 Some users carry `@bigul.co` addresses in this tenant, so the two tenants'
 populations overlap.
 
-## 5 · Lead stages
+## 5 · Lead stages — 30 active, 4 retired
 
-Different from Bigul's 24. Active, in order: NEW LEAD, CONTACTED, MEETING
-FIXED, MEETING DONE, ONBOARDED, DOCUMENTS SUBMITTED, UNDER OBJECTION, UNDER
-REVIEW, and more below the fold. Retired: INVALID NUMBER, IRRELEVANT - NOT
-INTERESTED, NO RESPONSE, RELEVANT - NOT INTERESTED.
+Bigul has 24, and the two lists are not the same. In order:
 
-The stage vocabularies of the two tenants are **not the same list**, which the
-CRM has to reconcile: one Stage picklist per business, or one shared list with
-the union of both (OPS-13, OPS-14).
+NEW LEAD · CONTACTED · MEETING FIXED · MEETING DONE · ONBOARDED · DOCUMENTS
+SUBMITTED · UNDER OBJECTION · UNDER REVIEW · INTERNALLY VERIFIED · CUSTODIAN
+VERIFIED · ACCOUNT CREATED · FUNDS TRANSFERRED · INTERESTED · DOCUMENTION DONE ·
+FIRST BUSINESS · ONBOARDING & TRAINING · NOT INTERESTED · PROSPECT · CONTACT
+INFO SUBMITTED · PAN SUBMITTED · DIGILOCKER /KRA COMPLETED · PERSONAL INFO
+SUBMITTED · BANK INFO SUBMITTED · SEGMENT INFO SUBMITTED · SIGNATURE UPDATED ·
+SELFIE UPDATED · ESIGN DONE · APPLICATION VERIFIED · READY TO TRADE · CUSTOMER
 
-## 6 · Not yet captured
+Retired: INVALID NUMBER · IRRELEVANT - NOT INTERESTED · NO RESPONSE ·
+RELEVANT - NOT INTERESTED.
 
-The browser could not render several Settings screens for long enough to read
-them. Still to do on a second pass:
+Three things to notice. *DOCUMENTION DONE* is a typo that is now a stored value
+on every lead that reached it. Eleven of the thirty are steps of one KYC
+journey — PAN, DigiLocker, personal info, bank info, segment, signature,
+selfie, e-sign, verified — which is a checklist modelled as a pipeline, the
+shape non-negotiable 9 warns against. And *NOT INTERESTED* is an active stage
+while *RELEVANT - NOT INTERESTED* is retired, so "not interested" is recorded
+two ways.
 
-- the full active stage list below the fold, and Lead Sources (needed for the
-  Source picklist per book — OPS-14)
-- the lead field inventory, custom fields and dependent fields
-- installed connectors and apps, and the API keys inventory
-- forms and processes, opportunity types, smart views
-- lead and activity volumes
+## 6 · Lead fields — 200
 
-## 7 · What this changes
+Two hundred fields on the lead object, across eight pages. The grid offers no
+"custom only" filter, so the split between system and custom was not counted;
+the Bigul audit's `lead-fields.md` is the comparison once it is.
+
+## 7 · Lead sources — the strongest argument for OPS-14
+
+The Lead Sources settings screen renders blank in this tenant and could not be
+read. The Lead Source Report gives the live picture instead — **2,757 leads in
+the last 30 days, across 19 distinct source values**:
+
+| Source | Leads | |
+|---|---:|---|
+| **Unknown** | **2,170** | **78.7%** |
+| google | 129 | 4.7% |
+| ig | 118 | 4.3% |
+| Self | 57 | 2.1% |
+| DSA | 47 | 1.7% |
+| Partner Client | 46 | 1.7% |
+| Outbound Phone call | 41 | 1.5% |
+| Organic | 35 | 1.3% |
+| BA | 21 | 0.8% |
+| Partner Referral | 14 | 0.5% |
+| fb · Organic Search · Direct Traffic | 13 each | 0.5% each |
+| New Leads for DSA | 12 | 0.4% |
+| CLIENT | 11 | 0.4% |
+| Direct | 8 | 0.3% |
+| Franchise | 6 | 0.2% |
+| whatsapp | 2 | 0.1% |
+| Fresh Insurance | 1 | 0.04% |
+
+**Nearly four in five leads have no source at all.** Of the rest, the values
+are the free-text sprawl OPS-14's dropdown exists to stop: `google` beside
+`Organic Search` and `Organic`; `Direct` beside `Direct Traffic`; `fb`,
+`ig` and `whatsapp` in lower case; `DSA` beside `New Leads for DSA`;
+`CLIENT` beside `Partner Client`. Nine of the nineteen are arguably four.
+
+This is the migration's source-mapping table, and the reason the new CRM
+refuses a source that is not on the list.
+
+## 8 · Opportunity types — 25
+
+Account Opening Customer · Ace Algo · AIF opportunity · Alpha Portfolio · Bigul
+Products · Bonanza Partner · Bonanza Partner Team · Bond Customer · Business
+Associate · E-Broking Customer · Equity Customer · Franchise · Game Changer
+DSA · GIFT IFSC · Insurance Customer · IPO Customer · Merchant Banking
+Customer · Multiple Opportunity · Mutual Fund · Mutual Funds Customer ·
+Obsolete Customer · Partner Activation · PMS · Reactivation - Margin
+Collection · Sunglow Loan
+
+Each is a product line, which is what this CRM's product cards are. The
+overlaps are the interesting part: *Mutual Fund* (added this June, "for MF
+outbound calling") sits beside *Mutual Funds Customer*; *Bonanza Partner*
+beside *Bonanza Partner Team*; and *Obsolete Customer* is a type called
+obsolete that nobody deleted. *Multiple Opportunity* is a type for having more
+than one, which the data model should express rather than a type.
+
+## 9 · Installed apps — 13
+
+Universal Telephony Connector · Facebook/Instagram Lead Ads · WhatsApp
+Business · Custom Tab Connector · Custom Lead and List Actions · Universal Data
+Sync · Custom Menu For Web App · Nudges Connector · Custom Opportunity Tab
+Connector · Custom Opportunity Actions · Zoom Meeting Connector · Zip based
+lead distribution · **Freshdesk**
+
+Bigul has 18. Two matter for the build:
+
+- **Freshdesk** is installed here, so customer support tickets live in
+  Freshdesk rather than in LeadSquared. Our Cases module has to know whether it
+  replaces Freshdesk or integrates with it — a question for Ritesh.
+- **Zip based lead distribution** assigns leads by PIN code, which is a routing
+  rule this CRM's assignment engine does not have today.
+
+No Google Ads connector here, where Bigul has two.
+
+## 10 · Not yet captured
+
+- Forms, Process Designer processes and Smart Views
+- Lead and activity volumes (the Bigul audit's 495,118 leads has no counterpart
+  here yet)
+- The split of the 200 lead fields into system and custom
+- The two Cube LAPPS' code (the export button reports success and produces no
+  file)
+
+## 11 · What this changes
 
 1. **Every migration estimate so far covers one of two tenants.** Fields,
-   stages, sources, automations, LAPPS and reports all have a second set.
+   stages, sources, automations, LAPPS, opportunity types and reports all have
+   a second set.
 2. **The ten flows to port are Bigul's.** Bonanza's business logic is
    unscoped, and its own distribution and campaign flows will need the same
    treatment.
@@ -171,3 +257,8 @@ them. Still to do on a second pass:
    enforces is the right shape for this, but the configuration that hangs off
    each book — stages, sources, templates, dialler campaigns, DLT headers —
    has to be loaded per business rather than once.
+4. **Source and stage migration needs a mapping table, not a copy.** 78.7% of
+   recent Bonanza leads have no source, the rest use nineteen values that are
+   really about ten, and the stage list carries a typo and a duplicate
+   "not interested". Importing either list as-is would carry the mess across.
+5. **Freshdesk is a live dependency** nobody has ruled on.
