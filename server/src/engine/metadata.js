@@ -898,6 +898,60 @@ export function valueUsage(entity, apiName, orgs = null) {
   return rows;
 }
 
+/**
+ * Move every record holding one value onto another, and retire the first.
+ *
+ * This is what "merge" means on a picklist: two values become one. It is the
+ * answer to an orphan -- a value on records but not on the list -- which is
+ * what retiring a value in use leaves behind, and what an import or an
+ * integration wrote before those writers were checked against the list
+ * (OPS-14). The alternative, adding the value back, needs no engine help.
+ *
+ * Within the administrator's own books, like the counts beside it. A Bigul
+ * administrator merging "Walkin" into "Walk-in branch" must not rewrite
+ * Bonanza's records, and would not be shown their count either.
+ *
+ * Returns null when there is nothing to work with -- no such field, or a
+ * storage shape this cannot touch -- so a caller can tell "nothing moved" from
+ * "that was not a question I could answer".
+ */
+export function mergeValue(entity, apiName, from, to, orgs = null) {
+  const def = one('SELECT table_name FROM entity_def WHERE api_name = ?', [entity]);
+  const field = fieldDef(entity, apiName);
+  if (!def?.table_name || !field) return null;
+  if (String(from) === String(to)) return null;
+
+  /* The same guard valueUsage applies, for the same reason: these identifiers
+     come from our own registry and never from the request, and both are
+     checked against the shape a column may have before being interpolated. */
+  if (!/^[a-z_][a-z0-9_]*$/i.test(apiName) || !/^[a-z_][a-z0-9_]*$/i.test(def.table_name)) return null;
+
+  if (field.storage !== 'column') {
+    const moved = run(
+      'UPDATE field_value SET text_value = ? WHERE field_id = ? AND text_value = ?',
+      [to, field.id, from],
+    ).changes;
+    return { moved: Number(moved ?? 0), scoped: false };
+  }
+
+  const cols = new Set(all(`PRAGMA table_info(${def.table_name})`).map((c) => c.name));
+  if (!cols.has(apiName)) return null;
+
+  const where = [`${apiName} = ?`];
+  const params = [to, from];
+  if (cols.has('deleted_at')) where.push('deleted_at IS NULL');
+  if (orgs && cols.has('sales_org')) {
+    where.push(`sales_org IN (${orgs.map(() => '?').join(',') || "''"})`);
+    params.push(...orgs);
+  }
+
+  const moved = run(
+    `UPDATE ${def.table_name} SET ${apiName} = ? WHERE ${where.join(' AND ')}`,
+    params,
+  ).changes;
+  return { moved: Number(moved ?? 0), scoped: Boolean(orgs && cols.has('sales_org')) };
+}
+
 /* ----------------------------------------------- field-level security */
 
 /**

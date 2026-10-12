@@ -26,6 +26,17 @@
  */
 
 import { all, one, run, audit } from '../db.js';
+import { columnRefusal, columnPicklist, LEAD_PICKLIST_COLUMNS } from './metadata.js';
+
+/**
+ * The picklist columns an import can write.
+ *
+ * Stage is not among them -- a new lead starts at the column default and an
+ * import does not get to decide somebody's pipeline position -- so this is
+ * LEAD_PICKLIST_COLUMNS minus Stage, intersected with what IMPORT_FIELDS
+ * actually offers.
+ */
+const PICKLIST_COLUMNS = LEAD_PICKLIST_COLUMNS.filter((c) => c !== 'stage');
 
 /** Rows one import may carry. The same cap the bulk actions use. */
 export const IMPORT_CAP = 5000;
@@ -122,6 +133,69 @@ export function checkMapping(header, mapping) {
 const MOBILE = /^[6-9]\d{9}$/;
 
 /**
+ * What an incoming value becomes.
+ *
+ * `valueMap` is `{ source: { 'Self': 'DKYC Portal' } }`: the decision somebody
+ * made on the mapping step for a value the list does not hold. An empty string
+ * means "leave the column blank", which is a real answer -- 78.7% of the legacy
+ * rows have no source at all and Ritesh's ruling on those is blank rather than
+ * a visible "Unknown (migrated)".
+ *
+ * The blank key is honoured too: `{ source: { '': '' } }` says a row with no
+ * source stays without one, instead of taking the "Import" default below. That
+ * is how the migration gets answer 4 without changing what an ordinary import
+ * does.
+ */
+const mapValue = (valueMap, column, value) => {
+  const forColumn = valueMap?.[column];
+  if (!forColumn) return value;
+  const key = value ?? '';
+  return Object.prototype.hasOwnProperty.call(forColumn, key) ? forColumn[key] : value;
+};
+
+/**
+ * Which values in this file the list does not hold, and how many rows carry
+ * each.
+ *
+ * Counted over the whole file rather than reported per row: "three values are
+ * not on the Source list, between them on 41,112 rows" is a decision somebody
+ * can make, and forty thousand identical row errors is not.
+ */
+export function unknownValues({ header, rows, mapping, valueMap, salesOrg }) {
+  const found = new Map();
+
+  for (const cells of rows) {
+    const record = applyMapping(header, cells, mapping);
+    for (const column of PICKLIST_COLUMNS) {
+      if (!Object.values(mapping ?? {}).includes(column)) continue;
+      const raw = record[column] ?? '';
+      const mapped = mapValue(valueMap, column, raw);
+      /* A blank left blank is not an unknown value -- it is a column nobody
+         filled in, which the picklist does not govern. */
+      if (mapped === '' || mapped === null || mapped === undefined) continue;
+      if (!columnRefusal('lead', column, mapped, salesOrg)) continue;
+
+      const key = `${column}\u0000${raw}`;
+      const seen = found.get(key);
+      if (seen) seen.rows += 1;
+      else found.set(key, { column, value: raw, becomes: mapped === raw ? null : mapped, rows: 1 });
+    }
+  }
+
+  const byColumn = {};
+  for (const entry of found.values()) {
+    (byColumn[entry.column] ??= []).push(entry);
+  }
+  for (const list of Object.values(byColumn)) list.sort((a, b) => b.rows - a.rows);
+  return byColumn;
+}
+
+/** The values each picklist column will accept, for the mapping step. */
+export const importChoices = (salesOrg) => Object.fromEntries(
+  PICKLIST_COLUMNS.map((c) => [c, columnPicklist('lead', c, salesOrg)]),
+);
+
+/**
  * Read every row and say what would happen, or make it happen.
  *
  * `commit` false is the preview the wizard shows before anybody presses the
@@ -130,7 +204,7 @@ const MOBILE = /^[6-9]\d{9}$/;
  */
 export function runImport({
   header, rows, mapping, mode = 'create', salesOrg, ownerId, listId = null,
-  commit = false, generateCards,
+  commit = false, generateCards, valueMap = null,
 }) {
   const report = {
     total: rows.length,
@@ -156,6 +230,31 @@ export function runImport({
   rows.forEach((cells, i) => {
     const rowNo = i + 1;
     const record = applyMapping(header, cells, mapping);
+
+    /* An import is a writer a person reaches, so Setup's picklist decides what
+       it may store (OPS-14, ruled 18 September). Whatever the mapping step
+       decided is applied first; anything still not on the list fails the row
+       rather than being written, because a value no picker offers and no filter
+       reaches is the mess this ticket exists to stop. The run refuses to start
+       while any unknown value is undecided, so reaching this is either a direct
+       API call or a list edited mid-import. */
+    /* Columns the mapping step emptied deliberately, as opposed to ones the
+       row never filled in. The difference decides whether a default applies. */
+    const emptied = new Set();
+
+    for (const column of PICKLIST_COLUMNS) {
+      if (!Object.values(mapping ?? {}).includes(column)) continue;
+      const raw = record[column] ?? '';
+      const mapped = mapValue(valueMap, column, raw);
+      if (mapped === '' || mapped === null || mapped === undefined) {
+        if (raw !== '') emptied.add(column);
+        delete record[column];
+        continue;
+      }
+      record[column] = mapped;
+      const refusal = columnRefusal('lead', column, mapped, salesOrg);
+      if (refusal) return fail(rowNo, refusal, record);
+    }
 
     if (!record.name) return fail(rowNo, 'Missing name', record);
     if (record.mobile && !MOBILE.test(record.mobile)) {
@@ -202,7 +301,21 @@ export function runImport({
     if (commit) {
       const cols = ['sales_org', 'owner_id', ...Object.keys(record)];
       const vals = [salesOrg, ownerId, ...Object.keys(record).map((k) => record[k])];
-      if (!record.source) { cols.push('source'); vals.push('Import'); }
+      /* "Import" is the long-standing default for a row that names no source,
+         and it still is. It is skipped only where somebody decided otherwise,
+         which is one of two things: the mapping step said what a blank becomes
+         (the migration says blank -- Ritesh's ruling on the 78.7% of legacy
+         rows with no source), or this row's own source was mapped to blank.
+
+         Read as "has the importer answered for blanks?" rather than "what does
+         a blank map to?", because mapValue returns the value it was given when
+         there is no map -- so asking the second question turned every ordinary
+         import's default off. */
+      const blankDecided = Object.prototype.hasOwnProperty.call(valueMap?.source ?? {}, '');
+      if (!record.source && !blankDecided && !emptied.has('source')) {
+        cols.push('source');
+        vals.push('Import');
+      }
 
       const result = run(
         `INSERT INTO leads (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
@@ -217,6 +330,7 @@ export function runImport({
   });
 
   report.failed = report.failures.length + (report.truncated ? 1 : 0);
+  report.unknown_values = unknownValues({ header, rows, mapping, valueMap, salesOrg });
 
   /* The list, once, at the end. Adding per row would mean a half-filled list
      when a run is interrupted, which is worse than none. */

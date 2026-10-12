@@ -10,6 +10,7 @@ import { encryptField, decryptField, maskRecord, maskRecords, validate, blindInd
 import { sendCsv } from '../engine/csv.js';
 import {
   IMPORT_FIELDS, MODES, IMPORT_CAP, checkMapping, runImport, recordRun, readRun, listRuns,
+  unknownValues, importChoices,
 } from '../engine/leadimport.js';
 import { applyScore } from '../engine/rules.js';
 import { click2call, pushToAutodialler, send, logCall } from '../integrations.js';
@@ -384,13 +385,22 @@ router.get('/leads', (req, res) => {
  */
 
 /** Step 2's vocabulary: what a column can be mapped onto, and the modes. */
-router.get('/leads/import/fields', requirePermission('lead.create'), (_req, res) => {
+/** The label each import field goes by, for a refusal that names a column. */
+const FIELD_LABEL = Object.fromEntries(IMPORT_FIELDS.map((f) => [f.key, f.label]));
+
+router.get('/leads/import/fields', requirePermission('lead.create'), (req, res) => {
+  const org = activeOrg(req) || req.user.sales_org || 'BONANZA';
   res.json({
     fields: IMPORT_FIELDS,
     modes: MODES,
     max_rows: IMPORT_CAP,
     accepts: ['.csv'],
     match_on: 'mobile',
+    /* What Source, Language and Risk profile will accept, for the business the
+       import is going into. Sent here so the mapping step offers the list the
+       write actually holds somebody to, rather than a second copy of it. */
+    sales_org: org,
+    choices: importChoices(org),
     note: 'Columns you do not map are ignored. Rows are matched to existing leads on mobile number, within your business only.',
   });
 });
@@ -420,8 +430,10 @@ router.post('/leads/import/preview', requirePermission('lead.create'), (req, res
   return res.json({
     ...runImport({
       header, rows, mapping, mode, salesOrg: importOrg, ownerId: req.user.id, commit: false,
+      valueMap: req.body?.value_map ?? null,
     }),
     unmapped: check.unmapped,
+    choices: importChoices(importOrg),
   });
 });
 
@@ -449,6 +461,28 @@ router.post('/leads/import/run', requirePermission('lead.create'), (req, res) =>
     return res.status(403).json({ error: `You cannot import leads into ${importOrg}.` });
   }
 
+  /* Every unknown value decided, before anything is created.
+   *
+   * Checked here rather than inside the run because the run writes row by row
+   * with no transaction around it: a refusal partway through would leave some
+   * of the file imported and the rest not, which is the worst of the three
+   * possible outcomes. The same pass the preview makes, so the two cannot
+   * disagree about what is unknown. */
+  const undecided = unknownValues({
+    header, rows, mapping, salesOrg: importOrg, valueMap: req.body?.value_map ?? null,
+  });
+  if (Object.keys(undecided).length) {
+    const columns = Object.entries(undecided)
+      .map(([c, list]) => `${FIELD_LABEL[c] ?? c} (${list.length})`)
+      .join(', ');
+    return res.status(400).json({
+      error: `Some values in this file are not on their list: ${columns}. Decide what each one becomes before importing.`,
+      unknown_values: undecided,
+      choices: importChoices(importOrg),
+      fix: 'Map each value to one that is on the list, or choose to leave the column blank.',
+    });
+  }
+
   let targetList = listId ? Number(listId) : null;
   if (!targetList && listName?.trim()) {
     const made = run(
@@ -462,6 +496,7 @@ router.post('/leads/import/run', requirePermission('lead.create'), (req, res) =>
   const report = runImport({
     header, rows, mapping, mode, salesOrg: importOrg, ownerId: req.user.id,
     listId: targetList, commit: true, generateCards,
+    valueMap: req.body?.value_map ?? null,
   });
 
   const runId = recordRun({

@@ -101,7 +101,7 @@ const STEPS = [
   { n: 1, title: 'Import your file', blurb: 'A .csv with a header row. Nothing is written yet.' },
   { n: 2, title: 'Map the fields', blurb: 'Say what each column in your file means. Anything you leave unmapped is ignored.' },
   { n: 3, title: 'Choose what happens', blurb: 'What to do about people already in the CRM, and where the new leads should go.' },
-  { n: 4, title: 'Check and import', blurb: 'What would happen, row by row, before anything does.' },
+  { n: 4, title: 'Check and import', blurb: 'What would happen, row by row, before anything does — and what to do about values your lists do not hold.' },
 ];
 
 function Steps({ at }) {
@@ -136,6 +136,10 @@ export default function LeadImport({ session }) {
   const [mode, setMode] = useState(null);
   const [listName, setListName] = useState('');
   const [preview, setPreview] = useState(null);
+  /* What each value the lists do not hold becomes: `{ source: { Self: 'DKYC
+     Portal' } }`. An empty string is a real answer — leave the column blank —
+     so "decided" is about the key being present, never about it being truthy. */
+  const [valueMap, setValueMap] = useState({});
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -178,7 +182,7 @@ export default function LeadImport({ session }) {
     setError(null);
     try {
       setPreview(await api.post('/leads/import/preview', {
-        header: parsed.header, rows: parsed.rows, mapping, mode: chosenMode,
+        header: parsed.header, rows: parsed.rows, mapping, mode: chosenMode, value_map: valueMap,
       }));
       setStep(4);
     } catch (err) { setError(err.message); }
@@ -196,6 +200,7 @@ export default function LeadImport({ session }) {
         mode: chosenMode,
         filename: file?.name ?? null,
         list_name: listName.trim() || null,
+        value_map: valueMap,
       });
       setResult(out);
       reloadRuns();
@@ -206,6 +211,7 @@ export default function LeadImport({ session }) {
   const restart = () => {
     setStep(1); setFile(null); setParsed(null); setMapping({});
     setMode(null); setListName(''); setPreview(null); setResult(null); setError(null);
+    setValueMap({});
   };
 
   if (!session.permissions.includes('lead.create')) {
@@ -358,13 +364,26 @@ export default function LeadImport({ session }) {
                     {preview.unmapped.length === 1 ? '' : 's'}: {preview.unmapped.join(', ')}.
                   </p>
                 )}
+                <Strays
+                  unknown={preview.unknown_values}
+                  choices={preview.choices ?? meta.choices}
+                  fields={meta.fields}
+                  valueMap={valueMap}
+                  onDecide={(column, value, becomes) => setValueMap((prev) => ({
+                    ...prev,
+                    [column]: { ...(prev[column] ?? {}), [value]: becomes },
+                  }))}
+                  onRecheck={runPreview}
+                  busy={busy}
+                />
+
                 <Failures rows={preview.failures} truncated={preview.truncated} />
 
                 <div className="row" style={{ justifyContent: 'space-between' }}>
                   <button onClick={() => setStep(3)}>Back</button>
                   <button
                     className="btn-primary"
-                    disabled={busy || (preview.created + preview.updated === 0)}
+                    disabled={busy || (preview.created + preview.updated === 0) || undecided(preview, valueMap) > 0}
                     onClick={commit}
                   >
                     {busy ? <Spinner /> : `Import ${(preview.created + preview.updated).toLocaleString('en-IN')} leads`}
@@ -407,6 +426,89 @@ export default function LeadImport({ session }) {
 }
 
 /* --------------------------------------------------------------- pieces */
+
+/**
+ * How many values still have no answer.
+ *
+ * Counted from the preview rather than tracked as the user clicks, so it cannot
+ * drift from what the server will refuse. A value is decided when the map has a
+ * key for it — an empty string means "leave the column blank", which is a real
+ * decision and not an absent one.
+ */
+function undecided(preview, valueMap) {
+  return Object.entries(preview.unknown_values ?? {}).reduce(
+    (n, [column, list]) => n + list.filter(
+      (u) => !Object.prototype.hasOwnProperty.call(valueMap[column] ?? {}, u.value),
+    ).length,
+    0,
+  );
+}
+
+/**
+ * The values this file carries that the lists do not hold.
+ *
+ * An import is a writer like any other, so Setup's picklist decides what it may
+ * store (OPS-14). Refusing the file would be no use on the data this exists
+ * for — the legacy export carries nineteen sources, most of them not on the new
+ * list — so every stray value gets a decision instead: become one that is on
+ * the list, or leave the column empty. Nothing is imported until each has one.
+ *
+ * Commonest first, with the row count beside it, because "this one is 41,000
+ * rows" is the thing that decides how much care it deserves.
+ */
+function Strays({ unknown, choices, fields, valueMap, onDecide, onRecheck, busy }) {
+  const columns = Object.entries(unknown ?? {});
+  if (!columns.length) return null;
+
+  const label = (key) => fields.find((f) => f.key === key)?.label ?? key;
+
+  return (
+    <div className="notice" style={{ display: 'block' }}>
+      <p>
+        <strong>Some values in this file are not on their list.</strong> Say what each one
+        becomes. Nothing is imported until they all have an answer.
+      </p>
+
+      {columns.map(([column, list]) => (
+        <div key={column} style={{ marginTop: 10 }}>
+          <strong className="small">{label(column)}</strong>
+          <table className="field-table compact">
+            <thead>
+              <tr><th>In your file</th><th className="num">Rows</th><th>Becomes</th></tr>
+            </thead>
+            <tbody>
+              {list.map((u) => (
+                <tr key={u.value}>
+                  <td><code>{u.value || '(blank)'}</code></td>
+                  <td className="num">{u.rows.toLocaleString('en-IN')}</td>
+                  <td>
+                    <select
+                      value={valueMap[column]?.[u.value] ?? '\u0000'}
+                      onChange={(e) => onDecide(column, u.value, e.target.value === '\u0000' ? undefined : e.target.value)}
+                      aria-label={`What "${u.value}" becomes`}
+                    >
+                      <option value={'\u0000'}>Choose…</option>
+                      <option value="">Leave it blank</option>
+                      {(choices?.[column] ?? []).map((c) => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+
+      <p className="tiny">
+        A value missing from a list is added in Setup → Objects, under that field&rsquo;s values.
+        Add it there and check the file again.
+      </p>
+      <button type="button" className="btn btn-sm" disabled={busy} onClick={onRecheck}>
+        Check the file again
+      </button>
+    </div>
+  );
+}
 
 function Summary({ report }) {
   const cells = [

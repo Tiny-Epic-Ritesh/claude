@@ -304,10 +304,17 @@ written.** 7 and 8 can still follow.
 **Not built yet.** Each is a decision that lands at migration time or needs its
 own change, and none of them is blocked on you:
 
-- **Answers 1, 3 and 4** are import-mapping rules: "Self" → DKYC portal,
-  "Fresh Insurance" → an Insurance product card, and the 78.7% with no source
-  → blank. They belong in the import step that maps an unknown legacy value,
-  which is the remaining half of `OPS-14`.
+- ~~**Answers 1, 3 and 4**~~ — **the step they live in was built 12 Oct**
+  (`OPS-14`, finished). The import preview now lists every value the Source,
+  Language and Risk profile lists do not hold, with the number of rows carrying
+  each, and nothing is imported until each has an answer: map it to a value on
+  the list, or leave the column blank. So "Self" → DKYC portal and the 78.7%
+  with no source → blank are decisions made on that screen when the migration
+  is run, which is where they belong — not rules in the code that would be
+  wrong for the next file. "Fresh Insurance" → an Insurance product card is the
+  one of the three that is not a Source at all: map it to blank on the way in,
+  and the product card follows from the client's interest rather than from a
+  column.
 - **Section 3d gaps 3 to 5** — first-funding and first-trade on the client;
   shifting and reactivation as journey types; the partner journey and ARN on
   the partner record. The doc says to size these before promising them, and

@@ -28,8 +28,38 @@ import { useApi, Modal, ErrorBanner, Spinner, Loading, Icon } from '../component
 /** The API value derived from a label, once, the way the field name is. */
 const slug = (label) => String(label).trim();
 
+/**
+ * Which value a stray one becomes.
+ *
+ * A select and a button rather than a one-click merge: moving every record off
+ * a value is not reversible from this screen, and the destination is the whole
+ * decision. Nothing happens until both are chosen.
+ */
+function MergeInto({ options, disabled, onMerge }) {
+  const [into, setInto] = useState('');
+
+  return (
+    <span className="row" style={{ gap: 6 }}>
+      <select
+        value={into} onChange={(e) => setInto(e.target.value)} disabled={disabled}
+        aria-label="Merge into which value"
+      >
+        <option value="">Choose a value…</option>
+        {options.map((o) => <option key={o.value} value={o.value}>{o.label || o.value}</option>)}
+      </select>
+      <button
+        type="button" className="btn btn-sm btn-danger"
+        disabled={disabled || !into}
+        onClick={() => onMerge(into)}
+      >
+        Merge
+      </button>
+    </span>
+  );
+}
+
 export default function PicklistValues({ entity, field, onClose, onSaved }) {
-  const [usage, { loading }] = useApi(`/setup/objects/${entity}/fields/${field.api_name}/value-usage`);
+  const [usage, { loading, reload }] = useApi(`/setup/objects/${entity}/fields/${field.api_name}/value-usage`);
   /* Whether this field's values may belong to one business — the server's
      answer, not a second copy of the list. Ritesh, 12 October: the two
      LeadSquared tenants keep different stage and source lists and one CRM
@@ -75,6 +105,29 @@ export default function PicklistValues({ entity, field, onClose, onSaved }) {
   /* One default, enforced here as well as on the server. Clicking a second one
      moves it rather than adding it, because two defaults is not a decision. */
   const setDefault = (i) => setRows(current.map((r, j) => ({ ...r, is_default: j === i ? 1 : 0 })));
+
+  /**
+   * Run one repair and start again from what the server now holds.
+   *
+   * The draft is dropped on purpose: a merge changes which values exist and how
+   * many records hold them, so a draft built before it describes a list that is
+   * no longer there. The buttons are disabled while a draft exists, so nothing
+   * unsaved is lost here.
+   */
+  async function repair(fn) {
+    setBusy(true);
+    setError(null);
+    try {
+      await fn();
+      setRows(null);
+      reload();
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function save(retireInUse = false) {
     setBusy(true);
@@ -285,14 +338,59 @@ export default function PicklistValues({ entity, field, onClose, onSaved }) {
           <div className="glass notice notice-warn">
             <Icon name="inventory" size={16} />
             <div>
-              <p>
-                <strong>On records but not on the list:</strong>{' '}
-                {orphans.map((v) => `${v.value} (${v.records.toLocaleString('en-IN')})`).join(', ')}.
-              </p>
+              <p><strong>On records but not on the list.</strong></p>
               <p className="tiny">
-                These were retired while records still held them, or arrived from an import.
-                Add the value back to make those records match the picker again.
+                These were retired while records still held them, or arrived from an import or an
+                integration. Records holding them show a value no picker offers and no filter
+                reaches. Put the value back, or move its records onto one that is on the list.
               </p>
+
+              {/* These two write at once, unlike the list above, which waits for
+                  Save. They are repairs rather than edits -- one value, one
+                  decision, done on the server in a single step -- and batching a
+                  repair behind the same button as a reordering would make Save
+                  mean two different things. So an unsaved draft is refused
+                  rather than quietly thrown away. */}
+              {rows !== null && (
+                <p className="tiny">
+                  <strong>Save or cancel your changes above first</strong> — these repairs reload the list.
+                </p>
+              )}
+
+              <table className="field-table compact">
+                <thead>
+                  <tr><th>Value</th><th className="num">Records</th><th>Put it back</th><th>Or merge into</th></tr>
+                </thead>
+                <tbody>
+                  {orphans.map((v) => (
+                    <tr key={v.value}>
+                      <td><code>{v.value}</code></td>
+                      <td className="num">{v.records.toLocaleString('en-IN')}</td>
+                      <td>
+                        <button
+                          type="button" className="btn btn-sm" disabled={busy || rows !== null}
+                          onClick={() => repair(() => api.post(
+                            `/setup/objects/${entity}/fields/${field.api_name}/values/add`,
+                            { value: v.value },
+                          ))}
+                        >
+                          Add to the list
+                        </button>
+                      </td>
+                      <td>
+                        <MergeInto
+                          options={current.filter((r) => !r.isNew && String(r.value) !== String(v.value))}
+                          disabled={busy || rows !== null}
+                          onMerge={(into) => repair(() => api.post(
+                            `/setup/objects/${entity}/fields/${field.api_name}/values/merge`,
+                            { from: v.value, to: into },
+                          ))}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         )}

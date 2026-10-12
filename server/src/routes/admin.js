@@ -9,6 +9,7 @@ import { requireUser, requirePermission, permissionsFor, orgsFor, activeOrg, may
 import { hashPassword } from '../security.js';
 import { CONDITION_FIELDS, ACTION_TYPES, runRule } from '../engine/rules.js';
 import { MASTER_STEPS } from '../engine/kyc.js';
+import { columnPicklist, columnRefusal } from '../engine/metadata.js';
 import { integrationRegistry, getOutbox, syncTradingDb, vendorStatus } from '../integrations.js';
 import {
   CHANNELS, MERGE_FIELDS, checkTemplate, checkAttachments, withExamples, smsSegments, toMetaTemplate,
@@ -1447,6 +1448,10 @@ router.get('/connectors/meta/forms', requirePermission('admin.system'), (req, re
        "Global Investing" — an unlabelled list shows each twice and there is
        no way to tell which is which. */
     products: all('SELECT id, name, sales_org FROM product_types ORDER BY name'),
+    /* The Source values each book holds, so the screen offers the list the
+       write is held to instead of a free-text box. Per book because the two
+       keep different lists (12 Oct), and a form feeds exactly one of them. */
+    sources: Object.fromEntries(orgsFor(req.user).map((o) => [o, columnPicklist('lead', 'source', o)])),
   });
 });
 
@@ -1481,6 +1486,17 @@ router.patch('/connectors/meta/forms/:formId', requirePermission('admin.system')
     if (owner.sales_org !== intoOrg) {
       return res.status(400).json({ error: `${owner.name} is in ${owner.sales_org} and could not see leads from a ${intoOrg} form` });
     }
+  }
+
+  /* The Source a form stamps on its leads is a value somebody picks, so the
+     picklist decides (OPS-14). Blank is allowed and means "use the platform
+     default" -- Facebook Lead Ads or Instagram Lead Ads, both of which are on
+     the list. Checked against the book the form will be in after this save,
+     not the one it is in now, or moving a form and setting its source in one
+     request would be judged against the wrong list. */
+  if (label !== undefined && label !== null && String(label).trim() !== '') {
+    const refusal = columnRefusal('lead', 'source', String(label).trim(), org ?? form.sales_org);
+    if (refusal) return res.status(400).json({ error: refusal, field: 'source_label' });
   }
 
   const sets = [];

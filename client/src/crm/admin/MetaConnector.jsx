@@ -160,6 +160,60 @@ function Connection() {
  * leads already created are left where they are, because moving somebody's
  * client between books silently is worse than a mistake somebody can see.
  */
+/**
+ * Which Source a form's leads get.
+ *
+ * A list rather than a box, because the picklist decides what may go into
+ * `leads.source` and a box could type anything -- which it did, and those
+ * leads then showed a Source no picker offered and no filter reached (OPS-14).
+ * Blank is a real choice: the lead takes the platform's own name, Facebook Lead
+ * Ads or Instagram Lead Ads.
+ *
+ * And a value can be created here, because the alternative is leaving this
+ * screen for Setup in the middle of mapping a form and coming back.
+ */
+function SourcePicker({ value, options, busy, onPick, onCreate, onError }) {
+  const [creating, setCreating] = useState(false);
+  const [draft, setDraft] = useState('');
+
+  if (creating) {
+    return (
+      <span className="row" style={{ gap: 6 }}>
+        <input
+          value={draft} onChange={(e) => setDraft(e.target.value)}
+          placeholder="New source name" aria-label="New source name"
+        />
+        <button
+          type="button" className="btn btn-sm btn-primary" disabled={busy || !draft.trim()}
+          onClick={async () => {
+            try { await onCreate(draft.trim()); setCreating(false); setDraft(''); }
+            catch (err) { onError(err.message); }
+          }}
+        >
+          Add
+        </button>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setCreating(false)}>Cancel</button>
+      </span>
+    );
+  }
+
+  return (
+    <span className="row" style={{ gap: 6 }}>
+      <select
+        value={value} disabled={busy}
+        onChange={(e) => (e.target.value === '\u0000' ? setCreating(true) : onPick(e.target.value))}
+        aria-label="Source for this form's leads"
+      >
+        <option value="">The platform default</option>
+        {options.map((o) => <option key={o} value={o}>{o}</option>)}
+        {/* Only where it is missing is a new one wanted, so the option sits at
+            the bottom rather than competing with the real values. */}
+        <option value={'\u0000'}>Add a new source…</option>
+      </select>
+    </span>
+  );
+}
+
 function Forms({ onError }) {
   const [data, { loading, reload }] = useApi('/admin/connectors/meta/forms');
   const [busy, setBusy] = useState(null);
@@ -240,12 +294,23 @@ function Forms({ onError }) {
                   </td>
 
                   <td>
-                    <input
-                      defaultValue={f.source_label ?? ''}
-                      placeholder="Facebook Lead Ads"
-                      onBlur={(e) => {
-                        if (e.target.value !== (f.source_label ?? '')) save(f.form_id, { source_label: e.target.value });
+                    <SourcePicker
+                      value={f.source_label ?? ''}
+                      options={data.sources?.[f.sales_org] ?? []}
+                      busy={busy === f.form_id}
+                      onPick={(v) => save(f.form_id, { source_label: v })}
+                      onCreate={async (v) => {
+                        /* Created where it is needed, as asked: "provide an
+                           option to create a new lead source then and there
+                           while mapping the fields" (Ritesh, 6 Oct). It is one
+                           value appended to the list, not the whole list
+                           resent, so nothing else on it can be disturbed. */
+                        await api.post('/setup/objects/lead/fields/source/values/add',
+                          { value: v, sales_org: f.sales_org });
+                        await save(f.form_id, { source_label: v });
+                        reload();
                       }}
+                      onError={onError}
                     />
                   </td>
 

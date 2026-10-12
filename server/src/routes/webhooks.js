@@ -29,6 +29,7 @@ import { applyScore } from '../engine/rules.js';
 import { assignLead } from '../engine/assignment.js';
 import { kycStatusSql, kycStatusFor } from '../engine/kycstatus.js';
 import * as kyc from '../engine/kyc.js';
+import { columnRefusal } from '../engine/metadata.js';
 import { resolveLead } from '../engine/callmatch.js';
 
 const router = Router();
@@ -429,8 +430,31 @@ function createMetaLead(lead) {
     }
   }
 
-  const source = form?.source_label
-    || (lead.platform === 'Instagram' ? 'Instagram' : 'Facebook Lead Ads');
+  /* The form's configured Source, or the platform's own.
+   *
+   * Two things here. The Instagram default was "Instagram", which is not on the
+   * Source picklist -- "Instagram Lead Ads" is -- so every Instagram lead
+   * arrived holding a value no picker offered and no filter reached, which is
+   * the OPS-14 defect arriving through the one door nobody had checked.
+   *
+   * And a configured Source is verified before it is used, not refused: this is
+   * a real lead arriving, and the original ticket's own caution was that a
+   * strict check here "could refuse real leads". If the list no longer holds
+   * what the form was set to -- retired after it was configured -- the lead is
+   * created with the platform default and the timeline says what was asked for.
+   * Dropping somebody who filled in an ad form is never the better trade. */
+  const platformSource = lead.platform === 'Instagram' ? 'Instagram Lead Ads' : 'Facebook Lead Ads';
+  const configured = form?.source_label || null;
+  const configuredRefused = configured
+    ? columnRefusal('lead', 'source', configured, form?.sales_org ?? null)
+    : null;
+  const source = configuredRefused ? platformSource : (configured || platformSource);
+
+  if (configuredRefused) {
+    audit(null, 'meta_source_fallback', 'meta_lead_form', form?.id ?? null, {
+      form_id: form?.form_id ?? null, configured, used: source, reason: configuredRefused,
+    });
+  }
 
   const info = run(
     `INSERT INTO leads (name, mobile, email, city, state, pan, language, risk_profile,

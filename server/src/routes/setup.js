@@ -69,7 +69,7 @@ import {
 import { explainVisibility } from '../engine/sharing.js';
 import {
   entities, entityDef, fieldsOf, fieldDef, picklistValues, valueUsage, historyFor,
-  stageDurations, auditConfig, typeOf, FIELD_TYPES, LEAD_PICKLIST_COLUMNS,
+  stageDurations, auditConfig, typeOf, FIELD_TYPES, LEAD_PICKLIST_COLUMNS, mergeValue,
 } from '../engine/metadata.js';
 import {
   validateFormula, validateRollup, describeFormula, describeRollup, catalogue,
@@ -2270,6 +2270,116 @@ router.get('/objects/:entity/fields/:apiName/value-usage', requirePermission('ad
   return res.json({
     values: rows,
     per_book: req.params.entity === 'lead' && LEAD_PICKLIST_COLUMNS.includes(req.params.apiName),
+  });
+});
+
+/**
+ * Add one value to a list, without resending the whole list.
+ *
+ * The PUT below saves every value at once, which is right for the editor and
+ * wrong for everything else: a screen that wants to add one value would have to
+ * send back all the others, and any of them it got wrong it would silently
+ * save. This is what the cleanup screen, the import mapping step and the Meta
+ * form mapping all use to create a value where they stand (Ritesh, 6 Oct: the
+ * Source list is maintained by admins and superadmins, and a new value can be
+ * created while mapping).
+ */
+router.post('/objects/:entity/fields/:apiName/values/add', requirePermission('admin.objects'), (req, res) => {
+  const field = fieldDef(req.params.entity, req.params.apiName);
+  if (!field) return res.status(404).json({ error: 'No such field' });
+  if (field.type !== 'picklist' && field.type !== 'multipicklist') {
+    return res.status(400).json({ error: `${field.label} is not a picklist` });
+  }
+
+  const value = String(req.body?.value ?? '').trim();
+  if (!value) return res.status(400).json({ error: 'Give the value a name', field: 'value' });
+  const label = String(req.body?.label ?? value).trim();
+
+  const perBook = req.params.entity === 'lead' && LEAD_PICKLIST_COLUMNS.includes(req.params.apiName);
+  const org = req.body?.sales_org ?? null;
+  if (org !== null) {
+    if (!perBook) {
+      return res.status(400).json({
+        error: `${field.label} keeps one list for both businesses`,
+        fix: 'Only Stage, Source, Language and Risk profile can hold a value for one business.',
+      });
+    }
+    if (!mayUseOrg(req.user, org)) return res.status(403).json({ error: `You cannot add a value for ${org}` });
+  }
+
+  const existing = one('SELECT * FROM picklist_value WHERE field_id = ? AND value = ?', [field.id, value]);
+  if (existing?.active) {
+    return res.status(409).json({ error: `"${value}" is already on the list`, field: 'value' });
+  }
+
+  const before = picklistValues(field.id);
+  const last = one('SELECT MAX(sort_order) AS n FROM picklist_value WHERE field_id = ?', [field.id])?.n ?? -1;
+
+  /* Reactivated rather than inserted again when it was retired: the records
+     that still hold it are the reason somebody is adding it back, and a second
+     row with the same value is refused by the unique constraint anyway. */
+  run(
+    `INSERT INTO picklist_value (field_id, value, label, sort_order, sales_org, active)
+     VALUES (?,?,?,?,?,1)
+     ON CONFLICT(field_id, value) DO UPDATE SET active = 1, label = excluded.label, sales_org = excluded.sales_org`,
+    [field.id, value, label, Number(last) + 1, org],
+  );
+
+  auditConfig('field', `${req.params.entity}.${req.params.apiName}.values`, existing ? 'value_restored' : 'value_added',
+    before, picklistValues(field.id), req.user.id);
+  return res.status(201).json({ values: picklistValues(field.id), restored: Boolean(existing) });
+});
+
+/**
+ * Two values become one.
+ *
+ * The other way out of an orphan: instead of adding the stray value back,
+ * move the records that hold it onto a value that is on the list. Both halves
+ * happen or neither -- the records move and the stray value is retired, because
+ * leaving it offered after its records have gone is how the list grew the
+ * duplicates in the first place.
+ */
+router.post('/objects/:entity/fields/:apiName/values/merge', requirePermission('admin.objects'), (req, res) => {
+  const field = fieldDef(req.params.entity, req.params.apiName);
+  if (!field) return res.status(404).json({ error: 'No such field' });
+
+  const from = String(req.body?.from ?? '').trim();
+  const to = String(req.body?.to ?? '').trim();
+  if (!from || !to) return res.status(400).json({ error: 'Say which value moves, and what it becomes' });
+  if (from === to) return res.status(400).json({ error: 'That is the same value' });
+
+  /* The destination has to be one the pickers offer, or the merge replaces one
+     unselectable value with another. */
+  const live = picklistValues(field.id).filter((v) => v.active);
+  const target = live.find((v) => String(v.value) === to);
+  if (!target) {
+    return res.status(400).json({ error: `"${to}" is not on the list, so nothing should be merged into it`, field: 'to' });
+  }
+  if (target.sales_org && !mayUseOrg(req.user, target.sales_org)) {
+    return res.status(403).json({ error: `"${to}" belongs to ${target.sales_org}` });
+  }
+
+  const orgs = orgsFor(req.user);
+  const result = transact(() => {
+    const out = mergeValue(req.params.entity, req.params.apiName, from, to, orgs);
+    if (!out) return null;
+    /* Retire the value that has been merged away, if it was ever on the list.
+       An orphan was never on it and needs no retiring. */
+    run('UPDATE picklist_value SET active = 0 WHERE field_id = ? AND value = ?', [field.id, from]);
+    return out;
+  });
+  if (!result) return res.status(400).json({ error: `${field.label} cannot be merged` });
+
+  auditConfig('field', `${req.params.entity}.${req.params.apiName}.values`, 'values_merged',
+    { from }, { to, moved: result.moved }, req.user.id);
+  return res.json({
+    moved: result.moved,
+    from,
+    to,
+    values: picklistValues(field.id),
+    note: result.scoped
+      ? 'Records in the businesses you work in were moved. Any in another business keep the old value.'
+      : null,
   });
 });
 
