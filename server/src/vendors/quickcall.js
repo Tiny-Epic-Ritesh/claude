@@ -128,6 +128,32 @@ async function token() {
  *
  * Never returns the credentials, and the message is CUBE's own words.
  */
+/**
+ * What the vendor actually said, when it said anything.
+ *
+ * `vendorFetch` attaches the response body to the error and stops its message
+ * at "returned HTTP 401", which is the less useful half. CUBE answers a refused
+ * token with
+ *
+ *   {"Api":"AuthToken","Status":"Failed","Reason":"Invalid Credentials"}
+ *
+ * and an administrator reading "QuickCall (Cube Software) returned HTTP 401"
+ * cannot tell a wrong password from a wrong host from a tenant that is not
+ * enabled. The reason is right there in the body; this puts it on the screen.
+ *
+ * Only the vendor's own words, trimmed: the body can echo the request, and the
+ * request carries the password.
+ */
+const vendorReason = (err) => {
+  try {
+    /* VendorError carries it as vendorBody; the plain name is checked too so
+       a different thrower is not silently ignored. */
+    const said = JSON.parse(err?.vendorBody ?? err?.body ?? '');
+    const reason = said?.Reason ?? said?.Message ?? said?.reason ?? said?.message;
+    return reason ? String(reason).slice(0, 200) : null;
+  } catch { return null; }
+};
+
 export async function checkCredentials() {
   resetToken();
   if (!cfg.configured) {
@@ -148,7 +174,15 @@ export async function checkCredentials() {
     return { ok: true, configured: true, simulated: false, message: 'CUBE accepted the credentials.' };
   } catch (err) {
     /* The vendor's message, not a stack: an administrator reads this. */
-    return { ok: false, configured: true, simulated: false, message: err?.message || 'CUBE could not be reached.' };
+    const reason = vendorReason(err);
+    const said = err?.message || 'CUBE could not be reached.';
+    return {
+      ok: false,
+      configured: true,
+      simulated: false,
+      message: reason ? `${said} — ${reason}` : said,
+      status: err?.status ?? null,
+    };
   } finally {
     resetToken();
   }
