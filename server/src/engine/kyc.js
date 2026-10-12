@@ -98,7 +98,46 @@ export const MASTER_STEPS = [
     fields: [{ name: 'signature', label: 'Signature on white paper', type: 'file', required: true, accept: 'image/*' }] },
   { code: 'ESIGN', label: 'eSign with Aadhaar OTP', owner_type: 'System', timer: 300, group: 'Final Verification',
     fields: [{ name: 'esign_otp', label: 'Aadhaar OTP', type: 'otp', required: true, pattern: '^[0-9]{6}$' }] },
+  /*
+   * The seventeenth step, and the only one nobody can hurry.
+   *
+   * Everything above is the applicant's fifteen to twenty minutes. This is what
+   * happens next: Bonanza checks the application, and then the depository does.
+   * The journey had no step for it, so "waiting on the custodian" could only be
+   * inferred -- which is exactly why the legacy tenant grew APPLICATION UNDER
+   * VERIFICATION, INTERNALLY VERIFIED and CUSTODIAN VERIFIED as three stages of
+   * a pipeline that was supposed to be about selling (gap 1 of
+   * docs/feedback/MIGRATION-STAGE-SOURCE-MAPPING.md).
+   *
+   * "waits" is the whole difference between this step and the sixteen above it.
+   * A timed step the applicant is not sitting at would stall within minutes and
+   * be abandoned within the hour, reporting somebody as having given up while
+   * their file sits in a queue at the depository. So a waiting step is outside
+   * the timers, outside the sweep, and stops the clock on the applicant's own
+   * journey when they reach it.
+   */
+  { code: 'VERIFICATION', label: 'Verification', owner_type: 'Ops', timer: 0, waits: true,
+    group: 'Verification', fields: [],
+    note: 'Bonanza checks the application, then the depository confirms it. Not a step the applicant fills in.' },
 ];
+
+/**
+ * How far verification has got.
+ *
+ * Three answers rather than a flag, because the two that are not "done" are
+ * different problems with different owners: an application under review is ours
+ * to move, and one waiting on the custodian is not. A single verified yes/no is
+ * what left the legacy tenant unable to answer "how many are stuck with us?"
+ * without somebody reading stage names.
+ */
+export const VERIFICATION_OUTCOMES = [
+  { code: 'UNDER_REVIEW', label: 'Under review', waiting_on: 'Bonanza' },
+  { code: 'INTERNALLY_VERIFIED', label: 'Internally verified', waiting_on: 'the custodian' },
+  { code: 'CUSTODIAN_VERIFIED', label: 'Custodian verified', waiting_on: null },
+];
+
+export const verificationOutcome = (code) =>
+  VERIFICATION_OUTCOMES.find((o) => o.code === code) ?? null;
 
 export const stepByCode = (code) => MASTER_STEPS.find((s) => s.code === code);
 
@@ -245,12 +284,23 @@ export function getJourney(id, { byToken = false } = {}) {
 
 function computeElapsed(journey) {
   if (!journey.started_at) return 0;
-  const start = new Date(`${journey.started_at.replace(' ', 'T')}Z`).getTime();
-  const end = journey.completed_at
-    ? new Date(`${journey.completed_at.replace(' ', 'T')}Z`).getTime()
-    : journey.abandoned_at
-      ? new Date(`${journey.abandoned_at.replace(' ', 'T')}Z`).getTime()
-      : Date.now();
+  const at = (ts) => new Date(`${ts.replace(' ', 'T')}Z`).getTime();
+  const start = at(journey.started_at);
+
+  /* What the applicant spent, not how long the paperwork took.
+   *
+   * Every per-step timer and the whole 15-20 minute promise are about the
+   * applicant's own sitting. Once they reach a waiting step the file is out of
+   * their hands, so the clock stops there -- otherwise an application that
+   * cleared verification in three days would report a three-day DIY time, and
+   * the averages on the KYC health table would mean nothing. */
+  const end = journey.applicant_done_at
+    ? at(journey.applicant_done_at)
+    : journey.completed_at
+      ? at(journey.completed_at)
+      : journey.abandoned_at
+        ? at(journey.abandoned_at)
+        : Date.now();
   return Math.max(0, Math.round((end - start) / 1000));
 }
 
@@ -258,6 +308,12 @@ function computeElapsed(journey) {
 function stallState(journey, steps) {
   const active = steps.find((s) => s.status === 'active');
   if (!active || !active.entered_at || journey.status === 'Complete') return null;
+
+  /* A waiting step has no clock and cannot stall. Timed like the sixteen
+     before it, VERIFICATION would stall in minutes and be abandoned within the
+     hour -- the sweep reading "nobody has touched this" as "the applicant gave
+     up", when the applicant has finished and somebody else is holding it. */
+  if (active.waits) return null;
 
   const enteredMs = new Date(`${active.entered_at.replace(' ', 'T')}Z`).getTime();
   const onStepS = Math.round((Date.now() - enteredMs) / 1000);
@@ -283,6 +339,16 @@ export function submitStep(journeyId, stepCode, payload) {
   }
   if (journey.status === 'Complete') return { error: 'This application is already complete.' };
 
+  const steps = journeyStepsFor(journey.product_type_id, journey.journey_version_id);
+
+  /* Verification is recorded by Bonanza through recordVerification, not posted
+     by whoever holds the resume token. Without this an applicant could mark
+     their own application custodian-verified from the public portal -- the one
+     step in the journey that exists to be somebody else's decision. */
+  if (steps.find((s) => s.code === stepCode)?.waits) {
+    return { error: 'Verification is recorded by Bonanza, not submitted with the application.' };
+  }
+
   const form = { ...readForm(journey), ...payload };
 
   // Simulated penny drop: the adapter decides, the journey just records the outcome.
@@ -299,7 +365,6 @@ export function submitStep(journeyId, stepCode, payload) {
     [onStepS, JSON.stringify(payload), journeyId, stepCode],
   );
 
-  const steps = journeyStepsFor(journey.product_type_id, journey.journey_version_id);
   const idx = steps.findIndex((s) => s.code === stepCode);
   const next = steps.slice(idx + 1).find((s) => stepApplies(s, form));
 
@@ -316,10 +381,111 @@ export function submitStep(journeyId, stepCode, payload) {
     run('UPDATE kyc_journeys SET current_step = ?, form_data = ?, status = ? WHERE id = ?', [
       next.code, writeForm(form), 'In Progress', journeyId,
     ]);
+    if (next.waits) handedOver(journeyId, next);
     return { done: false, next_step: next.code, journey: getJourney(journeyId) };
   }
 
   return { done: true, journey: completeJourney(journeyId, form) };
+}
+
+/**
+ * The applicant has finished and somebody else now holds the application.
+ *
+ * Stamped rather than inferred: the elapsed clock stops here, verification
+ * opens at its first outcome instead of sitting blank for somebody to read a
+ * meaning into, and the product RM is told -- because an application arriving
+ * for review is work, and nothing else would have said so.
+ */
+function handedOver(journeyId, step) {
+  run(
+    `UPDATE kyc_journeys SET
+       applicant_done_at    = COALESCE(applicant_done_at, datetime('now')),
+       verification_outcome = COALESCE(verification_outcome, 'UNDER_REVIEW'),
+       verification_at      = COALESCE(verification_at, datetime('now'))
+     WHERE id = ?`,
+    [journeyId],
+  );
+  const journey = one('SELECT * FROM kyc_journeys WHERE id = ?', [journeyId]);
+  if (!journey?.lead_id) {
+    audit(null, 'kyc_submitted_for_verification', 'kyc_journey', journeyId, { step: step.code });
+    return;
+  }
+  run('INSERT INTO activities (lead_id, card_id, type, direction, subject, body, user_id) VALUES (?,?,?,?,?,?,NULL)', [
+    journey.lead_id, journey.card_id, 'KYC Event', 'system', 'Application submitted for verification',
+    `The applicant finished every step they own. "${step.label}" is with Bonanza for review.`,
+  ]);
+  const card = journey.card_id ? one('SELECT * FROM product_cards WHERE id = ?', [journey.card_id]) : null;
+  const lead = one('SELECT * FROM leads WHERE id = ?', [journey.lead_id]);
+  notify(card?.product_rm_id ?? lead?.owner_id, 'KYC ready for verification',
+    `${lead?.name} has submitted everything. The application is waiting on Bonanza's review.`,
+    `/leads/${journey.lead_id}`);
+  audit(null, 'kyc_submitted_for_verification', 'kyc_journey', journeyId, { step: step.code });
+}
+
+/**
+ * Record how far verification has got.
+ *
+ * Only the last outcome completes the journey. The other two are recorded and
+ * nothing else happens, which is the point: the application sits in a state the
+ * CRM can report on -- with us, or with the depository -- instead of being
+ * "In Progress" for a week with nothing saying what it waits for.
+ *
+ * Outcomes are not forced forwards. A custodian can send a file back and a
+ * reviewer can correct a mis-click; refusing either would mean inventing a rule
+ * nobody asked for, and every change is on the timeline and in the audit log,
+ * so what happened stays recoverable either way.
+ */
+export function recordVerification(journeyId, outcome, userId = null) {
+  const journey = one('SELECT * FROM kyc_journeys WHERE id = ?', [journeyId]);
+  if (!journey) return { error: 'Journey not found' };
+
+  const known = verificationOutcome(outcome);
+  if (!known) {
+    return {
+      error: `"${outcome}" is not a verification outcome`,
+      allowed: VERIFICATION_OUTCOMES.map((o) => o.code),
+    };
+  }
+  if (journey.status === 'Complete') return { error: 'This application is already complete.' };
+  if (journey.status === 'Abandoned') {
+    return { error: 'This application was abandoned. Take it over before verifying it.' };
+  }
+
+  const steps = journeyStepsFor(journey.product_type_id, journey.journey_version_id);
+  const waiting = steps.find((s) => s.waits);
+  if (!waiting) return { error: 'This journey has no verification step.' };
+  if (journey.current_step !== waiting.code) {
+    const at = steps.find((s) => s.code === journey.current_step);
+    return { error: `The applicant has not finished yet — this journey is at "${at?.label ?? journey.current_step}".` };
+  }
+
+  const was = journey.verification_outcome;
+  if (was === known.code) return { unchanged: true, journey: getJourney(journeyId) };
+
+  const finished = known.code === 'CUSTODIAN_VERIFIED';
+  run(
+    `UPDATE kyc_journey_progress SET status = ?, payload = ?, completed_at = ${finished ? "datetime('now')" : 'NULL'}
+      WHERE journey_id = ? AND step_code = ?`,
+    [finished ? 'done' : 'active', JSON.stringify({ outcome: known.code }), journeyId, waiting.code],
+  );
+  run(
+    "UPDATE kyc_journeys SET verification_outcome = ?, verification_at = datetime('now'), verified_by = ? WHERE id = ?",
+    [known.code, userId, journeyId],
+  );
+
+  if (journey.lead_id) {
+    run('INSERT INTO activities (lead_id, card_id, type, direction, subject, body, user_id) VALUES (?,?,?,?,?,?,?)', [
+      journey.lead_id, journey.card_id, 'KYC Event', 'system', `Verification: ${known.label}`,
+      known.waiting_on
+        ? `Recorded as ${known.label.toLowerCase()}. Waiting on ${known.waiting_on}.`
+        : `Recorded as ${known.label.toLowerCase()}. Verification is finished.`,
+      userId,
+    ]);
+  }
+  audit(userId, 'kyc_verification', 'kyc_journey', journeyId, { from: was, to: known.code });
+
+  if (!finished) return { journey: getJourney(journeyId) };
+  return { completed: true, journey: completeJourney(journeyId, null) };
 }
 
 export function completeJourney(journeyId, form) {
@@ -431,12 +597,23 @@ export function kycHealth(productTypeId = null) {
 
   return rows.map((r) => {
     const full = getJourney(r.id);
+    const active = full?.steps?.find((s) => s.status === 'active');
+    const outcome = verificationOutcome(r.verification_outcome);
     return {
       ...r,
-      current_step_label: full?.stall?.step_label || (r.status === 'Complete' ? 'Completed' : r.current_step),
+      /* The active step, not the stalled one. They were the same thing until a
+         step existed that cannot stall: VERIFICATION has no stall state, so the
+         label fell through to the raw code and this column read "VERIFICATION"
+         where every other row read a sentence. */
+      current_step_label: active?.label || (r.status === 'Complete' ? 'Completed' : r.current_step),
       seconds_on_step: full?.stall?.seconds_on_step ?? 0,
       progress_pct: full?.progress_pct ?? 0,
       elapsed_s: full?.elapsed_s ?? 0,
+      /* Who the application is sitting with -- the question the legacy tenant
+         could not answer: is this ours to move, or the depository's? */
+      verification: outcome && r.status !== 'Complete'
+        ? { outcome: outcome.code, label: outcome.label, waiting_on: outcome.waiting_on, since: r.verification_at }
+        : null,
       age_days: daysSince(r.created_at),
     };
   });

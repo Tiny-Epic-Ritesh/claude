@@ -3287,6 +3287,10 @@ th[aria-sort] .th-sort .mi { opacity: 1; }
 .outcome-icon { font-size: 52px; }
 .outcome-icon.is-done { color: var(--ok); }
 .outcome-icon.is-paused { color: var(--warn); }
+/* Submitted and being verified. Neither of the two above tells the truth here:
+   green reads as "your account is open", which it is not yet, and amber reads
+   as "something is wrong", which it is not either. */
+.outcome-icon.is-waiting { color: var(--accent); }
 
 .outcome-stats {
   display: grid;

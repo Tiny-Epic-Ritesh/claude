@@ -100,6 +100,47 @@ internal.post('/journeys/:id/assist', requirePermission('kyc.manage'), (req, res
   res.json(kyc.assist(Number(req.params.id), req.user.id));
 });
 
+/** The outcomes a verification may be recorded at, so the screen offers what the write takes. */
+internal.get('/verification-outcomes', (_req, res) => res.json({ outcomes: kyc.VERIFICATION_OUTCOMES }));
+
+/**
+ * Record how far verification has got (gap 1 of the migration mapping).
+ *
+ * Book-scoped like `/journeys/:id`, and for the same reason: a journey belongs
+ * to the book its lead does, and verifying the other business's application is
+ * not something a reviewer in this one should be able to do.
+ */
+internal.post('/journeys/:id/verification', requirePermission('kyc.manage'), (req, res) => {
+  const id = Number(req.params.id);
+  const journey = one('SELECT * FROM kyc_journeys WHERE id = ?', [id]);
+  if (!journey) return res.status(404).json({ error: 'Journey not found' });
+
+  /* A journey with a lead belongs to the book that lead does, and verifying
+     the other business's application is not something a reviewer in this one
+     should be able to do. A self-service journey has no lead until it
+     completes -- it is in neither book yet, so there is no boundary to police
+     and kyc.manage alone governs it. Refusing those would mean nobody could
+     ever verify a walk-in application. */
+  if (journey.lead_id) {
+    const scope = reqScope(req, 'l');
+    const visible = one(`SELECT 1 v FROM leads l WHERE l.id = ? AND ${scope.sql}`,
+      [journey.lead_id, ...scope.params]);
+    if (!visible) return res.status(403).json({ error: 'This journey is outside your visibility scope' });
+  }
+
+  const out = kyc.recordVerification(id, req.body?.outcome, req.user.id);
+  if (out.error) return res.status(400).json(out);
+
+  /* The applicant's own path calls this when the last step lands. Completion
+     happens HERE now, so without it a self-service application would finish
+     verification and leave nothing in the CRM: no lead, no card, no owner. */
+  if (out.completed) {
+    ensureLead(out.journey);
+    return res.json({ ...out, journey: kyc.getJourney(id) });
+  }
+  return res.json(out);
+});
+
 /** Product Supervisor override — force a step complete or reset the journey. */
 internal.post('/journeys/:id/override', requirePermission('kyc.override'), (req, res) => {
   const { step_code, action = 'complete' } = req.body;
@@ -337,6 +378,12 @@ function publicView(j) {
         code: s.code, label: s.label, group: s.group, status: s.status,
         fields: s.fields, note: s.note, timer_s: s.timer_s || s.timer,
         seconds_on_step: s.seconds_on_step,
+        /* Whether this is a step the applicant fills in. Without it the portal
+           drew the verification step as a form -- and it has no fields, so an
+           empty one. What the applicant is NOT told is how far verification has
+           got: "internally verified" versus "with the custodian" is our
+           process, and the screen says we have it and are checking. */
+        waits: s.waits === true,
       })),
     stall: j.stall ? { stalled: j.stall.stalled, seconds_on_step: j.stall.seconds_on_step, timer_s: j.stall.timer_s } : null,
   };

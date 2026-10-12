@@ -572,6 +572,10 @@ for (const code of ['EQD', 'DP', 'COM', 'CUR', 'GLOBAL']) {
     ]);
   });
 }
+/* No VERIFICATION step: a mutual fund application does not go to a depository,
+   so there is no custodian to wait on. The five broking and demat products above
+   get it; this list is shorter on purpose, and the Journey Composer can add the
+   step to any product if that turns out to be wrong. */
 const MF_STEPS = ['MOBILE', 'MOBILE_OTP', 'EMAIL', 'EMAIL_OTP', 'PAN', 'AADHAAR_DIGILOCKER', 'PERSONAL', 'FINANCIAL', 'BANK', 'BANK_PROOF', 'NOMINEE', 'ESIGN'];
 for (const code of ['MF', 'SMART', 'FI']) {
   MF_STEPS.forEach((stepCode, i) => {

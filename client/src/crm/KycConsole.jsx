@@ -84,7 +84,14 @@ export default function KycConsole({ session }) {
                   <td>
                     <span className={`badge ${j.status === 'Complete' ? 'badge-green' : ['Stalled', 'Abandoned'].includes(j.status) ? 'badge-red' : 'badge-blue'}`}>{j.status}</span>
                   </td>
-                  <td className="small">{j.current_step_label || '—'}</td>
+                  <td className="small">
+                    {j.current_step_label || '—'}
+                    {/* Whose desk it is sitting on. "In progress" on its own was
+                        the legacy tenant's whole problem: true, and no use. */}
+                    {j.verification?.waiting_on && (
+                      <div className="tiny muted">waiting on {j.verification.waiting_on}</div>
+                    )}
+                  </td>
                   <td><Progress pct={j.progress_pct} /></td>
                   <td className="num small">{j.seconds_on_step ? mins(j.seconds_on_step) : '—'}</td>
                   <td className="num small muted">{mins(j.elapsed_s)}</td>

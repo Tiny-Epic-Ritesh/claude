@@ -774,8 +774,25 @@ function KycTab({ lead, session, reload, onError }) {
 }
 
 function JourneyCard({ journey, canManage, onError, reload, setCoach, busy, setBusy }) {
-  const [full] = useApi(`/kyc/journeys/${journey.id}`);
+  const [full, { reload: reloadJourney }] = useApi(`/kyc/journeys/${journey.id}`);
+  /* The outcomes come from the server rather than a list repeated here, so the
+     buttons offered cannot drift from the ones the write accepts. */
+  const [outcomes] = useApi('/kyc/verification-outcomes');
   if (!full) return <div className="card"><Loading /></div>;
+
+  /* The step the applicant has handed over at. It has no timer and cannot
+     stall, so nothing in the stall state describes it. */
+  const waiting = full.steps?.find((s) => s.waits && s.status === 'active');
+  const here = (outcomes?.outcomes ?? []).find((o) => o.code === full.verification_outcome);
+
+  async function record(outcome) {
+    setBusy(true);
+    try {
+      await api.post(`/kyc/journeys/${journey.id}/verification`, { outcome });
+      reloadJourney();
+      reload();
+    } catch (err) { onError(err.message); } finally { setBusy(false); }
+  }
 
   async function coach() {
     setBusy(true);
@@ -805,13 +822,45 @@ function JourneyCard({ journey, canManage, onError, reload, setCoach, busy, setB
           <span className={`badge ${full.status === 'Complete' ? 'badge-green' : ['Stalled', 'Abandoned'].includes(full.status) ? 'badge-red' : 'badge-blue'}`}>{full.status}</span>
           {['Stalled', 'Abandoned'].includes(full.status) && <button className="btn-sm" onClick={coach} disabled={busy}>Why stuck?</button>}
           {canManage && full.status === 'Abandoned' && <button className="btn-sm btn-primary" onClick={assist} disabled={busy}>Take over</button>}
-          {full.resume_token && full.status !== 'Complete' && (
+          {here && full.status !== 'Complete' && (
+            <span className="badge">
+              {here.waiting_on ? `${here.label} — waiting on ${here.waiting_on}` : here.label}
+            </span>
+          )}
+          {full.resume_token && full.status !== 'Complete' && !waiting && (
             <a className="btn btn-sm" href={appUrl(`/dkyc/resume/${full.resume_token}`)} target="_blank" rel="noreferrer">Open applicant link</a>
           )}
         </div>
       </div>
 
       <div className="card-body">
+        {waiting && (
+          <div className="glass notice">
+            <div>
+              <p>
+                The applicant has finished everything they own. This application is
+                {here?.waiting_on ? ` with ${here.waiting_on}` : ' being verified'}
+                {full.verification_at ? ` since ${full.verification_at.slice(0, 10)}` : ''}.
+              </p>
+              {canManage && (
+                <div className="row" style={{ gap: 8, marginTop: 8 }}>
+                  {(outcomes?.outcomes ?? [])
+                    .filter((o) => o.code !== full.verification_outcome)
+                    .map((o) => (
+                      <button
+                        key={o.code} type="button" disabled={busy}
+                        className={`btn btn-sm ${o.waiting_on ? '' : 'btn-primary'}`}
+                        onClick={() => record(o.code)}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                </div>
+              )}
+              {!canManage && <p className="tiny muted">Only a Product RM or supervisor can record verification.</p>}
+            </div>
+          </div>
+        )}
         <Progress pct={full.progress_pct} label="Journey progress" />
         <div className="rail" style={{ marginTop: 14 }}>
           {full.steps.filter((s) => s.applies).map((s) => (

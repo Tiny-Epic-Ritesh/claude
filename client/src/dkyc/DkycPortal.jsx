@@ -318,6 +318,13 @@ function Journey() {
     );
   }
 
+  /* The applicant's part is over.
+   *
+   * The step they are on is one they cannot fill in -- Bonanza reviews the
+   * application and then the depository confirms it. Falling through to the
+   * form branch below would draw a form with no fields in it. */
+  if (step?.waits) return <Submitted journey={journey} />;
+
   /* ---- active step ---- */
   const setValue = (name, v) => setValues((prev) => ({ ...prev, [name]: v }));
 
@@ -587,6 +594,52 @@ function Field({ field, value, onChange, onSendOtp }) {
 }
 
 /* ----------------------------------------------------------------- done */
+
+/**
+ * Everything is in, and somebody else is holding it.
+ *
+ * Deliberately not the "Onboarding successful" screen: the account is not open
+ * yet, and telling an applicant it is would be the one thing on this surface
+ * they would remember. It says what we have, what happens next, and how to
+ * reach somebody -- and it does not quote an internal verification state.
+ */
+function Submitted({ journey }) {
+  return (
+    <div className="portal-body">
+      <section className="glass section-card outcome-card">
+        <span className="outcome-icon material-symbols-rounded is-waiting" aria-hidden>fact_check</span>
+        <h1>We have everything we need</h1>
+        <p className="muted">
+          Your {journey.product?.name} application is submitted and being verified.
+          There is nothing more for you to do.
+        </p>
+
+        <div className="outcome-stats">
+          <div className="hero-stat"><strong>{journey.steps_done}</strong><span>steps completed</span></div>
+          <div className="hero-stat"><strong>{mins(journey.elapsed_s)}</strong><span>your time</span></div>
+          <div className="hero-stat"><strong>1</strong><span>working day to verify</span></div>
+        </div>
+
+        <div className="notice" style={{ textAlign: 'left', width: '100%' }}>
+          <span className="material-symbols-rounded" aria-hidden>schedule</span>
+          <div>
+            <strong>What happens next.</strong> Our operations team checks your documents and the
+            depository confirms your demat account. You will receive your client code and login
+            details by email once that is done.
+          </div>
+        </div>
+
+        <div className="notice" style={{ textAlign: 'left', width: '100%' }}>
+          <span className="material-symbols-rounded" aria-hidden>call</span>
+          <div>
+            Any questions? Call <strong>022-6153-0000</strong> and quote application reference{' '}
+            <code>{String(journey.resume_token).slice(0, 8).toUpperCase()}</code>.
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
 
 function Done({ journey }) {
   return (

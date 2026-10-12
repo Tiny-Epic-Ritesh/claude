@@ -209,10 +209,10 @@ Bigul shares most of the above. These are the ones it has and Bonanza does not:
 
 ### 3d · The five gaps, and what I would do
 
-1. **Verification has three steps the journey does not model** — under review,
-   internally verified, custodian verified. *Recommendation:* add a
-   `VERIFICATION` step to the KYC journey with three outcomes, so "waiting on
-   the custodian" is visible rather than inferred. Small change.
+1. ~~**Verification has three steps the journey does not model**~~ — under
+   review, internally verified, custodian verified. **Built 12 Oct**, as
+   recommended: a `VERIFICATION` step with three outcomes, so "waiting on the
+   custodian" is visible rather than inferred. See section 5.
 2. **"Under objection" is not the same as rejected.** An objection is "fix this
    and resubmit"; rejection ends it. The CRM's `kyc_status` has Rejected but no
    objection. *Recommendation:* add **Objection** to the status list, with the
@@ -272,6 +272,19 @@ written.** 7 and 8 can still follow.
 - **Section 2b — the 16-value source list** is what a new database seeds.
 - **Answer 2 — DSA, Business Associate and Franchise** are now values of
   `partner.partner_model`, so a partner referral records which kind.
+- **Section 3d gap 1 — the verification step.** The KYC journey has a
+  seventeenth step, `VERIFICATION`, with the three outcomes the legacy tenant
+  kept as lead stages: under review, internally verified, custodian verified.
+  Only the last one completes the journey and opens the product card, which
+  fixes something that was wrong before the step existed — finishing eSign
+  flipped the account straight to Active, before anybody at Bonanza or the
+  depository had looked at it. The step is a *waiting* step: no timer, outside
+  the stall sweep, and the applicant's own clock stops when they reach it, so
+  the 15–20 minute DIY figure stays about the applicant rather than about how
+  long the paperwork took. The lead's KYC rail and the KYC console both say
+  which of the two desks the application is sitting on. Mutual fund journeys
+  do not get the step — there is no depository to wait on — and the Journey
+  Composer can add it to any product if that turns out to be wrong.
 
 **Not built yet.** Each is a decision that lands at migration time or needs its
 own change, and none of them is blocked on you:
@@ -282,10 +295,10 @@ own change, and none of them is blocked on you:
   which is the remaining half of `OPS-14`.
 - **Answer 6 — Objection.** A `kyc_status` of its own, the objection text, and
   the resubmission loop back into the journey.
-- **Section 3d gaps 1 and 3 to 5** — a `VERIFICATION` journey step with its
-  three outcomes; first-funding and first-trade on the client; shifting and
-  reactivation as journey types; the partner journey and ARN on the partner
-  record.
+- **Section 3d gaps 3 to 5** — first-funding and first-trade on the client;
+  shifting and reactivation as journey types; the partner journey and ARN on
+  the partner record. The doc says to size these before promising them, and
+  that is still true.
 - **The lists themselves.** Nothing has been migrated. The values above are the
   shape; Bonanza's 30 stages and 19 sources and Bigul's own are still only in
   the tables in sections 2c and 3b.

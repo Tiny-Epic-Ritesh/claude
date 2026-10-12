@@ -1785,15 +1785,50 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
     eq(data.next_step, 'INCOME_PROOF', 'income proof not triggered');
   });
 
-  await check('completing eSign finishes the journey', async () => {
+  await check('completing eSign hands the application to verification', async () => {
     await dkycStep('INCOME_PROOF', { income_proof: 'itr.pdf' });
     await dkycStep('SELFIE', { selfie: 'selfie.jpg' });
     await dkycStep('SIGNATURE', { signature: 'sign.jpg' });
     const { status, data } = await dkycStep('ESIGN', { esign_otp: '123456' });
     eq(status, 200, 'esign status');
-    eq(data.done, true, 'journey not marked done');
-    eq(data.journey.status, 'Complete', 'journey status');
-    eq(data.journey.progress_pct, 100, 'progress');
+
+    /* Not done, from 12 Oct. eSign used to complete the journey and open the
+       account in the same breath, before anybody at Bonanza or the depository
+       had looked at it. The journey now ends at a verification step only
+       Bonanza can move -- gap 1 of the migration mapping. */
+    eq(data.done, false, 'eSign completed the journey without anybody verifying it');
+    eq(data.next_step, 'VERIFICATION', 'next step after eSign');
+    eq(data.journey.status, 'In Progress', 'journey status');
+    eq(data.journey.current_step, 'VERIFICATION', 'journey current step');
+    /* The applicant is told the step waits and nothing about how far our own
+       verification has got -- that is internal, and checked below. */
+    eq(data.journey.steps.find((s) => s.code === 'VERIFICATION').waits, true, 'step marked as waiting');
+    assert(
+      !('verification_outcome' in data.journey),
+      'the public view leaks the internal verification state',
+    );
+    REF.dkycJourneyId = data.journey.id;
+  });
+
+  await check('the applicant cannot verify their own application', async () => {
+    const { status } = await dkycStep('VERIFICATION', { outcome: 'CUSTODIAN_VERIFIED' });
+    assert(status === 409 || status === 400, `expected rejection, got ${status}`);
+  });
+
+  await check('Bonanza records the outcomes and the custodian one completes it', async () => {
+    const { data: list } = await req('/api/kyc/verification-outcomes', { token: T.admin, expect: 200 });
+    eq(list.outcomes.length, 3, 'verification outcomes offered');
+
+    const mid = await req(`/api/kyc/journeys/${REF.dkycJourneyId}/verification`, {
+      method: 'POST', token: T.admin, body: { outcome: 'INTERNALLY_VERIFIED' }, expect: 200,
+    });
+    eq(mid.data.journey.status, 'In Progress', 'status after internal verification');
+
+    const done = await req(`/api/kyc/journeys/${REF.dkycJourneyId}/verification`, {
+      method: 'POST', token: T.admin, body: { outcome: 'CUSTODIAN_VERIFIED' }, expect: 200,
+    });
+    eq(done.data.journey.status, 'Complete', 'status after custodian verification');
+    eq(done.data.journey.progress_pct, 100, 'progress');
   });
 
   await check('completing the journey creates an attributed CRM lead', async () => {

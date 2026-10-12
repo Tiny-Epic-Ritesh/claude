@@ -77,6 +77,10 @@ const bonanzaProduct = one(
 assert(bigulProduct && bonanzaProduct, 'the seed has no KYC-bearing product in each book');
 
 const RM_BZ = await probeAdmin(`ops05bz${RUN}`, { role: 'sales_rm', sales_org: 'BONANZA' });
+/* Somebody who may record a verification. From 12 Oct the applicant's own
+   steps no longer finish the journey: Bonanza records the custodian outcome,
+   and that is what opens the account and creates the lead. */
+const VERIFIER = await probeAdmin(`ops05ver${RUN}`, { role: 'admin', sales_org: 'BONANZA' });
 const RM_BOTH = await probeAdmin(`ops05both${RUN}`, { role: 'sales_rm', sales_org: 'BONANZA' });
 run('UPDATE users SET org_access = ? WHERE id = ?', [JSON.stringify(['BONANZA', 'BIGUL']), RM_BOTH.id]);
 
@@ -200,6 +204,15 @@ const ANSWERS = {
   selfie: 'probe-selfie.png', signature: 'probe-signature.png', esign_otp: '123456',
 };
 
+const verify = async (journeyId, outcome = 'CUSTODIAN_VERIFIED') => {
+  const res = await fetch(`${BASE}/api/kyc/journeys/${journeyId}/verification`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${VERIFIER.token}` },
+    body: JSON.stringify({ outcome }),
+  });
+  return { status: res.status, body: await res.json().catch(() => null) };
+};
+
 const walk = async (token, firstStep) => {
   let step = firstStep;
   for (let i = 0; i < 40 && step; i += 1) {
@@ -207,6 +220,16 @@ const walk = async (token, firstStep) => {
     assert.equal(status, 200, `step ${step} returned HTTP ${status}: ${JSON.stringify(body)}`);
     if (body.done) return true;
     step = body.next_step;
+
+    /* The applicant's part ends at the verification step, which they cannot
+       submit. Bonanza records the custodian outcome, and that is what
+       completes the journey and creates the lead this file is about. */
+    if (body.journey?.steps?.find((s) => s.code === step)?.waits) {
+      const journey = one('SELECT id FROM kyc_journeys WHERE resume_token = ?', [token]);
+      const { status: vs, body: vb } = await verify(journey.id);
+      assert.equal(vs, 200, `recording verification returned HTTP ${vs}: ${JSON.stringify(vb)}`);
+      return true;
+    }
   }
   throw new Error('the journey never completed');
 };

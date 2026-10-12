@@ -764,7 +764,7 @@ CREATE TABLE IF NOT EXISTS kyc_steps_master (
   code        TEXT NOT NULL UNIQUE,
   label       TEXT NOT NULL,
   description TEXT,
-  owner_type  TEXT NOT NULL DEFAULT 'Lead',   -- Lead / RM / System
+  owner_type  TEXT NOT NULL DEFAULT 'Lead',   -- Lead / RM / System / Ops
   default_timer_s INTEGER NOT NULL DEFAULT 180,
   input_schema TEXT,                    -- JSON: fields the DKYC portal renders
   sort_order  INTEGER NOT NULL DEFAULT 0
@@ -1656,6 +1656,18 @@ const COLUMNS = [
    * Null on rows that predate versioning, which read as "whatever is current",
    * exactly as they always have. */
   ['kyc_journeys', 'journey_version_id', 'INTEGER'],
+  /* Verification -- what happens after the applicant's twenty minutes are up.
+     Bonanza checks the application, then the depository does, and until this
+     the CRM had no way to say which of those it was waiting on: gap 1 of
+     docs/feedback/MIGRATION-STAGE-SOURCE-MAPPING.md, and three of the legacy
+     tenant's thirty lead stages. See VERIFICATION_OUTCOMES in engine/kyc.js. */
+  ['kyc_journeys', 'verification_outcome', 'TEXT'],
+  ['kyc_journeys', 'verification_at', 'TEXT'],
+  ['kyc_journeys', 'verified_by', 'INTEGER'],
+  /* When the applicant's own part ended. The elapsed clock stops here, because
+     the 15-20 minute promise is about their sitting and not about how long the
+     paperwork afterwards takes. */
+  ['kyc_journeys', 'applicant_done_at', 'TEXT'],
   ['tickets', 'sla_version_id', 'INTEGER'],
   /* When the SLA was breached, as opposed to whether it was.
    *
