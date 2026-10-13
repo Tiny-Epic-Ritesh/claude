@@ -10,11 +10,14 @@ import { Router } from 'express';
 import { all, one, run, audit, notify, daysSince, PARTNER_STATES } from '../db.js';
 import {
   requireUser, requirePermission, can, unmaskRequested, maskFor, orgsFor, mayUseOrg,
-  reqPartnerScope,
+  reqPartnerScope, activeOrg,
 } from '../auth.js';
 import { encryptField, decryptField, maskRecord, maskRecords, validate } from '../security.js';
-import { send, lmsSync } from '../integrations.js';
-import { hashPassword } from '../security.js';
+import { lmsSync } from '../integrations.js';
+import { withoutPortalSecret } from '../security.js';
+import {
+  stepsOutstanding, activatePartner, issuePortalCredential, withdrawPortalAccess,
+} from './partners-support.js';
 import * as ai from '../ai/index.js';
 import { applyFieldSecurity } from '../engine/metadata.js';
 import { lockRefusal } from '../engine/approvals.js';
@@ -41,10 +44,16 @@ export const LMS_MODULES = [
   'Risk management basics',
 ];
 
-const decorate = (p) => {
+const decorate = (row) => {
   const month = new Date().toISOString().slice(0, 7);
-  // Encrypted at rest; decrypted here, masked at the response boundary.
-  p = { ...p, pan: decryptField(p.pan), bank_account: decryptField(p.bank_account), bank_ifsc: decryptField(p.bank_ifsc) };
+  /* Encrypted at rest; decrypted here, masked at the response boundary. The
+     portal password's hash stops here (OPS-26): every list, profile, create and
+     edit response carried it to anyone holding partner.view. Whether there is
+     one, and whether it is still the one-time one, is all a screen needs. */
+  const p = {
+    ...withoutPortalSecret(row),
+    pan: decryptField(row.pan), bank_account: decryptField(row.bank_account), bank_ifsc: decryptField(row.bank_ifsc),
+  };
   return {
     ...p,
     owner_name: p.owner_id ? one('SELECT name FROM users WHERE id = ?', [p.owner_id])?.name : null,
@@ -57,7 +66,8 @@ const decorate = (p) => {
     steps_total: one('SELECT COUNT(*) n FROM partner_steps WHERE partner_id = ?', [p.id]).n,
     last_activity: one('SELECT MAX(created_at) at FROM activities WHERE partner_id = ?', [p.id]).at,
     age_days: daysSince(p.created_at),
-    has_portal_login: Boolean(p.portal_password),
+    has_portal_login: Boolean(row.portal_password),
+    portal_password_one_time: Boolean(row.portal_password && row.portal_password_temp),
   };
 };
 
@@ -339,10 +349,19 @@ router.post('/', requirePermission('partner.create'), (req, res) => {
   });
   if (invalid) return res.status(400).json(invalid);
 
+  /* OPS-17. The business was never set, so every new prospect was Bonanza's by
+     the column default -- a Bigul Partner RM's prospect landed in the other
+     book, out of their own sight. The business named, else the one the screen
+     is switched to, else the creator's own; and only one they work in. */
+  const org = req.body.sales_org ?? activeOrg(req) ?? req.user.sales_org;
+  if (!org || !mayUseOrg(req.user, org)) {
+    return res.status(403).json({ error: `You cannot add partners to ${org ?? 'that business'}`, field: 'sales_org' });
+  }
+
   const result = run(
-    `INSERT INTO partners (name, business_name, partner_model, mobile, email, city, state, pan, sebi_reg_no, owner_id, commission_pct, state_code)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,'PROSPECT')`,
-    [name, business_name || null, partner_model || 'Remisier', mobile || null, email || null, city || null,
+    `INSERT INTO partners (sales_org, name, business_name, partner_model, mobile, email, city, state, pan, sebi_reg_no, owner_id, commission_pct, state_code)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'PROSPECT')`,
+    [org, name, business_name || null, partner_model || 'Remisier', mobile || null, email || null, city || null,
       state || null, encryptField(pan ? String(pan).toUpperCase() : null), sebi_reg_no || null,
       req.user.id, commission_pct || 0],
   );
@@ -357,7 +376,7 @@ router.post('/', requirePermission('partner.create'), (req, res) => {
     run('INSERT INTO partner_lms (partner_id, module) VALUES (?,?)', [id, m]);
   }
 
-  audit(req.user.id, 'partner_created', 'partner', id, { partner_model });
+  audit(req.user.id, 'partner_created', 'partner', id, { partner_model, sales_org: org });
   res.status(201).json(decorate(one('SELECT * FROM partners WHERE id = ?', [id])));
 });
 
@@ -440,10 +459,8 @@ router.post('/:id/lms/:module', requirePermission('partner.create'), (req, res) 
   res.json({ ok: true, modules: lmsSync(found.partner.id) });
 });
 
-/** Onboarding steps not yet done. One definition, so the request and the
-    activation cannot disagree about it again (QA-33). */
-const stepsOutstanding = (partnerId) =>
-  one("SELECT COUNT(*) n FROM partner_steps WHERE partner_id = ? AND status != 'done'", [partnerId]).n;
+/* `stepsOutstanding` is in partners-support.js, shared with the approval that
+   elevates a partner (OPS-25). */
 
 /**
  * Elevation is a staged, audited workflow (BRD risk register):
@@ -482,26 +499,49 @@ router.post('/:id/elevate', requirePermission('partner.elevate'), async (req, re
     return res.status(400).json({ error: `${pending} onboarding step(s) still incomplete`, pending });
   }
 
-  const code = `BNZ-P${String(partner.id).padStart(4, '0')}`;
-  const password = req.body.portal_password || `partner${partner.id}`;
+  /* OPS-15 and OPS-16. This route kept its own copy of the activation, which
+     defaulted the portal password to `partner<id>` and the code to `BNZ-P`
+     whatever the partner's business. Both paths now share partners-support.js,
+     and the password is always generated, one-time, and shown only here. */
+  const code = activatePartner(partner, req.user.id);
+  const portalLogin = issuePortalCredential(partner, req.user.id);
+  res.json({ elevated: true, partner_code: code, portal_login: portalLogin });
+});
 
-  run("UPDATE partners SET state_code = 'ACTIVE', partner_code = ?, onboarded_at = datetime('now'), portal_password = ? WHERE id = ?",
-    [code, await hashPassword(password), req.params.id]);
-  run('INSERT INTO activities (partner_id, type, direction, subject, body, user_id) VALUES (?,?,?,?,?,?)', [
-    req.params.id, 'Partner Activity', 'system', 'Elevated to Partner entity',
-    `Partner code ${code} issued. Portal access enabled.`, req.user.id,
-  ]);
-  if (partner.mobile) {
-    send('whatsapp', {
-      to: partner.mobile,
-      body: `Welcome to Bonanza, ${partner.name}. Your partner code is ${code}. You can now sign in to the Partner Portal.`,
-      partnerId: partner.id,
-    });
+/**
+ * A new one-time portal password for an active partner (OPS-15).
+ *
+ * For a partner activated through an approval, which issues none; for one who
+ * has lost theirs; and for every partner whose `partner<id>` password was
+ * withdrawn at start-up. Ends the partner's sessions.
+ */
+router.post('/:id/portal-credential', requirePermission('partner.elevate'), (req, res) => {
+  const found = loadPartner(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const { partner } = found;
+  if (partner.state_code !== 'ACTIVE') {
+    return res.status(409).json({ error: `Only an active partner can be given portal access; ${partner.name} is ${String(partner.state_code).toLowerCase()}` });
   }
-  notify(partner.owner_id, 'Partner activated', `${partner.name} is now an active partner (${code}).`, `/partners/${partner.id}`);
-  audit(req.user.id, 'partner_elevated', 'partner', partner.id, { code });
+  if (!partner.email) {
+    return res.status(400).json({ error: `${partner.name} has no email address to sign in with`, field: 'email' });
+  }
+  res.json({ portal_login: issuePortalCredential(partner, req.user.id) });
+});
 
-  res.json({ elevated: true, partner_code: code, portal_login: { email: partner.email, password } });
+/**
+ * Withdraw a partner's portal access: the password and every open session.
+ *
+ * The control the auditor looked for and could not find (Round 4, cleanup of
+ * partner #9). A reason is required, and it goes on the partner's timeline.
+ */
+router.post('/:id/portal-access/withdraw', requirePermission('partner.elevate'), (req, res) => {
+  const found = loadPartner(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const { partner } = found;
+  const reason = String(req.body?.reason ?? '').trim();
+  if (!reason) return res.status(400).json({ error: 'Say why portal access is being withdrawn', field: 'reason' });
+  if (!partner.portal_password) return res.status(409).json({ error: `${partner.name} has no portal access to withdraw` });
+  res.json(withdrawPortalAccess(partner, req.user.id, reason));
 });
 
 /* ------------------------------------------------------------ activity */

@@ -34,7 +34,7 @@
 
 import {
   randomBytes, scrypt, scryptSync, timingSafeEqual, createCipheriv,
-  createDecipheriv, createHmac, randomUUID,
+  createDecipheriv, createHmac, randomUUID, randomInt,
 } from 'node:crypto';
 import { promisify } from 'node:util';
 
@@ -192,6 +192,56 @@ export async function verifyPassword(plain, stored) {
     return { ok: false, needsRehash: false };
   }
 }
+
+/**
+ * `verifyPassword`, blocking, as a plain yes or no.
+ *
+ * For the start-up check in db.js (OPS-15), which runs before the server
+ * listens and at module top level, where an await is not available. Fails
+ * closed on anything that is not a well-formed scrypt hash, as the async one
+ * does.
+ */
+export function verifyPasswordSync(plain, stored) {
+  const value = String(stored ?? '');
+  if (!value.startsWith('scrypt$')) return false;
+  try {
+    const [, n, r, p, saltHex, hashHex] = value.split('$');
+    const expected = Buffer.from(hashHex, 'hex');
+    const actual = scryptSync(String(plain), Buffer.from(saltHex, 'hex'), expected.length,
+      { N: Number(n), r: Number(r), p: Number(p), maxmem: MAXMEM });
+    return expected.length > 0 && actual.length === expected.length && timingSafeEqual(actual, expected);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A one-time password for somebody to hand on (OPS-15).
+ *
+ * Twelve characters drawn from an alphabet without the look-alikes (0 and O,
+ * 1, l and I), in three groups of four so it can be read out over a phone:
+ * about 70 bits. It is shown once, to the person issuing it, and the partner
+ * must replace it before the portal opens anything else.
+ */
+const ONE_TIME_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+export function temporaryPassword() {
+  const group = () => Array.from({ length: 4 }, () => ONE_TIME_ALPHABET[randomInt(ONE_TIME_ALPHABET.length)]).join('');
+  return `${group()}-${group()}-${group()}`;
+}
+
+/**
+ * A partner row without its portal password (OPS-26).
+ *
+ * The partner routes, the Partner RM cockpit and the copilot's context each
+ * read `SELECT *` and passed the row on, so the stored hash went to every
+ * holder of `partner.view` and into the AI's context. Only the portal sign-in
+ * needs it, and that reads its own row.
+ */
+export const withoutPortalSecret = (row) => {
+  if (!row || typeof row !== 'object') return row;
+  const { portal_password: _secret, ...rest } = row;
+  return rest;
+};
 
 /* ------------------------------------------------------ field encryption */
 

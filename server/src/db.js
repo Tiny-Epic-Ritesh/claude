@@ -7,7 +7,7 @@
 
 import { DatabaseSync } from 'node:sqlite';
 import { actingActor } from './engine/reqcontext.js';
-import { hashPasswordSync } from './security.js';
+import { hashPasswordSync, verifyPasswordSync } from './security.js';
 import { mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1706,6 +1706,12 @@ const COLUMNS = [
   ['conversation', 'archived_at', 'TEXT'],
   ['conversation', 'archived_by', 'INTEGER'],
   ['message', 'parent_id', 'INTEGER'],
+  /* OPS-15. A portal password the system issues is one-time: the partner must
+     replace it before the portal opens anything else. `portal_password_set_at`
+     is when the current one was written, so a row without it predates the fix
+     and is checked once for the old guessable default. */
+  ['partners', 'portal_password_temp', 'INTEGER NOT NULL DEFAULT 0'],
+  ['partners', 'portal_password_set_at', 'TEXT'],
 ];
 
 /**
@@ -2768,6 +2774,51 @@ for (const [table, column] of [['users', 'password'], ['partners', 'portal_passw
   for (const row of stale) write.run(hashPasswordSync(String(row.secret)), row.id);
   console.log(`[db] hashed ${stale.length} cleartext ${table}.${column} value(s)`);
 }
+
+/**
+ * Withdraw every portal password that is still the old default (OPS-15).
+ *
+ * Until 13 October, a partner activated from the CRM got the portal password
+ * `partner<id>` -- the route's default, because the screen never sent one -- so
+ * anyone who knew or guessed a partner's number could sign in as them. The
+ * auditor's partner #9 on labs is one. Each such password is removed here, with
+ * every session it opened; the partner shows as having no portal login until an
+ * administrator issues a one-time password from the partner's page.
+ *
+ * Each row is checked once: the fixed code stamps `portal_password_set_at` on
+ * every write, and this stamps the rows it has looked at. Written against `db`
+ * directly because `run` and `audit` are declared further down this module.
+ * Exported so a test can plant a legacy row and run it again.
+ */
+export function withdrawGuessablePortalPasswords() {
+  const legacy = db.prepare(
+    `SELECT id, portal_password FROM partners
+      WHERE portal_password IS NOT NULL AND portal_password_set_at IS NULL`,
+  ).all();
+  const withdrawn = [];
+  for (const row of legacy) {
+    if (verifyPasswordSync(`partner${row.id}`, row.portal_password)) {
+      db.prepare(
+        "UPDATE partners SET portal_password = NULL, portal_password_temp = 0, portal_password_set_at = datetime('now') WHERE id = ?",
+      ).run(row.id);
+      db.prepare('DELETE FROM sessions WHERE partner_id = ?').run(row.id);
+      db.prepare('INSERT INTO audit_log (user_id, action, entity, entity_id, detail) VALUES (NULL, ?, ?, ?, ?)').run(
+        'partner_portal_withdrawn', 'partner', row.id,
+        JSON.stringify({ reason: 'the portal password was the guessable default partner<id> (OPS-15)' }),
+      );
+      withdrawn.push(row.id);
+    } else {
+      db.prepare(
+        'UPDATE partners SET portal_password_set_at = COALESCE(onboarded_at, created_at) WHERE id = ?',
+      ).run(row.id);
+    }
+  }
+  if (withdrawn.length) {
+    console.log(`[db] withdrew ${withdrawn.length} guessable partner portal password(s): partner ${withdrawn.join(', ')}`);
+  }
+  return withdrawn;
+}
+withdrawGuessablePortalPasswords();
 
 db.exec(`
 /**

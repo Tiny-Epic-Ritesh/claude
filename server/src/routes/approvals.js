@@ -11,7 +11,7 @@ import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
 import { recordChange } from '../engine/metadata.js';
 import { requireUser, requirePermission, mayUseOrg } from '../auth.js';
-import { newPartnerCode, issuePortalCredential } from './partners-support.js';
+import { stepsOutstanding, activatePartner } from './partners-support.js';
 import { setDefaults as setOwd, isLevel } from '../engine/owd.js';
 import {
   APPROVAL_SCOPES, BULK_THRESHOLD, request, decide, withdraw, byId,
@@ -42,18 +42,22 @@ const supervisorsOf = (userId) => all(
  * approval for something that did not happen.
  */
 const APPLY = {
-  partner_elevation: (req) => {
+  partner_elevation: (req, decidedBy) => {
     const partner = one('SELECT * FROM partners WHERE id = ?', [req.entity_id]);
     if (!partner) throw new Error('Partner no longer exists');
     if (partner.partner_code) throw new Error(`${partner.name} is already elevated`);
 
-    const code = newPartnerCode(partner);
-    const credential = issuePortalCredential(partner);
-    run(
-      "UPDATE partners SET partner_code = ?, state_code = 'ACTIVE', onboarded_at = datetime('now') WHERE id = ?",
-      [code, partner.id],
-    );
-    return { partner_code: code, portal_login: credential };
+    /* OPS-25. QA-33 put this question on both direct routes and this third one
+       never asked it, so an approval raised over a 0-of-8 prospect activated it
+       when granted. Asked again here, at the moment of granting, because steps
+       can be reopened while a request waits. */
+    const pending = stepsOutstanding(partner.id);
+    if (pending > 0) throw new Error(`${pending} onboarding step(s) still incomplete`);
+
+    /* No portal password here (OPS-15): the approvals screen has nowhere to show
+       one, so the one this issued reached nobody. The partner's page issues it. */
+    const code = activatePartner(partner, decidedBy?.id ?? null);
+    return { partner_code: code, portal_login: null, next_step: "Issue a portal password from the partner's page" };
   },
 
   partner_closure: (req) => {
@@ -245,6 +249,25 @@ router.post('/', (req, res) => {
   const needed = REQUEST_CAP[scope];
   if (needed && !req.caps.has(needed)) {
     return res.status(403).json({ error: `Requesting this needs ${needed}`, required: needed });
+  }
+
+  /* OPS-25. A partner request was raised without reading the partner: the
+     requester's book was not checked, so the reply named the other business's
+     partner, and an elevation could be asked for a prospect with no step done.
+     The decision checks the book again, and the grant the steps again. */
+  if (spec.entity === 'partner') {
+    const partner = one('SELECT id, name, sales_org, state_code FROM partners WHERE id = ?', [Number(entityId) || -1]);
+    if (!partner) return res.status(404).json({ error: 'Partner not found' });
+    if (!mayUseOrg(req.user, partner.sales_org)) {
+      return res.status(403).json({ error: 'This partner belongs to another book' });
+    }
+    if (scope === 'partner_elevation') {
+      if (partner.state_code === 'ACTIVE') return res.status(409).json({ error: `${partner.name} is already active` });
+      const pending = stepsOutstanding(partner.id);
+      if (pending > 0) {
+        return res.status(400).json({ error: `${pending} onboarding step(s) still incomplete`, pending });
+      }
+    }
   }
 
   const subject = spec.entity === 'partner'

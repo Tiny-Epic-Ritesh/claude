@@ -13,7 +13,7 @@
 import { Router } from 'express';
 import { all, one, daysSince, ageBand, CARD_COLOUR } from '../db.js';
 import { requireUser, leadScope, unmaskRequested, maskFor, activeOrg, orgScope } from '../auth.js';
-import { maskRecords } from '../security.js';
+import { maskRecords, withoutPortalSecret } from '../security.js';
 import { maskedFieldsFor } from '../engine/masking.js';
 import { kycHealth } from '../engine/kyc.js';
 import { queueFor } from '../engine/approvals.js';
@@ -453,7 +453,7 @@ const COCKPITS = {
   /* ---- P2: Partner RM ------------------------------------------------ */
   partner_rm: (user, active) => {
     const partners = all('SELECT * FROM partners WHERE owner_id = ? ORDER BY created_at DESC', [user.id]).map((p) => ({
-      ...p,
+      ...withoutPortalSecret(p),   // OPS-26: the worklist rows went to the browser whole
       sourced_count: one('SELECT COUNT(*) n FROM leads WHERE partner_id = ? AND deleted_at IS NULL', [p.id]).n,
       sourced_this_month: one("SELECT COUNT(*) n FROM leads WHERE partner_id = ? AND strftime('%Y-%m', created_at) = strftime('%Y-%m','now')", [p.id]).n,
       steps_done: one("SELECT COUNT(*) n FROM partner_steps WHERE partner_id = ? AND status = 'done'", [p.id]).n,

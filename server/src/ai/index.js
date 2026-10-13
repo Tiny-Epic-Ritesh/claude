@@ -8,6 +8,7 @@
 
 import { all, one, daysSince, ageBand } from '../db.js';
 import { leadScope } from '../auth.js';
+import { withoutPortalSecret } from '../security.js';
 import * as mock from './mock.js';
 import { withResidency, routeFor, residencyReport, MODE } from './residency.js';
 import { kycHealth } from '../engine/kyc.js';
@@ -147,7 +148,7 @@ export function copilotSnapshot(user) {
 
   const partners = ['partner_rm', 'admin', 'superadmin', 'sales_supervisor'].includes(user.role)
     ? all(`SELECT p.*, (SELECT COUNT(*) FROM leads WHERE partner_id = p.id) AS sourced_count FROM partners p ${user.role === 'partner_rm' ? 'WHERE p.owner_id = ?' : ''} ORDER BY sourced_count DESC LIMIT 20`,
-      user.role === 'partner_rm' ? [user.id] : [])
+      user.role === 'partner_rm' ? [user.id] : []).map(withoutPortalSecret)   // OPS-26: not into the AI's context
     : [];
 
   return {
@@ -163,7 +164,7 @@ export function copilotSnapshot(user) {
 }
 
 export function partnerInsightContext(partnerId) {
-  const p = one('SELECT * FROM partners WHERE id = ?', [partnerId]);
+  const p = withoutPortalSecret(one('SELECT * FROM partners WHERE id = ?', [partnerId]));   // OPS-26
   if (!p) return null;
 
   const month = new Date().toISOString().slice(0, 7);
@@ -207,7 +208,7 @@ export async function disposition(ctx) {
 
 export async function ticketSummary(ticket, replies) {
   const lead = ticket.lead_id ? withKycStatus(one('SELECT * FROM leads WHERE id = ?', [ticket.lead_id])) : null;
-  const partner = ticket.partner_id ? one('SELECT * FROM partners WHERE id = ?', [ticket.partner_id]) : null;
+  const partner = ticket.partner_id ? withoutPortalSecret(one('SELECT * FROM partners WHERE id = ?', [ticket.partner_id])) : null;   // OPS-26
 
   const { result } = await route(
     'ticketSummary',

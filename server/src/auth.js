@@ -314,6 +314,7 @@ export const publicUser = (u) => ({
 export const publicPartner = (p) => ({
   id: p.id, name: p.name, code: p.partner_code, model: p.partner_model,
   state: p.state_code, business_name: p.business_name, city: p.city,
+  must_change_password: Boolean(p.portal_password_temp),
 });
 
 const tokenFrom = (req) => (req.headers.authorization || '').replace(/^Bearer\s+/i, '') || null;
@@ -389,8 +390,14 @@ export function attachSession(req, _res, next) {
 export const requireUser = (req, res, next) =>
   req.user ? next() : res.status(401).json({ error: 'Sign in required' });
 
-export const requirePartner = (req, res, next) =>
-  req.partner ? next() : res.status(401).json({ error: 'Partner sign-in required' });
+export const requirePartner = (req, res, next) => {
+  if (!req.partner) return res.status(401).json({ error: 'Partner sign-in required' });
+  /* OPS-15. A one-time password opens only the screen that replaces it. */
+  if (req.partner.portal_password_temp) {
+    return res.status(403).json({ error: 'Choose your own password to continue', must_change_password: true });
+  }
+  return next();
+};
 
 /** Route guard: `requirePermission('lead.stage.change')`. */
 /**

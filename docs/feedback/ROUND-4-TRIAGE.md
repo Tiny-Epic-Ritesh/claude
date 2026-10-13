@@ -10,35 +10,36 @@ against this document and earlier feedback IDs." This is that document.
 ## The ledger — every point in the report, and where it stands
 
 Kept current: a commit that closes a point changes its row here and says so.
-Last updated **13 October 2026**: `84c2c2f`, `eaf4743`, `d34bb6b`, and the QA-02 design.
+Last updated **13 October 2026**: `84c2c2f`, `eaf4743`, `d34bb6b`, the QA-02 design, the rulings of 13 October, and the partner-access commit after `a10b21e` (OPS-15, 16, 17, 25, 26).
 
 **States.** *fixed* — in code, tested, pushed. *not started* — open, no
 blocker. *needs decision* — waiting on Ritesh, and nothing is built until it is
 answered. *unverified* — the auditor's evidence stands but I have not traced it
-to a line yet. *environment* — a change to labs.tinyepic.in itself, not the code.
+to a line yet. *environment* — a change to labs.tinyepic.in itself, not the code. *closed by
+ruling* — Ritesh ruled that the behaviour reported is the behaviour wanted.
 
-**Today, of the 43 IDs: 20 fixed · 5 partly fixed · 11 open · 5 waiting on a
-decision · 2 split** (open work with a decision inside, QA-06 and QA-35). Plus
-the points below the table, which are not IDs but are as much part of the
-report.
+**Today, of the 43 IDs: 20 fixed · 1 closed by ruling · 5 partly fixed · 17
+open · none waiting on a decision.** Every decision asked for was answered on 13
+October; QA-37's is answered once its recommendations are in. Plus the points
+below the table, which are not IDs but are as much part of the report.
 
 ### The 43 findings
 
 | ID | Pri | State | Note |
 |---|---|---|---|
 | QA-01 | P0 | **fixed** `84c2c2f` | Form sends `route: false`. Its second half is adjacent (e). |
-| QA-02 | P0 | not started · **designed, awaiting sign-off** | Cause traced: every five minutes each enabled rule acts on every lead that currently matches, with no record that it already did. The KYC waterfall sends the **client** a WhatsApp each sweep — 288 a day in production. Design and four questions: [QA-02-SCHEDULER-DESIGN.md](QA-02-SCHEDULER-DESIGN.md). |
+| QA-02 | P0 | open · **signed off 13 Oct**, being built | Cause traced: every five minutes each enabled rule acts on every lead that currently matches, with no record that it already did. The KYC waterfall sends the **client** a WhatsApp each sweep. Design: [QA-02-SCHEDULER-DESIGN.md](QA-02-SCHEDULER-DESIGN.md), shown as a page and signed off with its four recommended answers: rules fire once per change; the waterfall is WhatsApp at the stall, SMS 30 minutes later, an assisted-completion task at abandonment, and no client message while a High or Critical case is open; the labs-only transfer rule stays and fires once; `rule_runs` kept 90 days; the duplicates closed, not deleted, after a preview and a yes. |
 | QA-03 | P0 | **fixed** `84c2c2f` | `engine/cases.js`. |
 | QA-04 | P1 | **fixed** `eaf4743` | The Leads page reads the date window — and the source chart's `source` — a tile sends, and shows each as a removable chip. Tile and list compare the same dates. Both compare IST dates against UTC timestamps: adjacent (j). |
 | QA-05 | P1 | **partly fixed** `eaf4743` | "Open cases" opens on All open (`?view=`, `?open=true`). The case-summary strip is still not clickable, and "Resolved today" was not traced. |
-| QA-06 | P1 | not started · **half needs decision** | Marketing may view unmasked PII (decided) — the work. Export is the open decision. |
+| QA-06 | P1 | open · **ruled 13 Oct** | Marketing may view unmasked PII (decided earlier). Export: allowed, with a Setup control for Admins and Superadmins that chooses masked or unmasked export. To build. |
 | QA-07 | P1 | not started | A UI build: draft-until-Save on Manage, and a consequence summary with Confirm for Escalate and Resolve (Ritesh's Part 4). Confirmed by the report; no code defect to trace. |
 | QA-08 | P1 | **fixed** `84c2c2f` | Every link book-checked too. |
-| QA-09 | P1 | **needs decision** | Stage / Trading / Active / UCC / accrued vs paid commission. |
+| QA-09 | P1 | open · **ruled 13 Oct** | No definitions given; Ritesh asked for them to be set from standard broking practice. One definitions note for QA-09, 24 and 35, built to and written down for confirmation. |
 | QA-10 | P1 | not started | A UI build: an opaque, scrollable call panel with a visible End call and state-aware actions. Confirmed by the report; needs a design pass in both themes. |
 | QA-11 | P1 | **fixed** `eaf4743` | One resolver, `fill()` in the merge engine, for the composer, test-send and campaign send. A field masked for the sender is refused by name. **`{{name}}` in campaigns is now the first name**, as the picker always said. The picker's static examples are untouched. |
 | QA-12 | P1 | **partly fixed** `eaf4743` | The screen shows `CRM_PUBLIC_URL` or the origin it is itself using — https. Refusing a key sent over plain http needs the proxy to say the scheme (`X-Forwarded-Proto`), which is nginx, which I do not touch. |
-| QA-13 | P1 | **needs decision** | May a Bonanza partner refer Bigul products; may Bonanza DKYC open Bigul accounts. |
+| QA-13 | P1 | open · **ruled 13 Oct** | A Bonanza partner cannot refer Bigul products today, and the business wants to be able to allow it later: a Setup control for Admins and Superadmins, off by default. The DKYC half of the question was not part of the answer and stays as built -- a journey takes its product's book (`OPS-05`). |
 | QA-14 | P2 | not started | Pipeline multi-select products and per-stage filters. |
 | QA-15 | P2 | not started | Pagination and column sorting, `P3-36`/`37`/`39`. |
 | QA-16 | P2 | not started | Report builder and dashboard creation, `P3-06`/`P2-17` — gated on `N-4a`. |
@@ -49,7 +50,7 @@ report.
 | QA-21 | P2 | **fixed** `eaf4743` | The handoff names the Product RM(s) asked and the High-priority task it gave them. 60-second timing still unmeasured. |
 | QA-22 | P2 | not started | Market headlines are not links, `ENH-09`. |
 | QA-23 | P2 | **fixed** `eaf4743` | An egress row records what actually answered; the table says Sent abroad, Served locally, or — for rows before 13 Oct — Not recorded. |
-| QA-24 | P2 | **needs decision** | What `Won` means — the same conflation as QA-09. |
+| QA-24 | P2 | open · **ruled 13 Oct** | What `Won` means — QA-09's definitions note. |
 | QA-25 | P2 | **partly fixed** `eaf4743` | The breach answer says whose tickets it counted. The drawer covering dashboard cards is untouched. |
 | QA-26 | P1 | **fixed** `84c2c2f` | |
 | QA-27 | P2 | **fixed** `eaf4743` | A delete returns to the list with a confirmation and a link straight to the recycle bin. |
@@ -59,10 +60,10 @@ report.
 | QA-31 | P2 | **fixed** `eaf4743` | Any whole-rupee minimum; zero is zero, not "not set"; a negative is refused on create and edit. |
 | QA-32 | P1 | **fixed** `84c2c2f` | And the cross-book backfill it would have switched on. |
 | QA-33 | P0 | **fixed** `84c2c2f` | Override question open; partner #9 cleanup is *environment*, below. |
-| QA-34 | P1 | **partly fixed** `d34bb6b` | Every DKYC step is checked against its own declaration — required, pattern, listed options, dates not in the future, numbers in range — before any vendor call, and stored normalised. All six of the auditor's values are refused. PIN tightened to the house rule (`V.pincode`); account number 9–18 digits and a nominee share of 1–100 are new, and mine to be corrected. **Still open:** keeping the mobile the journey started with rather than asking again; and two rulings — must a single nominee be exactly 100%, and are under-18 applicants refused. |
-| QA-35 | P2 | not started · **half needs decision** | The summary query is a bug; what Active means is QA-09's decision. |
-| QA-36 | P1 | **needs decision** | Not a bypass: Sales RM and Sales Supervisor hold `pii.unmask`, so the edit form's unmask is permitted and audited. Should opening the editor reveal contact details without a click? |
-| QA-37 | P2 | **needs decision** | Which entities get rename / retire / archive. |
+| QA-34 | P1 | **partly fixed** `d34bb6b` | Every DKYC step is checked against its own declaration — required, pattern, listed options, dates not in the future, numbers in range — before any vendor call, and stored normalised. All six of the auditor's values are refused. PIN tightened to the house rule (`V.pincode`); account number 9–18 digits and a nominee share of 1–100 are new. **Still open:** keeping the mobile the journey started with rather than asking again; and the two rulings, **ruled 13 Oct — follow industry practice**: to build. |
+| QA-35 | P2 | open · **ruled 13 Oct** | The summary query is a bug; what Active means is QA-09's definitions note. |
+| QA-36 | P1 | **closed by ruling** 13 Oct | Not a bypass: Sales RM and Sales Supervisor hold `pii.unmask`, so the edit form's unmask is permitted and audited. Ritesh ruled that opening the editor should show contact details without a click, which is what it does. |
+| QA-37 | P2 | open · **recommendations due** | Which entities get rename / retire / archive. Ritesh asked for industry-standard recommendations first, then a decision. The partner portal's revoke control is built (`OPS-15`). |
 | QA-38 | P2 | **fixed** `eaf4743` | Send email / SMS / WhatsApp open when any purpose is allowed; the dialog asks Service or Marketing and the API enforces it. |
 | QA-39 | P2 | **fixed** `eaf4743` | The manual message and the list bulk send name their sender. Automated sends stay "system". The bulk send writes two entries per lead: adjacent (i). |
 | QA-40 | P2 | **fixed** `eaf4743` | The log tabs called the Setup-health counter; they call the log counter. |
@@ -71,13 +72,14 @@ report.
 | QA-43 | P1 | **partly fixed** `eaf4743` | The detail shows the refusal instead of spinning. List and detail still disagree on scope — one of `N-12`'s cases. |
 
 Counted: **fixed 20** — QA-01, 03, 04, 08, 11, 19, 20, 21, 23, 26, 27, 28, 30,
-31, 32, 33, 38, 39, 40, 41. **Partly fixed 5** — QA-05, 12, 25, 34, 43. **Waiting
-on a decision 5** — QA-09, 13, 24, 36, 37. **Split 2** — QA-06, 35. **Open 11** —
-QA-02 (designed, not built), QA-07 and QA-10 (UI builds), QA-14 to
-QA-18 and QA-22 (feature requests under earlier IDs), and QA-29 and QA-42, which
-the code does not explain and need a reproduction. Every open ID is now traced
-or classified; none is "unverified". The rulings inside QA-28 and QA-33 are
-listed below rather than counted, because those IDs are fixed.
+31, 32, 33, 38, 39, 40, 41. **Closed by ruling 1** — QA-36. **Partly fixed 5** —
+QA-05, 12, 25, 34, 43. **Open 17** — QA-02 (signed off, being built); QA-06, 09,
+13, 24 and 35 (ruled 13 Oct, to build); QA-37 (recommendations due); QA-07 and
+QA-10 (UI builds); QA-14 to QA-18 and QA-22 (feature requests under earlier
+IDs); and QA-29 and QA-42, which the code does not explain and need a
+reproduction. Every open ID is traced or classified; none is "unverified". The
+rulings inside QA-28 and QA-33 are listed below rather than counted, because
+those IDs are fixed.
 
 ### Everything else the report asks for
 
@@ -85,7 +87,7 @@ listed below rather than counted, because those IDs are fixed.
 |---|---|---|
 | Per-ID status back, against the report and earlier IDs | §7, retest gate | **Delivered** — this document, kept current |
 | Re-run the linked reproduction paths **after deployment** | §7, retest gate | Pending a deploy of `84c2c2f` to labs.tinyepic.in — a deployment, which I do not do |
-| **Revoke synthetic partner #9's portal access and sessions** — "priority cleanup" | §9, and QA-33 | **environment** · open. #9 is ACTIVE with portal password `partner9` (adjacent a). Nothing in the product can revoke it: QA-37 found no revoke control |
+| **Revoke synthetic partner #9's portal access and sessions** — "priority cleanup" | §9, and QA-33 | **handled in code, pending deploy.** `OPS-15`'s start-up check withdraws every stored `partner<id>` password with its sessions, #9's included, the first time the fixed build starts on labs; the record itself is kept, as §9 asks. *Withdraw portal access* now exists on the partner's page. |
 | A scoped, auditable cleanup mechanism for test entities the UI cannot retire | §9 | not started — depends on QA-37's lifecycle decision |
 | Preserve reproduction records #40–#44, cases #9–#11, lists #3–#4, campaigns #3–#4, partners #9–#10, rule #6, automation #2 until retest | §9 | Nothing here touches them; they live in labs.tinyepic.in's database |
 | BRD gate P0 — API allow/deny tests for every role and business | §1 | not started — the largest open item. `N-12` is part of it |
@@ -100,18 +102,22 @@ listed below rather than counted, because those IDs are fixed.
 
 ### Found while fixing, needing their own OPS ids
 
-The eight in "Found beside the fixes" below, (a)–(h). Not fixed, and not
-counted above. (a), the guessable partner portal password, is the one to do
-first.
+**Ids assigned 13 Oct:** (a) `OPS-15`, (b) `OPS-16`, (c) `OPS-17`, (d) `OPS-18`,
+(e) `OPS-19`, (f) `OPS-20`, (g) `OPS-21`, (h) `OPS-22`, (i) `OPS-23`, (j)
+`OPS-24`. Fixing (a) found two more, fixed with it on approval — `OPS-25`, an
+elevation approval that skipped the onboarding check, and `OPS-26`, partner
+responses carrying the stored password hash — and one recorded open, `OPS-27`.
+**Fixed:** OPS-15, 16, 17, 25, 26. State of each is in the OPS table at the top
+of [OUTSTANDING.md](OUTSTANDING.md). Not counted above: they are not report IDs.
 
 ### Rulings asked for
 
-1. QA-13 · 2. QA-09/24/35 · 3. QA-06 export · 4. QA-37 lifecycle ·
-5. the category for each of the four unmapped compliance flags (QA-28) ·
-6. whether a Superadmin needs an audited emergency elevation (QA-33) ·
-7. OPS ids for (a)–(j) · 8. sign-off on the QA-02 design, and its four answers · 9. QA-36: should the
-editor reveal contact details without a click · 10. QA-34: must a single nominee
-hold exactly 100%, and does DKYC refuse applicants under 18.
+Answered 13 Oct: 1. QA-13 (a Setup control, off) · 2. QA-09/24/35 (standard
+practice) · 3. QA-06 export (allowed, with a masked/unmasked Setup control) ·
+4. QA-37 (recommendations first) · 7. OPS ids (assigned) · 8. QA-02 (signed off) ·
+9. QA-36 (yes) · 10. QA-34 (industry practice). **Still open:** 5. the category
+for each of the four unmapped compliance flags (QA-28) · 6. whether a Superadmin
+needs an audited emergency elevation (QA-33) · and the DKYC half of QA-13.
 
 ## Read this first: the build they tested is the build we have
 

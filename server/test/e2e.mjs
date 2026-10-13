@@ -1604,12 +1604,14 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
     await req(`/api/partners/${REF.partnerId}/elevate`, { method: 'POST', token: T.partner_rm, expect: 403 });
   });
 
-  await check('Admin elevation issues a partner code and portal credential', async () => {
+  await check('Admin elevation issues a partner code and a one-time portal password', async () => {
     const { data } = await req(`/api/partners/${REF.partnerId}/elevate`, {
-      method: 'POST', token: T.admin, expect: 200, body: { portal_password: 'e2epass' },
+      method: 'POST', token: T.admin, expect: 200, body: {},
     });
     eq(data.elevated, true, 'elevated');
     assert(/^BNZ-P\d{4}$/.test(data.partner_code), `bad partner code: ${data.partner_code}`);
+    eq(data.portal_login.one_time, true, 'portal_login.one_time');
+    assert(data.portal_login.password !== `partner${REF.partnerId}`, 'the guessable default came back (OPS-15)');
     REF.partnerLogin = data.portal_login;
   });
 
@@ -1635,6 +1637,20 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
     });
     REF.portalToken = data.token;
     eq(data.partner.state, 'ACTIVE', 'partner state');
+    eq(data.partner.must_change_password, true, 'must_change_password');
+  });
+
+  await check('a one-time password opens nothing until the partner replaces it', async () => {
+    const { data } = await req('/api/portal/dashboard', { token: REF.portalToken, expect: 403 });
+    eq(data.must_change_password, true, 'must_change_password');
+  });
+
+  await check('the partner chooses their own password and the portal opens', async () => {
+    await req('/api/auth/partner-password', {
+      method: 'POST', token: REF.portalToken, expect: 200,
+      body: { current_password: REF.partnerLogin.password, new_password: 'e2e-own-portal-1' },
+    });
+    await req('/api/portal/dashboard', { token: REF.portalToken, expect: 200 });
   });
 
   await check('a suspended partner is refused at sign-in', async () => {

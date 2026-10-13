@@ -9,7 +9,7 @@ import { existsSync } from 'node:fs';
 import { attachSession, login, partnerLogin, logout, publicUser, publicPartner } from './auth.js';
 import { rateLimiter, usingDevKey, usingReducedCost, scryptPolicy } from './security.js';
 import { ROLE_LABELS, one, run, audit } from './db.js';
-import { hashPassword } from './security.js';
+import { hashPassword, verifyPassword } from './security.js';
 
 import crm from './routes/crm.js';
 import tickets from './routes/tickets.js';
@@ -234,6 +234,47 @@ app.use(contextMiddleware);
 app.post('/api/auth/logout', (req, res) => {
   if (req.token) logout(req.token);
   res.json({ ok: true });
+});
+
+/* Keyed by the partner signed in, so a script cannot walk the current
+   password from an open session. */
+const partnerPasswordLimiter = rateLimiter({
+  name: 'partner-password', limit: 10, windowMs: 60_000,
+  by: (req) => `partner:${req.partner?.id ?? req.ip ?? 'anon'}`,
+});
+
+/**
+ * A partner chooses their own portal password (OPS-15).
+ *
+ * The one thing a one-time password opens: `requirePartner` refuses every
+ * portal route until this is done. It asks for the current password as well,
+ * so a session left open on a shared machine cannot be used to take the
+ * account. The same minimum as a staff reset. Every other session on the
+ * account ends; this one carries on.
+ */
+app.post('/api/auth/partner-password', partnerPasswordLimiter, async (req, res) => {
+  if (!req.partner) return res.status(401).json({ error: 'Partner sign-in required' });
+  const current = String(req.body?.current_password ?? '');
+  const chosen = String(req.body?.new_password ?? '');
+
+  const row = one('SELECT portal_password FROM partners WHERE id = ?', [req.partner.id]);
+  const { ok } = await verifyPassword(current, row?.portal_password);
+  if (!ok) return res.status(400).json({ error: 'Your current password is not right', field: 'current_password' });
+  if (chosen.length < 8) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters', field: 'new_password' });
+  }
+  if (chosen === current) {
+    return res.status(400).json({ error: 'Choose a password different from the one you were given', field: 'new_password' });
+  }
+
+  run(
+    `UPDATE partners SET portal_password = ?, portal_password_temp = 0, portal_password_set_at = datetime('now')
+      WHERE id = ?`,
+    [await hashPassword(chosen), req.partner.id],
+  );
+  run('DELETE FROM sessions WHERE partner_id = ? AND token != ?', [req.partner.id, req.token]);
+  audit(null, 'partner_password_changed', 'partner', req.partner.id, {});
+  return res.json({ ok: true });
 });
 
 app.get('/api/auth/me', (req, res) => {

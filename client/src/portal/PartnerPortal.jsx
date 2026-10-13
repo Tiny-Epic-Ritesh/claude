@@ -23,9 +23,61 @@ export default function PartnerPortal() {
       .catch(() => { token.clear('partner'); setPartner(null); });
   }, []);
 
+  const signOut = () => { token.clear('partner'); setPartner(null); };
   if (partner === undefined) return <div className="public"><div className="public-body"><Loading /></div></div>;
   if (!partner) return <PartnerLogin onSignedIn={setPartner} />;
-  return <Dashboard partner={partner} onSignOut={() => { token.clear('partner'); setPartner(null); }} />;
+  if (partner.must_change_password) {
+    return <ChoosePassword partner={partner} onDone={() => setPartner({ ...partner, must_change_password: false })} onSignOut={signOut} />;
+  }
+  return <Dashboard partner={partner} onSignOut={signOut} />;
+}
+
+/**
+ * The first sign-in with a one-time password (OPS-15).
+ *
+ * The password was issued by whoever onboarded the partner, so somebody else
+ * has seen it. Until the partner chooses their own, the server refuses every
+ * portal route, and this is the only screen there is.
+ */
+function ChoosePassword({ partner, onDone, onSignOut }) {
+  const [form, setForm] = useState({ current: '', chosen: '', again: '' });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+
+  async function submit(e) {
+    e.preventDefault();
+    if (form.chosen !== form.again) { setError('The two new passwords are not the same'); return; }
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post('/auth/partner-password', { current_password: form.current, new_password: form.chosen }, 'partner');
+      onDone();
+    } catch (err) { setError(err.message); setBusy(false); }
+  }
+
+  return (
+    <div className="login-wrap">
+      <div className="login-card">
+        <div className="login-brand"><BrandLogo org="BONANZA" height={30} /><div><strong>Partner Portal</strong></div></div>
+        <h2 style={{ margin: '4px 0 6px' }}>Choose your own password</h2>
+        <p className="small muted" style={{ marginTop: 0 }}>
+          Welcome, {partner.name}. You signed in with a one-time password. Choose one only you know before you continue.
+        </p>
+        <form onSubmit={submit}>
+          <ErrorBanner error={error} />
+          <div className="field"><label htmlFor="pp-current">One-time password</label><input id="pp-current" type="password" autoComplete="current-password" value={form.current} onChange={set('current')} autoFocus /></div>
+          <div className="field"><label htmlFor="pp-chosen">New password</label><input id="pp-chosen" type="password" autoComplete="new-password" minLength={8} value={form.chosen} onChange={set('chosen')} /></div>
+          <div className="field"><label htmlFor="pp-again">New password again</label><input id="pp-again" type="password" autoComplete="new-password" minLength={8} value={form.again} onChange={set('again')} /></div>
+          <div className="tiny muted" style={{ marginBottom: 10 }}>At least 8 characters.</div>
+          <button className="btn-primary" style={{ width: '100%', justifyContent: 'center' }} disabled={busy}>
+            {busy ? <Spinner /> : 'Save and continue'}
+          </button>
+        </form>
+        <button type="button" className="btn-ghost btn-sm" style={{ marginTop: 10 }} onClick={onSignOut}>Sign out</button>
+      </div>
+    </div>
+  );
 }
 
 /* --------------------------------------------------------------- login */
