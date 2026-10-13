@@ -69,6 +69,7 @@ and this table is the mapping.
 | `OPS-29` | `POST /tickets/sweep` -- close every case resolved over 72 hours ago and run the SLA sweep -- was open to any signed-in user. Found 13 Oct while fixing OPS-24. **Fixed 13 Oct:** it takes `ticket.reassign` (whoever manages the case queue; Customer Care runs it from the Tickets screen) or `admin.sla`, and the screen offers the button only to them. `test/bookgaps.test.mjs`. |
 | `OPS-30` | The automation `notify` action, given a role, notified everyone in that role in both businesses, so a Bigul lead's automation reached Bonanza's Product RMs with a link they could not open; `nudge_users` by role did the same. Found 13 Oct while building QA-02. **Fixed 13 Oct:** both reach only people who work in the lead's book. `test/bookgaps.test.mjs`. |
 | `OPS-31` | `GET /kyc/health` read every KYC journey in both businesses with no permission beyond a sign-in, and the Product Supervisor's cockpit read the same unscoped board. Found 13 Oct while fixing QA-06. **Fixed 13 Oct:** the board takes `kyc.view` and the reader's books (narrowed by the switcher), and so does the cockpit; a journey's book is its product's. `test/bookgaps.test.mjs`. |
+| `OPS-32` | **Open.** The rest of the Product Supervisor's cockpit still counts both businesses. Its metrics -- Cards total, Warm unactioned over 4 hours, Cards closed Active -- read `product_cards` with no book, so on the seed a Bonanza supervisor's Cards total is 310, not Bonanza's 220 (Bigul holds 90). Its Product RM scorecard lists every active Product RM in either business. The KYC figures beside them are right since `OPS-31`. Found 13 Oct while fixing `OPS-31`; recorded open on Ritesh's choice the same day, not fixed. |
 
 ---
 
@@ -180,7 +181,8 @@ masked or unmasked. QA-09/24/35: from standard broking practice. QA-34: from
 industry practice. QA-36: yes, the editor shows contact details without a click
 -- closed. QA-37: recommendations first, then a decision. The ten defects found
 beside the fixes are `OPS-15` to `OPS-24`, with `OPS-25` to `OPS-31` found
-along the way, all fixed; see the OPS table at the top.
+along the way, all fixed, and `OPS-32` recorded open; see the OPS table at the
+top.
 
 Nine more re-evidence work already open under its own ID — QA-04/05 against
 `ENH-05`/`05a` and `P2-13`/`P2-17c`, QA-15 against `P3-36`–`39`, QA-16 against
