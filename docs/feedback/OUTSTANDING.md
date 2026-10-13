@@ -124,8 +124,10 @@ labs.tinyepic.in, which was `1cff7c3` (18 September). No commit landed between
 the seventeen commits since are N-6, N-10, OPS-14 and documentation — none aimed
 at anything in this report.
 
-**Per-ID status is in [ROUND-4-TRIAGE.md](ROUND-4-TRIAGE.md).** That is the
-document to keep current; this is the summary.
+**Per-ID status is in [ROUND-4-TRIAGE.md](ROUND-4-TRIAGE.md)**, whose ledger
+covers every point in the report rather than only the 43 IDs — cleanup, the BRD
+gates and the retest. That is the document to keep current; this is the summary.
+The auditor's evidence is stored in [ROUND-4-evidence/](ROUND-4-evidence/).
 
 Eleven findings are traced to a line. Four P0s:
 

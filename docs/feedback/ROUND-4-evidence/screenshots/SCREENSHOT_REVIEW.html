@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bonanza CRM — Screenshot review</title>
+<style>
+:root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#15202b;background:#f3f5f8}
+*{box-sizing:border-box}body{margin:0}header{background:#14232c;color:white;padding:28px max(24px,calc((100vw - 1180px)/2))}
+h1{font-size:28px;margin:0 0 8px}header p{max-width:1050px;line-height:1.6;margin:8px 0}
+.controls{position:sticky;top:0;z-index:10;background:white;padding:14px 24px;display:flex;gap:10px;flex-wrap:wrap;border-bottom:1px solid #ccd4dc;box-shadow:0 2px 8px #102a4310}
+input[type=search]{min-width:250px;flex:1;max-width:520px;padding:10px;border:1px solid #aebbc5;border-radius:6px;font-size:15px}
+button{border:1px solid #aebbc5;border-radius:6px;padding:10px 16px;background:white;color:#15202b;cursor:pointer;font:inherit}
+button[aria-pressed=true]{background:#1c5a46;color:white;border-color:#1c5a46}
+.controls label{display:flex;align-items:center;gap:6px}#count{align-self:center;margin-left:auto;font-size:14px}
+main{max-width:1240px;margin:auto;padding:24px}article{background:white;border:1px solid #d4dce2;border-radius:10px;overflow:hidden;margin:0 0 30px;box-shadow:0 4px 16px #102a430c}
+.caption{padding:18px 22px;border-left:7px solid #c72531;background:#fff6f7}.pass .caption{border-color:#247a4c;background:#f3faf5}
+.tag{font-weight:800;font-size:11px;letter-spacing:.08em;color:#9f1725}.pass .tag{color:#1b693f}
+h2{font-size:18px;line-height:1.5;margin:5px 0}.caption p{font-size:12px;color:#5c6670;margin:5px 0 0}
+.screen{position:relative}.screen img{display:block;width:100%;height:auto}.screen a{display:block}
+.annotation{position:absolute;border:3px solid #e51b36;border-radius:5px;box-shadow:0 0 0 1px white;pointer-events:none}
+.annotation span{position:absolute;top:-15px;left:-14px;background:#cf142e;color:white;border:2px solid white;border-radius:50%;width:28px;height:28px;text-align:center;font-weight:800;line-height:24px}
+.annotation-note{font-size:12px;color:#5c6670;padding:0 22px}body.hide-annotations .annotation{display:none}
+[hidden]{display:none!important}footer{padding:18px;color:#5c6670;font-size:13px;text-align:center}
+@media print{header{background:white;color:black}.controls{display:none}main{padding:0}article{break-inside:avoid;box-shadow:none;border-radius:0}.annotation{print-color-adjust:exact}}
+</style></head><body>
+<header><h1>Bonanza AI CRM — Screenshot review</h1><p>Audit: 30 September–1 October 2026. Read the Markdown handoff for the role, record, exact response, expected behavior and acceptance checks. A red problem caption describes the observed issue; green indicates a verified result.</p><p><strong>Evidence limits:</strong> integrations and final KYC are simulated. Screenshots preserve original pixels; review boxes are separate overlays. Some frames show context or a subsequent screen rather than the submitted value. No newly issued password or API secret is included.</p></header>
+<div class="controls"><input type="search" id="search" aria-label="Find evidence" placeholder="Find QA ID, module, response or filename…"><button data-filter="all" aria-pressed="true">All</button><button data-filter="defect" aria-pressed="false">Problems</button><button data-filter="pass" aria-pressed="false">Verified results</button><label><input type="checkbox" id="annotations" checked>Review boxes</label><span id="count">51 screenshots</span></div>
+<main><article class="evidence defect" data-search="qa-01 · before submit: sales rm selected assign to me. qa01-sales-create-assign-to-me.jpg" data-type="defect" id="evidence-1">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-01 · Before submit: Sales RM selected Assign to me.</h2><p>QA01-sales-create-assign-to-me.jpg</p></div>
+<div class="screen"><a href="QA01-sales-create-assign-to-me.jpg" target="_blank"><img src="QA01-sales-create-assign-to-me.jpg" alt="QA-01 · Before submit: Sales RM selected Assign to me." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-01 · after successful creation: the lead is outside the creator’s visibility scope. qa01-sales-created-denied.jpg" data-type="defect" id="evidence-2">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-01 · After successful creation: the lead is outside the creator’s visibility scope.</h2><p>QA01-sales-created-denied.jpg</p></div>
+<div class="screen"><a href="QA01-sales-created-denied.jpg" target="_blank"><img src="QA01-sales-created-denied.jpg" alt="QA-01 · After successful creation: the lead is outside the creator’s visibility scope." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-01 · audit identifies the routing rule that replaced the owner. qa01-audit-routing-cause.jpg" data-type="defect" id="evidence-3">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-01 · Audit identifies the routing rule that replaced the owner.</h2><p>QA01-audit-routing-cause.jpg</p></div>
+<div class="screen"><a href="QA01-audit-routing-cause.jpg" target="_blank"><img src="QA01-audit-routing-cause.jpg" alt="QA-01 · Audit identifies the routing rule that replaced the owner." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-02 · scheduled firing counters remain high and increase; use task/audit evidence to diagnose side effects. qa02-rule-counters-retested.jpg" data-type="defect" id="evidence-4">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-02 · Scheduled firing counters remain high and increase; use task/audit evidence to diagnose side effects.</h2><p>QA02-rule-counters-retested.jpg</p></div>
+<div class="screen"><a href="QA02-rule-counters-retested.jpg" target="_blank"><img src="QA02-rule-counters-retested.jpg" alt="QA-02 · Scheduled firing counters remain high and increase; use task/audit evidence to diagnose side effects." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-03 · bonanza portal case #10 is uncategorised and assigned to divya; the user record identifies divya as bigul care. qa03-partner-case-cross-business-assignee.jpg" data-type="defect" id="evidence-5">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-03 · Bonanza portal case #10 is Uncategorised and assigned to Divya; the user record identifies Divya as Bigul Care.</h2><p>QA03-partner-case-cross-business-assignee.jpg</p></div>
+<div class="screen"><a href="QA03-partner-case-cross-business-assignee.jpg" target="_blank"><img src="QA03-partner-case-cross-business-assignee.jpg" alt="QA-03 · Bonanza portal case #10 is Uncategorised and assigned to Divya; the user record identifies Divya as Bigul Care." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-04 · 1 october tile counts two new leads. compare the next screenshot. qa04-date-tile-two-leads.jpg" data-type="defect" id="evidence-6">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-04 · 1 October tile counts two new leads. Compare the next screenshot.</h2><p>QA04-date-tile-two-leads.jpg</p></div>
+<div class="screen"><a href="QA04-date-tile-two-leads.jpg" target="_blank"><img src="QA04-date-tile-two-leads.jpg" alt="QA-04 · 1 October tile counts two new leads. Compare the next screenshot." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-04 / qa-15 · the tile’s date url opens 44 leads, including older dates. qa04-date-drill-through-44-leads.jpg" data-type="defect" id="evidence-7">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-04 / QA-15 · The tile’s date URL opens 44 leads, including older dates.</h2><p>QA04-date-drill-through-44-leads.jpg</p></div>
+<div class="screen"><a href="QA04-date-drill-through-44-leads.jpg" target="_blank"><img src="QA04-date-drill-through-44-leads.jpg" alt="QA-04 / QA-15 · The tile’s date URL opens 44 leads, including older dates." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-05 · care summary and assigned/all-open queue use different scopes. qa05-care-summary-before.jpg" data-type="defect" id="evidence-8">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-05 · Care summary and assigned/all-open queue use different scopes.</h2><p>QA05-care-summary-before.jpg</p></div>
+<div class="screen"><a href="QA05-care-summary-before.jpg" target="_blank"><img src="QA05-care-summary-before.jpg" alt="QA-05 · Care summary and assigned/all-open queue use different scopes." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-07 · manage status change is already saved without a save/cancel review. qa07-case-edit-autosaved.jpg" data-type="defect" id="evidence-9">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-07 · Manage status change is already saved without a Save/Cancel review.</h2><p>QA07-case-edit-autosaved.jpg</p></div>
+<div class="screen"><a href="QA07-case-edit-autosaved.jpg" target="_blank"><img src="QA07-case-edit-autosaved.jpg" alt="QA-07 · Manage status change is already saved without a Save/Cancel review." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-08 · corrected result: the main tasks page created an unlinked task. qa08-unlinked-task-submit-response.jpg" data-type="defect" id="evidence-10">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-08 · Corrected result: the main Tasks page created an unlinked task.</h2><p>QA08-unlinked-task-submit-response.jpg</p></div>
+<div class="screen"><a href="QA08-unlinked-task-submit-response.jpg" target="_blank"><img src="QA08-unlinked-task-submit-response.jpg" alt="QA-08 · Corrected result: the main Tasks page created an unlinked task." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-10 · translucent call overlay and unclear end call control. qa10-call-overlay.jpg" data-type="defect" id="evidence-11">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-10 · Translucent call overlay and unclear End call control.</h2><p>QA10-call-overlay.jpg</p></div>
+<div class="screen"><a href="QA10-call-overlay.jpg" target="_blank"><img src="QA10-call-overlay.jpg" alt="QA-10 · Translucent call overlay and unclear End call control." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-11 · reloaded activity retains offered owner/city/mobile/email placeholders. qa11-supported-merge-tokens-unresolved.jpg" data-type="defect" id="evidence-12">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-11 · Reloaded activity retains offered owner/city/mobile/email placeholders.</h2><p>QA11-supported-merge-tokens-unresolved.jpg</p></div>
+<div class="screen"><a href="QA11-supported-merge-tokens-unresolved.jpg" target="_blank"><img src="QA11-supported-merge-tokens-unresolved.jpg" alt="QA-11 · Reloaded activity retains offered owner/city/mobile/email placeholders." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-12 · http base url is advertised alongside api secret headers. qa12-api-http-secret-guidance.jpg" data-type="defect" id="evidence-13">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-12 · HTTP base URL is advertised alongside API secret headers.</h2><p>QA12-api-http-secret-guidance.jpg</p></div>
+<div class="screen"><a href="QA12-api-http-secret-guidance.jpg" target="_blank"><img src="QA12-api-http-secret-guidance.jpg" alt="QA-12 · HTTP base URL is advertised alongside API secret headers." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-14 · pipeline populated; product control remains single-select. qa14-pipeline-single-product-filter.jpg" data-type="defect" id="evidence-14">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-14 · Pipeline populated; product control remains single-select.</h2><p>QA14-pipeline-single-product-filter.jpg</p></div>
+<div class="screen"><a href="QA14-pipeline-single-product-filter.jpg" target="_blank"><img src="QA14-pipeline-single-product-filter.jpg" alt="QA-14 · Pipeline populated; product control remains single-select." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-16 · predefined reports present; requested custom builder absent from this surface. qa16-predefined-reports-no-builder.jpg" data-type="defect" id="evidence-15">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-16 · Predefined reports present; requested custom builder absent from this surface.</h2><p>QA16-predefined-reports-no-builder.jpg</p></div>
+<div class="screen"><a href="QA16-predefined-reports-no-builder.jpg" target="_blank"><img src="QA16-predefined-reports-no-builder.jpg" alt="QA-16 · Predefined reports present; requested custom builder absent from this surface." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-23 · offline local mode and outside-india/sent labels need consistent explanation. qa23-local-provider-versus-egress-labels.jpg" data-type="defect" id="evidence-16">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-23 · Offline local mode and outside-India/Sent labels need consistent explanation.</h2><p>QA23-local-provider-versus-egress-labels.jpg</p></div>
+<div class="screen"><a href="QA23-local-provider-versus-egress-labels.jpg" target="_blank"><img src="QA23-local-provider-versus-egress-labels.jpg" alt="QA-23 · Offline local mode and outside-India/Sent labels need consistent explanation." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-26 · empty name produces a raw database error. both are visible in this final screenshot. qa26-empty-name-error-dialog-top.jpg" data-type="defect" id="evidence-17">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-26 · Empty Name produces a raw database error. Both are visible in this final screenshot.</h2><p>QA26-empty-name-error-dialog-top.jpg</p></div>
+<div class="screen"><a href="QA26-empty-name-error-dialog-top.jpg" target="_blank"><img src="QA26-empty-name-error-dialog-top.jpg" alt="QA-26 · Empty Name produces a raw database error. Both are visible in this final screenshot." loading="lazy"></a><div class="annotation" style="left:20.5%;top:17.1%;width:29%;height:7%" aria-hidden="true"><span>1</span></div><div class="annotation" style="left:20.5%;top:24.4%;width:58%;height:9%" aria-hidden="true"><span>2</span></div></div>
+<p class="annotation-note">Red boxes are QA review annotations. The original screenshot file is unchanged.</p></article>
+<article class="evidence pass" data-search="delete guard pass · wrong name blocks deletion; exact-name confirmation is required. crud-lead-delete-confirmation.jpg" data-type="pass" id="evidence-18">
+<div class="caption"><span class="tag">VERIFIED RESULT</span><h2>Delete guard PASS · Wrong name blocks deletion; exact-name confirmation is required.</h2><p>CRUD-lead-delete-confirmation.jpg</p></div>
+<div class="screen"><a href="CRUD-lead-delete-confirmation.jpg" target="_blank"><img src="CRUD-lead-delete-confirmation.jpg" alt="Delete guard PASS · Wrong name blocks deletion; exact-name confirmation is required." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-27 · successful delete leaves lead not found at the deleted detail url. crud-lead-delete-result.jpg" data-type="defect" id="evidence-19">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-27 · Successful delete leaves Lead not found at the deleted detail URL.</h2><p>CRUD-lead-delete-result.jpg</p></div>
+<div class="screen"><a href="CRUD-lead-delete-result.jpg" target="_blank"><img src="CRUD-lead-delete-result.jpg" alt="QA-27 · Successful delete leaves Lead not found at the deleted detail URL." loading="lazy"></a></div>
+</article>
+<article class="evidence pass" data-search="recovery pass · deleted synthetic lead appears in recycle bin. crud-lead-in-recycle-bin.jpg" data-type="pass" id="evidence-20">
+<div class="caption"><span class="tag">VERIFIED RESULT</span><h2>Recovery PASS · Deleted synthetic lead appears in Recycle bin.</h2><p>CRUD-lead-in-recycle-bin.jpg</p></div>
+<div class="screen"><a href="CRUD-lead-in-recycle-bin.jpg" target="_blank"><img src="CRUD-lead-in-recycle-bin.jpg" alt="Recovery PASS · Deleted synthetic lead appears in Recycle bin." loading="lazy"></a></div>
+</article>
+<article class="evidence pass" data-search="recovery pass · restore recovers the synthetic record and related tabs. crud-lead-restored.jpg" data-type="pass" id="evidence-21">
+<div class="caption"><span class="tag">VERIFIED RESULT</span><h2>Recovery PASS · Restore recovers the synthetic record and related tabs.</h2><p>CRUD-lead-restored.jpg</p></div>
+<div class="screen"><a href="CRUD-lead-restored.jpg" target="_blank"><img src="CRUD-lead-restored.jpg" alt="Recovery PASS · Restore recovers the synthetic record and related tabs." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-28 · ai high compliance case has no category or sla due values. qa28-compliance-case-no-sla.jpg" data-type="defect" id="evidence-22">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-28 · AI High compliance case has no category or SLA due values.</h2><p>QA28-compliance-case-no-sla.jpg</p></div>
+<div class="screen"><a href="QA28-compliance-case-no-sla.jpg" target="_blank"><img src="QA28-compliance-case-no-sla.jpg" alt="QA-28 · AI High compliance case has no category or SLA due values." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-29 · successful import toast contradicts the empty/zero-member list until reload. qa29-list-stale-after-import.jpg" data-type="defect" id="evidence-23">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-29 · Successful import toast contradicts the empty/zero-member list until reload.</h2><p>QA29-list-stale-after-import.jpg</p></div>
+<div class="screen"><a href="QA29-list-stale-after-import.jpg" target="_blank"><img src="QA29-list-stale-after-import.jpg" alt="QA-29 · Successful import toast contradicts the empty/zero-member list until reload." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-30 · campaign creation is allowed with no approved template chosen. qa30-campaign-create-without-template.jpg" data-type="defect" id="evidence-24">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-30 · Campaign creation is allowed with no approved template chosen.</h2><p>QA30-campaign-create-without-template.jpg</p></div>
+<div class="screen"><a href="QA30-campaign-create-without-template.jpg" target="_blank"><img src="QA30-campaign-create-without-template.jpg" alt="QA-30 · Campaign creation is allowed with no approved template chosen." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-30 · the synthetic campaign becomes sent without a chosen template. qa30-campaign-send-without-template.jpg" data-type="defect" id="evidence-25">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-30 · The synthetic campaign becomes Sent without a chosen template.</h2><p>QA30-campaign-send-without-template.jpg</p></div>
+<div class="screen"><a href="QA30-campaign-send-without-template.jpg" target="_blank"><img src="QA30-campaign-send-without-template.jpg" alt="QA-30 · The synthetic campaign becomes Sent without a chosen template." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-31 · product minimum step rejects the catalog’s ₹500-style amount. qa31-product-minimum-step-validation.jpg" data-type="defect" id="evidence-26">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-31 · Product minimum step rejects the catalog’s ₹500-style amount.</h2><p>QA31-product-minimum-step-validation.jpg</p></div>
+<div class="screen"><a href="QA31-product-minimum-step-validation.jpg" target="_blank"><img src="QA31-product-minimum-step-validation.jpg" alt="QA-31 · Product minimum step rejects the catalog’s ₹500-style amount." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-32 · form promises a generated code and has no code input. this frame does not show the covered error. qa32-product-create-code-required.jpg" data-type="defect" id="evidence-27">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-32 · Form promises a generated code and has no Code input. This frame does not show the covered error.</h2><p>QA32-product-create-code-required.jpg</p></div>
+<div class="screen"><a href="QA32-product-create-code-required.jpg" target="_blank"><img src="QA32-product-create-code-required.jpg" alt="QA-32 · Form promises a generated code and has no Code input. This frame does not show the covered error." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-32 · after closing the obstructing modal, the actual code and name are required banner is visible. qa32-product-error-after-closing-modal.jpg" data-type="defect" id="evidence-28">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-32 · After closing the obstructing modal, the actual Code and name are required banner is visible.</h2><p>QA32-product-error-after-closing-modal.jpg</p></div>
+<div class="screen"><a href="QA32-product-error-after-closing-modal.jpg" target="_blank"><img src="QA32-product-error-after-closing-modal.jpg" alt="QA-32 · After closing the obstructing modal, the actual Code and name are required banner is visible." loading="lazy"></a><div class="annotation" style="left:19.6%;top:28.5%;width:29%;height:8%" aria-hidden="true"><span>1</span></div></div>
+<p class="annotation-note">Red boxes are QA review annotations. The original screenshot file is unchanged.</p></article>
+<article class="evidence defect" data-search="qa-33 · synthetic partner is active with portal access while onboarding remains 0/8. qa33-partner-active-zero-onboarding.jpg" data-type="defect" id="evidence-29">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-33 · Synthetic partner is Active with Portal access while onboarding remains 0/8.</h2><p>QA33-partner-active-zero-onboarding.jpg</p></div>
+<div class="screen"><a href="QA33-partner-active-zero-onboarding.jpg" target="_blank"><img src="QA33-partner-active-zero-onboarding.jpg" alt="QA-33 · Synthetic partner is Active with Portal access while onboarding remains 0/8." loading="lazy"></a><div class="annotation" style="left:15%;top:37%;width:30%;height:7%" aria-hidden="true"><span>1</span></div><div class="annotation" style="left:44%;top:71%;width:6%;height:7%" aria-hidden="true"><span>2</span></div></div>
+<p class="annotation-note">Red boxes are QA review annotations. The original screenshot file is unchanged.</p></article>
+<article class="evidence pass" data-search="partner rm guard pass · normal request refuses seven incomplete steps; no access issued. pass-partner-rm-elevation-incomplete-denied.jpg" data-type="pass" id="evidence-30">
+<div class="caption"><span class="tag">VERIFIED RESULT</span><h2>Partner RM guard PASS · Normal request refuses seven incomplete steps; no access issued.</h2><p>PASS-partner-rm-elevation-incomplete-denied.jpg</p></div>
+<div class="screen"><a href="PASS-partner-rm-elevation-incomplete-denied.jpg" target="_blank"><img src="PASS-partner-rm-elevation-incomplete-denied.jpg" alt="Partner RM guard PASS · Normal request refuses seven incomplete steps; no access issued." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-34 · complete simulated kyc retained invalid mobile/pan values in the internal record. qa34-kyc-invalid-data-persisted.jpg" data-type="defect" id="evidence-31">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-34 · Complete simulated KYC retained invalid mobile/PAN values in the internal record.</h2><p>QA34-kyc-invalid-data-persisted.jpg</p></div>
+<div class="screen"><a href="QA34-kyc-invalid-data-persisted.jpg" target="_blank"><img src="QA34-kyc-invalid-data-persisted.jpg" alt="QA-34 · Complete simulated KYC retained invalid mobile/PAN values in the internal record." loading="lazy"></a></div>
+</article>
+<article class="evidence pass" data-search="dkyc finish pass in simulator · final success reached after specific user confirmation. crud-kyc-completed.jpg" data-type="pass" id="evidence-32">
+<div class="caption"><span class="tag">VERIFIED RESULT</span><h2>DKYC Finish PASS in simulator · Final success reached after specific user confirmation.</h2><p>CRUD-kyc-completed.jpg</p></div>
+<div class="screen"><a href="CRUD-kyc-completed.jpg" target="_blank"><img src="CRUD-kyc-completed.jpg" alt="DKYC Finish PASS in simulator · Final success reached after specific user confirmation." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-35 · active product card conflicts with no active products summary. qa35-active-card-no-active-products.jpg" data-type="defect" id="evidence-33">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-35 · Active product card conflicts with no active products summary.</h2><p>QA35-active-card-no-active-products.jpg</p></div>
+<div class="screen"><a href="QA35-active-card-no-active-products.jpg" target="_blank"><img src="QA35-active-card-no-active-products.jpg" alt="QA-35 · Active product card conflicts with no active products summary." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-36 · sales edit reveals full contact values while the read view is masked. qa36-sales-edit-unmasks-contact.jpg" data-type="defect" id="evidence-34">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-36 · Sales edit reveals full contact values while the read view is masked.</h2><p>QA36-sales-edit-unmasks-contact.jpg</p></div>
+<div class="screen"><a href="QA36-sales-edit-unmasks-contact.jpg" target="_blank"><img src="QA36-sales-edit-unmasks-contact.jpg" alt="QA-36 · Sales edit reveals full contact values while the read view is masked." loading="lazy"></a></div>
+</article>
+<article class="evidence pass" data-search="dealer masking pass · contact fields stay masked and disabled; allowed city edit works. pass-dealer-edit-masked-fields.jpg" data-type="pass" id="evidence-35">
+<div class="caption"><span class="tag">VERIFIED RESULT</span><h2>Dealer masking PASS · Contact fields stay masked and disabled; allowed City edit works.</h2><p>PASS-dealer-edit-masked-fields.jpg</p></div>
+<div class="screen"><a href="PASS-dealer-edit-masked-fields.jpg" target="_blank"><img src="PASS-dealer-edit-masked-fields.jpg" alt="Dealer masking PASS · Contact fields stay masked and disabled; allowed City edit works." loading="lazy"></a></div>
+</article>
+<article class="evidence pass" data-search="content approval pass · author cannot approve their own item. pass-content-self-approval-rejected.jpg" data-type="pass" id="evidence-36">
+<div class="caption"><span class="tag">VERIFIED RESULT</span><h2>Content approval PASS · Author cannot approve their own item.</h2><p>PASS-content-self-approval-rejected.jpg</p></div>
+<div class="screen"><a href="PASS-content-self-approval-rejected.jpg" target="_blank"><img src="PASS-content-self-approval-rejected.jpg" alt="Content approval PASS · Author cannot approve their own item." loading="lazy"></a></div>
+</article>
+<article class="evidence pass" data-search="content approval pass · a different admin approves the item. pass-content-independent-approval.jpg" data-type="pass" id="evidence-37">
+<div class="caption"><span class="tag">VERIFIED RESULT</span><h2>Content approval PASS · A different Admin approves the item.</h2><p>PASS-content-independent-approval.jpg</p></div>
+<div class="screen"><a href="PASS-content-independent-approval.jpg" target="_blank"><img src="PASS-content-independent-approval.jpg" alt="Content approval PASS · A different Admin approves the item." loading="lazy"></a></div>
+</article>
+<article class="evidence pass" data-search="consent pass · opted-out synthetic audience member is skipped; sent count is zero. pass-campaign-opt-out-skipped.jpg" data-type="pass" id="evidence-38">
+<div class="caption"><span class="tag">VERIFIED RESULT</span><h2>Consent PASS · Opted-out synthetic audience member is skipped; sent count is zero.</h2><p>PASS-campaign-opt-out-skipped.jpg</p></div>
+<div class="screen"><a href="PASS-campaign-opt-out-skipped.jpg" target="_blank"><img src="PASS-campaign-opt-out-skipped.jpg" alt="Consent PASS · Opted-out synthetic audience member is skipped; sent count is zero." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-38 · email menu action is disabled although header composer permits service purpose. qa38-service-email-action-disabled.jpg" data-type="defect" id="evidence-39">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-38 · Email menu action is disabled although header composer permits Service purpose.</h2><p>QA38-service-email-action-disabled.jpg</p></div>
+<div class="screen"><a href="QA38-service-email-action-disabled.jpg" target="_blank"><img src="QA38-service-email-action-disabled.jpg" alt="QA-38 · Email menu action is disabled although header composer permits Service purpose." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-39 · manual service message bodies persist, but timeline actor is system. pass-sms-whatsapp-activities.jpg" data-type="defect" id="evidence-40">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-39 · Manual service message bodies persist, but timeline actor is system.</h2><p>PASS-sms-whatsapp-activities.jpg</p></div>
+<div class="screen"><a href="PASS-sms-whatsapp-activities.jpg" target="_blank"><img src="PASS-sms-whatsapp-activities.jpg" alt="QA-39 · Manual service message bodies persist, but timeline actor is system." loading="lazy"></a></div>
+</article>
+<article class="evidence pass" data-search="qa-39 limit · api audit correctly identifies kavita; server actor audit exists. qa39-message-actor-present-in-api-log.jpg" data-type="pass" id="evidence-41">
+<div class="caption"><span class="tag">VERIFIED RESULT</span><h2>QA-39 limit · API audit correctly identifies Kavita; server actor audit exists.</h2><p>QA39-message-actor-present-in-api-log.jpg</p></div>
+<div class="screen"><a href="QA39-message-actor-present-in-api-log.jpg" target="_blank"><img src="QA39-message-actor-present-in-api-log.jpg" alt="QA-39 limit · API audit correctly identifies Kavita; server actor audit exists." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-40 · zero entry counters contradict a populated audit table. qa40-log-counts-zero-with-entries.jpg" data-type="defect" id="evidence-42">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-40 · Zero entry counters contradict a populated audit table.</h2><p>QA40-log-counts-zero-with-entries.jpg</p></div>
+<div class="screen"><a href="QA40-log-counts-zero-with-entries.jpg" target="_blank"><img src="QA40-log-counts-zero-with-entries.jpg" alt="QA-40 · Zero entry counters contradict a populated audit table." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-41 · refused admin api tab remains at loading. qa41-admin-api-access-stuck-loading.jpg" data-type="defect" id="evidence-43">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-41 · Refused Admin API tab remains at Loading.</h2><p>QA41-admin-api-access-stuck-loading.jpg</p></div>
+<div class="screen"><a href="QA41-admin-api-access-stuck-loading.jpg" target="_blank"><img src="QA41-admin-api-access-stuck-loading.jpg" alt="QA-41 · Refused Admin API tab remains at Loading." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-41 · log records admin api credentials request as 403. qa41-admin-api-denial-log.jpg" data-type="defect" id="evidence-44">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-41 · Log records Admin API credentials request as 403.</h2><p>QA41-admin-api-denial-log.jpg</p></div>
+<div class="screen"><a href="QA41-admin-api-denial-log.jpg" target="_blank"><img src="QA41-admin-api-denial-log.jpg" alt="QA-41 · Log records Admin API credentials request as 403." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-42 · enabled dealer engagement action left the synthetic card unchanged; root cause unconfirmed. qa42-dealer-start-engaging-no-change.jpg" data-type="defect" id="evidence-45">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-42 · Enabled Dealer engagement action left the synthetic card unchanged; root cause unconfirmed.</h2><p>QA42-dealer-start-engaging-no-change.jpg</p></div>
+<div class="screen"><a href="QA42-dealer-start-engaging-no-change.jpg" target="_blank"><img src="QA42-dealer-start-engaging-no-change.jpg" alt="QA-42 · Enabled Dealer engagement action left the synthetic card unchanged; root cause unconfirmed." loading="lazy"></a></div>
+</article>
+<article class="evidence defect" data-search="qa-43 · product supervisor’s listed journey detail is refused with 403. qa43-kyc-listed-journey-forbidden-log.jpg" data-type="defect" id="evidence-46">
+<div class="caption"><span class="tag">PROBLEM</span><h2>QA-43 · Product Supervisor’s listed journey detail is refused with 403.</h2><p>QA43-kyc-listed-journey-forbidden-log.jpg</p></div>
+<div class="screen"><a href="QA43-kyc-listed-journey-forbidden-log.jpg" target="_blank"><img src="QA43-kyc-listed-journey-forbidden-log.jpg" alt="QA-43 · Product Supervisor’s listed journey detail is refused with 403." loading="lazy"></a></div>
+</article>
+<article class="evidence pass" data-search="import pass · preview separates a valid row, duplicate and invalid mobile. pass-import-preview-valid-duplicate-invalid.jpg" data-type="pass" id="evidence-47">
+<div class="caption"><span class="tag">VERIFIED RESULT</span><h2>Import PASS · Preview separates a valid row, duplicate and invalid mobile.</h2><p>PASS-import-preview-valid-duplicate-invalid.jpg</p></div>
+<div class="screen"><a href="PASS-import-preview-valid-duplicate-invalid.jpg" target="_blank"><img src="PASS-import-preview-valid-duplicate-invalid.jpg" alt="Import PASS · Preview separates a valid row, duplicate and invalid mobile." loading="lazy"></a></div>
+</article>
+<article class="evidence pass" data-search="import pass · commit creates one and skips the duplicate/invalid rows. pass-import-result.jpg" data-type="pass" id="evidence-48">
+<div class="caption"><span class="tag">VERIFIED RESULT</span><h2>Import PASS · Commit creates one and skips the duplicate/invalid rows.</h2><p>PASS-import-result.jpg</p></div>
+<div class="screen"><a href="PASS-import-result.jpg" target="_blank"><img src="PASS-import-result.jpg" alt="Import PASS · Commit creates one and skips the duplicate/invalid rows." loading="lazy"></a></div>
+</article>
+<article class="evidence pass" data-search="rule dry-run pass · two conditions match only the named synthetic leads; nothing sent. crud-rule-dry-run-result.jpg" data-type="pass" id="evidence-49">
+<div class="caption"><span class="tag">VERIFIED RESULT</span><h2>Rule dry-run PASS · Two conditions match only the named synthetic leads; nothing sent.</h2><p>CRUD-rule-dry-run-result.jpg</p></div>
+<div class="screen"><a href="CRUD-rule-dry-run-result.jpg" target="_blank"><img src="CRUD-rule-dry-run-result.jpg" alt="Rule dry-run PASS · Two conditions match only the named synthetic leads; nothing sent." loading="lazy"></a></div>
+</article>
+<article class="evidence pass" data-search="automation step deletion · review explicitly explains run-history consequences and disabling alternative. crud-automation-card-delete-confirm.jpg" data-type="pass" id="evidence-50">
+<div class="caption"><span class="tag">VERIFIED RESULT</span><h2>Automation step deletion · Review explicitly explains run-history consequences and disabling alternative.</h2><p>CRUD-automation-card-delete-confirm.jpg</p></div>
+<div class="screen"><a href="CRUD-automation-card-delete-confirm.jpg" target="_blank"><img src="CRUD-automation-card-delete-confirm.jpg" alt="Automation step deletion · Review explicitly explains run-history consequences and disabling alternative." loading="lazy"></a></div>
+</article>
+<article class="evidence pass" data-search="cleanup pass · test interaction field active is unchecked after saved retirement. crud-capture-field-retired.jpg" data-type="pass" id="evidence-51">
+<div class="caption"><span class="tag">VERIFIED RESULT</span><h2>Cleanup PASS · Test interaction field Active is unchecked after saved retirement.</h2><p>CRUD-capture-field-retired.jpg</p></div>
+<div class="screen"><a href="CRUD-capture-field-retired.jpg" target="_blank"><img src="CRUD-capture-field-retired.jpg" alt="Cleanup PASS · Test interaction field Active is unchecked after saved retirement." loading="lazy"></a></div>
+</article></main><footer>Original files and SHA-256 inventory are included in the evidence package. Keep this internal development handoff.</footer>
+<script>
+let filter='all';const search=document.getElementById('search');const articles=[...document.querySelectorAll('article.evidence')];
+function refresh(){let count=0;const q=search.value.toLowerCase().trim();articles.forEach(a=>{const show=(filter==='all'||a.dataset.type===filter)&&a.dataset.search.includes(q);a.hidden=!show;if(show)count++;});document.getElementById('count').textContent=count+' of '+articles.length+' screenshots';}
+search.addEventListener('input',refresh);document.querySelectorAll('[data-filter]').forEach(b=>b.addEventListener('click',()=>{filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));refresh();}));
+document.getElementById('annotations').addEventListener('change',e=>document.body.classList.toggle('hide-annotations',!e.target.checked));
+</script></body></html>

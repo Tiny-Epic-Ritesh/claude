@@ -1,0 +1,350 @@
+[
+  {
+    "time": "2026-09-30T12:10:41.281Z",
+    "module": "Lead CRUD",
+    "url": "https://labs.tinyepic.in/ai-crm/leads/42",
+    "result": "Sales RM created #42 Assign to me: denied visibility; Superadmin audit routed Website to Digital Desk user 6 Imran. Empty name edit leaked NOT NULL constraint failed: leads.name. Valid edit name/city/risk/owner saved; owner history logged. Note created (no edit/delete controls). Linked task created. Soft delete required exact name, wrong name disabled; success left /leads/42 showing Lead not found."
+  },
+  {
+    "time": "2026-09-30T12:11:58.977Z",
+    "module": "Lead recovery",
+    "url": "https://labs.tinyepic.in/ai-crm/data",
+    "result": "Recycle bin showed one deleted lead #42; Restore emptied bin."
+  },
+  {
+    "time": "2026-09-30T12:14:05.890Z",
+    "module": "Lead tabs and AI",
+    "url": "https://labs.tinyepic.in/ai-crm/leads/42",
+    "result": "Restored #42 retains note1/task1/products11. MF INACTIVE→EXPLORING→WARM increments activity and score10→13→16. Call complaint stub generated review, edited summary/task, Confirm applied activity +score3 task and High compliance case#11. Call overlay translucent/blank End call confirmed."
+  },
+  {
+    "time": "2026-09-30T12:15:25.089Z",
+    "module": "Case#11",
+    "url": "https://labs.tinyepic.in/ai-crm/tickets/11",
+    "result": "AI-created High compliance case is Uncategorised, response/resolution/SLA due all dash. Reply and verified internal note worked. Status Waiting on Client autosaved with no Save/Cancel; Mark resolved direct. No deletion or subject edit in case UI."
+  },
+  {
+    "time": "2026-09-30T12:16:36.966Z",
+    "module": "Tasks",
+    "url": "https://labs.tinyepic.in/ai-crm/tasks",
+    "result": "Correction QA08: correct datetime made Add task enabled; task created without linked entity shows Linked to —. Main form lacks link selector despite mandatory text. Linked task checkbox completion works. No title/due edit or delete control visible."
+  },
+  {
+    "time": "2026-09-30T12:19:09.879Z",
+    "module": "List#4",
+    "url": "https://labs.tinyepic.in/ai-crm/lists/4",
+    "result": "Static creation with reason/expiry works. Import by mobile two IDs gives 1 matched/added 1 missing. Closing modal left count0/empty with 1 lead added; reload reveals member1. Bulk City edit supported. No rename/list delete/member remove affordance; only Delete every member (lead soft delete) present."
+  },
+  {
+    "time": "2026-09-30T12:20:20.654Z",
+    "module": "Campaign",
+    "url": "https://labs.tinyepic.in/ai-crm/campaigns",
+    "result": "Created QA CRUD Campaign email list#4 without selecting template, Create allowed. Test on me returned Sent to you only. Send acted immediately, no preview/confirm. No edit/delete controls on draft."
+  },
+  {
+    "time": "2026-09-30T12:20:50.320Z",
+    "module": "Campaign activity",
+    "url": "https://labs.tinyepic.in/ai-crm/leads/42",
+    "result": "Send without template wrote Email system activity titled Bonanza update on #42 and campaign Sent1."
+  },
+  {
+    "time": "2026-09-30T12:22:42.902Z",
+    "module": "Marketing Hub",
+    "url": "https://labs.tinyepic.in/ai-crm/content",
+    "result": "Created Library QA CRUD Library owned Superadmin approval required default30. Added Link QA CRUD Content with example.invalid URL; draft and 30 Oct expiry derived. Only Send for approval, no edit/delete item/library in library UI."
+  },
+  {
+    "time": "2026-09-30T12:24:44.802Z",
+    "module": "Template CRUD",
+    "url": "https://labs.tinyepic.in/ai-crm/setup/templates",
+    "result": "Created qa_crud_20260930 WhatsApp Utility draft. Body {{name}} preview Rohan example. Edit body saved. Delete row removed immediately with no confirmation dialog/success toast; All6 WhatsApp3 after deletion."
+  },
+  {
+    "time": "2026-09-30T12:27:15.588Z",
+    "module": "Automation CRUD",
+    "url": "https://labs.tinyepic.in/ai-crm/setup/automations/2",
+    "result": "Draft#2 QA CRUD created lead-updated. Activation blocked missing watched fields+steps. Edit trigger City watch and Name equality#42 saved. Added terminal node, edited name/reason. Node deletion confirmation explains irreversible run-history ID and alternative disable; delete restored no-step activation guard. No automation-container rename/delete controls visible."
+  },
+  {
+    "time": "2026-09-30T12:29:34.919Z",
+    "module": "Rule CRUD",
+    "url": "https://labs.tinyepic.in/ai-crm/setup/rules",
+    "result": "New disabled rule#6 sourceWebsite AND age0, Star true. Save and dry-run matches exactly #40/#42 (2 of42), nothing sent. Renamed QA CRUD Rule Edited saved; no Delete control on rule cards. Existing counters rose10509/48633/47994."
+  },
+  {
+    "time": "2026-10-01T04:42:41.017Z",
+    "module": "Product creation",
+    "url": "https://labs.tinyepic.in/ai-crm/setup/products",
+    "result": "Creation blocked: form promises generated permanent code but save with valid name/category/min1000 returns Code and name are required, no code input. Browser minimum step1000 rejects500 despite catalog500. No product created; edit/withdraw cannot safely exercise new record."
+  },
+  {
+    "time": "2026-10-01T04:43:37.269Z",
+    "module": "Partner#9",
+    "url": "https://labs.tinyepic.in/ai-crm/partners/9",
+    "result": "Created QA partner prospect at0/8 onboarding. Clicking Elevate immediately made ACTIVE and issued partner code+portal sign-in without completeness/admin approval confirmation; unexpected security-access effect. No edit/delete/deactivate control visible. Do not reproduce with real partner."
+  },
+  {
+    "time": "2026-10-01T04:44:13.312Z",
+    "module": "Partner lifecycle",
+    "url": "https://labs.tinyepic.in/ai-crm/partners/9",
+    "result": "Partner note create persisted; Commission empty. No partner details editor/delete/deactivate in visible tabs; portal cleanup needed for synthetic#9."
+  },
+  {
+    "time": "2026-10-01T04:45:28.673Z",
+    "module": "Custom field",
+    "url": "https://labs.tinyepic.in/ai-crm/leads/42",
+    "result": "Created optional Text field qa_audit_marker_20261001 purpose/help. Renamed label; API name immutable. Appeared immediately on lead#42 details/edit, synthetic value saved. No delete; Active checkbox can retire."
+  },
+  {
+    "time": "2026-10-01T04:45:44.388Z",
+    "module": "Custom field retirement",
+    "url": "https://labs.tinyepic.in/ai-crm/setup/objects",
+    "result": "Active unchecked and save completed, field retired; stored value retained by UI policy."
+  },
+  {
+    "time": "2026-10-01T04:46:27.409Z",
+    "module": "Capture forms",
+    "url": "https://labs.tinyepic.in/ai-crm/setup/forms",
+    "result": "Optional synthetic Text field created, label edited. Remove takes off Call form retains field/data, requires Save order; reload verified removal."
+  },
+  {
+    "time": "2026-10-01T04:47:13.473Z",
+    "module": "Call outcome CRUD",
+    "url": "https://labs.tinyepic.in/ai-crm/setup/outcomes",
+    "result": "Created QA_CALL_20261001, edited label/hint, zero score/no action maintained. Retire removed active use after reload, history retained/reactivate available."
+  },
+  {
+    "time": "2026-10-01T04:47:48.095Z",
+    "module": "Calendar CRUD",
+    "url": "https://labs.tinyepic.in/ai-crm/setup/calendars",
+    "result": "Created exchange closed day 2099-12-30 clearlyQA, Remove succeeded directly; no holiday edit control. Seed holidays unchanged."
+  },
+  {
+    "time": "2026-10-01T04:48:04.256Z",
+    "module": "SLA configuration",
+    "url": "https://labs.tinyepic.in/ai-crm/setup/sla",
+    "result": "Policies/categories tables read-only; no create/edit/delete on Superadmin UI. Defaults60m/8hHigh exist despite AIcase#11 duesblank."
+  },
+  {
+    "time": "2026-10-01T04:48:20.643Z",
+    "module": "KYC journey configuration",
+    "url": "https://labs.tinyepic.in/ai-crm/setup/journeys",
+    "result": "Read-only journey list, no composer edit/create/delete controls. Bonanza master16/12 steps; eight Bigul KYC-required products show0steps. Runtime Bigul flow not yet exercised."
+  },
+  {
+    "time": "2026-10-01T04:53:04.082Z",
+    "module": "DKYC synthetic workflow",
+    "url": "https://labs.tinyepic.in/ai-crm/dkyc/resume/[synthetic-resume-token-omitted]",
+    "result": "Started BigulTrading synthetic mobile9000000044; runtime fallback14steps vsSetup0. Mobile123 and PAN BAD accepted; nominee150% accepted. Invalid email browserblock, incorrectOTP rejected; DigiLocker consent required. Highincome addsincomeproof; bankfailureaddsbankproof →16steps. Missingproofblocked; Choosefile/camera simulated tokens only. Resume reload restored15/16 eSign. FinalFinish awaiting user confirmation."
+  },
+  {
+    "time": "2026-10-01T04:54:03.099Z",
+    "module": "Email merge retest",
+    "url": "https://labs.tinyepic.in/ai-crm/leads/42",
+    "result": "Example labels Aarav/Sneha/Vikram static, full_name correctly resolves actualQA lead. Supported selector tokens rm/owner resolve Rohit/Priya; city/mobile/email remain literal in simulated logged body. Sender_name/owner_name unsupported initial probes excluded. No email deliveredSMTPunconfigured."
+  },
+  {
+    "time": "2026-10-01T04:54:19.720Z",
+    "module": "DKYC Finish",
+    "url": "https://labs.tinyepic.in/ai-crm/dkyc/resume/[synthetic-resume-token-omitted]",
+    "result": "User specifically confirmed Finish fullysimulatednoaccount/legalagreement. DemoOTP123456 Finish→Onboarding successful16steps5m opsreview next, incompleteformat/nomineevaluesstillaccepted."
+  },
+  {
+    "time": "2026-10-01T04:54:30.913Z",
+    "module": "Email merge correction verified",
+    "url": "https://labs.tinyepic.in/ai-crm/leads/42",
+    "result": "After reload second email persists: full_name resolvesQAlead,rmresolvesRohit; supported owner/city/mobile/email remain literal. Earlier log said ownerresolvedPriya prematurely; this row supersedes it."
+  },
+  {
+    "time": "2026-10-01T04:56:04.286Z",
+    "module": "KYC persistence",
+    "url": "https://labs.tinyepic.in/ai-crm/leads/43",
+    "result": "Synthetic KYC created lead#43 BIGUL ownerRhea, mobile123/PANBAD persist. CardTrading&DematACTIVE, header says noactiveproducts despite Activecard; finalpubliccopyopsactivationpending."
+  },
+  {
+    "time": "2026-10-01T04:56:40.023Z",
+    "module": "Caller scope",
+    "url": "https://labs.tinyepic.in/ai-crm/leads/42",
+    "result": "DemoCaller isSneha; lead#42assignedImran inaccessible as expected."
+  },
+  {
+    "time": "2026-10-01T04:57:55.429Z",
+    "module": "Caller product boundary",
+    "url": "https://labs.tinyepic.in/ai-crm/leads/40",
+    "result": "Own synthetic#40detailsread-only maskedPII; MF INACTIVE→EXPLORINGsucceeded activity+1,scoreunchanged. MarkasWarmdisabled Yourrolecannotdothis. OnlyUIguardverified,noAPIforge."
+  },
+  {
+    "time": "2026-10-01T04:58:46.114Z",
+    "module": "Sales RM edit",
+    "url": "https://labs.tinyepic.in/ai-crm/leads/42",
+    "result": "Own restored#42visible. Stage/OwnerdisabledrequireSupervisor correctly. Readmobile/emailmasked,Editformexposesfullvalues despitemaskpolicy; noexplicitstageRequestcontrolvisible."
+  },
+  {
+    "time": "2026-10-01T04:59:13.483Z",
+    "module": "Sales RM handoff",
+    "url": "https://labs.tinyepic.in/ai-crm/leads/42",
+    "result": "RequestProductRM on#42MF created High task assignedDeepakJoshi. Generictoastnoassignee/handoffbrief; badgeTasks2 while table3contains1done+2open (opencount intended butunlabeled)."
+  },
+  {
+    "time": "2026-10-01T04:59:54.458Z",
+    "module": "Product RM boundary",
+    "url": "https://labs.tinyepic.in/ai-crm/leads/42",
+    "result": "DemoDeepakMF sees#42withmaskedPII andread-onlydetails (noEdit/call/actions). CockpitreceivedHighhandofftaskandnotification namingPriya+#42product, leaving ownerPriya. Latency60snotmeasured precisely."
+  },
+  {
+    "time": "2026-10-01T05:00:29.422Z",
+    "module": "Supervisor stage",
+    "url": "https://labs.tinyepic.in/ai-crm/leads/42",
+    "result": "SalesSupervisorAnil permitted New→Contacted#42saved,reloadpersisted withtrackedStageaudit actorAnil; ownerPriyaunchanged. Noapprovalrecordcreated, directchangeconsistentpermissions."
+  },
+  {
+    "time": "2026-10-01T05:01:34.057Z",
+    "module": "Data Tools import",
+    "url": "https://labs.tinyepic.in/ai-crm/data",
+    "result": "CSV3rowsdryrun1willimport1duplicate1invalidmobile; commitreturns1leadcreated1duplicate1invalidskipped. DoesnotupdateexistingduplicateinthisDataToolsentrypoint."
+  },
+  {
+    "time": "2026-10-01T05:01:54.918Z",
+    "module": "Import readback",
+    "url": "https://labs.tinyepic.in/ai-crm/leads/44",
+    "result": "Imported record#44nameQAImport,ownerRohit,sourceImport,11products preserved."
+  },
+  {
+    "time": "2026-10-01T05:03:43.522Z",
+    "module": "Content approval",
+    "url": "https://labs.tinyepic.in/ai-crm/content",
+    "result": "Submitdraft→pending; centralApprovals excludescontentqueue(money/access). Sendbackrequiresreason,thenrejected withreasonvisible andSendforapprovalallowsresubmit. Noedit/version/withdraw/deletecontrolvisible."
+  },
+  {
+    "time": "2026-10-01T05:04:18.319Z",
+    "module": "Content selfapproval",
+    "url": "https://labs.tinyepic.in/ai-crm/content",
+    "result": "Resubmittedrejecteditem→pending. AuthorSuperadminApprove rejected Somebody other than the person who added it has to approve it; pendingpreserved."
+  },
+  {
+    "time": "2026-10-01T05:04:38.454Z",
+    "module": "Admin approval",
+    "url": "https://labs.tinyepic.in/ai-crm/content",
+    "result": "AdminKavita(notauthor)Approve→active approvedsyntheticcontent; selfapprovaldenialdistinctactorpass."
+  },
+  {
+    "time": "2026-10-01T05:05:49.885Z",
+    "module": "Approved collateral readback",
+    "url": "https://labs.tinyepic.in/ai-crm/leads/42",
+    "result": "ApprovedQAcontent appears in email Attachapprovedcollateral selector forAdminKavita; draftpreviouslyexcluded. No actualattachment/sendneeded."
+  },
+  {
+    "time": "2026-10-01T05:06:25.888Z",
+    "module": "Calendar view",
+    "url": "https://labs.tinyepic.in/ai-crm/calendar?days=1",
+    "result": "Read-only simulatedOutlook diary; Day/Week/Fortnight selectorspresent,Dayworks. Noeventcreate/edit/deletecontrol, tasks generatedelsewhere. No Join invoked becauseexternalTeams simulation link."
+  },
+  {
+    "time": "2026-10-01T05:07:30.227Z",
+    "module": "Campaign consent",
+    "url": "https://labs.tinyepic.in/ai-crm/campaigns",
+    "result": "DuplicatedQAcampaignsentoneopted-outsynthetic#42; response1personskipped optedout/nocontact/invalid,Sent0Open0Click0. Draftduplicate noedit/delete asbefore."
+  },
+  {
+    "time": "2026-10-01T05:07:49.169Z",
+    "module": "Direct email consent",
+    "url": "https://labs.tinyepic.in/ai-crm/leads/42",
+    "result": "Marketing purpose disabledOptedout andclearbanner; Servicepurposeallowed. Noadditionalemailactivityfromsuppressedcampaign (Activity10 unchanged)."
+  },
+  {
+    "time": "2026-10-01T05:08:16.173Z",
+    "module": "Consent entrypoint mismatch",
+    "url": "https://labs.tinyepic.in/ai-crm/leads/42",
+    "result": "Opt-outActionsSendEmaildisabledasmarketing whileheaderemailopensServicecomposer. SMS/WhatsAppdisabledexpectedformarketing; emailpurposeentrypointinconsistent."
+  },
+  {
+    "time": "2026-10-01T05:09:08.685Z",
+    "module": "SMS and WhatsApp",
+    "url": "https://labs.tinyepic.in/ai-crm/leads/42",
+    "result": "Freeform Service SMS and WhatsApp to QA#42 simulator succeeded toast, persisted timeline both messages; timeline actor says system although AdminKavita initiated. No approved template picker in this direct composer; provider window/template callbacks not certified. Opt-out flag restored No after test."
+  },
+  {
+    "time": "2026-10-01T05:09:38.722Z",
+    "module": "Calendar Day persistence",
+    "url": "https://labs.tinyepic.in/ai-crm/calendar?days=1",
+    "result": "Reload?days1showsTodayonly2meetings; Dayfilterverified."
+  },
+  {
+    "time": "2026-10-01T05:15:07.162Z",
+    "module": "Monitoring logs",
+    "url": "https://labs.tinyepic.in/ai-crm/setup/logs",
+    "result": "API/portal count and all channel counters display 0 despite API table showing most recent 100 of 8,646. Filtering /api/leads/42/message yields two POST 201 rows naming Kavita Iyer. This confirms server audit actor exists; timeline system label is a presentation/attribution issue."
+  },
+  {
+    "time": "2026-10-01T05:16:38.805Z",
+    "module": "Admin API access",
+    "url": "https://labs.tinyepic.in/ai-crm/setup/logs",
+    "result": "API access remained Loading after first attempt and a reload/retry; Logs visibly shows GET /api/setup/api-credentials 403 for Kavita. The server denial may be intended; UI must display refusal instead of endless loading. No credentials issued."
+  },
+  {
+    "time": "2026-10-01T05:17:52.669Z",
+    "module": "Capture field cleanup",
+    "url": "https://labs.tinyepic.in/ai-crm/setup/objects",
+    "result": "qa_call_marker_20261001 retired globally via Objects & fields Interactions; reopened editor confirms Active unchecked. Stored history retained by product policy."
+  },
+  {
+    "time": "2026-10-01T05:18:53.666Z",
+    "module": "API guidance",
+    "url": "https://labs.tinyepic.in/ai-crm/setup/logs",
+    "result": "Superadmin API access loads, active credentials0; base URL remains http://labs.tinyepic.in with X-Api-Key/X-Api-Secret headers. No credential issued."
+  },
+  {
+    "time": "2026-10-01T05:21:47.056Z",
+    "module": "Dealer retest",
+    "url": "https://labs.tinyepic.in/ai-crm/leads/44",
+    "result": "Synthetic#44 temporarily assigned Vikram; own lead visible, contact fields masked and disabled in editor, stage/owner disabled. City edit QA Dealer Edited City persisted after reload. Start engaging MF clicked but card/activity remained unchanged; investigate server result before classifying."
+  },
+  {
+    "time": "2026-10-01T05:25:30.831Z",
+    "module": "Product Supervisor",
+    "url": "https://labs.tinyepic.in/ai-crm/kyc",
+    "result": "KYC health lists BIGUL synthetic#43; opening its detail stayed Loading. Bonanza seeded Diya journey opens and exposes Force complete controls. No seeded journey changed, override write not certified. Scope mismatch and loading need audit-log confirmation."
+  },
+  {
+    "time": "2026-10-01T05:27:36.048Z",
+    "module": "Partner RM",
+    "url": "https://labs.tinyepic.in/ai-crm/partners/10",
+    "result": "Created synthetic prospect QA Partner RM Prospect 20261001, owner Jimish, initial PROSPECT0/8. First business-profile step saved QUALIFYING1/8 and Activity1. Request elevation returned 7 onboarding step(s) still incomplete, no access issued. Mark done on Bonanza product suite made Completed score85 (simulated completion, no exam tested). No edit/delete visible."
+  },
+  {
+    "time": "2026-10-01T05:30:14.227Z",
+    "module": "Role failure confirmation",
+    "url": "https://labs.tinyepic.in/ai-crm/setup/logs",
+    "result": "Product Supervisor KYC list shows BIGUL synthetic#43 but detail GET /api/kyc/journeys/14 returns403 for Meera; UI remained Loading. Bonanza Diya detail opens normally. Dealer own#44 Start engaging left state/activity unchanged and no product mutation entry appeared in visible filtered Dealer API audit; root cause not established, not reported as server403."
+  },
+  {
+    "time": "2026-10-01T05:30:28.433Z",
+    "module": "Synthetic ownership cleanup",
+    "url": "https://labs.tinyepic.in/ai-crm/leads/44",
+    "result": "After Dealer checks, imported#44 restored to Rohit Menon; QA Dealer Edited City retained for reproduction."
+  },
+  {
+    "time": "2026-10-01T05:34:35.295Z",
+    "module": "Metric drill-through retest",
+    "url": "https://labs.tinyepic.in/ai-crm/leads?created_from=2026-10-01&created_to=2026-10-01",
+    "result": "Superadmin All businesses currentmonthOctober1 New leads2 tile→URLcreated_from=2026-10-01&created_to=2026-10-01; destination44leads includes May/August records. Date filter still ignored."
+  },
+  {
+    "time": "2026-10-01T05:41:26.596Z",
+    "module": "Product error evidence verification",
+    "url": "https://labs.tinyepic.in/ai-crm/setup/products",
+    "result": "Reproduced product Save with valid values; waited for exact visible Code and name are required message before capture QA32-product-save-error-visible. Earlier image only shows form, so use this new screenshot for response proof. No product created."
+  },
+  {
+    "time": "2026-10-01T05:43:36.937Z",
+    "module": "Product error presentation",
+    "url": "https://labs.tinyepic.in/ai-crm/setup/products",
+    "result": "Error Code and name are required is rendered on underlying Products page and covered by still-open New product dialog. Closing Cancel reveals banner; QA32-product-error-after-closing-modal captures readable response. Modal screenshot alone is not error proof."
+  },
+  {
+    "time": "2026-10-01T05:45:37.170Z",
+    "module": "Lead error evidence verification",
+    "url": "https://labs.tinyepic.in/ai-crm/leads/42",
+    "result": "Empty Name rejection confirmed again. Error lives inside dialog above viewport after Save auto-scroll; clicking Name brought error into view and QA26-empty-name-error-dialog-top now visibly shows database error and empty Name. No persisted name changed; use this screenshot, not earlier bottom-of-dialog/after-cancel frames, for response proof."
+  }
+]

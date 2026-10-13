@@ -1,0 +1,257 @@
+[
+  {
+    "file": "QA01-sales-create-assign-to-me.jpg",
+    "caption": "QA-01 · Before submit: Sales RM selected Assign to me.",
+    "type": "defect"
+  },
+  {
+    "file": "QA01-sales-created-denied.jpg",
+    "caption": "QA-01 · After successful creation: the lead is outside the creator’s visibility scope.",
+    "type": "defect"
+  },
+  {
+    "file": "QA01-audit-routing-cause.jpg",
+    "caption": "QA-01 · Audit identifies the routing rule that replaced the owner.",
+    "type": "defect"
+  },
+  {
+    "file": "QA02-rule-counters-retested.jpg",
+    "caption": "QA-02 · Scheduled firing counters remain high and increase; use task/audit evidence to diagnose side effects.",
+    "type": "defect"
+  },
+  {
+    "file": "QA03-partner-case-cross-business-assignee.jpg",
+    "caption": "QA-03 · Bonanza portal case #10 is Uncategorised and assigned to Divya; the user record identifies Divya as Bigul Care.",
+    "type": "defect"
+  },
+  {
+    "file": "QA04-date-tile-two-leads.jpg",
+    "caption": "QA-04 · 1 October tile counts two new leads. Compare the next screenshot.",
+    "type": "defect"
+  },
+  {
+    "file": "QA04-date-drill-through-44-leads.jpg",
+    "caption": "QA-04 / QA-15 · The tile’s date URL opens 44 leads, including older dates.",
+    "type": "defect"
+  },
+  {
+    "file": "QA05-care-summary-before.jpg",
+    "caption": "QA-05 · Care summary and assigned/all-open queue use different scopes.",
+    "type": "defect"
+  },
+  {
+    "file": "QA07-case-edit-autosaved.jpg",
+    "caption": "QA-07 · Manage status change is already saved without a Save/Cancel review.",
+    "type": "defect"
+  },
+  {
+    "file": "QA08-unlinked-task-submit-response.jpg",
+    "caption": "QA-08 · Corrected result: the main Tasks page created an unlinked task.",
+    "type": "defect"
+  },
+  {
+    "file": "QA10-call-overlay.jpg",
+    "caption": "QA-10 · Translucent call overlay and unclear End call control.",
+    "type": "defect"
+  },
+  {
+    "file": "QA11-supported-merge-tokens-unresolved.jpg",
+    "caption": "QA-11 · Reloaded activity retains offered owner/city/mobile/email placeholders.",
+    "type": "defect"
+  },
+  {
+    "file": "QA12-api-http-secret-guidance.jpg",
+    "caption": "QA-12 · HTTP base URL is advertised alongside API secret headers.",
+    "type": "defect"
+  },
+  {
+    "file": "QA14-pipeline-single-product-filter.jpg",
+    "caption": "QA-14 · Pipeline populated; product control remains single-select.",
+    "type": "defect"
+  },
+  {
+    "file": "QA16-predefined-reports-no-builder.jpg",
+    "caption": "QA-16 · Predefined reports present; requested custom builder absent from this surface.",
+    "type": "defect"
+  },
+  {
+    "file": "QA23-local-provider-versus-egress-labels.jpg",
+    "caption": "QA-23 · Offline local mode and outside-India/Sent labels need consistent explanation.",
+    "type": "defect"
+  },
+  {
+    "file": "QA26-empty-name-error-dialog-top.jpg",
+    "caption": "QA-26 · Empty Name produces a raw database error. Both are visible in this final screenshot.",
+    "type": "defect"
+  },
+  {
+    "file": "CRUD-lead-delete-confirmation.jpg",
+    "caption": "Delete guard PASS · Wrong name blocks deletion; exact-name confirmation is required.",
+    "type": "pass"
+  },
+  {
+    "file": "CRUD-lead-delete-result.jpg",
+    "caption": "QA-27 · Successful delete leaves Lead not found at the deleted detail URL.",
+    "type": "defect"
+  },
+  {
+    "file": "CRUD-lead-in-recycle-bin.jpg",
+    "caption": "Recovery PASS · Deleted synthetic lead appears in Recycle bin.",
+    "type": "pass"
+  },
+  {
+    "file": "CRUD-lead-restored.jpg",
+    "caption": "Recovery PASS · Restore recovers the synthetic record and related tabs.",
+    "type": "pass"
+  },
+  {
+    "file": "QA28-compliance-case-no-sla.jpg",
+    "caption": "QA-28 · AI High compliance case has no category or SLA due values.",
+    "type": "defect"
+  },
+  {
+    "file": "QA29-list-stale-after-import.jpg",
+    "caption": "QA-29 · Successful import toast contradicts the empty/zero-member list until reload.",
+    "type": "defect"
+  },
+  {
+    "file": "QA30-campaign-create-without-template.jpg",
+    "caption": "QA-30 · Campaign creation is allowed with no approved template chosen.",
+    "type": "defect"
+  },
+  {
+    "file": "QA30-campaign-send-without-template.jpg",
+    "caption": "QA-30 · The synthetic campaign becomes Sent without a chosen template.",
+    "type": "defect"
+  },
+  {
+    "file": "QA31-product-minimum-step-validation.jpg",
+    "caption": "QA-31 · Product minimum step rejects the catalog’s ₹500-style amount.",
+    "type": "defect"
+  },
+  {
+    "file": "QA32-product-create-code-required.jpg",
+    "caption": "QA-32 · Form promises a generated code and has no Code input. This frame does not show the covered error.",
+    "type": "defect"
+  },
+  {
+    "file": "QA32-product-error-after-closing-modal.jpg",
+    "caption": "QA-32 · After closing the obstructing modal, the actual Code and name are required banner is visible.",
+    "type": "defect"
+  },
+  {
+    "file": "QA33-partner-active-zero-onboarding.jpg",
+    "caption": "QA-33 · Synthetic partner is Active with Portal access while onboarding remains 0/8.",
+    "type": "defect"
+  },
+  {
+    "file": "PASS-partner-rm-elevation-incomplete-denied.jpg",
+    "caption": "Partner RM guard PASS · Normal request refuses seven incomplete steps; no access issued.",
+    "type": "pass"
+  },
+  {
+    "file": "QA34-kyc-invalid-data-persisted.jpg",
+    "caption": "QA-34 · Complete simulated KYC retained invalid mobile/PAN values in the internal record.",
+    "type": "defect"
+  },
+  {
+    "file": "CRUD-kyc-completed.jpg",
+    "caption": "DKYC Finish PASS in simulator · Final success reached after specific user confirmation.",
+    "type": "pass"
+  },
+  {
+    "file": "QA35-active-card-no-active-products.jpg",
+    "caption": "QA-35 · Active product card conflicts with no active products summary.",
+    "type": "defect"
+  },
+  {
+    "file": "QA36-sales-edit-unmasks-contact.jpg",
+    "caption": "QA-36 · Sales edit reveals full contact values while the read view is masked.",
+    "type": "defect"
+  },
+  {
+    "file": "PASS-dealer-edit-masked-fields.jpg",
+    "caption": "Dealer masking PASS · Contact fields stay masked and disabled; allowed City edit works.",
+    "type": "pass"
+  },
+  {
+    "file": "PASS-content-self-approval-rejected.jpg",
+    "caption": "Content approval PASS · Author cannot approve their own item.",
+    "type": "pass"
+  },
+  {
+    "file": "PASS-content-independent-approval.jpg",
+    "caption": "Content approval PASS · A different Admin approves the item.",
+    "type": "pass"
+  },
+  {
+    "file": "PASS-campaign-opt-out-skipped.jpg",
+    "caption": "Consent PASS · Opted-out synthetic audience member is skipped; sent count is zero.",
+    "type": "pass"
+  },
+  {
+    "file": "QA38-service-email-action-disabled.jpg",
+    "caption": "QA-38 · Email menu action is disabled although header composer permits Service purpose.",
+    "type": "defect"
+  },
+  {
+    "file": "PASS-sms-whatsapp-activities.jpg",
+    "caption": "QA-39 · Manual service message bodies persist, but timeline actor is system.",
+    "type": "defect"
+  },
+  {
+    "file": "QA39-message-actor-present-in-api-log.jpg",
+    "caption": "QA-39 limit · API audit correctly identifies Kavita; server actor audit exists.",
+    "type": "pass"
+  },
+  {
+    "file": "QA40-log-counts-zero-with-entries.jpg",
+    "caption": "QA-40 · Zero entry counters contradict a populated audit table.",
+    "type": "defect"
+  },
+  {
+    "file": "QA41-admin-api-access-stuck-loading.jpg",
+    "caption": "QA-41 · Refused Admin API tab remains at Loading.",
+    "type": "defect"
+  },
+  {
+    "file": "QA41-admin-api-denial-log.jpg",
+    "caption": "QA-41 · Log records Admin API credentials request as 403.",
+    "type": "defect"
+  },
+  {
+    "file": "QA42-dealer-start-engaging-no-change.jpg",
+    "caption": "QA-42 · Enabled Dealer engagement action left the synthetic card unchanged; root cause unconfirmed.",
+    "type": "defect"
+  },
+  {
+    "file": "QA43-kyc-listed-journey-forbidden-log.jpg",
+    "caption": "QA-43 · Product Supervisor’s listed journey detail is refused with 403.",
+    "type": "defect"
+  },
+  {
+    "file": "PASS-import-preview-valid-duplicate-invalid.jpg",
+    "caption": "Import PASS · Preview separates a valid row, duplicate and invalid mobile.",
+    "type": "pass"
+  },
+  {
+    "file": "PASS-import-result.jpg",
+    "caption": "Import PASS · Commit creates one and skips the duplicate/invalid rows.",
+    "type": "pass"
+  },
+  {
+    "file": "CRUD-rule-dry-run-result.jpg",
+    "caption": "Rule dry-run PASS · Two conditions match only the named synthetic leads; nothing sent.",
+    "type": "pass"
+  },
+  {
+    "file": "CRUD-automation-card-delete-confirm.jpg",
+    "caption": "Automation step deletion · Review explicitly explains run-history consequences and disabling alternative.",
+    "type": "pass"
+  },
+  {
+    "file": "CRUD-capture-field-retired.jpg",
+    "caption": "Cleanup PASS · Test interaction field Active is unchecked after saved retirement.",
+    "type": "pass"
+  }
+]

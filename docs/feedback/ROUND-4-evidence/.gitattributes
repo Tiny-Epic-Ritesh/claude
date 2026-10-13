@@ -1,0 +1,4 @@
+# The auditor's package, byte for byte. SCREENSHOT_INVENTORY.json and
+# PACKAGE_MANIFEST.json pin SHA-256 hashes, and core.autocrlf would otherwise
+# rewrite the line endings of every text file here and break them.
+* -text

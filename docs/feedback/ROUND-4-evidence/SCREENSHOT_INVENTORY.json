@@ -1,0 +1,751 @@
+[
+  {
+    "file": "screenshots/CRUD-ai-disposition-applied.jpg",
+    "bytes": 33618,
+    "sha256": "7ba6dd90578f2c4409a69c0e1c778d1ed919cbf01414bc0295c210bf442d99c4",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-ai-disposition-before-confirm.jpg",
+    "bytes": 61567,
+    "sha256": "1f70ea289ab7f8f0a30f4b66e22e4c9663179046a1e8907d068c184c9766348c",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-automation-card-delete-confirm.jpg",
+    "bytes": 42210,
+    "sha256": "fa7e15338840a802981403dba42ba9ff9a25bc276a15f63bdb19a5a9a8a0cfe8",
+    "curated": true,
+    "caption": "Automation step deletion · Review explicitly explains run-history consequences and disabling alternative."
+  },
+  {
+    "file": "screenshots/CRUD-automation-card-deleted.jpg",
+    "bytes": 56139,
+    "sha256": "5483843d01fc4da1c40afed047e6a401a74823ed18ddf39f60a24a5218ccbe5c",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-automation-draft-guards.jpg",
+    "bytes": 59554,
+    "sha256": "ac2fd477e42e4cd7205eef18fabd3df225a7cdf7a1bd8841f49b3ea5fd86961f",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-automation-edited.jpg",
+    "bytes": 58060,
+    "sha256": "88d9c12f8694309d703f3b0582b1fd3faa6627532250009b2a87ef262b876c81",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-calendar-day-created.jpg",
+    "bytes": 71516,
+    "sha256": "8f7cfeccf94ce348be43be438d087b73690e5ab18b96e91956126901b2478aba",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-calendar-day-deleted.jpg",
+    "bytes": 68572,
+    "sha256": "2a8a4faad39e55258d00076fccb28eb62a07bceae956eed2433571bb0a12f82c",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-capture-field-created.jpg",
+    "bytes": 57510,
+    "sha256": "1cdc3c902f349441fb9020dd40ff8f2aa1842802619c8b0b55c60ad28b693f14",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-capture-field-retired.jpg",
+    "bytes": 53806,
+    "sha256": "06af7f32c5a793605fd2c0e668263a2e40c568afb63711e7afcffa5f5c8ea075",
+    "curated": true,
+    "caption": "Cleanup PASS · Test interaction field Active is unchecked after saved retirement."
+  },
+  {
+    "file": "screenshots/CRUD-case-resolved.jpg",
+    "bytes": 79622,
+    "sha256": "46131920216386937b78be5bae578bac39583b2779e4ddf692b1c66fc24a82b9",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-content-pending-approval.jpg",
+    "bytes": 37461,
+    "sha256": "f86cac704649cfc8c05b8d22edf4d2e19564394d176858fba5602b00145c3700",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-content-send-back-rejected.jpg",
+    "bytes": 40525,
+    "sha256": "2dacd4c9f50cfcf02de67dc021c73d1c3907804e00142cc457f188a00444388b",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-custom-field-edited.jpg",
+    "bytes": 72605,
+    "sha256": "cb9b7089fcc8af7a848f31df485cc8e98550fbe1073fadbf548220c369794dba",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-custom-field-value-persisted.jpg",
+    "bytes": 65583,
+    "sha256": "79a998c44151a956f364984e671e10d43f4e42c3bba00b4a3abf2d8d1413b099",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-import-owner-restored.jpg",
+    "bytes": 65123,
+    "sha256": "2511b13277a109dee496febfff8abc36d30960db2bc38d1a0872632857831a4a",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-kyc-bank-proof-branch.jpg",
+    "bytes": 62069,
+    "sha256": "d0a0749503d9b1eb7acd3ec3f8503bfcdf101105b3a684b42623c1d01d028fb8",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-kyc-completed.jpg",
+    "bytes": 66280,
+    "sha256": "407dbc3b4d312d6fda1838574347b963200b840111d9405a14e13f9ea049f30e",
+    "curated": true,
+    "caption": "DKYC Finish PASS in simulator · Final success reached after specific user confirmation."
+  },
+  {
+    "file": "screenshots/CRUD-kyc-esign-boundary.jpg",
+    "bytes": 53636,
+    "sha256": "057af6ecd554e8691073c16ecc90c862d9ddb63151be8417f7b949bfc987828d",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-kyc-internal-complete.jpg",
+    "bytes": 54907,
+    "sha256": "a73903f28b408ce459e4663fcaeba0fe32e862cff970afea61373cc5a0d35728",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-lead-delete-confirmation.jpg",
+    "bytes": 44227,
+    "sha256": "2c035b1e139ada7e37e17ea84aa5ac1f7342bb271e62ca1bf0d8445b7d227e64",
+    "curated": true,
+    "caption": "Delete guard PASS · Wrong name blocks deletion; exact-name confirmation is required."
+  },
+  {
+    "file": "screenshots/CRUD-lead-delete-result.jpg",
+    "bytes": 31919,
+    "sha256": "cf97a0ece554f7341be4bf4c8ba4dd739c7476671129ebb0ffc12ae0feff1ab1",
+    "curated": true,
+    "caption": "QA-27 · Successful delete leaves Lead not found at the deleted detail URL."
+  },
+  {
+    "file": "screenshots/CRUD-lead-edit-saved.jpg",
+    "bytes": 74559,
+    "sha256": "67ff4d59ca2f7020b7c185db2639ceaf870da7e095f0a11caa5f34577a980a27",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-lead-in-recycle-bin.jpg",
+    "bytes": 55917,
+    "sha256": "ce89c3e1d6b5b8c8adebd9e8092a20dde679a48e50ebf5468373c26d7d7ee065",
+    "curated": true,
+    "caption": "Recovery PASS · Deleted synthetic lead appears in Recycle bin."
+  },
+  {
+    "file": "screenshots/CRUD-lead-restored.jpg",
+    "bytes": 79593,
+    "sha256": "2ebc896dcb529202acb0942fad4a6b60ae4f34b49929dfc672cbdd1f1b68e2e4",
+    "curated": true,
+    "caption": "Recovery PASS · Restore recovers the synthetic record and related tabs."
+  },
+  {
+    "file": "screenshots/CRUD-library-draft-created.jpg",
+    "bytes": 36739,
+    "sha256": "c29e694b5a775db6975754c6b55d149dfe3027c44b15ee1aa608e8c083ccb263",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-linked-task-created.jpg",
+    "bytes": 70109,
+    "sha256": "83c3eef9e917214627f778bc5f77bf6a1b9fdcf513a0f06c20d4436f74a10f78",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-list-bulk-edit-result.jpg",
+    "bytes": 72855,
+    "sha256": "29cbf8b15d8837a9334cd4a624e02ffbebda6e916a2930382067050ab2321b5a",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-list-created-no-lifecycle-controls.jpg",
+    "bytes": 53409,
+    "sha256": "ec232d64b83948a9254c21c05643a5318e0267fcb86fa3439f3433daef45ba79",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-list-member-import-result.jpg",
+    "bytes": 33910,
+    "sha256": "40391cbe90774e9747f55b5f879fe3747cc823ce092f60cf781c929a1b1d4307",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-note-created.jpg",
+    "bytes": 61810,
+    "sha256": "950a0da5f5ade7f6c575bd94eec8f2f12be9d7f029187027c67164a776872f79",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-outcome-edited.jpg",
+    "bytes": 74991,
+    "sha256": "79dd96937770c92ce99f66154f4a38b5b872d432f7be5f2c5b44879f1b5c8013",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-outcome-retired.jpg",
+    "bytes": 67826,
+    "sha256": "21142b0118081d0f1b3c0b85c9c83841f9c3cb5171da566fef627930efba3abe",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-partner-created.jpg",
+    "bytes": 76984,
+    "sha256": "edcc709f2f9ab7d5505f62d010b33d1a83d2ba366a67cde4db4cc247d412b14d",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-product-warm.jpg",
+    "bytes": 60607,
+    "sha256": "904f4edbf21294464c561b4f0de0097b7e29b8bed3fc1ca6af3354c3ff07a201",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-rule-dry-run-result.jpg",
+    "bytes": 37250,
+    "sha256": "77b4b98e54daf25026805eaa3c67dde765638cfffa0dc98ad6d29109a1bf30fe",
+    "curated": true,
+    "caption": "Rule dry-run PASS · Two conditions match only the named synthetic leads; nothing sent."
+  },
+  {
+    "file": "screenshots/CRUD-template-deleted.jpg",
+    "bytes": 85661,
+    "sha256": "0aeba9fd88d38d335204937e2ddf206a5062d26bd46d910c00bc78b6210a270d",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/CRUD-template-edited.jpg",
+    "bytes": 88552,
+    "sha256": "7d4ff2fd75ef69ef91e6d94f54cb9aae453f688989b163a7030f442956a4a829",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/PASS-caller-warm-disabled.jpg",
+    "bytes": 64554,
+    "sha256": "9f7ffb76844c57170c9bdebfef84cd1a1aa79e62ce4cc18cfa30d2c070cf986b",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/PASS-campaign-opt-out-skipped.jpg",
+    "bytes": 80646,
+    "sha256": "821a0a41a918b76a283f5134d6a56a65f5ef3cdc27ebefee1271b0fabf4a7680",
+    "curated": true,
+    "caption": "Consent PASS · Opted-out synthetic audience member is skipped; sent count is zero."
+  },
+  {
+    "file": "screenshots/PASS-content-independent-approval.jpg",
+    "bytes": 36855,
+    "sha256": "66e2807c42b0d0615b83862b60c6db0bc7095e40566334737901daaf81bcd3e2",
+    "curated": true,
+    "caption": "Content approval PASS · A different Admin approves the item."
+  },
+  {
+    "file": "screenshots/PASS-content-self-approval-rejected.jpg",
+    "bytes": 37707,
+    "sha256": "b1eb4eb08ebc7f59cf66043e7ddc56dbcde995341a851479d33e77e0592b6d62",
+    "curated": true,
+    "caption": "Content approval PASS · Author cannot approve their own item."
+  },
+  {
+    "file": "screenshots/PASS-dealer-city-edit-persisted.jpg",
+    "bytes": 36516,
+    "sha256": "c1f13a96fb8b1aa0f8f85d0f80efa8a282d136b16363d158264350a244e408b9",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/PASS-dealer-edit-masked-fields.jpg",
+    "bytes": 45846,
+    "sha256": "5b7473bf4308a3d468d98757e612b91997abd077a1c33b28a0e28ea51b44bea6",
+    "curated": true,
+    "caption": "Dealer masking PASS · Contact fields stay masked and disabled; allowed City edit works."
+  },
+  {
+    "file": "screenshots/PASS-email-marketing-opt-out-disabled.jpg",
+    "bytes": 50419,
+    "sha256": "ed545ff0287f7ffe1f11b499cec5bcc98f19638dcae77ef0b243a0b066f48067",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/PASS-import-preview-valid-duplicate-invalid.jpg",
+    "bytes": 68131,
+    "sha256": "dde507b4f1bebd31f5e9cefa1370c339f89edb786c981067b7ff625ed94be67c",
+    "curated": true,
+    "caption": "Import PASS · Preview separates a valid row, duplicate and invalid mobile."
+  },
+  {
+    "file": "screenshots/PASS-import-record-owner-cards.jpg",
+    "bytes": 78681,
+    "sha256": "0fb86d6a31f9bf593d4029e2250b4d7e5123664b5f8dfebdbd748303717d3a85",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/PASS-import-result.jpg",
+    "bytes": 63943,
+    "sha256": "128597a1394307b77e90afc02cd77b6c16105941dca77ead298833c8eafe3e1c",
+    "curated": true,
+    "caption": "Import PASS · Commit creates one and skips the duplicate/invalid rows."
+  },
+  {
+    "file": "screenshots/PASS-partner-rm-elevation-incomplete-denied.jpg",
+    "bytes": 74807,
+    "sha256": "7ac9463a1a6c1b3ebbc381d8ac775588bfb99f407218f120c0af9f228c506bfc",
+    "curated": true,
+    "caption": "Partner RM guard PASS · Normal request refuses seven incomplete steps; no access issued."
+  },
+  {
+    "file": "screenshots/PASS-partner-rm-onboarding-step.jpg",
+    "bytes": 66559,
+    "sha256": "e66425f4c77dd71b28ef1497693c33adc6d2d332483c9aea2e836258009e9f59",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/PASS-partner-rm-training-simulated-complete.jpg",
+    "bytes": 65874,
+    "sha256": "829c99175dfaefeac7a255c24eeddcd5096537d40c39e42a9de2c2cf8b35793b",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/PASS-product-rm-handoff-notification.jpg",
+    "bytes": 66365,
+    "sha256": "c9f634284a6a450859a984c9d3e2c5a7e425706f5c341148cb42c4b087be4d94",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/PASS-product-rm-read-only.jpg",
+    "bytes": 74629,
+    "sha256": "464bbf78bae9d1b7867dd75d4ccfc37f0dc22c27678cda9b066413dc0e446e0d",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/PASS-product-supervisor-bonanza-kyc-controls.jpg",
+    "bytes": 53616,
+    "sha256": "6a9dce61c282c5eee930370ce926d4e1f72aaa100501eeb60f011dcc73ef0f4e",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/PASS-sms-simulated-send-response.jpg",
+    "bytes": 72996,
+    "sha256": "c036ecaa22887eb088782b7281e388fd51e344454a797ed8b503e685c77543be",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/PASS-sms-whatsapp-activities.jpg",
+    "bytes": 66050,
+    "sha256": "ab884e6d8cd7310da42c392ce00b5b68c4ce89880a3262220cb996314ad351c6",
+    "curated": true,
+    "caption": "QA-39 · Manual service message bodies persist, but timeline actor is system."
+  },
+  {
+    "file": "screenshots/PASS-supervisor-stage-change-audited.jpg",
+    "bytes": 77047,
+    "sha256": "3f9c989aa67129071b92176379d351905eb87970f740b289e064074e3687fabb",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/QA01-audit-routing-cause.jpg",
+    "bytes": 73722,
+    "sha256": "82e65076f9942c33baf5990627caf9f1cb0f1d10c203f6f19f391b0af8e0b6ad",
+    "curated": true,
+    "caption": "QA-01 · Audit identifies the routing rule that replaced the owner."
+  },
+  {
+    "file": "screenshots/QA01-owner-after-create.jpg",
+    "bytes": 78845,
+    "sha256": "789cc2e8b8b1729e19ac3eb5d808f44b34a39b394157618e24d9b6713ae9fc4f",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/QA01-sales-create-assign-to-me.jpg",
+    "bytes": 42136,
+    "sha256": "42c195a98fb0abe51984cfcff057bfeff53b94e6987f22dcb8c5a4212fde6562",
+    "curated": true,
+    "caption": "QA-01 · Before submit: Sales RM selected Assign to me."
+  },
+  {
+    "file": "screenshots/QA01-sales-created-denied.jpg",
+    "bytes": 31551,
+    "sha256": "896207297c708a643b40241fc5f7e6bb38458d84e8dd17e186a54569a985046e",
+    "curated": true,
+    "caption": "QA-01 · After successful creation: the lead is outside the creator’s visibility scope."
+  },
+  {
+    "file": "screenshots/QA02-rule-counters-retested.jpg",
+    "bytes": 72110,
+    "sha256": "e71ca740b7bfe2c44e537b2fd074619df02f9e8d922a17a9abdc4e11f6aac215",
+    "curated": true,
+    "caption": "QA-02 · Scheduled firing counters remain high and increase; use task/audit evidence to diagnose side effects."
+  },
+  {
+    "file": "screenshots/QA02-sales-backlog.jpg",
+    "bytes": 71294,
+    "sha256": "8c97ea8e5c03157cc5851c57ad50b0c9ca7b6f156b7d0ac6dd917c007a093c4e",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/QA03-partner-case-cross-business-assignee.jpg",
+    "bytes": 70009,
+    "sha256": "3fe24e7aa721ac5a4a20a6a678097769aa6bf35e0d1b56771ae8eacf9955213c",
+    "curated": true,
+    "caption": "QA-03 · Bonanza portal case #10 is Uncategorised and assigned to Divya; the user record identifies Divya as Bigul Care."
+  },
+  {
+    "file": "screenshots/QA04-date-drill-through-44-leads.jpg",
+    "bytes": 71354,
+    "sha256": "3c2587ba57549694ae8664bc838b4380c2384feb3c2fb88bd176840d3312ce2f",
+    "curated": true,
+    "caption": "QA-04 / QA-15 · The tile’s date URL opens 44 leads, including older dates."
+  },
+  {
+    "file": "screenshots/QA04-date-tile-two-leads.jpg",
+    "bytes": 72745,
+    "sha256": "e8962b90e88f287a8bae87ab4c79da5361f58979b90108ca7e0c8d0a182d7b06",
+    "curated": true,
+    "caption": "QA-04 · 1 October tile counts two new leads. Compare the next screenshot."
+  },
+  {
+    "file": "screenshots/QA05-care-summary-before.jpg",
+    "bytes": 56671,
+    "sha256": "4e2c6cdde17e892ccc79593da2c673c6b8a880d2c3ad749310db464fa905f8bf",
+    "curated": true,
+    "caption": "QA-05 · Care summary and assigned/all-open queue use different scopes."
+  },
+  {
+    "file": "screenshots/QA07-case-edit-autosaved.jpg",
+    "bytes": 73693,
+    "sha256": "b78f77ebbf150609ad81aa7078082380bb9e30093eb14c27b20af544b0011481",
+    "curated": true,
+    "caption": "QA-07 · Manage status change is already saved without a Save/Cancel review."
+  },
+  {
+    "file": "screenshots/QA08-main-task-missing-link.jpg",
+    "bytes": 65536,
+    "sha256": "a9f44c0dc887e380ae18ad698a1bc50add21c81c8f1afd886670ff42ad4e573c",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/QA08-unlinked-task-submit-response.jpg",
+    "bytes": 62579,
+    "sha256": "8e8fc28281872eb35c5d6d4e49e08b820e9f34ef7103ee0460f8abbeaa46931a",
+    "curated": true,
+    "caption": "QA-08 · Corrected result: the main Tasks page created an unlinked task."
+  },
+  {
+    "file": "screenshots/QA10-call-overlay.jpg",
+    "bytes": 48864,
+    "sha256": "88b7351b39034865b9503fa389b2723d4ac5086be6e60ab50c94f68d71bfd1eb",
+    "curated": true,
+    "caption": "QA-10 · Translucent call overlay and unclear End call control."
+  },
+  {
+    "file": "screenshots/QA11-email-example-labels.jpg",
+    "bytes": 52331,
+    "sha256": "cfd80d433f1d235dfe800d60b35060ff2e5e157ef9762f7b1a29357bc175617c",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/QA11-supported-merge-tokens-unresolved.jpg",
+    "bytes": 80693,
+    "sha256": "4470386801547e023dfd2563f4de3bd7261849ec5900abcfd8f80084fb2586a9",
+    "curated": true,
+    "caption": "QA-11 · Reloaded activity retains offered owner/city/mobile/email placeholders."
+  },
+  {
+    "file": "screenshots/QA12-api-http-secret-guidance.jpg",
+    "bytes": 62938,
+    "sha256": "efd70997c6ddd0484529b857d04485582a2c400902a5d39036084af0f609adc8",
+    "curated": true,
+    "caption": "QA-12 · HTTP base URL is advertised alongside API secret headers."
+  },
+  {
+    "file": "screenshots/QA14-pipeline-single-product-filter.jpg",
+    "bytes": 78957,
+    "sha256": "cf321d59ede4e4807d79ad11f87acccb49eb59257963ab10af2519ea5c7dc4c1",
+    "curated": true,
+    "caption": "QA-14 · Pipeline populated; product control remains single-select."
+  },
+  {
+    "file": "screenshots/QA16-predefined-reports-no-builder.jpg",
+    "bytes": 61612,
+    "sha256": "f4575241c6668c078a9d8d226c0defe12281aed6424493a64e171dea8b197c78",
+    "curated": true,
+    "caption": "QA-16 · Predefined reports present; requested custom builder absent from this surface."
+  },
+  {
+    "file": "screenshots/QA21-handoff-generic-response.jpg",
+    "bytes": 72721,
+    "sha256": "38688eeeb563163b4bc1bba90e1b5cbbeea40326d2fa4c542663ce1c1415732a",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/QA23-local-provider-versus-egress-labels.jpg",
+    "bytes": 82545,
+    "sha256": "5f3a538b327ae36dcab10526bd26b25f4d2b1705c5b718e67b86a02b49d12aae",
+    "curated": true,
+    "caption": "QA-23 · Offline local mode and outside-India/Sent labels need consistent explanation."
+  },
+  {
+    "file": "screenshots/QA26-empty-name-error-dialog-top.jpg",
+    "bytes": 47138,
+    "sha256": "67559bed3b537aa88eaa360cd3b46b4f9a1ab85e040e36fc8a62f4eee509c12d",
+    "curated": true,
+    "caption": "QA-26 · Empty Name produces a raw database error. Both are visible in this final screenshot."
+  },
+  {
+    "file": "screenshots/QA26-lead-db-error-after-closing-modal.jpg",
+    "bytes": 72841,
+    "sha256": "ee5d3fc1797e6e61bc14c9a28d95e9042f93443890b1e2a92e13e7778278ddbc",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/QA26-lead-empty-name-db-error.jpg",
+    "bytes": 44005,
+    "sha256": "9eda00104d6822af9a2cdee399d17e5fb12fa2302962e925a6f97e69754d5acb",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/QA26-lead-empty-name-form.jpg",
+    "bytes": 44737,
+    "sha256": "d13afec8b27e602fde45eee09539c517714115f36365ba64a0b3e654a6fc5961",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/QA28-compliance-case-no-sla.jpg",
+    "bytes": 74868,
+    "sha256": "444a3640297f4517efbdc39582317e702465bd6c9208d67478905ee0414056be",
+    "curated": true,
+    "caption": "QA-28 · AI High compliance case has no category or SLA due values."
+  },
+  {
+    "file": "screenshots/QA29-list-stale-after-import.jpg",
+    "bytes": 72354,
+    "sha256": "caaa51d9175441fd559aaccdd07930d3f01af5561f1326b25afecc182fd16546",
+    "curated": true,
+    "caption": "QA-29 · Successful import toast contradicts the empty/zero-member list until reload."
+  },
+  {
+    "file": "screenshots/QA30-campaign-create-without-template.jpg",
+    "bytes": 42575,
+    "sha256": "8f02139aaad332f3c9dce669b5da89dcdf26a6f4c0af8659fa3f3b82a0b203ee",
+    "curated": true,
+    "caption": "QA-30 · Campaign creation is allowed with no approved template chosen."
+  },
+  {
+    "file": "screenshots/QA30-campaign-fallback-activity.jpg",
+    "bytes": 79581,
+    "sha256": "c0fa4b15cb8f0df0d9666456f37c0b7750c99a61d642333536b0d1e378668702",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/QA30-campaign-send-without-template.jpg",
+    "bytes": 73817,
+    "sha256": "c59adef8c62692e87585b41e7881c0ac7ea6a9379cf98a50617b1151cc745100",
+    "curated": true,
+    "caption": "QA-30 · The synthetic campaign becomes Sent without a chosen template."
+  },
+  {
+    "file": "screenshots/QA30-campaign-test-no-template-response.jpg",
+    "bytes": 75140,
+    "sha256": "cef5111f21018d7a8ae7d324c1d2763073155d60478ebfc53dfdcc16962ab75f",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/QA31-product-minimum-step-validation.jpg",
+    "bytes": 58940,
+    "sha256": "01fe244470d76fa9c502479c879e07cbfa46779c6db459bc8ca3945d3dc1de95",
+    "curated": true,
+    "caption": "QA-31 · Product minimum step rejects the catalog’s ₹500-style amount."
+  },
+  {
+    "file": "screenshots/QA32-product-create-code-required.jpg",
+    "bytes": 53036,
+    "sha256": "9358c7f111c3ff355e62d093b37330d234525659b39924034c1dfa3c57d2ca9f",
+    "curated": true,
+    "caption": "QA-32 · Form promises a generated code and has no Code input. This frame does not show the covered error."
+  },
+  {
+    "file": "screenshots/QA32-product-error-after-closing-modal.jpg",
+    "bytes": 62092,
+    "sha256": "ab55de8e4473f820b1f3d2fa4da570d29eb0d06493bdfac382d1d2c3c7e308fc",
+    "curated": true,
+    "caption": "QA-32 · After closing the obstructing modal, the actual Code and name are required banner is visible."
+  },
+  {
+    "file": "screenshots/QA32-product-save-error-visible.jpg",
+    "bytes": 51999,
+    "sha256": "e7f8be2b4d0816eee41fa08d44f301e33cbbd0e3b467a87a65c300b78d3f4c42",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/QA33-partner-active-zero-onboarding.jpg",
+    "bytes": 75941,
+    "sha256": "89a889943729ea570a4de20d265dba8a3db4f51db7c07711fb14a75fe61f3439",
+    "curated": true,
+    "caption": "QA-33 · Synthetic partner is Active with Portal access while onboarding remains 0/8."
+  },
+  {
+    "file": "screenshots/QA34-kyc-invalid-data-persisted.jpg",
+    "bytes": 74130,
+    "sha256": "70eb22978ef6494711a476696a8ab644d5a4c9e7180d26b9dd5bd10770af2705",
+    "curated": true,
+    "caption": "QA-34 · Complete simulated KYC retained invalid mobile/PAN values in the internal record."
+  },
+  {
+    "file": "screenshots/QA34-kyc-invalid-mobile-advanced.jpg",
+    "bytes": 46995,
+    "sha256": "51f6593cdd001ce16369362295493fb6ec4934ea8ca5626e61ee65634e7d103e",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/QA34-kyc-invalid-pan-advanced.jpg",
+    "bytes": 50755,
+    "sha256": "a9a70a3191608155354760c84f5854a6f3b91f3ce5fe883c74b3aa31b06d23fc",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/QA34-kyc-nominee-over-100-advanced.jpg",
+    "bytes": 58402,
+    "sha256": "3b9849e3d73b1f4356fb992ebbf171fbf30c060a5610c5d89c7bde51d3619e58",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/QA35-active-card-no-active-products.jpg",
+    "bytes": 51272,
+    "sha256": "70e95aabeb00b2ab7827cfe46626c2ad74afd0a347cba72ef7bb864cb49db28c",
+    "curated": true,
+    "caption": "QA-35 · Active product card conflicts with no active products summary."
+  },
+  {
+    "file": "screenshots/QA36-sales-edit-unmasks-contact.jpg",
+    "bytes": 46833,
+    "sha256": "21a157f633931c6a27294e6ef4cd9d1aa9aa17830523a21e8d98d04212691681",
+    "curated": true,
+    "caption": "QA-36 · Sales edit reveals full contact values while the read view is masked."
+  },
+  {
+    "file": "screenshots/QA38-service-email-action-disabled.jpg",
+    "bytes": 80410,
+    "sha256": "cb233aef45bd6b0954f4ed1359df841d03dcc7e9f1e1b7f1780109cb4b7894c6",
+    "curated": true,
+    "caption": "QA-38 · Email menu action is disabled although header composer permits Service purpose."
+  },
+  {
+    "file": "screenshots/QA39-message-actor-present-in-api-log.jpg",
+    "bytes": 71282,
+    "sha256": "f1c8b881b89d07c6a28ee1dfe8ec4ab0772a51d508919a9403f2ceedff31cbe5",
+    "curated": true,
+    "caption": "QA-39 limit · API audit correctly identifies Kavita; server actor audit exists."
+  },
+  {
+    "file": "screenshots/QA40-log-counts-zero-with-entries.jpg",
+    "bytes": 64873,
+    "sha256": "bd7b6449d166c9de4f6f26b4c4e84c222016cfe12380a7ecfcbe1b7e79b69db9",
+    "curated": true,
+    "caption": "QA-40 · Zero entry counters contradict a populated audit table."
+  },
+  {
+    "file": "screenshots/QA41-admin-api-access-stuck-loading.jpg",
+    "bytes": 34080,
+    "sha256": "4603e1b25e111e366d7118c5bc10a60e0a9e7d455d13712d9da1a624610e11ad",
+    "curated": true,
+    "caption": "QA-41 · Refused Admin API tab remains at Loading."
+  },
+  {
+    "file": "screenshots/QA41-admin-api-denial-log.jpg",
+    "bytes": 65183,
+    "sha256": "66af05125db43f925460cb1afd0e31c89f6013c6e1b95f206e9010cdaf80d14e",
+    "curated": true,
+    "caption": "QA-41 · Log records Admin API credentials request as 403."
+  },
+  {
+    "file": "screenshots/QA41-product-supervisor-kyc-loading.jpg",
+    "bytes": 29764,
+    "sha256": "7ae14e78d9b2d5af14c0e8922fb132d08fddbb90cf0ba9864cbdf53aa4337880",
+    "curated": false,
+    "caption": null
+  },
+  {
+    "file": "screenshots/QA42-dealer-start-engaging-no-change.jpg",
+    "bytes": 65548,
+    "sha256": "c353118f5c5220f288e37a59e9575c1f38b2b659602cd2e46f3868bed89f909c",
+    "curated": true,
+    "caption": "QA-42 · Enabled Dealer engagement action left the synthetic card unchanged; root cause unconfirmed."
+  },
+  {
+    "file": "screenshots/QA43-kyc-listed-journey-forbidden-log.jpg",
+    "bytes": 72101,
+    "sha256": "5bfc3261f0ed08ecf390c922d685f39df7444557437d0b803fea195c5250e589",
+    "curated": true,
+    "caption": "QA-43 · Product Supervisor’s listed journey detail is refused with 403."
+  }
+]

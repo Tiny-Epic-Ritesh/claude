@@ -7,6 +7,105 @@ findings, received 13 October 2026.
 (`fixed`, `partly fixed`, `not started`, or `needs decision`) with evidence
 against this document and earlier feedback IDs." This is that document.
 
+## The ledger — every point in the report, and where it stands
+
+Kept current: a commit that closes a point changes its row here and says so.
+Last updated **13 October 2026**, at `84c2c2f`.
+
+**States.** *fixed* — in code, tested, pushed. *not started* — open, no
+blocker. *needs decision* — waiting on Ritesh, and nothing is built until it is
+answered. *unverified* — the auditor's evidence stands but I have not traced it
+to a line yet. *environment* — a change to labs.tinyepic.in itself, not the code.
+
+**Today, of the 43 IDs: 8 fixed · 29 open · 4 waiting on a decision · 2 split**
+(open work with a decision inside, QA-06 and QA-35). Plus the points below the
+table, which are not IDs but are as much part of the report.
+
+### The 43 findings
+
+| ID | Pri | State | Note |
+|---|---|---|---|
+| QA-01 | P0 | **fixed** `84c2c2f` | Form sends `route: false`. Its second half is adjacent (e). |
+| QA-02 | P0 | not started | Design change: idempotency, retry bound, retention, reconciling ~48,000 rows. Wants scoping and sign-off. |
+| QA-03 | P0 | **fixed** `84c2c2f` | `engine/cases.js`. |
+| QA-04 | P1 | not started · unverified | Drill-through drops the date predicate. `ENH-05`/`05a`, `P2-13`/`P2-17c`. |
+| QA-05 | P1 | not started · unverified | Care tiles and case filters disagree. |
+| QA-06 | P1 | not started · **half needs decision** | Marketing may view unmasked PII (decided) — the work. Export is the open decision. |
+| QA-07 | P1 | not started · unverified | Case review and confirmation step (Ritesh's Part 4). |
+| QA-08 | P1 | **fixed** `84c2c2f` | Every link book-checked too. |
+| QA-09 | P1 | **needs decision** | Stage / Trading / Active / UCC / accrued vs paid commission. |
+| QA-10 | P1 | not started · unverified | The call panel in both themes. |
+| QA-11 | P1 | not started · unverified | Offered merge fields left unresolved in the sent body. |
+| QA-12 | P1 | not started · needs one check | `base_url` is server-composed; whether it says `http://`. |
+| QA-13 | P1 | **needs decision** | May a Bonanza partner refer Bigul products; may Bonanza DKYC open Bigul accounts. |
+| QA-14 | P2 | not started | Pipeline multi-select products and per-stage filters. |
+| QA-15 | P2 | not started | Pagination and column sorting, `P3-36`/`37`/`39`. |
+| QA-16 | P2 | not started | Report builder and dashboard creation, `P3-06`/`P2-17` — gated on `N-4a`. |
+| QA-17 | P2 | not started | One `DD-MM-YYYY` display formatter. |
+| QA-18 | P2 | not started | App Launcher outside-click, `P3-31`. |
+| QA-19 | P2 | not started · unverified | Marketing Home's stale "Create list". |
+| QA-20 | P2 | not started · unverified | "Tasks (2)" over three rows — label the open count. |
+| QA-21 | P2 | not started · unverified | The handoff acknowledgement is generic. |
+| QA-22 | P2 | not started | Market headlines are not links, `ENH-09`. |
+| QA-23 | P2 | not started · unverified | Residency "Sent" versus "served locally". |
+| QA-24 | P2 | **needs decision** | What `Won` means — the same conflation as QA-09. |
+| QA-25 | P2 | not started · unverified | Copilot's breach answer does not state its scope. |
+| QA-26 | P1 | **fixed** `84c2c2f` | |
+| QA-27 | P2 | not started · unverified | "Lead not found" after a successful delete. |
+| QA-28 | P1 | **fixed** `84c2c2f` | Four compliance flags still need a category ruling. |
+| QA-29 | P2 | not started · unverified | Static list stale after import. |
+| QA-30 | P1 | **fixed** `84c2c2f` | Including duplication. |
+| QA-31 | P2 | not started · unverified | Minimum amount accepts only multiples of ₹1,000. |
+| QA-32 | P1 | **fixed** `84c2c2f` | And the cross-book backfill it would have switched on. |
+| QA-33 | P0 | **fixed** `84c2c2f` | Override question open; partner #9 cleanup is *environment*, below. |
+| QA-34 | P1 | not started · verified | No field validation in the KYC routes at all. Medium: DKYC, import and automation all write these. |
+| QA-35 | P2 | not started · **half needs decision** | The summary query is a bug; what Active means is QA-09's decision. |
+| QA-36 | P1 | not started · needs one check | Whether the server's unmask gate covers the edit fetch. |
+| QA-37 | P2 | **needs decision** | Which entities get rename / retire / archive. |
+| QA-38 | P2 | not started · unverified | Two email entry points, two purpose rules. |
+| QA-39 | P2 | not started · unverified | Timeline names "system" for a person's message. |
+| QA-40 | P2 | not started · unverified | Counters read 0 over 8,646 rows. |
+| QA-41 | P2 | not started · unverified | A refused tab spins forever. |
+| QA-42 | P1 | not started · unverified | Dealer's Start engaging does nothing. |
+| QA-43 | P1 | not started | List and detail disagree on scope — one of `N-12`'s cases. |
+
+Counted: **fixed 8** — QA-01, 03, 08, 26, 28, 30, 32, 33. **Waiting on a
+decision 4** — QA-09, 13, 24, 37. **Split 2** — QA-06, 35. **Open 29**, of which
+18 are not yet traced to a line and 2 need one check. The rulings inside QA-28
+and QA-33 are listed below rather than counted, because those IDs are fixed.
+
+### Everything else the report asks for
+
+| Point | Where in the report | State |
+|---|---|---|
+| Per-ID status back, against the report and earlier IDs | §7, retest gate | **Delivered** — this document, kept current |
+| Re-run the linked reproduction paths **after deployment** | §7, retest gate | Pending a deploy of `84c2c2f` to labs.tinyepic.in — a deployment, which I do not do |
+| **Revoke synthetic partner #9's portal access and sessions** — "priority cleanup" | §9, and QA-33 | **environment** · open. #9 is ACTIVE with portal password `partner9` (adjacent a). Nothing in the product can revoke it: QA-37 found no revoke control |
+| A scoped, auditable cleanup mechanism for test entities the UI cannot retire | §9 | not started — depends on QA-37's lifecycle decision |
+| Preserve reproduction records #40–#44, cases #9–#11, lists #3–#4, campaigns #3–#4, partners #9–#10, rule #6, automation #2 until retest | §9 | Nothing here touches them; they live in labs.tinyepic.in's database |
+| BRD gate P0 — API allow/deny tests for every role and business | §1 | not started — the largest open item. `N-12` is part of it |
+| BRD gate P1 — dialler/AI disposition, 90s/120s timing | §1 | partly: QA-28 fixed; real dialler blocked on `N-6` (CUBE credential) |
+| BRD gate P2 — Warm handoff, partner elevation, 60-second notification timing | §1 | partly: QA-33 fixed; timing untested |
+| BRD gate P3 — DKYC validation, timers, abandonment, audited override | §1 | QA-34 not started; the rest untested |
+| BRD gate P4 — SLA sweep and reopen, live delivery, CSAT | §1 | QA-30 fixed; the rest untested |
+| Pilot gates: credential hashing, session expiry and revocation, server-side authorisation, partner isolation, KYC document encryption and retention, consent and DND, India residency, the pilot database, latency and availability | §1 | not started as an **evidence** exercise. Some exist in code (passwords are hashed; PAN is encrypted); none has been written up as the auditor asks |
+| Implementation sequence, steps 1–9 | §6 | Steps 1 (records), 5 (validation, partly), 6 (partner activation) advanced by `84c2c2f`. Step 2 is QA-02. Steps 3, 4, 7, 8, 9 not started |
+| Evidence attached to each fix | §6 | Tests in `round4.test.mjs`; before/after screenshots need the deployed build |
+| Regression table against Rounds 1–3 and Ritesh's Part 4 | §4 | Each item maps to an ID above; nothing there is separate work |
+
+### Found while fixing, needing their own OPS ids
+
+The eight in "Found beside the fixes" below, (a)–(h). Not fixed, and not
+counted above. (a), the guessable partner portal password, is the one to do
+first.
+
+### Rulings asked for
+
+1. QA-13 · 2. QA-09/24/35 · 3. QA-06 export · 4. QA-37 lifecycle ·
+5. the category for each of the four unmapped compliance flags (QA-28) ·
+6. whether a Superadmin needs an audited emergency elevation (QA-33) ·
+7. OPS ids for (a)–(h) · 8. sign-off to scope QA-02.
+
 ## Read this first: the build they tested is the build we have
 
 labs.tinyepic.in was running `1cff7c3` (18 September). **No commit landed between

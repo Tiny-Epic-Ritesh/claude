@@ -9,10 +9,13 @@
 Verbatim below. Two notes on reading it:
 
 - Its links and image paths point at `C:/Users/Admin/OneDrive - Bonanza Group/`, the
-  auditor_s own machine. The evidence archive (107 screenshots, 51 curated, a test
-  journal and a manifest) came with it; it is not in this repository because it is
-  5.4 MB of JPEG. Ask Ritesh for `Bonanza_CRM_QA_Claude_Handoff_2026-10-01.zip` if a
-  screenshot is needed.
+  auditor's own machine. **The evidence is stored beside it, in
+  [ROUND-4-evidence/](ROUND-4-evidence/)**: 107 original screenshots, the gallery,
+  the test journal, the inventory and the manifest, unpacked from
+  `Bonanza_CRM_QA_Claude_Handoff_2026-10-01.zip` on 13 October. All 107 images
+  matched their SHA-256 in the inventory, and the package's own report matched the
+  manifest's hash. That copy, `ROUND-4-evidence/REPORT_FOR_CLAUDE.md`, is the same
+  report with its image links relative, so it opens with its screenshots in place.
 - Section 10 onward is the screenshot gallery: a problem caption per image. The
   captions are useful, the image links are not resolvable from here.
 
