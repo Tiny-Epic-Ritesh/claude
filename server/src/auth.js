@@ -136,7 +136,9 @@ export const PERMISSIONS = {
   /* P3-35, per object. These are exactly who could export each of these
      yesterday through `data.export`, so nobody gains or loses access today --
      what changes is that the four can now be decided separately. */
-  'export.lead':          ['superadmin', 'admin', 'sales_supervisor'],
+  /* marketing_manager added for QA-06 (Ritesh, 13 Oct: Marketing may export). Its
+     list Export opened and then refused with "your role cannot do this". */
+  'export.lead':          ['superadmin', 'admin', 'sales_supervisor', 'marketing_manager'],
   'export.client':        ['superadmin', 'admin', 'sales_supervisor'],
   'export.case':          ['superadmin', 'admin', 'sales_supervisor'],
   'export.partner':       ['superadmin', 'admin', 'sales_supervisor'],
@@ -150,7 +152,8 @@ export const PERMISSIONS = {
   'list.create':          ['superadmin', 'admin', 'caller', 'dealer', 'sales_rm', 'sales_supervisor', 'partner_rm', 'product_rm', 'product_supervisor', 'customer_care', 'marketing_manager'],
 
   // PII — unmasking a client identifier is a distinct, audited capability
-  'pii.unmask':           ['superadmin', 'admin', 'sales_rm', 'sales_supervisor', 'product_rm', 'product_supervisor', 'customer_care'],
+  /* marketing_manager added for QA-06: the owner decision that Marketing may see unmasked PII. */
+  'pii.unmask':           ['superadmin', 'admin', 'sales_rm', 'sales_supervisor', 'product_rm', 'product_supervisor', 'customer_care', 'marketing_manager'],
 
   // Audit — the compliance trail, including the AI egress log. Read-only by
   // design: nobody may edit it, which is the whole point of keeping it.

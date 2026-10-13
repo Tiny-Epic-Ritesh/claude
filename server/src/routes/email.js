@@ -25,7 +25,8 @@
 import { Router } from 'express';
 import { all, one, run, audit } from '../db.js';
 import { requireUser, requirePermission, reqScope, mayUnmask, can, orgsFor } from '../auth.js';
-import { decryptField } from '../security.js';
+import { decryptField, maskEmail } from '../security.js';
+import { maskedFieldsFor } from '../engine/masking.js';
 import { checkConsent } from '../engine/consent.js';
 import { send } from '../integrations.js';
 import { sanitizeHtml, htmlToText, isEmptyHtml } from '../engine/sanitize.js';
@@ -83,10 +84,11 @@ router.get('/compose/:leadId', (req, res) => {
     lead: {
       id: lead.id,
       name: lead.name,
-      // The composer needs a real address to send to. This is the one place the
-      // masked value is useless, so it is fetched deliberately and the read is
-      // audited like any other unmask.
-      email: lead.email,
+      /* QA-06. Shown under the reader's masking. The send reads the address
+         from the lead on the server and never from this, so a masked one here
+         costs the composer nothing -- and it was the one place a caller could
+         read a client's whole address. */
+      email: mayUnmask(req) || !maskedFieldsFor(req.user.role).has('email') ? lead.email : maskEmail(lead.email),
       sales_org: lead.sales_org,
     },
     consent: {

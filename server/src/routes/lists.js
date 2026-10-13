@@ -13,15 +13,16 @@
  * action — because "was this client contacted" has to stay answerable.
  */
 
+import { exportHeldMasked } from '../engine/policies.js';
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
 import {
   leadStages, stageRefusal, columnRefusal, picklistValues,
 } from '../engine/metadata.js';
 import {
-  requireUser, requirePermission, reqScope, activeOrg, orgsFor, can,
+  requireUser, requirePermission, reqScope, activeOrg, orgsFor, can, maskFor,
 } from '../auth.js';
-import { validate, activeMaskers } from '../security.js';
+import { validate, activeMaskers, maskRecords } from '../security.js';
 import { validateTree, describe, conditionSchema, FIELDS } from '../engine/conditions.js';
 import {
   LIST_KINDS, KIND_LABEL, KIND_HELP, normaliseKind, membersSql, refreshList,
@@ -340,7 +341,10 @@ router.get('/:id', (req, res) => {
     sort,
     dir: dir.toLowerCase(),
     q: q || null,
-    members: rows,
+    /* QA-06. Every member's mobile and email went out in the clear, to any
+       role that could open the list -- the auditor's list #3. Masked exactly as
+       the lead list masks the same rows, and unmasked on the same audited ask. */
+    members: maskRecords(rows, maskFor(req, 'list', list.id)),
   });
 });
 
@@ -552,6 +556,12 @@ router.post('/:id/export', requirePermission('export.lead'), (req, res) => {
       error: 'Exporting identifiers in the clear needs the unmask permission',
       required: 'pii.unmask',
     });
+  }
+  /* QA-06. A business policy can hold a role's exports masked, whatever it
+     sees on screen (Setup → Business policies). */
+  const held = exportHeldMasked(req.user.role);
+  if (wantsClear && held) {
+    return res.status(403).json({ error: held, policy: `export_pii.${req.user.role}` });
   }
   const unmasked = wantsClear && mayUnmask;
 

@@ -3905,10 +3905,11 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
   });
 
   await check('a field the caller cannot read is never described to them', async () => {
-    // Field-level security applied at the API, not in the browser. Marketing
+    // Field-level security applied at the API, not in the browser. A caller
     // has no pii.unmask, so PAN must not even appear in the form definition.
+    // (Marketing was this role until QA-06 gave it pii.unmask.)
     const { data: open } = await req('/api/meta/fields/lead', { token: T.sales_rm, expect: 200 });
-    const { data: shut } = await req('/api/meta/fields/lead', { token: T.marketing_manager, expect: 200 });
+    const { data: shut } = await req('/api/meta/fields/lead', { token: T.caller, expect: 200 });
 
     assert(open.fields.some((f) => f.api_name === 'pan'), 'a capability holder should see PAN');
     assert(!shut.fields.some((f) => f.api_name === 'pan'),
@@ -4053,8 +4054,10 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
   /* ---- the edit form must never be seeded from masked PII ---- */
 
   await check('unmask is refused to a role without the capability', async () => {
-    const lead = need(REF.leadId, 'a lead');
-    const { data } = await req(`/api/leads/${lead}?unmask=true`, { token: T.marketing_manager, expect: 200 });
+    // A caller, on a lead in their own view: Marketing holds pii.unmask since QA-06.
+    const { data: mine } = await req('/api/leads?limit=1', { token: T.caller, expect: 200 });
+    const lead = need(mine[0]?.id, 'a lead the caller can open');
+    const { data } = await req(`/api/leads/${lead}?unmask=true`, { token: T.caller, expect: 200 });
     assert(String(data.mobile).includes('•'),
       'a role without pii.unmask received a real mobile number by asking for it');
   });
@@ -5665,15 +5668,15 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     }
   });
 
-  await check('Marketing gets the email it needs and nothing it does not', async () => {
-    // The default was reconsidered: this role segments and sends, so it needs an
-    // address to run a campaign and no reason to read a PAN or ring anybody.
+  await check('Marketing sees every identifier in the clear, as ruled (QA-06)', async () => {
+    // It was email only. The owner decision recorded in Round 4 is that the
+    // Marketing Manager may see unmasked PII.
     const lead = await firstLead(T.marketing_manager);
     assert(!/\u2022/.test(String(lead.email ?? '')), `email should be clear: ${lead.email}`);
-    if (lead.mobile) assert(/\u2022/.test(lead.mobile), `mobile should be masked: ${lead.mobile}`);
+    if (lead.mobile) assert(!/\u2022/.test(lead.mobile), `mobile should be clear: ${lead.mobile}`);
 
     const { data: detail } = await req(`/api/leads/${lead.id}`, { token: T.marketing_manager, expect: 200 });
-    if (detail.pan) assert(/[\u2022*]/.test(detail.pan), `PAN should be masked: ${detail.pan}`);
+    if (detail.pan) assert(!/[\u2022*]/.test(detail.pan), `PAN should be clear: ${detail.pan}`);
   });
 
   await check('everybody else still sees dots', async () => {
@@ -5687,27 +5690,26 @@ await check('a per-channel withdrawal closes only that channel', async () => {
   await check('the matrix reports where each answer came from', async () => {
     const { data } = await req('/api/setup/field-masking', { token: T.admin, expect: 200 });
     const marketing = data.matrix.find((m) => m.role === 'marketing_manager');
-    eq(marketing.fields.pan.masked, true, 'marketing should not see a PAN by default');
-    eq(marketing.fields.mobile.masked, true, 'marketing should not see a mobile by default');
-    eq(marketing.fields.email.masked, false, 'marketing needs the email address to send');
+    eq(marketing.fields.pan.masked, false, 'marketing sees a PAN by default (QA-06)');
+    eq(marketing.fields.mobile.masked, false, 'marketing sees a mobile by default (QA-06)');
+    eq(marketing.fields.email.masked, false, 'marketing sees the email address');
     eq(marketing.fields.pan.source, 'default', 'nothing has been configured yet');
     const caller = data.matrix.find((m) => m.role === 'caller');
     eq(caller.fields.pan.masked, true, 'a caller should start masked');
   });
 
   await check('masking one field for one role takes effect immediately', async () => {
-    // Unmasking, this time: mobile is masked for Marketing by default, so this
-    // proves the configuration can open a field as well as close one.
+    // Masking, this time: every field is clear for Marketing by default
+    // (QA-06), so this proves the configuration can close one field alone.
     await req('/api/setup/field-masking', {
       method: 'POST', token: T.admin, expect: 200,
-      body: { role: 'marketing_manager', field: 'mobile', masked: false },
+      body: { role: 'marketing_manager', field: 'mobile', masked: true },
     });
 
     const lead = await firstLead(await login('marketing@bonanza.test'));
-    assert(!/\u2022/.test(String(lead.mobile ?? '')), 'the mobile should now be visible');
-    // …and only that field. A blunt on/off would have opened the PAN too.
-    const { data: detail } = await req(`/api/leads/${lead.id}`, { token: await login('marketing@bonanza.test'), expect: 200 });
-    if (detail.pan) assert(/[\u2022*]/.test(detail.pan), `PAN should still be masked: ${detail.pan}`);
+    if (lead.mobile) assert(/\u2022/.test(lead.mobile), `the mobile should now be masked: ${lead.mobile}`);
+    // ...and only that field. A blunt on/off would have closed the email too.
+    assert(!/\u2022/.test(String(lead.email ?? '')), `the email should still be clear: ${lead.email}`);
 
     await req('/api/setup/field-masking', {
       method: 'POST', token: T.admin, expect: 200,
@@ -5721,13 +5723,20 @@ await check('a per-channel withdrawal closes only that channel', async () => {
       body: { role: 'marketing_manager', field: 'mobile', masked: null },
     });
     const lead = await firstLead(await login('marketing@bonanza.test'));
-    // The shipped default for this role and field is now MASKED, so a reset has
-    // to return it to masked -- not to visible. Reset means "follow the
+    // The shipped default for this role and field is CLEAR since QA-06, so a
+    // reset has to return it to clear -- not to masked. Reset means "follow the
     // default", whatever the default happens to be.
-    if (lead.mobile) assert(/\u2022/.test(lead.mobile), 'reset did not restore the default');
+    if (lead.mobile) assert(!/\u2022/.test(lead.mobile), 'reset did not restore the default');
   });
 
   await check('masking applies everywhere a lead is served, not only the list', async () => {
+    /* A role with one field masked and one clear, configured for the check and
+       put back after it: Marketing's mobile masked, its email clear. Every
+       field is clear for Marketing by default since QA-06. */
+    await req('/api/setup/field-masking', {
+      method: 'POST', token: T.admin, expect: 200,
+      body: { role: 'marketing_manager', field: 'mobile', masked: true },
+    });
     const token = await login('marketing@bonanza.test');
     const lead = await firstLead(token);
     const { data: detail } = await req(`/api/leads/${lead.id}`, { token, expect: 200 });
@@ -5744,6 +5753,10 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     const hit = (search.groups?.Leads ?? []).find((l) => l.mobile);
     if (hit) assert(/\u2022/.test(hit.mobile), 'global search leaked an unmasked mobile');
 
+    await req('/api/setup/field-masking', {
+      method: 'POST', token: T.admin, expect: 200,
+      body: { role: 'marketing_manager', field: 'mobile', masked: null },
+    });
   });
 
   await check('an unmaskable field is refused', async () => {

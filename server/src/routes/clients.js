@@ -8,6 +8,7 @@
  * reason to rediscover that here.
  */
 
+import { exportHeldMasked } from '../engine/policies.js';
 import { Router } from 'express';
 import { assertValid } from '../engine/validation.js';
 import { all, one, run, audit, notify } from '../db.js';
@@ -219,6 +220,12 @@ router.post('/export', requirePermission('export.client'), (req, res) => {
       error: 'Exporting identifiers in the clear needs the unmask permission',
       required: 'pii.unmask',
     });
+  }
+  /* QA-06. A business policy can hold a role's exports masked, whatever it
+     sees on screen (Setup → Business policies). */
+  const held = exportHeldMasked(req.user.role);
+  if (wantsClear && held) {
+    return res.status(403).json({ error: held, policy: `export_pii.${req.user.role}` });
   }
   const unmasked = wantsClear && mayUnmask;
 

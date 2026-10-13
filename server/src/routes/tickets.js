@@ -2,9 +2,11 @@
  * Ticket module — creation, SLA, replies, escalation, merge, CSAT.
  */
 
+import { exportHeldMasked } from '../engine/policies.js';
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
-import { can, requireUser, requirePermission, mayUseOrg, activeOrg, reqTicketScope } from '../auth.js';
+import { can, requireUser, requirePermission, mayUseOrg, activeOrg, reqTicketScope, maskFor } from '../auth.js';
+import { maskRecord } from '../security.js';
 import { loadInBook } from '../engine/bookscope.js';
 import { assertValid } from '../engine/validation.js';
 import { recordChange } from '../engine/metadata.js';
@@ -185,7 +187,7 @@ router.get('/', (req, res) => {
      ORDER BY ${orderBy}
      LIMIT ? OFFSET ?`,
     [...params, limit, offset],
-  ).map(decorate));
+  ).map((t) => maskRecord(decorate(t), maskFor(req, 'ticket_list'))));   // QA-06: lead_mobile
 });
 
 /* Declared before `/:id`, or Express reads "meta" as a ticket id. */
@@ -231,7 +233,7 @@ router.get('/:id', (req, res) => {
   if (!visible) return res.status(403).json({ error: 'This case is outside your visibility scope' });
 
   res.json({
-    ...decorate(ticket),
+    ...maskRecord(decorate(ticket), maskFor(req, 'ticket', ticket.id)),   // QA-06: lead_mobile
     replies: all('SELECT r.*, u.name AS user_name FROM ticket_replies r LEFT JOIN users u ON u.id = r.user_id WHERE r.ticket_id = ? ORDER BY r.created_at', [req.params.id]),
     merged: all('SELECT id, ref, subject FROM tickets WHERE merged_into = ?', [req.params.id]),
   });
@@ -504,6 +506,12 @@ router.post('/export', requirePermission('export.case'), (req, res) => {
       error: 'Exporting identifiers in the clear needs the unmask permission',
       required: 'pii.unmask',
     });
+  }
+  /* QA-06. A business policy can hold a role's exports masked, whatever it
+     sees on screen (Setup → Business policies). */
+  const held = exportHeldMasked(req.user.role);
+  if (wantsClear && held) {
+    return res.status(403).json({ error: held, policy: `export_pii.${req.user.role}` });
   }
   const unmasked = wantsClear && mayUnmask;
 

@@ -6,6 +6,7 @@
  * Portal (routes/portal.js), which is a separate authenticated surface.
  */
 
+import { exportHeldMasked } from '../engine/policies.js';
 import { Router } from 'express';
 import { all, one, run, audit, notify, daysSince, PARTNER_STATES } from '../db.js';
 import {
@@ -277,6 +278,12 @@ router.post('/export', requirePermission('partner.view'), requirePermission('exp
       error: 'Exporting identifiers in the clear needs the unmask permission',
       required: 'pii.unmask',
     });
+  }
+  /* QA-06. A business policy can hold a role's exports masked, whatever it
+     sees on screen (Setup → Business policies). */
+  const held = exportHeldMasked(req.user.role);
+  if (wantsClear && held) {
+    return res.status(403).json({ error: held, policy: `export_pii.${req.user.role}` });
   }
   const unmasked = wantsClear && mayUnmask;
 

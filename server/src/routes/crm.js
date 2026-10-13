@@ -2,6 +2,7 @@
  * Core CRM routes — leads, product cards, activities, tasks, notes and lists.
  */
 
+import { exportHeldMasked } from '../engine/policies.js';
 import { Router } from 'express';
 import { all, one, run, audit, notify, daysSince, ageBand, AGE_BANDS, CARD_COLOUR, CARD_STATES } from '../db.js';
 import { can, requireUser, requirePermission, reqScope, isReadOnlyOnLeads, unmaskRequested, maskFor, orgsFor, activeOrg, mayUseOrg } from '../auth.js';
@@ -863,7 +864,8 @@ router.get('/leads/:id', (req, res) => {
     tasks: all('SELECT t.*, u.name AS assignee_name FROM tasks t LEFT JOIN users u ON u.id = t.assignee_id WHERE t.lead_id = ? ORDER BY t.status, t.due_at', [id]),
     notes: all('SELECT n.*, u.name AS user_name, u.role AS user_role FROM notes n LEFT JOIN users u ON u.id = n.user_id WHERE n.lead_id = ? ORDER BY n.pinned DESC, n.created_at DESC', [id]),
     tickets: all('SELECT * FROM tickets WHERE lead_id = ? ORDER BY created_at DESC', [id]),
-    journeys: all(`SELECT j.*, pt.name AS product_name FROM kyc_journeys j JOIN product_types pt ON pt.id = j.product_type_id WHERE j.lead_id = ? ORDER BY j.created_at DESC`, [id]),
+    // QA-06: each journey carries the applicant's mobile and email.
+    journeys: maskRecords(all(`SELECT j.*, pt.name AS product_name FROM kyc_journeys j JOIN product_types pt ON pt.id = j.product_type_id WHERE j.lead_id = ? ORDER BY j.created_at DESC`, [id]), masking),
   });
 });
 
@@ -1260,6 +1262,12 @@ router.post('/leads/export', requirePermission('export.lead'), (req, res) => {
       LIMIT 5000`,
     params,
   );
+
+  /* QA-06. Asked before the unmask is granted, and audited, below. */
+  const held = exportHeldMasked(req.user.role);
+  if (req.query?.unmask === 'true' && held) {
+    return res.status(403).json({ error: held, policy: `export_pii.${req.user.role}` });
+  }
 
   /* The same masking the list applies to the same rows. An export is not a way
      around field-level security -- and this is the direction that cannot be

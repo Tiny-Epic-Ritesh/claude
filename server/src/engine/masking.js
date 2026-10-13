@@ -132,17 +132,15 @@ export const UNMASKED_BY_DEFAULT = {
   admin: 'ALL',
 
   /**
-   * Marketing segments and sends; it does not open individual records.
+   * Marketing sees every identifier in the clear (QA-06).
    *
-   * Email only. PAN and mobile are masked on Ritesh's decision, and it is the
-   * right one under data minimisation: a role that never needs to phone a
-   * client has no reason to hold their number in the clear, and a PAN is the
-   * single most sensitive identifier in the system.
-   *
-   * Campaign sends are unaffected -- the send path reads the stored value
-   * server-side and never depends on what reached the browser.
+   * It was email only, PAN and mobile masked, on an earlier decision. The owner
+   * decision recorded in Round 4 is that the Marketing Manager may see unmasked
+   * PII, and Ritesh confirmed on 13 Oct that Marketing may export it too --
+   * with a Setup policy that can hold its exports masked. Field masking in
+   * Setup can still mask any field for the role; this is only the default.
    */
-  marketing_manager: ['email'],
+  marketing_manager: 'ALL',
 };
 
 export function defaultMasked(role, field) {

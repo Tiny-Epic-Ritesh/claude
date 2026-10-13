@@ -343,6 +343,22 @@ export const STRATEGY_LABEL = {
   hide: 'Hide it entirely',
 };
 
+/**
+ * The same identifiers under the names a join gives them (QA-06).
+ *
+ * A case carries its lead's number as `lead_mobile` and a KYC journey its
+ * applicant's as `applicant_mobile`, and the masker only knew `mobile` -- so a
+ * caller whose lead list showed ••••4321 read the whole number off the case
+ * queue, the KYC screens and the journeys on the lead itself. Each alias is
+ * masked exactly when the field it carries is.
+ */
+export const MASK_ALIASES = {
+  lead_mobile: 'mobile',
+  applicant_mobile: 'mobile',
+  lead_email: 'email',
+  applicant_email: 'email',
+};
+
 /** Which masker applies to which field name. */
 export const MASKERS = {
   mobile: maskMobile,
@@ -400,6 +416,11 @@ export function maskRecord(row, { unmask = false, fields = null } = {}) {
     // everything, which keeps every existing caller behaving as before.
     if (fields && !fields.has(field)) continue;
     if (out[field]) { out[field] = mask(out[field]); masked = true; }
+  }
+  const maskers = activeMaskers();
+  for (const [alias, field] of Object.entries(MASK_ALIASES)) {
+    if (fields && !fields.has(field)) continue;
+    if (out[alias] && maskers[field]) { out[alias] = maskers[field](out[alias]); masked = true; }
   }
   if (masked) out._pii_masked = true;
   return out;

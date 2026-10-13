@@ -8,7 +8,8 @@
 
 import { Router } from 'express';
 import { all, one, run, audit } from '../db.js';
-import { requireUser, requirePermission, reqScope } from '../auth.js';
+import { requireUser, requirePermission, reqScope, maskFor } from '../auth.js';
+import { maskRecord, maskRecords } from '../security.js';
 import * as kyc from '../engine/kyc.js';
 import { digilockerFetch, pennyDrop, esign, sendOtp, verifyOtp, DEMO_OTP } from '../integrations.js';
 import { generateCards } from './crm.js';
@@ -25,7 +26,8 @@ internal.get('/master-steps', (_req, res) => res.json(kyc.MASTER_STEPS));
 
 internal.get('/health', (req, res) => {
   const productId = req.query.product_id || (req.user.role === 'product_rm' ? req.user.product_type_id : null);
-  res.json(kyc.kycHealth(productId ? Number(productId) : null));
+  // QA-06: applicant_mobile and applicant_email were in the clear for every reader.
+  res.json(maskRecords(kyc.kycHealth(productId ? Number(productId) : null), maskFor(req, 'kyc_health')));
 });
 
 internal.get('/journeys/:id', (req, res) => {
@@ -43,7 +45,11 @@ internal.get('/journeys/:id', (req, res) => {
     : null;
   if (!visible) return res.status(403).json({ error: 'This journey is outside your visibility scope' });
 
-  res.json(journey);
+  /* QA-06. The applicant's contact details, and the form they filled in --
+     mobile, email, PAN, account number -- under the reader's masking, and
+     unmasked on the same audited ask as a lead. */
+  const masking = maskFor(req, 'kyc_journey', journey.id);
+  res.json({ ...maskRecord(journey, masking), form: maskRecord(journey.form, masking) });
 });
 
 /** Start a journey from the CRM (RM-initiated), returning the applicant link. */

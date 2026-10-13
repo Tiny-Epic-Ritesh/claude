@@ -18,7 +18,7 @@ answered. *unverified* — the auditor's evidence stands but I have not traced i
 to a line yet. *environment* — a change to labs.tinyepic.in itself, not the code. *closed by
 ruling* — Ritesh ruled that the behaviour reported is the behaviour wanted.
 
-**Today, of the 43 IDs: 21 fixed · 1 closed by ruling · 6 partly fixed · 15
+**Today, of the 43 IDs: 22 fixed · 1 closed by ruling · 6 partly fixed · 14
 open · none waiting on a decision.** Every decision asked for was answered on 13
 October; QA-37's is answered once its recommendations are in. Plus the points
 below the table, which are not IDs but are as much part of the report.
@@ -32,7 +32,7 @@ below the table, which are not IDs but are as much part of the report.
 | QA-03 | P0 | **fixed** `84c2c2f` | `engine/cases.js`. |
 | QA-04 | P1 | **fixed** `eaf4743` | The Leads page reads the date window — and the source chart's `source` — a tile sends, and shows each as a removable chip. Tile and list compare the same dates. Both compared IST dates against UTC timestamps: adjacent (j), `OPS-24`, fixed — both read IST days now. |
 | QA-05 | P1 | **partly fixed** `eaf4743` | "Open cases" opens on All open (`?view=`, `?open=true`). The case-summary strip is still not clickable, and "Resolved today" was not traced. |
-| QA-06 | P1 | open · **ruled 13 Oct** | Marketing may view unmasked PII (decided earlier). Export: allowed, with a Setup control for Admins and Superadmins that chooses masked or unmasked export. To build. |
+| QA-06 | P1 | **fixed** · QA-06 commit | Ruled 13 Oct. The Marketing Manager holds `pii.unmask` and sees identifiers unmasked by default (Setup → Field masking can still mask any field for the role), and holds `export.lead`, so the list Export that opened and then refused now works. **Setup → Business policies → Marketing's exports carry personal data**: *Unmasked* (the default, as ruled) or *Masked*, which refuses a clear export from every export route. **One masking rule everywhere:** the masker learnt the names a join gives identifiers (`lead_mobile`, `applicant_mobile`, `applicant_email`), and list members (the auditor's list #3), the case queue and case, the KYC health board and journey — the applicant's form included — a lead's journeys and the email composer now mask as the lead list does. Found by `server/test/piimasking.test.mjs`, which plants a lead and calls every GET route as a masked role. |
 | QA-07 | P1 | not started | A UI build: draft-until-Save on Manage, and a consequence summary with Confirm for Escalate and Resolve (Ritesh's Part 4). Confirmed by the report; no code defect to trace. |
 | QA-08 | P1 | **fixed** `84c2c2f` | Every link book-checked too. |
 | QA-09 | P1 | open · **ruled 13 Oct** | No definitions given; Ritesh asked for them to be set from standard broking practice. One definitions note for QA-09, 24 and 35, built to and written down for confirmation. |
@@ -71,10 +71,10 @@ below the table, which are not IDs but are as much part of the report.
 | QA-42 | P1 | not started · **needs a reproduction** | Not explained by the code: a Dealer holds `card.mark.exploring` and the panel offers Mark as Exploring. Needs watching as a Dealer. |
 | QA-43 | P1 | **partly fixed** `eaf4743` | The detail shows the refusal instead of spinning. List and detail still disagree on scope — one of `N-12`'s cases. |
 
-Counted: **fixed 21** — QA-01, 02, 03, 04, 08, 11, 19, 20, 21, 23, 26, 27, 28,
-30, 31, 32, 33, 38, 39, 40, 41. **Closed by ruling 1** — QA-36. **Partly fixed
-6** — QA-05, 12, 13, 25, 34, 43. **Open 15** — QA-06, 09,
-24 and 35 (ruled 13 Oct, to build); QA-37 (recommendations due); QA-07 and
+Counted: **fixed 22** — QA-01, 02, 03, 04, 06, 08, 11, 19, 20, 21, 23, 26, 27,
+28, 30, 31, 32, 33, 38, 39, 40, 41. **Closed by ruling 1** — QA-36. **Partly
+fixed 6** — QA-05, 12, 13, 25, 34, 43. **Open 14** — QA-09, 24 and 35 (ruled 13
+Oct, to build); QA-37 (recommendations due); QA-07 and
 QA-10 (UI builds); QA-14 to QA-18 and QA-22 (feature requests under earlier
 IDs); and QA-29 and QA-42, which the code does not explain and need a
 reproduction. Every open ID is traced or classified; none is "unverified". The

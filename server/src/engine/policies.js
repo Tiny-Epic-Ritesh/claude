@@ -36,6 +36,18 @@ export const POLICIES = [
     type: 'bool',
     default: false,
   },
+  {
+    /* QA-06 (Ritesh, 13 Oct): Marketing may export unmasked PII, and an Admin or
+       Superadmin may hold its exports masked from here. */
+    key: 'export_pii.marketing_manager',
+    area: 'Exports',
+    label: 'Marketing\'s exports carry personal data',
+    help: 'Unmasked: a Marketing Manager may export mobile numbers, emails and PAN in the clear, as they see them on screen. '
+      + 'Masked: their exported files are masked whatever they see on screen. Every unmasked export is audited.',
+    type: 'choice',
+    options: [{ value: 'unmasked', label: 'Unmasked' }, { value: 'masked', label: 'Masked' }],
+    default: 'unmasked',
+  },
 ];
 
 export const policyDef = (key) => POLICIES.find((p) => p.key === key) ?? null;
@@ -106,3 +118,17 @@ export function referrableBooks(org) {
 }
 
 export const bookName = (org) => BOOK_NAME[org] ?? org;
+
+/* ------------------------------------------------------------ QA-06 */
+
+/**
+ * Why this role's export may not carry identifiers in the clear, or null.
+ *
+ * Asked by every export after its own unmask check: holding `pii.unmask` is
+ * still required, and a policy can only take the clear export away.
+ */
+export function exportHeldMasked(role) {
+  const key = `export_pii.${role}`;
+  if (!policyDef(key) || policy(key) !== 'masked') return null;
+  return 'Exports for your role are masked by a business policy (Setup → Business policies)';
+}
