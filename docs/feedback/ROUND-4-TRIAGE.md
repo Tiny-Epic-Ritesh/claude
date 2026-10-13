@@ -10,7 +10,7 @@ against this document and earlier feedback IDs." This is that document.
 ## The ledger — every point in the report, and where it stands
 
 Kept current: a commit that closes a point changes its row here and says so.
-Last updated **13 October 2026**: `84c2c2f`, `eaf4743`, `d34bb6b`, the QA-02 design, the rulings of 13 October, and the partner-access commit after `a10b21e` (OPS-15, 16, 17, 25, 26).
+Last updated **13 October 2026**: `84c2c2f`, `eaf4743`, `d34bb6b`, the QA-02 design, the rulings of 13 October, the partner-access commit `72fa94d` (OPS-15, 16, 17, 25, 26), and the commit after it (OPS-18 to OPS-24).
 
 **States.** *fixed* — in code, tested, pushed. *not started* — open, no
 blocker. *needs decision* — waiting on Ritesh, and nothing is built until it is
@@ -27,10 +27,10 @@ below the table, which are not IDs but are as much part of the report.
 
 | ID | Pri | State | Note |
 |---|---|---|---|
-| QA-01 | P0 | **fixed** `84c2c2f` | Form sends `route: false`. Its second half is adjacent (e). |
+| QA-01 | P0 | **fixed** `84c2c2f` | Form sends `route: false`. Its second half, adjacent (e), is `OPS-19`, fixed. |
 | QA-02 | P0 | open · **signed off 13 Oct**, being built | Cause traced: every five minutes each enabled rule acts on every lead that currently matches, with no record that it already did. The KYC waterfall sends the **client** a WhatsApp each sweep. Design: [QA-02-SCHEDULER-DESIGN.md](QA-02-SCHEDULER-DESIGN.md), shown as a page and signed off with its four recommended answers: rules fire once per change; the waterfall is WhatsApp at the stall, SMS 30 minutes later, an assisted-completion task at abandonment, and no client message while a High or Critical case is open; the labs-only transfer rule stays and fires once; `rule_runs` kept 90 days; the duplicates closed, not deleted, after a preview and a yes. |
 | QA-03 | P0 | **fixed** `84c2c2f` | `engine/cases.js`. |
-| QA-04 | P1 | **fixed** `eaf4743` | The Leads page reads the date window — and the source chart's `source` — a tile sends, and shows each as a removable chip. Tile and list compare the same dates. Both compare IST dates against UTC timestamps: adjacent (j). |
+| QA-04 | P1 | **fixed** `eaf4743` | The Leads page reads the date window — and the source chart's `source` — a tile sends, and shows each as a removable chip. Tile and list compare the same dates. Both compared IST dates against UTC timestamps: adjacent (j), `OPS-24`, fixed — both read IST days now. |
 | QA-05 | P1 | **partly fixed** `eaf4743` | "Open cases" opens on All open (`?view=`, `?open=true`). The case-summary strip is still not clickable, and "Resolved today" was not traced. |
 | QA-06 | P1 | open · **ruled 13 Oct** | Marketing may view unmasked PII (decided earlier). Export: allowed, with a Setup control for Admins and Superadmins that chooses masked or unmasked export. To build. |
 | QA-07 | P1 | not started | A UI build: draft-until-Save on Manage, and a consequence summary with Confirm for Escalate and Resolve (Ritesh's Part 4). Confirmed by the report; no code defect to trace. |
@@ -65,7 +65,7 @@ below the table, which are not IDs but are as much part of the report.
 | QA-36 | P1 | **closed by ruling** 13 Oct | Not a bypass: Sales RM and Sales Supervisor hold `pii.unmask`, so the edit form's unmask is permitted and audited. Ritesh ruled that opening the editor should show contact details without a click, which is what it does. |
 | QA-37 | P2 | open · **recommendations due** | Which entities get rename / retire / archive. Ritesh asked for industry-standard recommendations first, then a decision. The partner portal's revoke control is built (`OPS-15`). |
 | QA-38 | P2 | **fixed** `eaf4743` | Send email / SMS / WhatsApp open when any purpose is allowed; the dialog asks Service or Marketing and the API enforces it. |
-| QA-39 | P2 | **fixed** `eaf4743` | The manual message and the list bulk send name their sender. Automated sends stay "system". The bulk send writes two entries per lead: adjacent (i). |
+| QA-39 | P2 | **fixed** `eaf4743` | The manual message and the list bulk send name their sender. Automated sends stay "system". The bulk send wrote two entries per lead: adjacent (i), `OPS-23`, fixed. |
 | QA-40 | P2 | **fixed** `eaf4743` | The log tabs called the Setup-health counter; they call the log counter. |
 | QA-41 | P2 | **fixed** `eaf4743` | A refusal shows, on all fourteen screens that put the spinner first. |
 | QA-42 | P1 | not started · **needs a reproduction** | Not explained by the code: a Dealer holds `card.mark.exploring` and the panel offers Mark as Exploring. Needs watching as a Dealer. |
@@ -107,7 +107,8 @@ those IDs are fixed.
 `OPS-24`. Fixing (a) found two more, fixed with it on approval — `OPS-25`, an
 elevation approval that skipped the onboarding check, and `OPS-26`, partner
 responses carrying the stored password hash — and one recorded open, `OPS-27`.
-**Fixed:** OPS-15, 16, 17, 25, 26. State of each is in the OPS table at the top
+**Fixed:** all ten, and OPS-25 and 26. Fixing (j) found two more, recorded open:
+`OPS-28` and `OPS-29`. State of each is in the OPS table at the top
 of [OUTSTANDING.md](OUTSTANDING.md). Not counted above: they are not report IDs.
 
 ### Rulings asked for

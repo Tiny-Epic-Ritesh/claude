@@ -125,19 +125,39 @@ export function financialFYQuarterStart(d) {
 }
 
 /**
+ * The moment an IST calendar day begins, written the way stored timestamps are:
+ * UTC, 'YYYY-MM-DD HH:MM:SS' (OPS-24).
+ *
+ * Every timestamp in the database is UTC -- `datetime('now')` -- and every
+ * range here is IST days. Comparing one with the other as bare dates moved the
+ * start of each day to 05:30 IST, so anything recorded between midnight and
+ * 05:30 counted on the day before. A date-only value still compares the right
+ * way round: '2026-10-13' sorts after '2026-10-12 18:30:00'.
+ *
+ * The filters elsewhere that compare whole days -- a list opened from a tile, a
+ * log filtered by date, a "today" count -- use SQLite's
+ * `date(x, '+330 minutes')`, the IST date of a UTC timestamp, which leaves a
+ * date-only value as it is.
+ */
+export const istDayStartUtc = (day) => new Date(new Date(`${day}T00:00:00Z`).getTime() - IST_OFFSET_MIN * 60_000)
+  .toISOString().slice(0, 19).replace('T', ' ');
+
+/**
  * A SQL predicate for a column falling inside the range.
  *
  * Returned as a fragment plus params rather than an interpolated string,
- * because these are user-supplied dates on the custom range.
+ * because these are user-supplied dates on the custom range. The bounds are
+ * instants rather than an expression on the column, so an index on it still
+ * serves the query.
  */
 export const inRange = (column, range) => ({
   sql: `${column} >= ? AND ${column} < ?`,
-  params: [range.sqlFrom, range.sqlToExclusive],
+  params: [istDayStartUtc(range.sqlFrom), istDayStartUtc(range.sqlToExclusive)],
 });
 
 export const inPrevRange = (column, range) => ({
   sql: `${column} >= ? AND ${column} < ?`,
-  params: [range.prevFrom, range.prevToExclusive],
+  params: [istDayStartUtc(range.prevFrom), istDayStartUtc(range.prevToExclusive)],
 });
 
 /** Percentage change, or null when the previous period had nothing to compare. */

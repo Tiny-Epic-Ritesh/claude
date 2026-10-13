@@ -496,6 +496,15 @@ for (const [name, channel, subject, body, product] of TEMPLATES) {
   ]).lastInsertRowid);
 }
 
+/* OPS-21. Bigul's own content. Every template above is Bonanza's by the column
+   default, and the Bigul campaign below used to send one of them -- Bonanza's
+   brand, to Bigul's clients. */
+templateIds['Bigul account opening'] = Number(run(
+  "INSERT INTO templates (name, channel, subject, body, product_type_id, approved, sales_org) VALUES (?,?,?,?,NULL,1,'BIGUL')",
+  ['Bigul account opening', 'whatsapp', null,
+    'Hi {{name}}, you can open your Bigul account online in about 15 minutes with Aadhaar and PAN. Here is your secure link.'],
+).lastInsertRowid);
+
 /* --------------------------------------------------------------- content */
 
 /* Three libraries, because the differences between them are the point.
@@ -1478,7 +1487,7 @@ if (bigulOwner) {
 
   run(
     'INSERT INTO campaigns (name, channel, template_id, list_id, status, created_by, sales_org) VALUES (?,?,?,?,?,?,?)',
-    ['Bigul onboarding nudge', 'whatsapp', templateIds['MF SIP intro'], bigulListId, 'Draft', bigulOwner.id, 'BIGUL'],
+    ['Bigul onboarding nudge', 'whatsapp', templateIds['Bigul account opening'], bigulListId, 'Draft', bigulOwner.id, 'BIGUL'],
   );
 }
 

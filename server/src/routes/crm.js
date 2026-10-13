@@ -230,8 +230,8 @@ function leadFilter(req) {
    * A homepage tile reading "New leads 32" that opens a list of 40 is worse
    * than one that opens nothing: the reader believes the list. The tile now
    * hands over the same window it counted, and this is what applies it. */
-  if (req.query.created_from) { where.push('date(l.created_at) >= date(?)'); params.push(req.query.created_from); }
-  if (req.query.created_to) { where.push('date(l.created_at) <= date(?)'); params.push(req.query.created_to); }
+  if (req.query.created_from) { where.push("date(l.created_at, '+330 minutes') >= date(?)"); params.push(req.query.created_from); }
+  if (req.query.created_to) { where.push("date(l.created_at, '+330 minutes') <= date(?)"); params.push(req.query.created_to); }
 
   /* Nobody has logged contact, and it has been long enough to matter.
    *
@@ -877,6 +877,12 @@ router.post('/leads', requirePermission('lead.create'), (req, res) => {
     if (!owner) return res.status(400).json({ error: 'Choose an active user' });
     if (owner.sales_org !== org) {
       return res.status(400).json({ error: 'A lead can only be owned by somebody in the same business' });
+    }
+    /* OPS-19. Naming somebody else as the owner is a reassignment, which the
+       edit refuses without lead.reassign; the create let any holder of
+       lead.create make it. Naming yourself is not one. */
+    if (owner.id !== req.user.id && !can(req.user.role, 'lead.reassign')) {
+      return res.status(403).json({ error: 'Reassignment requires a Sales Supervisor or Admin', required: 'lead.reassign' });
     }
   }
   const { name, mobile, email, source, pan, city, state, risk_profile, language, owner_id, partner_id } = req.body;

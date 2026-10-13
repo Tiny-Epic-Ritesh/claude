@@ -120,7 +120,7 @@ export function archiveExpired() {
         SET archived_at = datetime('now')
       WHERE archived_at IS NULL
         AND expires_at IS NOT NULL
-        AND date(expires_at) < date('now')`,
+        AND date(expires_at, '+330 minutes') < date('now', '+330 minutes')`,
   );
   return Number(res.changes ?? 0);
 }

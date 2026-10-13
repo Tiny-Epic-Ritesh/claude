@@ -234,8 +234,10 @@ function NewCampaign({ lists, templates, onClose, onDone, onError }) {
 
   // A campaign may only send to a list whose membership holds still (Q-25).
   const eligible = lists.filter((l) => l.kind !== 'dynamic');
-  // Already approved-only: the parent filters before passing them in.
-  const approved = templates.filter((t) => t.channel === form.channel);
+  // Already approved-only: the parent filters before passing them in. And the
+  // audience's business's only (OPS-21): a campaign sends for the book of its list.
+  const audienceOrg = lists.find((l) => String(l.id) === String(form.list_id))?.sales_org;
+  const approved = templates.filter((t) => t.channel === form.channel && (!audienceOrg || t.sales_org === audienceOrg));
   const dynamicCount = lists.length - eligible.length;
 
   const submit = async (e) => {
@@ -269,7 +271,7 @@ function NewCampaign({ lists, templates, onClose, onDone, onError }) {
         </div>
         <div className="field">
           <label htmlFor="c-list">Audience</label>
-          <select id="c-list" value={form.list_id} onChange={(e) => set('list_id', e.target.value)}>
+          <select id="c-list" value={form.list_id} onChange={(e) => { set('list_id', e.target.value); set('template_id', ''); }}>
             <option value="">Choose a list…</option>
             {eligible.map((l) => (
               <option key={l.id} value={l.id}>{l.name} · {l.member_count} · {l.kind_label}</option>

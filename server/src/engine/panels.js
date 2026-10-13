@@ -308,7 +308,7 @@ export function runPanel(req, panel, range = null) {
   const params = [...scope.params, ...filters.params];
 
   if (range && panel.use_range !== false) {
-    where.push(`date(${src.alias}.${src.dateColumn}) BETWEEN date(?) AND date(?)`);
+    where.push(`date(${src.alias}.${src.dateColumn}, '+330 minutes') BETWEEN date(?) AND date(?)`);
     params.push(range.from, range.to);
   }
 

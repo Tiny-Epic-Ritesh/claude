@@ -1002,21 +1002,19 @@ router.post('/:id/bulk/message', requirePermission('lead.contact'), (req, res) =
     }
     // send() wants a destination, not a record — it has no business knowing
     // what a lead is.
+    /* OPS-23. send() writes the timeline entry, and this route wrote a second
+       one of its own -- two interactions for one message, against
+       non-negotiable 1. The list's name goes on send()'s entry instead; an
+       email keeps the subject the client actually received. */
     send(channel, {
       to: channel === 'email' ? lead.email : lead.mobile,
       body,
-      subject: channel === 'email' ? `A note from ${req.user.name}` : undefined,
+      subject: channel === 'email' ? `A note from ${req.user.name}` : `Bulk send from "${list.name}"`,
       leadId: id,
       userName: req.user.name,
       // QA-39. The name was passed for the message text; the id never was.
       userId: req.user.id,
     });
-    run(
-      `INSERT INTO activities (lead_id, type, direction, subject, body, user_id)
-       VALUES (?,?, 'outbound', ?, ?, ?)`,
-      [id, channel === 'email' ? 'Email' : channel === 'sms' ? 'SMS' : 'WhatsApp',
-        `Bulk send from "${list.name}"`, body, req.user.id],
-    );
     audit(req.user.id, 'lead.message', 'lead', id, { channel, intent, via_list: list.id });
     sent += 1;
   }

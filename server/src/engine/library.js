@@ -141,9 +141,9 @@ export function expiryFor(library, given) {
  */
 export const itemsIn = (libraryId) => all(
   `SELECT c.*, pt.name AS product_name, u.name AS approved_by_name,
-          CASE WHEN c.expiry_date IS NOT NULL AND date(c.expiry_date) < date('now') THEN 1 ELSE 0 END AS expired,
+          CASE WHEN c.expiry_date IS NOT NULL AND date(c.expiry_date, '+330 minutes') < date('now', '+330 minutes') THEN 1 ELSE 0 END AS expired,
           CASE WHEN c.expiry_date IS NOT NULL AND date(c.expiry_date) <= date('now', '+30 days')
-                AND date(c.expiry_date) >= date('now') THEN 1 ELSE 0 END AS expiring_soon
+                AND date(c.expiry_date, '+330 minutes') >= date('now', '+330 minutes') THEN 1 ELSE 0 END AS expiring_soon
      FROM content_items c
      LEFT JOIN product_types pt ON pt.id = c.product_type_id
      LEFT JOIN users u ON u.id = c.approved_by

@@ -184,6 +184,12 @@ router.post('/disposition/confirm', (req, res) => {
   const { lead_id, outcome, summary, card_changes = [], next_action, next_action_due_hours = 4,
     follow_up_task, compliance_flag, compliance_note, score_signal = 0, duration_s } = req.body;
 
+  /* OPS-18. The preview above checks the book; this is the half that writes
+     -- card states, the score, a task, a compliance case -- and it did not, so
+     any user could apply a disposition to a lead in the other business. */
+  const inBook = loadInBook(req, 'lead', lead_id);
+  if (inBook.error) return res.status(inBook.status).json({ error: inBook.error });
+
   const lead = one('SELECT * FROM leads WHERE id = ?', [lead_id]);
   if (!lead) return res.status(404).json({ error: 'Lead not found' });
 

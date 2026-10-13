@@ -187,8 +187,8 @@ export function purge() {
 const dateRange = (col, from, to) => {
   const where = [];
   const params = [];
-  if (from) { where.push(`date(${col}) >= date(?)`); params.push(from); }
-  if (to) { where.push(`date(${col}) <= date(?)`); params.push(to); }
+  if (from) { where.push(`date(${col}, '+330 minutes') >= date(?)`); params.push(from); }
+  if (to) { where.push(`date(${col}, '+330 minutes') <= date(?)`); params.push(to); }
   return { where, params };
 };
 

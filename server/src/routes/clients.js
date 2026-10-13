@@ -111,8 +111,8 @@ function clientFilter(req) {
   /* P2-13. The window the "Accounts opened" tile counted over. Matched on
      activated_at, which is what that tile counts -- created_at would be a
      different set and a plausible-looking wrong answer. */
-  if (req.query.opened_from) { where.push('date(c.activated_at) >= date(?)'); params.push(req.query.opened_from); }
-  if (req.query.opened_to) { where.push('date(c.activated_at) <= date(?)'); params.push(req.query.opened_to); }
+  if (req.query.opened_from) { where.push("date(c.activated_at, '+330 minutes') >= date(?)"); params.push(req.query.opened_from); }
+  if (req.query.opened_to) { where.push("date(c.activated_at, '+330 minutes') <= date(?)"); params.push(req.query.opened_to); }
 
   return { clause: where.join(' AND '), params };
 }

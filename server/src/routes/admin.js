@@ -171,7 +171,10 @@ export function issueProductCode(name, org) {
 }
 
 router.post('/products', requirePermission('admin.products'), (req, res) => {
-  const { code, name, category, min_investment, lock_in, risk_category, pitch_points, objections, requires_kyc = 1 } = req.body;
+  const {
+    code, name, category, min_investment, lock_in, risk_category, pitch_points, objections, requires_kyc = 1,
+    brochure_url, apply_url,
+  } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'A product needs a name' });
 
   /* QA-31. Zero is a minimum; empty is "not set". `min_investment || null`
@@ -197,10 +200,13 @@ router.post('/products', requirePermission('admin.products'), (req, res) => {
 
   const maxOrder = one('SELECT COALESCE(MAX(sort_order), 0) v FROM product_types').v;
   const result = run(
-    `INSERT INTO product_types (sales_org, code, name, category, min_investment, lock_in, risk_category, pitch_points, objections, requires_kyc, sort_order)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    /* OPS-20. The form sends a brochure and an apply link; only the edit stored
+       them, so a product made with both came out with neither. */
+    `INSERT INTO product_types (sales_org, code, name, category, min_investment, lock_in, risk_category, pitch_points, objections, requires_kyc, sort_order, brochure_url, apply_url)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [org, issued, name.trim(), category || null, minimum, lock_in || null, risk_category || null,
-      JSON.stringify(pitch_points || []), JSON.stringify(objections || []), requires_kyc ? 1 : 0, maxOrder + 1],
+      JSON.stringify(pitch_points || []), JSON.stringify(objections || []), requires_kyc ? 1 : 0, maxOrder + 1,
+      String(brochure_url ?? '').trim() || null, String(apply_url ?? '').trim() || null],
   );
   const id = Number(result.lastInsertRowid);
 
@@ -468,7 +474,7 @@ function templateProblems(draft, user) {
       `SELECT id, name FROM content_items
         WHERE id IN (${ids.map(() => '?').join(',')})
           AND status = 'approved'
-          AND (expiry_date IS NULL OR expiry_date >= date('now'))`,
+          AND (expiry_date IS NULL OR expiry_date >= date('now', '+330 minutes'))`,
       ids,
     );
     problems.push(...checkAttachments(ids, found));
@@ -643,7 +649,7 @@ router.get('/content', (req, res) => {
   res.json(all(
     `SELECT c.*, pt.name AS product_name,
             CASE WHEN c.expiry_date IS NOT NULL AND date(c.expiry_date) <= date('now', '+30 days') THEN 1 ELSE 0 END AS expiring_soon,
-            CASE WHEN c.expiry_date IS NOT NULL AND date(c.expiry_date) < date('now') THEN 1 ELSE 0 END AS expired
+            CASE WHEN c.expiry_date IS NOT NULL AND date(c.expiry_date, '+330 minutes') < date('now', '+330 minutes') THEN 1 ELSE 0 END AS expired
      FROM content_items c LEFT JOIN product_types pt ON pt.id = c.product_type_id
      ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY c.name`,
     params,
@@ -1013,8 +1019,8 @@ function auditFilter(req) {
   /* Dates are inclusive of the whole day at both ends. A range of "the 3rd to
      the 3rd" that returned nothing because the rows carry a time is the kind of
      filter people conclude is broken. */
-  if (req.query.from) { where.push('date(a.created_at) >= date(?)'); params.push(req.query.from); }
-  if (req.query.to) { where.push('date(a.created_at) <= date(?)'); params.push(req.query.to); }
+  if (req.query.from) { where.push("date(a.created_at, '+330 minutes') >= date(?)"); params.push(req.query.from); }
+  if (req.query.to) { where.push("date(a.created_at, '+330 minutes') <= date(?)"); params.push(req.query.to); }
 
   return { clause: where.length ? `WHERE ${where.join(' AND ')}` : '', params };
 }
@@ -1211,12 +1217,23 @@ router.get('/campaigns/archived', requirePermission('campaign.manage'), (_req, r
  * moment it exists -- and the send asks again, because approval can be
  * withdrawn after the campaign was made.
  */
-function approvedTemplate(templateId, channel) {
+const BOOK_NAME = { BONANZA: 'Bonanza', BIGUL: 'Bigul' };
+
+function approvedTemplate(templateId, channel, org) {
   if (!templateId) return { error: 'Choose an approved template for this campaign', status: 400 };
   const template = one('SELECT * FROM templates WHERE id = ?', [templateId]);
   if (!template) return { error: 'That template does not exist', status: 400 };
   if (template.channel !== channel) {
     return { error: `"${template.name}" is a ${template.channel} template, and this campaign sends by ${channel}`, status: 400 };
+  }
+  /* OPS-21. A campaign sends for one business and its content must be that
+     business's, brand and all: a Bonanza campaign could send a Bigul template.
+     Every caller passes the campaign's business. */
+  if (template.sales_org !== org) {
+    return {
+      error: `"${template.name}" is a ${BOOK_NAME[template.sales_org] ?? template.sales_org} template, and this campaign sends for ${BOOK_NAME[org] ?? org ?? 'no business'}`,
+      status: 400,
+    };
   }
   if (!template.approved) return { error: `"${template.name}" is not approved for sending`, status: 409 };
   return { template };
@@ -1245,7 +1262,7 @@ router.post('/campaigns', requirePermission('campaign.manage'), (req, res) => {
     return res.status(403).json({ error: 'That list belongs to another book' });
   }
 
-  const content = approvedTemplate(template_id, channel);
+  const content = approvedTemplate(template_id, channel, org);
   if (content.error) return res.status(content.status).json({ error: content.error });
 
   const result = run(
@@ -1281,6 +1298,7 @@ router.patch('/campaigns/:id', requirePermission('campaign.manage'), (req, res) 
     const content = approvedTemplate(
       req.body.template_id !== undefined ? req.body.template_id : campaign.template_id,
       req.body.channel !== undefined ? req.body.channel : campaign.channel,
+      campaign.sales_org,
     );
     if (content.error) return res.status(content.status).json({ error: content.error });
   }
@@ -1316,13 +1334,21 @@ router.post('/campaigns/:id/duplicate', requirePermission('campaign.manage'), (r
      The auditor's #4 was a copy of #3, which had no content at all; copying
      the template id blindly carried that forward, and would carry forward a
      template that has since lost its approval. */
-  const content = approvedTemplate(c.template_id, c.channel);
+  /* OPS-22. The copy never said which business it was for, so a Bigul
+     campaign's copy was filed in Bonanza's book by the column default -- the
+     defect the create route's comment describes fixing. It is the original's
+     business, and only someone who works in that business may make it. */
+  if (!mayUseOrg(req.user, c.sales_org)) {
+    return res.status(403).json({ error: 'This campaign belongs to another book' });
+  }
+
+  const content = approvedTemplate(c.template_id, c.channel, c.sales_org);
   if (content.error) return res.status(content.status).json({ error: content.error });
 
   const result = run(
-    `INSERT INTO campaigns (name, channel, template_id, list_id, status, created_by)
-     VALUES (?,?,?,?,'Draft',?)`,
-    [`${c.name} (copy)`, c.channel, c.template_id, c.list_id, req.user.id],
+    `INSERT INTO campaigns (name, channel, template_id, list_id, status, created_by, sales_org)
+     VALUES (?,?,?,?,'Draft',?,?)`,
+    [`${c.name} (copy)`, c.channel, c.template_id, c.list_id, req.user.id, c.sales_org],
   );
   audit(req.user.id, 'campaign_duplicated', 'campaign', Number(result.lastInsertRowid), { from: c.id });
   res.status(201).json(one('SELECT * FROM campaigns WHERE id = ?', [result.lastInsertRowid]));
@@ -1413,7 +1439,7 @@ router.post('/campaigns/:id/test', requirePermission('campaign.manage'), async (
   const campaign = one('SELECT * FROM campaigns WHERE id = ?', [req.params.id]);
   if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
-  const content = approvedTemplate(campaign.template_id, campaign.channel);
+  const content = approvedTemplate(campaign.template_id, campaign.channel, campaign.sales_org);
   if (content.error) return res.status(content.status).json({ error: content.error });
   const { template } = content;
 
@@ -1471,7 +1497,7 @@ router.post('/campaigns/:id/send', requirePermission('campaign.manage'), async (
 
   /* Asked after the dynamic-list refusal, so a campaign that fails both is
      told about its audience first: that is the one it cannot fix by editing. */
-  const content = approvedTemplate(campaign.template_id, campaign.channel);
+  const content = approvedTemplate(campaign.template_id, campaign.channel, campaign.sales_org);
   if (content.error) return res.status(content.status).json({ error: content.error });
   const { template } = content;
 

@@ -138,10 +138,12 @@ const T = {};      // role → token
 
 /** An approved template for a channel, which a campaign is created with
     (QA-30). Read as the superadmin, who sees both books' templates. */
-async function approvedTemplateId(channel) {
+/* A campaign sends its own business's content (OPS-21), so the template is
+   asked for by business as well as channel. */
+async function approvedTemplateId(channel, org = 'BONANZA') {
   const { data } = await req('/api/admin/templates', { token: T.superadmin, expect: 200 });
-  const t = (data ?? []).find((x) => x.channel === channel && x.approved);
-  if (!t) throw new Error(`no approved ${channel} template to build a campaign from`);
+  const t = (data ?? []).find((x) => x.channel === channel && x.approved && x.sales_org === org);
+  if (!t) throw new Error(`no approved ${org} ${channel} template to build a campaign from`);
   return t.id;
 }
 const REF = {};    // reference records created by the suite
@@ -1081,7 +1083,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
 
     const { data: made } = await req('/api/admin/campaigns', {
       method: 'POST', token: T.superadmin, expect: 201,
-      body: { name: `Book check ${RUN}`, channel: 'whatsapp', list_id: audience.id, template_id: await approvedTemplateId('whatsapp') },
+      body: { name: `Book check ${RUN}`, channel: 'whatsapp', list_id: audience.id, template_id: await approvedTemplateId('whatsapp', 'BIGUL') },
     });
     eq(made.sales_org, 'BIGUL', 'a campaign on a Bigul list was created into the other book');
 

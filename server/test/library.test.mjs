@@ -54,7 +54,9 @@ test('the email composer only offers approved, in-date collateral', () => {
   const src = readFileSync(new URL('../src/routes/email.js', import.meta.url), 'utf8').replace(CRLF, '\n');
   const offers = src.slice(src.indexOf('FROM content_items'));
   assert(/status = 'approved'/.test(offers), 'the composer no longer requires approval');
-  assert(/expiry_date IS NULL OR expiry_date >= date\('now'\)/.test(offers),
+  // Today in IST (OPS-24): read as a UTC day, an item expiring today stayed
+  // sendable until 05:30 the next morning.
+  assert(/expiry_date IS NULL OR expiry_date >= date\('now', '\+330 minutes'\)/.test(offers),
     'the composer no longer excludes expired collateral');
 });
 

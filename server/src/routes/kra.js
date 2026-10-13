@@ -91,8 +91,8 @@ router.get('/incentives', (req, res) => {
   const plan = one(
     `SELECT * FROM incentive_plans
       WHERE role_code = ? AND active = 1 AND sales_org = ?
-        AND effective_from <= date('now')
-        AND (effective_to IS NULL OR effective_to >= date('now'))
+        AND effective_from <= date('now', '+330 minutes')
+        AND (effective_to IS NULL OR effective_to >= date('now', '+330 minutes'))
       ORDER BY effective_from DESC LIMIT 1`,
     [req.user.role, req.user.sales_org],
   );

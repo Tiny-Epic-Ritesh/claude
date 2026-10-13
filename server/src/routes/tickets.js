@@ -119,10 +119,10 @@ function ticketFilter(req) {
   /* P2-13. The predicates the dashboard tiles count on, so the tile and the
      list are the same set rather than two implementations that agree today. */
   if (req.query.breached === 'true') where.push('t.breached = 1');
-  if (req.query.resolved_from) { where.push('date(t.resolved_at) >= date(?)'); params.push(req.query.resolved_from); }
-  if (req.query.resolved_to) { where.push('date(t.resolved_at) <= date(?)'); params.push(req.query.resolved_to); }
-  if (req.query.created_from) { where.push('date(t.created_at) >= date(?)'); params.push(req.query.created_from); }
-  if (req.query.created_to) { where.push('date(t.created_at) <= date(?)'); params.push(req.query.created_to); }
+  if (req.query.resolved_from) { where.push("date(t.resolved_at, '+330 minutes') >= date(?)"); params.push(req.query.resolved_from); }
+  if (req.query.resolved_to) { where.push("date(t.resolved_at, '+330 minutes') <= date(?)"); params.push(req.query.resolved_to); }
+  if (req.query.created_from) { where.push("date(t.created_at, '+330 minutes') >= date(?)"); params.push(req.query.created_from); }
+  if (req.query.created_to) { where.push("date(t.created_at, '+330 minutes') <= date(?)"); params.push(req.query.created_to); }
   if (priority) { where.push('t.priority = ?'); params.push(priority); }
   if (breached === 'true') where.push('t.breached = 1');
   if (lead_id) { where.push('t.lead_id = ?'); params.push(lead_id); }
@@ -564,7 +564,7 @@ router.get('/reports/summary', requirePermission('report.team'), (_req, res) => 
     totals: {
       open: one("SELECT COUNT(*) n FROM tickets WHERE status NOT IN ('Resolved','Closed')").n,
       breached: one('SELECT COUNT(*) n FROM tickets WHERE breached = 1').n,
-      resolved_today: one("SELECT COUNT(*) n FROM tickets WHERE date(resolved_at) = date('now')").n,
+      resolved_today: one("SELECT COUNT(*) n FROM tickets WHERE date(resolved_at, '+330 minutes') = date('now', '+330 minutes')").n,
       avg_csat: one('SELECT ROUND(AVG(csat), 2) v FROM tickets WHERE csat IS NOT NULL').v,
     },
     by_category: byCategory,

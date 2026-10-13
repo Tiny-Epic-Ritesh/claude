@@ -577,7 +577,7 @@ export default function Leads({ session }) {
       />
 
       {creating && (
-        <NewLead meta={meta} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); navigate(`/leads/${id}`); }} />
+        <NewLead meta={meta} mayReassign={session.permissions.includes('lead.reassign')} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); navigate(`/leads/${id}`); }} />
       )}
     </>
   );
@@ -586,7 +586,7 @@ export default function Leads({ session }) {
 /** DD-MM-YYYY, from the YYYY-MM-DD a link carries. */
 const dmy = (d) => (d ? String(d).slice(0, 10).split('-').reverse().join('-') : '');
 
-function NewLead({ meta, onClose, onCreated }) {
+function NewLead({ meta, mayReassign, onClose, onCreated }) {
   const [form, setForm] = useState({ name: '', mobile: '', email: '', city: '', source: 'Website', risk_profile: 'Moderate', language: 'English', owner_id: '' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -641,12 +641,15 @@ function NewLead({ meta, onClose, onCreated }) {
         </div>
         <div className="field">
           <label>Owner</label>
-          <select value={form.owner_id} onChange={set('owner_id')}>
+          {/* OPS-19. Only someone who may reassign is offered other owners; the
+              server refuses the rest, as the edit does. */}
+          <select value={form.owner_id} onChange={set('owner_id')} disabled={!mayReassign}>
             <option value="">Assign to me</option>
-            {(meta?.users || []).filter((u) => ['caller', 'dealer', 'sales_rm'].includes(u.role)).map((u) => (
+            {mayReassign && (meta?.users || []).filter((u) => ['caller', 'dealer', 'sales_rm'].includes(u.role)).map((u) => (
               <option key={u.id} value={u.id}>{u.name}</option>
             ))}
           </select>
+          {!mayReassign && <span className="tiny muted">Only a Sales Supervisor or Admin can create a lead for someone else.</span>}
         </div>
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button type="button" onClick={onClose}>Cancel</button>

@@ -74,7 +74,7 @@ function callsToday(user, active) {
   return one(
     `SELECT COUNT(*) n FROM activities a
        JOIN leads l ON l.id = a.lead_id
-      WHERE a.type = 'Call' AND date(a.created_at) = date('now') AND ${f.sql}`,
+      WHERE a.type = 'Call' AND date(a.created_at, '+330 minutes') = date('now', '+330 minutes') AND ${f.sql}`,
     f.params,
   ).n;
 }
@@ -139,7 +139,7 @@ const tasksDue = (userId) => all(
 );
 
 const countDueToday = (userId) => one(
-  "SELECT COUNT(*) n FROM tasks WHERE assignee_id = ? AND status = 'Open' AND date(due_at) <= date('now')",
+  "SELECT COUNT(*) n FROM tasks WHERE assignee_id = ? AND status = 'Open' AND date(due_at, '+330 minutes') <= date('now', '+330 minutes')",
   [userId],
 ).n;
 
@@ -245,13 +245,13 @@ const COCKPITS = {
       metric('Active users', orgCount(user, active, 'users', 'active = 1'), `${all('SELECT DISTINCT role FROM users').length} roles in use`, null, '/admin?tab=users'),
       metric('Total leads', orgCount(user, active, 'leads', 'deleted_at IS NULL'), `${orgCount(user, active, 'leads', 'deleted_at IS NOT NULL')} in recycle bin`, null, '/leads'),
       metric('Product cards', one('SELECT COUNT(*) n FROM product_cards').n, `${one("SELECT COUNT(*) n FROM product_cards WHERE state != 'INACTIVE'").n} engaged`),
-      metric('Rules fired today', one("SELECT COUNT(*) n FROM rule_runs WHERE date(created_at) = date('now') AND dry_run = 0").n, `${one('SELECT COUNT(*) n FROM rules WHERE enabled = 1').n} rules enabled`),
+      metric('Rules fired today', one("SELECT COUNT(*) n FROM rule_runs WHERE date(created_at, '+330 minutes') = date('now', '+330 minutes') AND dry_run = 0").n, `${one('SELECT COUNT(*) n FROM rules WHERE enabled = 1').n} rules enabled`),
       (() => {
         const reg = integrationRegistry();
         const live = reg.filter((i) => i.status === 'live').length;
         return metric('Integrations', `${live}/${reg.length}`, live ? `${live} live, rest simulated` : 'all simulated in this build', live ? 'ok' : 'warn');
       })(),
-      metric('Audit events today', one("SELECT COUNT(*) n FROM audit_log WHERE date(created_at) = date('now')").n, null, null, '/setup/audit'),
+      metric('Audit events today', one("SELECT COUNT(*) n FROM audit_log WHERE date(created_at, '+330 minutes') = date('now', '+330 minutes')").n, null, null, '/setup/audit'),
 
       /* P3-27. The three that replaced the activity log: things to do, rather
          than a record of what was done. Each opens the screen that lists them. */
@@ -276,13 +276,13 @@ const COCKPITS = {
     title: 'Admin cockpit',
     subtitle: 'Configuration, users and system-wide activity.',
     metrics: [
-      metric('Leads created today', orgCount(user, active, 'leads', "date(created_at) = date('now')")),
+      metric('Leads created today', orgCount(user, active, 'leads', "date(created_at, '+330 minutes') = date('now', '+330 minutes')")),
       /* These two counted across both books while every other metric beside
          them went through orgCount, so a Bigul admin was shown Bonanza's call
          volume and Bonanza's breaches. Same boundary as the August incident,
          reached through an aggregate instead of a record. */
       metric('Calls today', callsToday(user, active)),
-      metric('Tickets opened today', orgCount(user, active, 'tickets', "date(created_at) = date('now')"), null, null, '/tickets'),
+      metric('Tickets opened today', orgCount(user, active, 'tickets', "date(created_at, '+330 minutes') = date('now', '+330 minutes')"), null, null, '/tickets'),
       metric('SLA breaches', orgCount(user, active, 'tickets', 'breached = 1'), 'open + closed', 'danger', '/tickets?breached=1'),
       metric('Active users', orgCount(user, active, 'users', 'active = 1'), null, null, '/admin?tab=users'),
       metric('Products configured', orgCount(user, active, 'product_types', 'active = 1'), null, null, '/admin?tab=products'),
@@ -317,7 +317,7 @@ const COCKPITS = {
   caller: (user, active) => {
     const leads = myLeads(user, active);
     const today = new Date().toISOString().slice(0, 10);
-    const callsToday = all("SELECT * FROM activities WHERE user_id = ? AND type = 'Call' AND date(created_at) = date('now')", [user.id]);
+    const callsToday = all("SELECT * FROM activities WHERE user_id = ? AND type = 'Call' AND date(created_at, '+330 minutes') = date('now', '+330 minutes')", [user.id]);
 
     // Callbacks due first, then fresh, then ageing — the queue order that matters.
     const queue = [...leads].sort((a, b) => {
@@ -413,7 +413,7 @@ const COCKPITS = {
       return {
         id: rm.id, name: rm.name, role: rm.role,
         leads: owned.length,
-        calls_today: one("SELECT COUNT(*) n FROM activities WHERE user_id = ? AND type = 'Call' AND date(created_at) = date('now')", [rm.id]).n,
+        calls_today: one("SELECT COUNT(*) n FROM activities WHERE user_id = ? AND type = 'Call' AND date(created_at, '+330 minutes') = date('now', '+330 minutes')", [rm.id]).n,
         warm_cards: warm,
         deals_won: won,
         overdue_tasks: one("SELECT COUNT(*) n FROM tasks WHERE assignee_id = ? AND status = 'Open' AND due_at < datetime('now')", [rm.id]).n,
@@ -577,7 +577,7 @@ const COCKPITS = {
         metric('Open assigned', queue.filter((t) => t.status !== 'Resolved').length),
         metric('Due today', queue.filter((t) => t.resolution_due && String(t.resolution_due).slice(0, 10) === new Date().toISOString().slice(0, 10)).length, null, 'warn'),
         metric('SLA breached', queue.filter((t) => t.breached).length, 'escalate now', 'danger'),
-        metric('Resolved today', one("SELECT COUNT(*) n FROM tickets WHERE assignee_id = ? AND date(resolved_at) = date('now')", [user.id]).n, null, 'good'),
+        metric('Resolved today', one("SELECT COUNT(*) n FROM tickets WHERE assignee_id = ? AND date(resolved_at, '+330 minutes') = date('now', '+330 minutes')", [user.id]).n, null, 'good'),
         metric('Waiting on client', queue.filter((t) => t.status === 'Waiting on Client').length),
         metric('CSAT (rolling)', one("SELECT ROUND(AVG(csat),2) v FROM tickets WHERE assignee_id = ? AND csat IS NOT NULL", [user.id]).v ?? '—'),
       ],
