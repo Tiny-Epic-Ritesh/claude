@@ -295,11 +295,17 @@ dkyc.post('/resume/:token/step', (req, res) => {
     return res.status(409).json({ error: 'That step is no longer active', current_step: journey.current_step });
   }
 
-  const enriched = { ...payload };
+  /* QA-34. Checked against the step's own declaration before any vendor
+     call and before anything is stored, and stored as normalised. */
+  const { problems, values } = kyc.validateStepPayload(kyc.stepByCode(step_code), payload);
+  if (problems.length) {
+    return res.status(400).json({ error: problems[0].message, field: problems[0].field, problems });
+  }
+  const enriched = { ...values };
 
   // --- vendor-backed steps ------------------------------------------------
   if (['MOBILE_OTP', 'EMAIL_OTP'].includes(step_code)) {
-    const submitted = payload.otp || payload.email_otp;
+    const submitted = values.otp || values.email_otp;
     if (!verifyOtp(submitted)) return res.status(400).json({ error: 'That code is not correct. Please try again.' });
     enriched.verified = true;
   }
@@ -312,9 +318,9 @@ dkyc.post('/resume/:token/step', (req, res) => {
 
   if (step_code === 'BANK') {
     const result = pennyDrop({
-      accountNumber: payload.account_number,
-      ifsc: payload.ifsc,
-      accountHolder: payload.account_holder,
+      accountNumber: values.account_number,
+      ifsc: values.ifsc,
+      accountHolder: values.account_holder,
     });
     enriched.penny_drop = result;
     enriched.penny_drop_failed = result.failed;
@@ -322,7 +328,7 @@ dkyc.post('/resume/:token/step', (req, res) => {
   }
 
   if (step_code === 'ESIGN') {
-    const result = esign({ otp: payload.esign_otp });
+    const result = esign({ otp: values.esign_otp });
     if (!result.signed) return res.status(400).json({ error: 'eSign failed. Please re-enter the Aadhaar OTP.' });
     enriched.esign = result;
   }

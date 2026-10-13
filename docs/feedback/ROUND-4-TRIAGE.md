@@ -10,14 +10,14 @@ against this document and earlier feedback IDs." This is that document.
 ## The ledger — every point in the report, and where it stands
 
 Kept current: a commit that closes a point changes its row here and says so.
-Last updated **13 October 2026**, at batch 2 (the second commit after `52ecf88`).
+Last updated **13 October 2026**: `84c2c2f`, `eaf4743`, and batch 3 (QA-34, the commit after `eaf4743`).
 
 **States.** *fixed* — in code, tested, pushed. *not started* — open, no
 blocker. *needs decision* — waiting on Ritesh, and nothing is built until it is
 answered. *unverified* — the auditor's evidence stands but I have not traced it
 to a line yet. *environment* — a change to labs.tinyepic.in itself, not the code.
 
-**Today, of the 43 IDs: 20 fixed · 4 partly fixed · 12 open · 5 waiting on a
+**Today, of the 43 IDs: 20 fixed · 5 partly fixed · 11 open · 5 waiting on a
 decision · 2 split** (open work with a decision inside, QA-06 and QA-35). Plus
 the points below the table, which are not IDs but are as much part of the
 report.
@@ -29,51 +29,51 @@ report.
 | QA-01 | P0 | **fixed** `84c2c2f` | Form sends `route: false`. Its second half is adjacent (e). |
 | QA-02 | P0 | not started | Design change: idempotency, retry bound, retention, reconciling ~48,000 rows. Wants scoping and sign-off. |
 | QA-03 | P0 | **fixed** `84c2c2f` | `engine/cases.js`. |
-| QA-04 | P1 | **fixed** batch 2 | The Leads page reads the date window — and the source chart's `source` — a tile sends, and shows each as a removable chip. Tile and list compare the same dates. Both compare IST dates against UTC timestamps: adjacent (j). |
-| QA-05 | P1 | **partly fixed** batch 2 | "Open cases" opens on All open (`?view=`, `?open=true`). The case-summary strip is still not clickable, and "Resolved today" was not traced. |
+| QA-04 | P1 | **fixed** `eaf4743` | The Leads page reads the date window — and the source chart's `source` — a tile sends, and shows each as a removable chip. Tile and list compare the same dates. Both compare IST dates against UTC timestamps: adjacent (j). |
+| QA-05 | P1 | **partly fixed** `eaf4743` | "Open cases" opens on All open (`?view=`, `?open=true`). The case-summary strip is still not clickable, and "Resolved today" was not traced. |
 | QA-06 | P1 | not started · **half needs decision** | Marketing may view unmasked PII (decided) — the work. Export is the open decision. |
 | QA-07 | P1 | not started | A UI build: draft-until-Save on Manage, and a consequence summary with Confirm for Escalate and Resolve (Ritesh's Part 4). Confirmed by the report; no code defect to trace. |
 | QA-08 | P1 | **fixed** `84c2c2f` | Every link book-checked too. |
 | QA-09 | P1 | **needs decision** | Stage / Trading / Active / UCC / accrued vs paid commission. |
 | QA-10 | P1 | not started | A UI build: an opaque, scrollable call panel with a visible End call and state-aware actions. Confirmed by the report; needs a design pass in both themes. |
-| QA-11 | P1 | **fixed** batch 2 | One resolver, `fill()` in the merge engine, for the composer, test-send and campaign send. A field masked for the sender is refused by name. **`{{name}}` in campaigns is now the first name**, as the picker always said. The picker's static examples are untouched. |
-| QA-12 | P1 | **partly fixed** batch 2 | The screen shows `CRM_PUBLIC_URL` or the origin it is itself using — https. Refusing a key sent over plain http needs the proxy to say the scheme (`X-Forwarded-Proto`), which is nginx, which I do not touch. |
+| QA-11 | P1 | **fixed** `eaf4743` | One resolver, `fill()` in the merge engine, for the composer, test-send and campaign send. A field masked for the sender is refused by name. **`{{name}}` in campaigns is now the first name**, as the picker always said. The picker's static examples are untouched. |
+| QA-12 | P1 | **partly fixed** `eaf4743` | The screen shows `CRM_PUBLIC_URL` or the origin it is itself using — https. Refusing a key sent over plain http needs the proxy to say the scheme (`X-Forwarded-Proto`), which is nginx, which I do not touch. |
 | QA-13 | P1 | **needs decision** | May a Bonanza partner refer Bigul products; may Bonanza DKYC open Bigul accounts. |
 | QA-14 | P2 | not started | Pipeline multi-select products and per-stage filters. |
 | QA-15 | P2 | not started | Pagination and column sorting, `P3-36`/`37`/`39`. |
 | QA-16 | P2 | not started | Report builder and dashboard creation, `P3-06`/`P2-17` — gated on `N-4a`. |
 | QA-17 | P2 | not started | One `DD-MM-YYYY` display formatter. |
 | QA-18 | P2 | not started | App Launcher outside-click, `P3-31`. |
-| QA-19 | P2 | **fixed** batch 2 | "Create list" goes to Lead Lists for whoever holds `list.create`. |
-| QA-20 | P2 | **fixed** batch 2 | Tasks and Tickets count what they list, like every other tab. |
-| QA-21 | P2 | **fixed** batch 2 | The handoff names the Product RM(s) asked and the High-priority task it gave them. 60-second timing still unmeasured. |
+| QA-19 | P2 | **fixed** `eaf4743` | "Create list" goes to Lead Lists for whoever holds `list.create`. |
+| QA-20 | P2 | **fixed** `eaf4743` | Tasks and Tickets count what they list, like every other tab. |
+| QA-21 | P2 | **fixed** `eaf4743` | The handoff names the Product RM(s) asked and the High-priority task it gave them. 60-second timing still unmeasured. |
 | QA-22 | P2 | not started | Market headlines are not links, `ENH-09`. |
-| QA-23 | P2 | **fixed** batch 2 | An egress row records what actually answered; the table says Sent abroad, Served locally, or — for rows before 13 Oct — Not recorded. |
+| QA-23 | P2 | **fixed** `eaf4743` | An egress row records what actually answered; the table says Sent abroad, Served locally, or — for rows before 13 Oct — Not recorded. |
 | QA-24 | P2 | **needs decision** | What `Won` means — the same conflation as QA-09. |
-| QA-25 | P2 | **partly fixed** batch 2 | The breach answer says whose tickets it counted. The drawer covering dashboard cards is untouched. |
+| QA-25 | P2 | **partly fixed** `eaf4743` | The breach answer says whose tickets it counted. The drawer covering dashboard cards is untouched. |
 | QA-26 | P1 | **fixed** `84c2c2f` | |
-| QA-27 | P2 | **fixed** batch 2 | A delete returns to the list with a confirmation and a link straight to the recycle bin. |
+| QA-27 | P2 | **fixed** `eaf4743` | A delete returns to the list with a confirmation and a link straight to the recycle bin. |
 | QA-28 | P1 | **fixed** `84c2c2f` | Four compliance flags still need a category ruling. |
 | QA-29 | P2 | not started · **needs a reproduction** | Not explained by the code: the server counts live, nothing caches, and Done reloads. Needs watching in a browser. |
 | QA-30 | P1 | **fixed** `84c2c2f` | Including duplication. |
-| QA-31 | P2 | **fixed** batch 2 | Any whole-rupee minimum; zero is zero, not "not set"; a negative is refused on create and edit. |
+| QA-31 | P2 | **fixed** `eaf4743` | Any whole-rupee minimum; zero is zero, not "not set"; a negative is refused on create and edit. |
 | QA-32 | P1 | **fixed** `84c2c2f` | And the cross-book backfill it would have switched on. |
 | QA-33 | P0 | **fixed** `84c2c2f` | Override question open; partner #9 cleanup is *environment*, below. |
-| QA-34 | P1 | not started · verified | No field validation in the KYC routes at all. Medium: DKYC, import and automation all write these. |
+| QA-34 | P1 | **partly fixed** batch 3 | Every DKYC step is checked against its own declaration — required, pattern, listed options, dates not in the future, numbers in range — before any vendor call, and stored normalised. All six of the auditor's values are refused. PIN tightened to the house rule (`V.pincode`); account number 9–18 digits and a nominee share of 1–100 are new, and mine to be corrected. **Still open:** keeping the mobile the journey started with rather than asking again; and two rulings — must a single nominee be exactly 100%, and are under-18 applicants refused. |
 | QA-35 | P2 | not started · **half needs decision** | The summary query is a bug; what Active means is QA-09's decision. |
 | QA-36 | P1 | **needs decision** | Not a bypass: Sales RM and Sales Supervisor hold `pii.unmask`, so the edit form's unmask is permitted and audited. Should opening the editor reveal contact details without a click? |
 | QA-37 | P2 | **needs decision** | Which entities get rename / retire / archive. |
-| QA-38 | P2 | **fixed** batch 2 | Send email / SMS / WhatsApp open when any purpose is allowed; the dialog asks Service or Marketing and the API enforces it. |
-| QA-39 | P2 | **fixed** batch 2 | The manual message and the list bulk send name their sender. Automated sends stay "system". The bulk send writes two entries per lead: adjacent (i). |
-| QA-40 | P2 | **fixed** batch 2 | The log tabs called the Setup-health counter; they call the log counter. |
-| QA-41 | P2 | **fixed** batch 2 | A refusal shows, on all fourteen screens that put the spinner first. |
+| QA-38 | P2 | **fixed** `eaf4743` | Send email / SMS / WhatsApp open when any purpose is allowed; the dialog asks Service or Marketing and the API enforces it. |
+| QA-39 | P2 | **fixed** `eaf4743` | The manual message and the list bulk send name their sender. Automated sends stay "system". The bulk send writes two entries per lead: adjacent (i). |
+| QA-40 | P2 | **fixed** `eaf4743` | The log tabs called the Setup-health counter; they call the log counter. |
+| QA-41 | P2 | **fixed** `eaf4743` | A refusal shows, on all fourteen screens that put the spinner first. |
 | QA-42 | P1 | not started · **needs a reproduction** | Not explained by the code: a Dealer holds `card.mark.exploring` and the panel offers Mark as Exploring. Needs watching as a Dealer. |
-| QA-43 | P1 | **partly fixed** batch 2 | The detail shows the refusal instead of spinning. List and detail still disagree on scope — one of `N-12`'s cases. |
+| QA-43 | P1 | **partly fixed** `eaf4743` | The detail shows the refusal instead of spinning. List and detail still disagree on scope — one of `N-12`'s cases. |
 
 Counted: **fixed 20** — QA-01, 03, 04, 08, 11, 19, 20, 21, 23, 26, 27, 28, 30,
-31, 32, 33, 38, 39, 40, 41. **Partly fixed 4** — QA-05, 12, 25, 43. **Waiting on
-a decision 5** — QA-09, 13, 24, 36, 37. **Split 2** — QA-06, 35. **Open 12** —
-QA-02 and QA-34 (designed, not built), QA-07 and QA-10 (UI builds), QA-14 to
+31, 32, 33, 38, 39, 40, 41. **Partly fixed 5** — QA-05, 12, 25, 34, 43. **Waiting
+on a decision 5** — QA-09, 13, 24, 36, 37. **Split 2** — QA-06, 35. **Open 11** —
+QA-02 (designed, not built), QA-07 and QA-10 (UI builds), QA-14 to
 QA-18 and QA-22 (feature requests under earlier IDs), and QA-29 and QA-42, which
 the code does not explain and need a reproduction. Every open ID is now traced
 or classified; none is "unverified". The rulings inside QA-28 and QA-33 are
@@ -110,7 +110,8 @@ first.
 5. the category for each of the four unmapped compliance flags (QA-28) ·
 6. whether a Superadmin needs an audited emergency elevation (QA-33) ·
 7. OPS ids for (a)–(j) · 8. sign-off to scope QA-02 · 9. QA-36: should the
-editor reveal contact details without a click.
+editor reveal contact details without a click · 10. QA-34: must a single nominee
+hold exactly 100%, and does DKYC refuse applicants under 18.
 
 ## Read this first: the build they tested is the build we have
 

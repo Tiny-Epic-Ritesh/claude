@@ -608,6 +608,12 @@ function Field({ field, value, onChange, onSendOtp }) {
         value={value || ''}
         onChange={(e) => onChange(field.transform === 'upper' ? e.target.value.toUpperCase() : e.target.value)}
         inputMode={field.type === 'tel' ? 'numeric' : undefined}
+        /* QA-34. The step declares these and only `required` was passed on.
+           A courtesy -- the server checks the same rules. */
+        pattern={field.pattern}
+        title={field.help}
+        min={field.min}
+        max={field.type === 'date' ? new Date().toISOString().slice(0, 10) : field.max}
       />
       {field.help && <div className="hint">{field.help}</div>}
     </div>

@@ -54,7 +54,8 @@ export const MASTER_STEPS = [
       { name: 'address', label: 'Address', type: 'textarea', required: true },
       { name: 'city', label: 'City', type: 'text', required: true },
       { name: 'state', label: 'State', type: 'text', required: true },
-      { name: 'pincode', label: 'PIN code', type: 'text', required: true, pattern: '^[0-9]{6}$' },
+      // No Indian PIN starts with 0; security.js V.pincode has always said so.
+      { name: 'pincode', label: 'PIN code', type: 'text', required: true, pattern: '^[1-9][0-9]{5}$', help: '6 digits, not starting with 0' },
     ] },
   { code: 'FINANCIAL', label: 'Financial & background information', owner_type: 'Lead', timer: 240, group: 'Financial Information',
     fields: [
@@ -66,7 +67,7 @@ export const MASTER_STEPS = [
     ] },
   { code: 'BANK', label: 'Bank account verification', owner_type: 'System', timer: 300, group: 'Bank Verification',
     fields: [
-      { name: 'account_number', label: 'Bank account number', type: 'text', required: true },
+      { name: 'account_number', label: 'Bank account number', type: 'text', required: true, pattern: '^[0-9]{9,18}$', help: '9 to 18 digits' },
       { name: 'ifsc', label: 'IFSC code', type: 'text', required: true, pattern: '^[A-Z]{4}0[A-Z0-9]{6}$', transform: 'upper' },
       { name: 'account_holder', label: 'Account holder name', type: 'text', required: true },
     ],
@@ -79,7 +80,7 @@ export const MASTER_STEPS = [
       { name: 'nominee_opt', label: 'Do you want to add a nominee?', type: 'select', required: true, options: ['Add nominee', 'Opt out'] },
       { name: 'nominee_name', label: 'Nominee name', type: 'text', required: false },
       { name: 'nominee_relation', label: 'Relationship', type: 'select', required: false, options: ['Spouse', 'Son', 'Daughter', 'Father', 'Mother', 'Brother', 'Sister', 'Other'] },
-      { name: 'nominee_share', label: 'Share (%)', type: 'number', required: false },
+      { name: 'nominee_share', label: 'Share (%)', type: 'number', required: false, min: 1, max: 100 },
     ] },
   { code: 'SEGMENTS', label: 'Segment & depository selection', owner_type: 'Lead', timer: 180, group: 'Segments',
     fields: [
@@ -140,6 +141,82 @@ export const verificationOutcome = (code) =>
   VERIFICATION_OUTCOMES.find((o) => o.code === code) ?? null;
 
 export const stepByCode = (code) => MASTER_STEPS.find((s) => s.code === code);
+
+/**
+ * Check one step's answers against what the step declares (QA-34).
+ *
+ * The declarations were always here -- required, pattern, options, the
+ * upper-casing of a PAN -- and the portal passed only `required` to the
+ * browser, while the server checked nothing. A public journey that ends in an
+ * account application took mobile 123, PAN BAD and a 150% nominee, and kept
+ * them on the lead. The browser is a courtesy; this is the check.
+ *
+ * Returns `{ problems, values }`: the problems in field order, each with the
+ * field and a sentence for the applicant, and the answers as they should be
+ * stored -- trimmed, and upper-cased where the field says so.
+ */
+export function validateStepPayload(step, payload = {}) {
+  const problems = [];
+  const values = { ...payload };
+  if (!step) return { problems, values };
+
+  /* Nominee details are optional only for someone opting out. */
+  const addingNominee = step.code === 'NOMINEE' && payload.nominee_opt === 'Add nominee';
+  const today = new Date().toISOString().slice(0, 10);
+
+  for (const f of step.fields ?? []) {
+    let v = payload[f.name];
+    if (typeof v === 'string') {
+      v = v.trim();
+      if (f.transform === 'upper') v = v.toUpperCase();
+      values[f.name] = v;
+    }
+
+    const present = f.type === 'consent' ? v === true || v === 'true'
+      : f.type === 'multiselect' ? Array.isArray(v) && v.length > 0
+        : v !== undefined && v !== null && String(v).trim() !== '';
+    const required = f.required || (addingNominee && f.name.startsWith('nominee_'));
+
+    if (!present) {
+      if (required) problems.push({ field: f.name, message: f.type === 'consent' ? `Please confirm: ${f.label}` : `${f.label} is required` });
+      continue;
+    }
+
+    if (f.pattern && !new RegExp(f.pattern).test(String(v))) {
+      problems.push({ field: f.name, message: `${f.label} is not valid${f.help ? ` — ${f.help}` : ''}` });
+      continue;
+    }
+    if (f.type === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(v))) {
+      problems.push({ field: f.name, message: `${f.label} is not a valid email address` });
+      continue;
+    }
+    if (f.type === 'select' && f.options && !f.options.includes(v)) {
+      problems.push({ field: f.name, message: `Choose one of the listed options for ${f.label}` });
+      continue;
+    }
+    if (f.type === 'multiselect' && f.options && !v.every((x) => f.options.includes(x))) {
+      problems.push({ field: f.name, message: `Choose only the listed options for ${f.label}` });
+      continue;
+    }
+    if (f.type === 'date') {
+      const ok = /^\d{4}-\d{2}-\d{2}$/.test(String(v)) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`));
+      if (!ok) { problems.push({ field: f.name, message: `${f.label} is not a date` }); continue; }
+      if (v > today) { problems.push({ field: f.name, message: `${f.label} cannot be in the future` }); continue; }
+      if (v < '1900-01-01') { problems.push({ field: f.name, message: `${f.label} is not plausible` }); continue; }
+    }
+    if (f.type === 'number') {
+      const n = Number(v);
+      if (!Number.isFinite(n)) { problems.push({ field: f.name, message: `${f.label} must be a number` }); continue; }
+      if ((f.min != null && n < f.min) || (f.max != null && n > f.max)) {
+        problems.push({ field: f.name, message: `${f.label} must be between ${f.min} and ${f.max}` });
+        continue;
+      }
+      values[f.name] = n;
+    }
+  }
+
+  return { problems, values };
+}
 
 /**
  * The step list as it was in a saved version, or null if that version is gone.
