@@ -10,7 +10,7 @@ against this document and earlier feedback IDs." This is that document.
 ## The ledger — every point in the report, and where it stands
 
 Kept current: a commit that closes a point changes its row here and says so.
-Last updated **13 October 2026**: `84c2c2f`, `eaf4743`, and batch 3 (QA-34, the commit after `eaf4743`).
+Last updated **13 October 2026**: `84c2c2f`, `eaf4743`, `d34bb6b`, and the QA-02 design.
 
 **States.** *fixed* — in code, tested, pushed. *not started* — open, no
 blocker. *needs decision* — waiting on Ritesh, and nothing is built until it is
@@ -27,7 +27,7 @@ report.
 | ID | Pri | State | Note |
 |---|---|---|---|
 | QA-01 | P0 | **fixed** `84c2c2f` | Form sends `route: false`. Its second half is adjacent (e). |
-| QA-02 | P0 | not started | Design change: idempotency, retry bound, retention, reconciling ~48,000 rows. Wants scoping and sign-off. |
+| QA-02 | P0 | not started · **designed, awaiting sign-off** | Cause traced: every five minutes each enabled rule acts on every lead that currently matches, with no record that it already did. The KYC waterfall sends the **client** a WhatsApp each sweep — 288 a day in production. Design and four questions: [QA-02-SCHEDULER-DESIGN.md](QA-02-SCHEDULER-DESIGN.md). |
 | QA-03 | P0 | **fixed** `84c2c2f` | `engine/cases.js`. |
 | QA-04 | P1 | **fixed** `eaf4743` | The Leads page reads the date window — and the source chart's `source` — a tile sends, and shows each as a removable chip. Tile and list compare the same dates. Both compare IST dates against UTC timestamps: adjacent (j). |
 | QA-05 | P1 | **partly fixed** `eaf4743` | "Open cases" opens on All open (`?view=`, `?open=true`). The case-summary strip is still not clickable, and "Resolved today" was not traced. |
@@ -59,7 +59,7 @@ report.
 | QA-31 | P2 | **fixed** `eaf4743` | Any whole-rupee minimum; zero is zero, not "not set"; a negative is refused on create and edit. |
 | QA-32 | P1 | **fixed** `84c2c2f` | And the cross-book backfill it would have switched on. |
 | QA-33 | P0 | **fixed** `84c2c2f` | Override question open; partner #9 cleanup is *environment*, below. |
-| QA-34 | P1 | **partly fixed** batch 3 | Every DKYC step is checked against its own declaration — required, pattern, listed options, dates not in the future, numbers in range — before any vendor call, and stored normalised. All six of the auditor's values are refused. PIN tightened to the house rule (`V.pincode`); account number 9–18 digits and a nominee share of 1–100 are new, and mine to be corrected. **Still open:** keeping the mobile the journey started with rather than asking again; and two rulings — must a single nominee be exactly 100%, and are under-18 applicants refused. |
+| QA-34 | P1 | **partly fixed** `d34bb6b` | Every DKYC step is checked against its own declaration — required, pattern, listed options, dates not in the future, numbers in range — before any vendor call, and stored normalised. All six of the auditor's values are refused. PIN tightened to the house rule (`V.pincode`); account number 9–18 digits and a nominee share of 1–100 are new, and mine to be corrected. **Still open:** keeping the mobile the journey started with rather than asking again; and two rulings — must a single nominee be exactly 100%, and are under-18 applicants refused. |
 | QA-35 | P2 | not started · **half needs decision** | The summary query is a bug; what Active means is QA-09's decision. |
 | QA-36 | P1 | **needs decision** | Not a bypass: Sales RM and Sales Supervisor hold `pii.unmask`, so the edit form's unmask is permitted and audited. Should opening the editor reveal contact details without a click? |
 | QA-37 | P2 | **needs decision** | Which entities get rename / retire / archive. |
@@ -109,7 +109,7 @@ first.
 1. QA-13 · 2. QA-09/24/35 · 3. QA-06 export · 4. QA-37 lifecycle ·
 5. the category for each of the four unmapped compliance flags (QA-28) ·
 6. whether a Superadmin needs an audited emergency elevation (QA-33) ·
-7. OPS ids for (a)–(j) · 8. sign-off to scope QA-02 · 9. QA-36: should the
+7. OPS ids for (a)–(j) · 8. sign-off on the QA-02 design, and its four answers · 9. QA-36: should the
 editor reveal contact details without a click · 10. QA-34: must a single nominee
 hold exactly 100%, and does DKYC refuse applicants under 18.
 
