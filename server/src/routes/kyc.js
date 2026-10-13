@@ -325,7 +325,9 @@ dkyc.post('/resume/:token/step', (req, res) => {
 
   /* QA-34. Checked against the step's own declaration before any vendor
      call and before anything is stored, and stored as normalised. */
-  const { problems, values } = kyc.validateStepPayload(kyc.stepByCode(step_code), payload);
+  const definition = kyc.stepByCode(step_code);
+  const asOffered = definition && { ...definition, fields: kyc.fieldsForBusiness(definition.fields, journey.product?.sales_org) };
+  const { problems, values } = kyc.validateStepPayload(asOffered, payload);
   if (problems.length) {
     return res.status(400).json({ error: problems[0].message, field: problems[0].field, problems });
   }
@@ -443,7 +445,7 @@ function publicView(j) {
       .filter((s) => s.applies)
       .map((s) => ({
         code: s.code, label: s.label, group: s.group, status: s.status,
-        fields: s.fields, note: s.note, timer_s: s.timer_s || s.timer,
+        fields: kyc.fieldsForBusiness(s.fields, j.product?.sales_org), note: s.note, timer_s: s.timer_s || s.timer,
         seconds_on_step: s.seconds_on_step,
         /* Whether this is a step the applicant fills in. Without it the portal
            drew the verification step as a form -- and it has no fields, so an

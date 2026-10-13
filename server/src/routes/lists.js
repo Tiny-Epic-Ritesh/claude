@@ -13,7 +13,7 @@
  * action — because "was this client contacted" has to stay answerable.
  */
 
-import { exportHeldMasked } from '../engine/policies.js';
+import { exportHeldMasked, wonRefusal } from '../engine/policies.js';
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
 import {
@@ -812,6 +812,8 @@ router.post('/:id/bulk/field', requirePermission('lead.edit'), (req, res) => {
   const refusal = columnRefusal('lead', field, value, list.sales_org);
   if (refusal) return res.status(400).json({ error: refusal, field: 'value' });
   const ids = memberIds(list, req);
+  const notWon = field === 'stage' ? wonRefusal(value, ids) : null;   // QA-24
+  if (notWon) return res.status(400).json({ error: notWon, field: 'value', policy: 'lead_won_requires_account' });
   let changed = 0;
   let unchanged = 0;
 
@@ -948,6 +950,8 @@ router.post('/:id/bulk/stage', requirePermission('lead.stage.change'), (req, res
   }
 
   const ids = memberIds(list, req);
+  const notWon = wonRefusal(stage, ids);   // QA-24
+  if (notWon) return res.status(400).json({ error: notWon, field: 'stage', policy: 'lead_won_requires_account' });
   for (const id of ids) {
     const before = one('SELECT stage FROM leads WHERE id = ?', [id]);
     if (!before || before.stage === stage) continue;

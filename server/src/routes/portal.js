@@ -6,6 +6,7 @@
  * write their own records.
  */
 
+import { dormantSql } from '../engine/clients.js';
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
 import { requirePartner } from '../auth.js';
@@ -37,12 +38,17 @@ router.get('/dashboard', (req, res) => {
             (SELECT GROUP_CONCAT(pt.code || ':' || pc.state)
              FROM product_cards pc JOIN product_types pt ON pt.id = pc.product_type_id
              WHERE pc.lead_id = l.id AND pc.state != 'INACTIVE') AS cards,
-            (SELECT COALESCE(SUM(value),0) FROM product_cards WHERE lead_id = l.id AND state = 'ACTIVE') AS aum
+            (SELECT COALESCE(SUM(value),0) FROM product_cards WHERE lead_id = l.id AND state = 'ACTIVE') AS aum,
+            /* QA-09. The account, if one was opened: the UCC, and whether it is
+               trading. A product card is not an account. */
+            (SELECT c.client_code FROM clients c WHERE c.converted_from_lead_id = l.id ORDER BY c.id LIMIT 1) AS client_code,
+            (SELECT ${dormantSql('c')} FROM clients c WHERE c.converted_from_lead_id = l.id ORDER BY c.id LIMIT 1) AS account_status
      FROM leads l WHERE ${scope.sql} ORDER BY l.created_at DESC`,
     scope.params,
   );
 
-  const converted = sourced.filter((l) => (l.cards || '').includes(':ACTIVE')).length;
+  /* QA-09. Converted is an account opened, not an Active product card. */
+  const converted = sourced.filter((l) => l.client_code).length;
 
   res.json({
     partner: {
@@ -59,6 +65,9 @@ router.get('/dashboard', (req, res) => {
       aum_attributed: sourced.reduce((s, l) => s + (l.aum || 0), 0),
       commission_month: one('SELECT COALESCE(SUM(payout),0) v FROM commissions WHERE partner_id = ? AND period = ?', [id, month()]).v,
       commission_lifetime: one('SELECT COALESCE(SUM(payout),0) v FROM commissions WHERE partner_id = ?', [id]).v,
+      /* QA-09. The lifetime figure included accrued rows nobody had been paid. */
+      commission_paid: one("SELECT COALESCE(SUM(payout),0) v FROM commissions WHERE partner_id = ? AND status = 'Paid'", [id]).v,
+      commission_accrued: one("SELECT COALESCE(SUM(payout),0) v FROM commissions WHERE partner_id = ? AND status != 'Paid'", [id]).v,
       open_tickets: one("SELECT COUNT(*) n FROM tickets WHERE partner_id = ? AND status NOT IN ('Resolved','Closed')", [id]).n,
     },
     sourced_leads: sourced,

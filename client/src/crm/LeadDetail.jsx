@@ -209,10 +209,25 @@ export default function LeadDetail({ session }) {
           back. */}
       <div className="lead-stats">
         <Stat label="Lead score" value={lead.score ?? '—'} meter={lead.score} />
+        {/* QA-35. It said "no active products" whenever the AUM date was
+            missing, beside an Active card. */}
         <Stat
           label="AUM"
           value={lead.aum ? money(lead.aum) : '—'}
-          sub={lead.aum_as_of ? `as of ${shortDate(lead.aum_as_of)}` : 'no active products'}
+          sub={(() => {
+            const active = lead.cards.filter((c) => c.state === 'ACTIVE').length;
+            if (!active) return 'no active products';
+            const count = `${active} active product${active === 1 ? '' : 's'}`;
+            return lead.aum_as_of ? `${count} · as of ${shortDate(lead.aum_as_of)}` : count;
+          })()}
+        />
+        {/* QA-35. An Active product is not an opened account: the account is the
+            UCC, and says so separately. */}
+        <Stat
+          label="Account"
+          value={lead.client_code ? 'Opened' : 'Not opened'}
+          sub={lead.client_code ? `UCC ${lead.client_code}` : 'no UCC yet'}
+          tone={lead.client_code ? 'good' : null}
         />
         <Stat
           label="Owner"

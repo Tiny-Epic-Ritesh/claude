@@ -280,11 +280,12 @@ function Overview({ data, onRefer, onRaise }) {
    * Instead: work out how far each client actually got, then count how many
    * reached at least each level. Monotonic by construction.
    */
-  const LEVELS = ['Referred', 'Engaged', 'Product interest', 'KYC underway', 'Trading'];
+  /* QA-09. The last step is an opened account, not an Active product card. */
+  const LEVELS = ['Referred', 'Engaged', 'Product interest', 'KYC underway', 'Account opened'];
 
   const furthest = (l) => {
     const cards = (l.cards || '').split(',').filter(Boolean);
-    if (cards.some((c) => c.endsWith(':ACTIVE'))) return 4;
+    if (l.client_code) return 4;
     if (l.kyc_status && l.kyc_status !== 'NOT_STARTED') return 3;
     if (cards.length) return 2;
     if (l.stage && l.stage !== 'New') return 1;
@@ -319,8 +320,9 @@ function Overview({ data, onRefer, onRaise }) {
             <h1>Good to see you, {(p.name || '').split(' ')[0]}.</h1>
             <p>
               You have sourced <strong>{m.leads_sourced}</strong> client{m.leads_sourced === 1 ? '' : 's'}, of which{' '}
-              <strong>{m.converted}</strong> {m.converted === 1 ? 'is' : 'are'} trading. Your lifetime commission stands at{' '}
-              <strong>{rupees(m.commission_lifetime)}</strong> at {p.commission_pct}%.
+              <strong>{m.converted}</strong> {m.converted === 1 ? 'has' : 'have'} opened an account. You have been paid{' '}
+              <strong>{rupees(m.commission_paid)}</strong> at {p.commission_pct}%
+              {m.commission_accrued > 0 && <>, and <strong>{rupees(m.commission_accrued)}</strong> more is accrued and not yet paid</>}.
             </p>
           </div>
           <div className="row" style={{ gap: 9, flexWrap: 'wrap' }}>
@@ -369,7 +371,7 @@ function Overview({ data, onRefer, onRaise }) {
         <StatTile label="Converted" value={m.converted} sub={`${m.conversion_rate}% conversion`} tone="ok" icon="verified" />
         <StatTile label="AUM attributed" value={money(m.aum_attributed)} icon="account_balance" tone="info" />
         <StatTile label="Commission this month" value={rupees(m.commission_month)} sub={`at ${p.commission_pct}%`} trend={delta} icon="payments" />
-        <StatTile label="Lifetime commission" value={rupees(m.commission_lifetime)} icon="savings" />
+        <StatTile label="Commission paid" value={rupees(m.commission_paid)} sub={m.commission_accrued ? `${rupees(m.commission_accrued)} accrued, not yet paid` : 'nothing waiting'} icon="savings" />
         <StatTile
           label="Open requests" value={m.open_tickets}
           tone={m.open_tickets ? 'warn' : null} icon="support_agent"
@@ -415,8 +417,9 @@ function Clients({ data, onRefer, onOpen }) {
   const [stage, setStage] = useState('all');
 
   const rows = data.sourced_leads.filter((l) => {
-    if (stage === 'active' && !(l.cards || '').includes(':ACTIVE')) return false;
-    if (stage === 'pending' && (l.cards || '').includes(':ACTIVE')) return false;
+    // QA-09: Trading is an account that traded in the last 90 days, not a product card.
+    if (stage === 'active' && l.account_status !== 'Active') return false;
+    if (stage === 'pending' && l.client_code) return false;
     if (!q.trim()) return true;
     const needle = q.toLowerCase();
     return (l.name || '').toLowerCase().includes(needle) || (l.city || '').toLowerCase().includes(needle);
@@ -434,7 +437,7 @@ function Clients({ data, onRefer, onOpen }) {
           <select className="input-sm" value={stage} onChange={(e) => setStage(e.target.value)}>
             <option value="all">All</option>
             <option value="active">Trading</option>
-            <option value="pending">In progress</option>
+            <option value="pending">No account yet</option>
           </select>
           <button type="button" className="btn btn-primary btn-sm" onClick={onRefer}>Refer a client</button>
         </div>
@@ -451,7 +454,10 @@ function Clients({ data, onRefer, onOpen }) {
           {rows.map((l) => {
             const cards = (l.cards || '').split(',').filter(Boolean)
               .map((pair) => { const [code, state] = pair.split(':'); return { code, state }; });
-            const trading = cards.some((c) => c.state === 'ACTIVE');
+            /* QA-09. Trading only for an account that traded in the last 90 days;
+               an account that has not reads Dormant; no account, the lead's stage. */
+            const trading = l.account_status === 'Active';
+            const label = l.account_status ? (trading ? 'Trading' : l.account_status) : l.stage;
             return (
               <button type="button" key={l.id}
                 className={`glass client-card is-clickable ${trading ? 'is-active' : ''}`}
@@ -463,7 +469,7 @@ function Clients({ data, onRefer, onOpen }) {
                     <div className="tiny muted">{l.city || '—'} · referred {shortDate(l.created_at)}</div>
                   </div>
                   <span className={`state-pill ${trading ? 'state-active' : 'state-exploring'}`}>
-                    {trading ? 'Trading' : l.stage}
+                    {label}
                   </span>
                 </div>
 
@@ -520,7 +526,8 @@ function Earnings({ data }) {
     <>
       <div className="stat-strip">
         <StatTile label="This month" value={rupees(m.commission_month)} icon="payments" />
-        <StatTile label="Lifetime" value={rupees(m.commission_lifetime)} icon="savings" tone="ok" />
+        <StatTile label="Paid to date" value={rupees(m.commission_paid)} icon="savings" tone="ok" />
+        <StatTile label="Accrued, not yet paid" value={rupees(m.commission_accrued)} icon="schedule" />
         <StatTile label="Rate" value={`${data.partner.commission_pct}%`} icon="percent" />
         <StatTile label="Periods paid" value={rows.length} icon="receipt_long" />
       </div>
@@ -569,7 +576,7 @@ function Earnings({ data }) {
             </div>
           </div>
           {mix.length
-            ? <Donut segments={mix} centre={compactMoney(m.commission_lifetime)} caption="lifetime" />
+            ? <Donut segments={mix} centre={compactMoney(m.commission_lifetime)} caption="paid and accrued" />
             : <div className="chart-empty">Nothing attributed yet</div>}
         </div>
       </div>

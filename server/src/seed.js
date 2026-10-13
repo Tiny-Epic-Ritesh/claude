@@ -688,7 +688,9 @@ const OWNERS = [U.caller, U.caller2, U.dealer, U.sales_rm, U.sales_rm2];
 const BIGUL_OWNERS = [U.bigul_rm, U.bigul_caller, U.sales_rm3];
 const orgFor = (i) => (i % 3 === 2 ? 'BIGUL' : 'BONANZA');
 const RISK = ['Conservative', 'Moderate', 'Aggressive'];
-const STAGES = ['New', 'Contacted', 'Qualified', 'In Progress', 'Won'];
+/* QA-24. No Won at random: the leads that are Won are the ones whose account
+   is opened below, which is what Won means (docs/feedback/QA-09-DEFINITIONS.md). */
+const STAGES = ['New', 'Contacted', 'Qualified', 'In Progress'];
 
 const leadIds = [];
 NAMES.forEach((name, i) => {

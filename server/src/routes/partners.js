@@ -60,7 +60,8 @@ const decorate = (row) => {
     owner_name: p.owner_id ? one('SELECT name FROM users WHERE id = ?', [p.owner_id])?.name : null,
     sourced_count: one('SELECT COUNT(*) n FROM leads WHERE partner_id = ? AND deleted_at IS NULL', [p.id]).n,
     sourced_this_month: one("SELECT COUNT(*) n FROM leads WHERE partner_id = ? AND strftime('%Y-%m', created_at) = ?", [p.id, month]).n,
-    converted_count: one("SELECT COUNT(*) n FROM product_cards pc JOIN leads l ON l.id = pc.lead_id WHERE l.partner_id = ? AND pc.state = 'ACTIVE'", [p.id]).n,
+    /* QA-09. Accounts opened from the partner's referrals, not Active cards. */
+    converted_count: one('SELECT COUNT(*) n FROM clients c JOIN leads l ON l.id = c.converted_from_lead_id WHERE l.partner_id = ?', [p.id]).n,
     aum_attributed: one("SELECT COALESCE(SUM(pc.value),0) v FROM product_cards pc JOIN leads l ON l.id = pc.lead_id WHERE l.partner_id = ? AND pc.state = 'ACTIVE'", [p.id]).v,
     commission_month: one('SELECT COALESCE(SUM(payout),0) v FROM commissions WHERE partner_id = ? AND period = ?', [p.id, month]).v,
     steps_done: one("SELECT COUNT(*) n FROM partner_steps WHERE partner_id = ? AND status = 'done'", [p.id]).n,

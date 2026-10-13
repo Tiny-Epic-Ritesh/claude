@@ -32,6 +32,7 @@ export const STALL_TO_ABANDON_MS = 60 * 60 * 1000;   // OD-09: 1 hour
 /* The master step library, exactly as published by Bonanza. */
 export const MASTER_STEPS = [
   { code: 'MOBILE', label: 'Enter mobile number', owner_type: 'Lead', timer: 90, group: 'Basic Verification',
+    note: 'If you gave your number when you started, it is filled in. We send a code to the number you confirm here.',
     fields: [{ name: 'mobile', label: 'Mobile number', type: 'tel', required: true, pattern: '^[6-9][0-9]{9}$', help: '10-digit Indian mobile' }] },
   { code: 'MOBILE_OTP', label: 'Verify mobile with OTP', owner_type: 'Lead', timer: 120, group: 'Basic Verification',
     fields: [{ name: 'otp', label: 'Enter the 6-digit OTP', type: 'otp', required: true, pattern: '^[0-9]{6}$' }] },
@@ -42,7 +43,7 @@ export const MASTER_STEPS = [
   { code: 'PAN', label: 'Enter PAN details', owner_type: 'Lead', timer: 120, group: 'Identity Verification',
     fields: [
       { name: 'pan', label: 'PAN', type: 'text', required: true, pattern: '^[A-Z]{5}[0-9]{4}[A-Z]$', transform: 'upper', help: 'e.g. ABCDE1234F' },
-      { name: 'dob', label: 'Date of birth', type: 'date', required: true },
+      { name: 'dob', label: 'Date of birth', type: 'date', required: true, help: 'You must be 18 or over to open an account online' },
     ] },
   { code: 'AADHAAR_DIGILOCKER', label: 'Verify Aadhaar via DigiLocker', owner_type: 'System', timer: 240, group: 'Identity Verification',
     fields: [{ name: 'digilocker_consent', label: 'I consent to fetch my Aadhaar KYC from DigiLocker', type: 'consent', required: true }] },
@@ -80,14 +81,18 @@ export const MASTER_STEPS = [
       { name: 'nominee_opt', label: 'Do you want to add a nominee?', type: 'select', required: true, options: ['Add nominee', 'Opt out'] },
       { name: 'nominee_name', label: 'Nominee name', type: 'text', required: false },
       { name: 'nominee_relation', label: 'Relationship', type: 'select', required: false, options: ['Spouse', 'Son', 'Daughter', 'Father', 'Mother', 'Brother', 'Sister', 'Other'] },
-      { name: 'nominee_share', label: 'Share (%)', type: 'number', required: false, min: 1, max: 100 },
+      { name: 'nominee_share', label: 'Share (%)', type: 'number', required: false, min: 1, max: 100, help: 'One nominee holds 100%' },
     ] },
   { code: 'SEGMENTS', label: 'Segment & depository selection', owner_type: 'Lead', timer: 180, group: 'Segments',
     fields: [
       { name: 'segments', label: 'Trading segments', type: 'multiselect', required: true,
         options: ['Equity Cash', 'Equity Derivatives (F&O)', 'Currency Derivatives', 'Commodity', 'Mutual Funds'] },
       { name: 'depository', label: 'Depository', type: 'select', required: true, options: ['CDSL', 'NSDL'] },
-      { name: 'plan', label: 'Brokerage plan', type: 'select', required: true, options: ['Bigul Flat ₹0 Delivery', 'Classic Percentage Plan', 'PMS / Advisory'] },
+      /* QA-13 (Ritesh, 13 Oct): Bigul's flat plan on Bigul applications only.
+         `options` is every plan any business offers, for screens that list
+         them all; an applicant is offered their own business's. */
+      { name: 'plan', label: 'Brokerage plan', type: 'select', required: true, options: ['Bigul Flat ₹0 Delivery', 'Classic Percentage Plan', 'PMS / Advisory'],
+        options_by_business: { BONANZA: ['Classic Percentage Plan', 'PMS / Advisory'], BIGUL: ['Bigul Flat ₹0 Delivery', 'Classic Percentage Plan'] } },
     ] },
   { code: 'INCOME_PROOF', label: 'Upload income proof', owner_type: 'Lead', timer: 300, group: 'Income Proof',
     conditional_on: 'income_gt_10L_or_fno',
@@ -141,6 +146,11 @@ export const verificationOutcome = (code) =>
   VERIFICATION_OUTCOMES.find((o) => o.code === code) ?? null;
 
 export const stepByCode = (code) => MASTER_STEPS.find((s) => s.code === code);
+
+/** A step's fields as one business's applicant sees them (QA-13). */
+export const fieldsForBusiness = (fields = [], business = null) => fields.map(({ options_by_business: byBusiness, ...f }) => (
+  byBusiness && business && byBusiness[business] ? { ...f, options: byBusiness[business] } : f
+));
 
 /**
  * Check one step's answers against what the step declares (QA-34).
@@ -215,7 +225,37 @@ export function validateStepPayload(step, payload = {}) {
     }
   }
 
+  /* QA-34, ruled 13 Oct: follow industry practice.
+   *
+   * An individual account opened online is an adult's. A minor's account is
+   * opened and operated by a parent or court-appointed guardian, with the
+   * guardian's KYC alongside the minor's, and brokers take those offline
+   * rather than through a self-serve journey -- so this journey refuses an
+   * applicant under 18 and says where to go instead. */
+  const fieldOk = (name) => !problems.some((p) => p.field === name);
+  if (step.code === 'PAN' && typeof values.dob === 'string' && fieldOk('dob') && yearsOld(values.dob, today) < 18) {
+    problems.push({
+      field: 'dob',
+      message: 'You must be 18 or over to open an account online. A parent or guardian can open an account for a minor with us — call us and we will help.',
+    });
+  }
+
+  /* The depositories' nomination forms require the nominees' shares to add up
+     to 100%, settling equally only when none is given. This journey takes one
+     nominee, so theirs is the whole of it: 60% would leave 40% nominated to
+     nobody. */
+  if (addingNominee && values.nominee_share !== undefined && fieldOk('nominee_share') && Number(values.nominee_share) !== 100) {
+    problems.push({ field: 'nominee_share', message: 'With one nominee, their share is 100%' });
+  }
+
   return { problems, values };
+}
+
+/** Whole years from a YYYY-MM-DD date of birth to a YYYY-MM-DD day. */
+function yearsOld(dob, on) {
+  const [by, bm, bd] = dob.split('-').map(Number);
+  const [y, m, d] = on.split('-').map(Number);
+  return y - by - ((m < bm || (m === bm && d < bd)) ? 1 : 0);
 }
 
 /**
@@ -295,7 +335,9 @@ export function createJourney({ leadId = null, cardId = null, productTypeId, mob
   const result = run(
     `INSERT INTO kyc_journeys (lead_id, card_id, product_type_id, applicant_mobile, applicant_email, resume_token, status, current_step, form_data, started_at, journey_version_id)
      VALUES (?,?,?,?,?,?,?,?,?,datetime('now'),?)`,
-    [leadId, cardId, productTypeId, mobile, email, token, 'In Progress', steps[0].code, writeForm({}), pin],
+    /* QA-34. The mobile the journey was started with is the form's from the
+       start, so the mobile step shows it to confirm rather than asking again. */
+    [leadId, cardId, productTypeId, mobile, email, token, 'In Progress', steps[0].code, writeForm(mobile ? { mobile } : {}), pin],
   );
   const journeyId = Number(result.lastInsertRowid);
 

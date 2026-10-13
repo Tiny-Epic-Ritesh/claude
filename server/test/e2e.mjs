@@ -1807,7 +1807,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
     await dkycStep('BANK_PROOF', { bank_proof: 'cheque.jpg' });
     await dkycStep('NOMINEE', { nominee_opt: 'Opt out' });
     const { data } = await dkycStep('SEGMENTS', {
-      segments: ['Equity Cash', 'Equity Derivatives (F&O)'], depository: 'CDSL', plan: 'Bigul Flat ₹0 Delivery',
+      segments: ['Equity Cash', 'Equity Derivatives (F&O)'], depository: 'CDSL', plan: 'Classic Percentage Plan',   // a Bonanza journey: the flat plan is Bigul's (QA-13)
     });
     eq(data.next_step, 'INCOME_PROOF', 'income proof not triggered');
   });

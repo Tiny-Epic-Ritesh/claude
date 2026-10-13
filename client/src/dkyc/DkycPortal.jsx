@@ -288,6 +288,22 @@ function Journey() {
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [tokenId]);
 
+  /* QA-34. A step opens with what the application already holds for it -- the
+     mobile it was started with, or an answer given before a resume -- so the
+     applicant confirms it instead of typing it again. Never a code or a file. */
+  const stepCode = journey?.current_step;
+  useEffect(() => {
+    if (!journey) return;
+    const current = journey.steps.find((s) => s.code === stepCode);
+    const seed = {};
+    for (const f of current?.fields ?? []) {
+      if (['otp', 'file', 'consent'].includes(f.type)) continue;
+      if (journey.form?.[f.name] !== undefined && journey.form[f.name] !== null) seed[f.name] = journey.form[f.name];
+    }
+    setValues(seed);
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [stepCode]);
+
   useEffect(() => {
     tick.current = setInterval(() => setElapsed((s) => s + 1), 1000);
     return () => clearInterval(tick.current);

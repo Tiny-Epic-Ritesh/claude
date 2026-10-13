@@ -2,7 +2,7 @@
  * Core CRM routes — leads, product cards, activities, tasks, notes and lists.
  */
 
-import { exportHeldMasked } from '../engine/policies.js';
+import { exportHeldMasked, wonRefusal } from '../engine/policies.js';
 import { Router } from 'express';
 import { all, one, run, audit, notify, daysSince, ageBand, AGE_BANDS, CARD_COLOUR, CARD_STATES } from '../db.js';
 import { can, requireUser, requirePermission, reqScope, isReadOnlyOnLeads, unmaskRequested, maskFor, orgsFor, activeOrg, mayUseOrg } from '../auth.js';
@@ -715,6 +715,8 @@ router.post('/leads/bulk/field', requirePermission('lead.edit'), (req, res) => {
     const refusal = columnRefusal('lead', field, value, org);
     if (refusal) return res.status(400).json({ error: refusal, field: 'value', sales_org: org });
   }
+  const notWon = field === 'stage' ? wonRefusal(value, targets.map((t) => t.id)) : null;   // QA-24
+  if (notWon) return res.status(400).json({ error: notWon, field: 'value', policy: 'lead_won_requires_account' });
 
   if (reassigning) {
     /* Never into a business the new owner does not work in: those leads are
@@ -1086,6 +1088,8 @@ router.patch('/leads/:id', (req, res) => {
     const refusal = columnRefusal('lead', column, body[column], lead.sales_org);
     if (refusal) return res.status(400).json({ error: refusal, field: column });
   }
+  const notWon = wonRefusal(body.stage, [lead.id]);   // QA-24, while the policy is on
+  if (notWon) return res.status(400).json({ error: notWon, field: 'stage', policy: 'lead_won_requires_account' });
   if (body.owner_id !== undefined && Number(body.owner_id) !== lead.owner_id && !can(req.user.role, 'lead.reassign')) {
     return res.status(403).json({ error: 'Reassignment requires a Sales Supervisor or Admin', required: 'lead.reassign' });
   }

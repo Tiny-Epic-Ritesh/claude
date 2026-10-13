@@ -18,7 +18,7 @@ answered. *unverified* — the auditor's evidence stands but I have not traced i
 to a line yet. *environment* — a change to labs.tinyepic.in itself, not the code. *closed by
 ruling* — Ritesh ruled that the behaviour reported is the behaviour wanted.
 
-**Today, of the 43 IDs: 22 fixed · 1 closed by ruling · 6 partly fixed · 14
+**Today, of the 43 IDs: 26 fixed · 1 closed by ruling · 5 partly fixed · 11
 open · none waiting on a decision.** Every decision asked for was answered on 13
 October; QA-37's is answered once its recommendations are in. Plus the points
 below the table, which are not IDs but are as much part of the report.
@@ -35,11 +35,11 @@ below the table, which are not IDs but are as much part of the report.
 | QA-06 | P1 | **fixed** · QA-06 commit | Ruled 13 Oct. The Marketing Manager holds `pii.unmask` and sees identifiers unmasked by default (Setup → Field masking can still mask any field for the role), and holds `export.lead`, so the list Export that opened and then refused now works. **Setup → Business policies → Marketing's exports carry personal data**: *Unmasked* (the default, as ruled) or *Masked*, which refuses a clear export from every export route. **One masking rule everywhere:** the masker learnt the names a join gives identifiers (`lead_mobile`, `applicant_mobile`, `applicant_email`), and list members (the auditor's list #3), the case queue and case, the KYC health board and journey — the applicant's form included — a lead's journeys and the email composer now mask as the lead list does. Found by `server/test/piimasking.test.mjs`, which plants a lead and calls every GET route as a masked role. |
 | QA-07 | P1 | not started | A UI build: draft-until-Save on Manage, and a consequence summary with Confirm for Escalate and Resolve (Ritesh's Part 4). Confirmed by the report; no code defect to trace. |
 | QA-08 | P1 | **fixed** `84c2c2f` | Every link book-checked too. |
-| QA-09 | P1 | open · **ruled 13 Oct** | No definitions given; Ritesh asked for them to be set from standard broking practice. One definitions note for QA-09, 24 and 35, built to and written down for confirmation. |
+| QA-09 | P1 | **fixed** · definitions commit | Set from standard broking practice and written down: [QA-09-DEFINITIONS.md](QA-09-DEFINITIONS.md). *Won* is an opened account (a UCC); *Trading* is an account that traded in the last 90 days and *Dormant* one that has not; the exchanges' *Inactive* is 24 months (NSE/INSP/64718, Oct 2024); an Active product card is not an account; commission *accrued* is earned and unpaid, *paid* is paid. The Partner Portal now reads Trading and Dormant from the account, ends its funnel at *Account opened*, counts conversions as accounts, and shows paid and accrued commission apart; the CRM's partner conversions are accounts too. |
 | QA-10 | P1 | not started | A UI build: an opaque, scrollable call panel with a visible End call and state-aware actions. Confirmed by the report; needs a design pass in both themes. |
 | QA-11 | P1 | **fixed** `eaf4743` | One resolver, `fill()` in the merge engine, for the composer, test-send and campaign send. A field masked for the sender is refused by name. **`{{name}}` in campaigns is now the first name**, as the picker always said. The picker's static examples are untouched. |
 | QA-12 | P1 | **partly fixed** `eaf4743` | The screen shows `CRM_PUBLIC_URL` or the origin it is itself using — https. Refusing a key sent over plain http needs the proxy to say the scheme (`X-Forwarded-Proto`), which is nginx, which I do not touch. |
-| QA-13 | P1 | **partly fixed** · QA-13 commit | Ruled 13 Oct and built. **Setup → Business policies** (new, `admin.policies`, Admins and Superadmins, draft until Save, every change in the configuration audit) holds one switch per business — *Bonanza partners may refer Bigul products* and the reverse — both **off**. Off, the portal offers the partner's own business's products only and refuses a referral for the other's; on, the other's are offered labelled with their business, a referral for one becomes a lead in that business attributed to the partner, and the partner can follow it in the portal. The public account-opening page is **a page per business**, as ruled: `/dkyc` is Bonanza's, `/dkyc?business=bigul` Bigul's, each with its own products, name, logo and regulatory line, and a resumed application wears its own business's name. Bonanza Equity no longer pitches "the Bigul flat plan". **Still open, needing the business's words:** the brokerage-plan choices in the DKYC journey (*Bigul Flat ₹0 Delivery* is offered on Bonanza applications too — what are Bonanza's plans called?), and the help-line number shown on the Bigul page, which is Bonanza's. Commission on a cross-business referral is not defined. |
+| QA-13 | P1 | **partly fixed** · QA-13 commit | Ruled 13 Oct and built. **Setup → Business policies** (new, `admin.policies`, Admins and Superadmins, draft until Save, every change in the configuration audit) holds one switch per business — *Bonanza partners may refer Bigul products* and the reverse — both **off**. Off, the portal offers the partner's own business's products only and refuses a referral for the other's; on, the other's are offered labelled with their business, a referral for one becomes a lead in that business attributed to the partner, and the partner can follow it in the portal. The public account-opening page is **a page per business**, as ruled: `/dkyc` is Bonanza's, `/dkyc?business=bigul` Bigul's, each with its own products, name, logo and regulatory line, and a resumed application wears its own business's name. Bonanza Equity no longer pitches "the Bigul flat plan". **Plans, ruled 13 Oct and built:** Bigul's flat plan is offered on Bigul applications only. **Still open:** the help-line number shown on the Bigul page is Bonanza's, and commission on a cross-business referral is not defined. |
 | QA-14 | P2 | not started | Pipeline multi-select products and per-stage filters. |
 | QA-15 | P2 | not started | Pagination and column sorting, `P3-36`/`37`/`39`. |
 | QA-16 | P2 | not started | Report builder and dashboard creation, `P3-06`/`P2-17` — gated on `N-4a`. |
@@ -50,7 +50,7 @@ below the table, which are not IDs but are as much part of the report.
 | QA-21 | P2 | **fixed** `eaf4743` | The handoff names the Product RM(s) asked and the High-priority task it gave them. 60-second timing still unmeasured. |
 | QA-22 | P2 | not started | Market headlines are not links, `ENH-09`. |
 | QA-23 | P2 | **fixed** `eaf4743` | An egress row records what actually answered; the table says Sent abroad, Served locally, or — for rows before 13 Oct — Not recorded. |
-| QA-24 | P2 | open · **ruled 13 Oct** | What `Won` means — QA-09's definitions note. |
+| QA-24 | P2 | **fixed** · definitions commit | *Won* means the account was opened: an account opening now sets its lead Won, in the field history. A Business policy, *A lead is marked Won only once its account is opened*, makes it a hard rule for every stage writer; it is **off** until the account-opening feed reaches the CRM, because until then an RM's Won is the only signal there is. The seed no longer hands out Won at random. |
 | QA-25 | P2 | **partly fixed** `eaf4743` | The breach answer says whose tickets it counted. The drawer covering dashboard cards is untouched. |
 | QA-26 | P1 | **fixed** `84c2c2f` | |
 | QA-27 | P2 | **fixed** `eaf4743` | A delete returns to the list with a confirmation and a link straight to the recycle bin. |
@@ -60,10 +60,10 @@ below the table, which are not IDs but are as much part of the report.
 | QA-31 | P2 | **fixed** `eaf4743` | Any whole-rupee minimum; zero is zero, not "not set"; a negative is refused on create and edit. |
 | QA-32 | P1 | **fixed** `84c2c2f` | And the cross-book backfill it would have switched on. |
 | QA-33 | P0 | **fixed** `84c2c2f` | Override question open; partner #9 cleanup is *environment*, below. |
-| QA-34 | P1 | **partly fixed** `d34bb6b` | Every DKYC step is checked against its own declaration — required, pattern, listed options, dates not in the future, numbers in range — before any vendor call, and stored normalised. All six of the auditor's values are refused. PIN tightened to the house rule (`V.pincode`); account number 9–18 digits and a nominee share of 1–100 are new. **Still open:** keeping the mobile the journey started with rather than asking again; and the two rulings, **ruled 13 Oct — follow industry practice**: to build. |
-| QA-35 | P2 | open · **ruled 13 Oct** | The summary query is a bug; what Active means is QA-09's definitions note. |
+| QA-34 | P1 | **fixed** `d34bb6b` and the definitions commit | Every DKYC step is checked against its own declaration before any vendor call, and stored normalised; all six of the auditor's values are refused. **Ruled 13 Oct, industry practice, and built:** an applicant under 18 is refused online and pointed to a guardian-opened minor account; one nominee holds 100%, since the depositories' forms require the shares to total 100% and the journey takes one nominee. The journey keeps the mobile it was started with and offers it to confirm. *Worth a decision, not built:* SEBI's revised nomination framework allows up to ten nominees and asks for an identifier for each; this journey takes one nominee with name, relationship and share. |
+| QA-35 | P2 | **fixed** · definitions commit | The lead page's AUM tile counts Active products — it said "no active products" whenever the AUM date was missing — and a new *Account* tile says whether the account is opened, with its UCC. KYC complete, operations reviewed, account opened and product Active are defined apart in the definitions note. |
 | QA-36 | P1 | **closed by ruling** 13 Oct | Not a bypass: Sales RM and Sales Supervisor hold `pii.unmask`, so the edit form's unmask is permitted and audited. Ritesh ruled that opening the editor should show contact details without a click, which is what it does. |
-| QA-37 | P2 | open · **recommendations due** | Which entities get rename / retire / archive. Ritesh asked for industry-standard recommendations first, then a decision. The partner portal's revoke control is built (`OPS-15`). |
+| QA-37 | P2 | open · **ruled 13 Oct**, to build | Recommendations accepted as written — [QA-37-LIFECYCLE.md](QA-37-LIFECYCLE.md) — with corrections to notes and activities as linked entries, never edits. To build entity by entity. Already built: the partner portal's withdraw and re-issue (`OPS-15`), and a task *Cancelled* status (QA-02). |
 | QA-38 | P2 | **fixed** `eaf4743` | Send email / SMS / WhatsApp open when any purpose is allowed; the dialog asks Service or Marketing and the API enforces it. |
 | QA-39 | P2 | **fixed** `eaf4743` | The manual message and the list bulk send name their sender. Automated sends stay "system". The bulk send wrote two entries per lead: adjacent (i), `OPS-23`, fixed. |
 | QA-40 | P2 | **fixed** `eaf4743` | The log tabs called the Setup-health counter; they call the log counter. |
@@ -71,10 +71,10 @@ below the table, which are not IDs but are as much part of the report.
 | QA-42 | P1 | not started · **needs a reproduction** | Not explained by the code: a Dealer holds `card.mark.exploring` and the panel offers Mark as Exploring. Needs watching as a Dealer. |
 | QA-43 | P1 | **partly fixed** `eaf4743` | The detail shows the refusal instead of spinning. List and detail still disagree on scope — one of `N-12`'s cases. |
 
-Counted: **fixed 22** — QA-01, 02, 03, 04, 06, 08, 11, 19, 20, 21, 23, 26, 27,
-28, 30, 31, 32, 33, 38, 39, 40, 41. **Closed by ruling 1** — QA-36. **Partly
-fixed 6** — QA-05, 12, 13, 25, 34, 43. **Open 14** — QA-09, 24 and 35 (ruled 13
-Oct, to build); QA-37 (recommendations due); QA-07 and
+Counted: **fixed 26** — QA-01, 02, 03, 04, 06, 08, 09, 11, 19, 20, 21, 23, 24,
+26, 27, 28, 30, 31, 32, 33, 34, 35, 38, 39, 40, 41. **Closed by ruling 1** —
+QA-36. **Partly fixed 5** — QA-05, 12, 13, 25, 43. **Open 11** — QA-37 (ruled
+13 Oct, to build); QA-07 and
 QA-10 (UI builds); QA-14 to QA-18 and QA-22 (feature requests under earlier
 IDs); and QA-29 and QA-42, which the code does not explain and need a
 reproduction. Every open ID is traced or classified; none is "unverified". The
@@ -115,7 +115,7 @@ of [OUTSTANDING.md](OUTSTANDING.md). Not counted above: they are not report IDs.
 
 Answered 13 Oct: 1. QA-13 (a Setup control, off) · 2. QA-09/24/35 (standard
 practice) · 3. QA-06 export (allowed, with a masked/unmasked Setup control) ·
-4. QA-37 (recommendations first) · 7. OPS ids (assigned) · 8. QA-02 (signed off) ·
+4. QA-37 (recommendations accepted as written; corrections as linked entries) · 7. OPS ids (assigned) · 8. QA-02 (signed off) ·
 9. QA-36 (yes) · 10. QA-34 (industry practice). **Still open:** 5. the category
 for each of the four unmapped compliance flags (QA-28) · 6. whether a Superadmin
 needs an audited emergency elevation (QA-33). The DKYC half of QA-13 was

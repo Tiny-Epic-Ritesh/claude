@@ -48,6 +48,18 @@ export const POLICIES = [
     options: [{ value: 'unmasked', label: 'Unmasked' }, { value: 'masked', label: 'Masked' }],
     default: 'unmasked',
   },
+  {
+    /* QA-24. Off, because nothing records an account opening until the
+       account-opening feed reaches the CRM, and the RM's own Won is the only
+       signal there is. */
+    key: 'lead_won_requires_account',
+    area: 'Leads',
+    label: 'A lead is marked Won only once its account is opened',
+    help: 'On: nobody can set a lead to Won until it carries its UCC; an account opening sets Won by itself either way. '
+      + 'Switch this on once the account-opening feed reaches the CRM. Until then RMs mark Won by hand.',
+    type: 'bool',
+    default: false,
+  },
 ];
 
 export const policyDef = (key) => POLICIES.find((p) => p.key === key) ?? null;
@@ -118,6 +130,28 @@ export function referrableBooks(org) {
 }
 
 export const bookName = (org) => BOOK_NAME[org] ?? org;
+
+/* ------------------------------------------------------------ QA-24 */
+
+/**
+ * Why these leads may not be set to Won, or null.
+ *
+ * Won means the account was opened. While the policy is on, a lead without its
+ * UCC cannot be Won by anybody's hand; a bulk change carrying any such lead is
+ * refused whole, naming how many, as a refused value is.
+ */
+export function wonRefusal(stage, leadIds) {
+  if (stage !== 'Won' || !policy('lead_won_requires_account') || !leadIds.length) return null;
+  const without = one(
+    `SELECT COUNT(*) n FROM leads WHERE id IN (${leadIds.map(() => '?').join(',')})
+       AND (client_code IS NULL OR TRIM(client_code) = '')`,
+    leadIds,
+  ).n;
+  if (!without) return null;
+  return without === 1 && leadIds.length === 1
+    ? 'This lead has no account yet. A lead is Won when its account is opened, which records its UCC.'
+    : `${without} of these leads have no account yet. A lead is Won when its account is opened, which records its UCC.`;
+}
 
 /* ------------------------------------------------------------ QA-06 */
 

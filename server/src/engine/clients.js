@@ -11,6 +11,7 @@
  * This module owns the boundary between the two.
  */
 
+import { recordChange } from './metadata.js';
 import { all, one, run } from '../db.js';
 import { encryptField, decryptField, blindIndex } from '../security.js';
 
@@ -99,6 +100,14 @@ export function convertLead(leadId, {
   // working unchanged. It is a pointer now, not the definition of a client.
   if (!lead.client_code) {
     run('UPDATE leads SET client_code = ?, updated_at = datetime(\'now\') WHERE id = ?', [code, leadId]);
+  }
+
+  /* QA-24. Won means the account was opened (docs/feedback/QA-09-DEFINITIONS.md),
+     so an account opening is what makes its lead Won -- recorded in the lead's
+     history like any other change, by the account rather than by a person. */
+  if (lead.stage !== 'Won') {
+    run("UPDATE leads SET stage = 'Won', updated_at = datetime('now') WHERE id = ?", [leadId]);
+    recordChange('lead', leadId, 'stage', lead.stage, 'Won', { source: 'account_opening' });
   }
 
   return { ok: true, client: one('SELECT * FROM clients WHERE id = ?', [clientId]), created: true };
