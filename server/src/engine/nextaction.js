@@ -51,6 +51,26 @@ export const STATE_LABEL = {
 };
 
 /**
+ * The capability each move needs, by the state it moves to.
+ *
+ * QA-42. This lived inside the state route, so the panel offered every legal
+ * move to every role: a Dealer could press Warm, be refused, and see nothing,
+ * because the refusal went to the page behind the panel. The route and the
+ * panel now read the same map, and a move the role cannot make is shown
+ * disabled with the reason.
+ */
+export const MOVE_NEEDS = {
+  EXPLORING: 'card.mark.exploring',
+  WARM: 'card.mark.warm',
+  PRODUCT_RM_ENGAGED: 'card.engage',
+  KYC_IN_PROGRESS: 'kyc.manage',
+  ACTIVE: 'card.close',
+  LOST: 'card.close',
+  ON_HOLD: 'card.mark.warm',
+  INACTIVE: 'card.mark.exploring',
+};
+
+/**
  * What to do next, per state.
  *
  * `kind` tells the client how to perform it:
@@ -155,6 +175,7 @@ export function nextAction(card, caps, { daysInState = 0 } = {}) {
     second: decorate(base.second),
     alternatives: (TRANSITIONS[card.state] ?? []).map((to) => ({
       to, label: STATE_LABEL[to] ?? to,
+      ...decorate({ needs: MOVE_NEEDS[to] }),
     })),
   };
 }

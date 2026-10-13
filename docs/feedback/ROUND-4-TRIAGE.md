@@ -10,7 +10,7 @@ against this document and earlier feedback IDs." This is that document.
 ## The ledger — every point in the report, and where it stands
 
 Kept current: a commit that closes a point changes its row here and says so.
-Last updated **13 October 2026**: `84c2c2f`, `eaf4743`, `d34bb6b`, the QA-02 design, the rulings of 13 October, the partner-access commit `72fa94d` (OPS-15, 16, 17, 25, 26), and the commit after it (OPS-18 to OPS-24).
+Last updated **13 October 2026**: `84c2c2f`, `eaf4743`, `d34bb6b`, the rulings of 13 October, `72fa94d` (OPS-15, 16, 17, 25, 26), `e02fb6d` (OPS-18 to 24), `1c3b18c` (QA-02), `ca7d4ee` (QA-13), `9aa78bf` (QA-06), `a3be2c1` (QA-09, 24, 34, 35), `93607f5` (OPS-27 to 31), and the commit after it (QA-29, QA-42).
 
 **States.** *fixed* — in code, tested, pushed. *not started* — open, no
 blocker. *needs decision* — waiting on Ritesh, and nothing is built until it is
@@ -18,10 +18,11 @@ answered. *unverified* — the auditor's evidence stands but I have not traced i
 to a line yet. *environment* — a change to labs.tinyepic.in itself, not the code. *closed by
 ruling* — Ritesh ruled that the behaviour reported is the behaviour wanted.
 
-**Today, of the 43 IDs: 26 fixed · 1 closed by ruling · 5 partly fixed · 11
-open · none waiting on a decision.** Every decision asked for was answered on 13
-October; QA-37's is answered once its recommendations are in. Plus the points
-below the table, which are not IDs but are as much part of the report.
+**Today, of the 43 IDs: 28 fixed · 1 closed by ruling · 5 partly fixed · 9
+open · none waiting on a decision.** Every ruling a finding needed was given on
+13 October. Three narrower questions inside fixed IDs stay open under *Rulings
+asked for*. Plus the points below the table, which are not IDs but are as much
+part of the report.
 
 ### The 43 findings
 
@@ -55,7 +56,7 @@ below the table, which are not IDs but are as much part of the report.
 | QA-26 | P1 | **fixed** `84c2c2f` | |
 | QA-27 | P2 | **fixed** `eaf4743` | A delete returns to the list with a confirmation and a link straight to the recycle bin. |
 | QA-28 | P1 | **fixed** `84c2c2f` | Four compliance flags still need a category ruling. |
-| QA-29 | P2 | not started · **needs a reproduction** | Not explained by the code: the server counts live, nothing caches, and Done reloads. Needs watching in a browser. |
+| QA-29 | P2 | **fixed** 13 Oct | Reproduced in a browser: Done reloaded the list, but the dialog's Close, Escape and a click outside did not, so the list kept its empty state until a reload. The server had counted the lead at once. Every way out after an import now goes the way Done goes, and the values that did not match stay on the list page, folded, after the dialog shuts. `round4d.test.mjs`. |
 | QA-30 | P1 | **fixed** `84c2c2f` | Including duplication. |
 | QA-31 | P2 | **fixed** `eaf4743` | Any whole-rupee minimum; zero is zero, not "not set"; a negative is refused on create and edit. |
 | QA-32 | P1 | **fixed** `84c2c2f` | And the cross-book backfill it would have switched on. |
@@ -68,18 +69,16 @@ below the table, which are not IDs but are as much part of the report.
 | QA-39 | P2 | **fixed** `eaf4743` | The manual message and the list bulk send name their sender. Automated sends stay "system". The bulk send wrote two entries per lead: adjacent (i), `OPS-23`, fixed. |
 | QA-40 | P2 | **fixed** `eaf4743` | The log tabs called the Setup-health counter; they call the log counter. |
 | QA-41 | P2 | **fixed** `eaf4743` | A refusal shows, on all fourteen screens that put the spinner first. |
-| QA-42 | P1 | not started · **needs a reproduction** | Not explained by the code: a Dealer holds `card.mark.exploring` and the panel offers Mark as Exploring. Needs watching as a Dealer. |
+| QA-42 | P1 | **fixed** 13 Oct | Watched as the Dealer in the Service Console, as in the auditor's screenshot. Start engaging opens the panel and Mark as Exploring works. The reported result came from the panel's other moves: it offered every legal move whether or not the role may make it, and sent a refusal to the page behind it. Lost, which a Dealer cannot set, answered 403 and nothing showed -- no change, Activity 0, no product mutation in the audit, as reported. A move the role cannot make is now disabled with the reason, a refusal shows in the panel, and a move that worked says so. Left for Ritesh: the auditor expects a Dealer to be refused Warm, but the role matrix grants it; unchanged until ruled. `round4d.test.mjs`. |
 | QA-43 | P1 | **partly fixed** `eaf4743` | The detail shows the refusal instead of spinning. List and detail still disagree on scope — one of `N-12`'s cases. |
 
-Counted: **fixed 26** — QA-01, 02, 03, 04, 06, 08, 09, 11, 19, 20, 21, 23, 24,
-26, 27, 28, 30, 31, 32, 33, 34, 35, 38, 39, 40, 41. **Closed by ruling 1** —
-QA-36. **Partly fixed 5** — QA-05, 12, 13, 25, 43. **Open 11** — QA-37 (ruled
-13 Oct, to build); QA-07 and
-QA-10 (UI builds); QA-14 to QA-18 and QA-22 (feature requests under earlier
-IDs); and QA-29 and QA-42, which the code does not explain and need a
-reproduction. Every open ID is traced or classified; none is "unverified". The
-rulings inside QA-28 and QA-33 are listed below rather than counted, because
-those IDs are fixed.
+Counted: **fixed 28** — QA-01, 02, 03, 04, 06, 08, 09, 11, 19, 20, 21, 23, 24,
+26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 38, 39, 40, 41, 42. **Closed by ruling
+1** — QA-36. **Partly fixed 5** — QA-05, 12, 13, 25, 43. **Open 9** — QA-37
+(ruled 13 Oct, to build); QA-07 and QA-10 (UI builds); QA-14 to QA-18 and QA-22
+(feature requests under earlier IDs). Every open ID is traced or classified;
+none is "unverified". The rulings inside QA-28, QA-33 and QA-42 are listed
+below rather than counted, because those IDs are fixed.
 
 ### Everything else the report asks for
 
@@ -120,7 +119,9 @@ practice) · 3. QA-06 export (allowed, with a masked/unmasked Setup control) ·
 4. QA-37 (recommendations accepted as written; corrections as linked entries) · 7. OPS ids (assigned) · 8. QA-02 (signed off) ·
 9. QA-36 (yes) · 10. QA-34 (industry practice). **Still open:** 5. the category
 for each of the four unmapped compliance flags (QA-28) · 6. whether a Superadmin
-needs an audited emergency elevation (QA-33). The DKYC half of QA-13 was
+needs an audited emergency elevation (QA-33) · 11. whether a Dealer may mark a
+product Warm (QA-42): the role matrix grants it, the auditor expects it refused,
+and it is unchanged until ruled. The DKYC half of QA-13 was
 answered the same day: a separate page per business.
 
 ## Read this first: the build they tested is the build we have

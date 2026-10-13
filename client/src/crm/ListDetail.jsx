@@ -155,8 +155,23 @@ export default function ListDetail({ session }) {
       <ErrorBanner error={problem} onDismiss={() => setProblem(null)} />
       {done && (
         <div className="notice notice-ok" style={{ marginBottom: 14 }}>
-          <Icon name="check_circle" size={17} /> <span>{done}</span>
+          <Icon name="check_circle" size={17} /> <span>{done.text ?? done}</span>
         </div>
+      )}
+      {/* QA-29. What an import could not match outlives its dialog: closing it
+          is no reason to lose the values somebody still has to chase. */}
+      {done?.missed?.length > 0 && (
+        <details className="card" style={{ marginBottom: 14, padding: '10px 14px' }}>
+          <summary className="small">{done.missed_total} did not match — show the values</summary>
+          <div className="field" style={{ marginTop: 8 }}>
+            <textarea rows={6} readOnly value={done.missed.join('\n')} aria-label="Values that did not match" />
+            <span className="tiny muted">
+              {done.missed_total > done.missed.length ? `Showing the first ${done.missed.length}. ` : ''}
+              A value can miss because no lead carries it, or because the lead
+              it belongs to sits in a book you cannot see.
+            </span>
+          </div>
+        </details>
       )}
 
       {/* What this list is, in English. A saved filter nobody can read is a
@@ -783,8 +798,19 @@ function ImportDialog({ list, onClose, onDone, onError }) {
     } catch (e) { onError(e.message); } finally { setBusy(false); }
   };
 
+  /* QA-29. Done reloaded the list; the header's Close, Escape and a click
+     outside did not, so a list that had just gained a lead still said it was
+     empty until somebody reloaded the page. Once the import has run, every way
+     out is Done -- and what did not match goes with it, to the list page. */
+  const finish = () => onDone({
+    text: `${result.added} lead${result.added === 1 ? '' : 's'} added.${result.missed_total ? ` ${result.missed_total} did not match.` : ''}`,
+    missed: result.missed,
+    missed_total: result.missed_total,
+  });
+  const close = result ? finish : onClose;
+
   return (
-    <Modal title="Import" subtitle={`Add leads to "${list.name}" by identifier`} onClose={onClose}>
+    <Modal title="Import" subtitle={`Add leads to "${list.name}" by identifier`} onClose={close}>
       <div className="stack" style={{ gap: 14 }}>
         {!result ? (
           <>
@@ -842,8 +868,7 @@ function ImportDialog({ list, onClose, onDone, onError }) {
               </button>
             </>
           ) : (
-            <button className="btn-primary"
-              onClick={() => onDone(`${result.added} lead${result.added === 1 ? '' : 's'} added.`)}>
+            <button className="btn-primary" onClick={finish}>
               Done
             </button>
           )}

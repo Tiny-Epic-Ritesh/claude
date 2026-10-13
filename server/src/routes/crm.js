@@ -22,7 +22,7 @@ import { assignLead } from '../engine/assignment.js';
 import { request as requestApproval, BULK_THRESHOLD } from '../engine/approvals.js';
 import { metricsFor } from '../engine/metrics.js';
 import { kycStatusSql, kycStatusFor } from '../engine/kycstatus.js';
-import { nextAction, nextStepForLead } from '../engine/nextaction.js';
+import { nextAction, nextStepForLead, MOVE_NEEDS } from '../engine/nextaction.js';
 import { loadInBook } from '../engine/bookscope.js';
 import {
   listQueues, membersOf, mayTakeFrom, workIn, claimFromQueue, assignToQueue,
@@ -1419,16 +1419,8 @@ router.post('/cards/:id/state', (req, res) => {
   const { state, contact_flag, note, lost_reason } = req.body;
   if (!CARD_STATES.includes(state)) return res.status(400).json({ error: `Unknown state. Allowed: ${CARD_STATES.join(', ')}` });
 
-  const permissionFor = {
-    EXPLORING: 'card.mark.exploring',
-    WARM: 'card.mark.warm',
-    PRODUCT_RM_ENGAGED: 'card.engage',
-    KYC_IN_PROGRESS: 'kyc.manage',
-    ACTIVE: 'card.close',
-    LOST: 'card.close',
-    ON_HOLD: 'card.mark.warm',
-    INACTIVE: 'card.mark.exploring',
-  }[state];
+  // QA-42: the map the panel reads too, so what it offers is what this accepts.
+  const permissionFor = MOVE_NEEDS[state];
 
   if (!can(req.user.role, permissionFor)) {
     return res.status(403).json({ error: `Your role cannot set a card to ${state}`, required: permissionFor });

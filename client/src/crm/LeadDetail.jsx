@@ -257,7 +257,7 @@ export default function LeadDetail({ session }) {
       <Tabs tabs={tabs} active={tab} onChange={setTab} />
 
       {tab === 'cards' && (
-          <Cards lead={lead} session={session} reload={reload} onError={setActionError} onNotice={setNotice}
+          <Cards lead={lead} session={session} reload={reload} onNotice={setNotice}
             showAll={showAllProducts} onShowAll={setShowAllProducts}
             onContact={(channel) => actions.run(channel, lead)} />
         )}
@@ -392,7 +392,7 @@ const NEXT_MOVE = {
   LOST: 'Review',
 };
 
-function Cards({ lead, session, reload, onError, onNotice, onContact, showAll, onShowAll }) {
+function Cards({ lead, session, reload, onNotice, onContact, showAll, onShowAll }) {
   const [open, setOpen] = useState(null);
   /* Owned by the lead screen rather than here, because the next-step button in
      the header opens this list and cannot reach state that lives inside the
@@ -463,7 +463,6 @@ function Cards({ lead, session, reload, onError, onNotice, onContact, showAll, o
           cardId={open.id}
           onClose={() => setOpen(null)}
           onDone={(msg) => { setOpen(null); if (msg) onNotice?.(msg); reload(); }}
-          onError={onError}
           onContact={(channel) => { setOpen(null); onContact?.(channel); }}
           onCrossSell={() => { setOpen(null); setShowAll(true); }}
         />

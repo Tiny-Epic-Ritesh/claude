@@ -20,7 +20,7 @@
  */
 
 import { useState } from 'react';
-import { api, rupees, dateTime, shortDate, appUrl } from '../api.js';
+import { api, rupees, dateTime, shortDate, appUrl, STATE_LABEL } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty, Modal } from '../components/ui.jsx';
 
 const CHANNEL = {
@@ -40,24 +40,33 @@ const STATE_BADGE = {
   ON_HOLD: 'badge-amber',
 };
 
-export default function ProductPanel({ cardId, onClose, onDone, onError, onContact, onCrossSell }) {
+export default function ProductPanel({ cardId, onClose, onDone, onContact, onCrossSell }) {
   const [d, { loading, error, reload }] = useApi(cardId ? `/cards/${cardId}/detail` : null, [cardId]);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
   const [showMoves, setShowMoves] = useState(false);
+  const [failed, setFailed] = useState(null);
 
   if (loading && !d) return <Modal title="Loading…" onClose={onClose}><Loading /></Modal>;
   if (error) return <Modal title="Product" onClose={onClose}><ErrorBanner error={error} /></Modal>;
   if (!d) return null;
 
+  /* QA-42. A refusal went to the lead page, behind this panel, so a move that
+     failed looked like a button that did nothing. It is said here, where the
+     button is. */
   const act = async (fn) => {
     setBusy(true);
+    setFailed(null);
     // A step that has something to say returns it as a string (QA-21).
     try { const said = await fn(); onDone?.(typeof said === 'string' ? said : undefined); }
-    catch (e) { onError?.(e.message); setBusy(false); }
+    catch (e) { setFailed(e.message); setBusy(false); }
   };
 
-  const move = (to) => act(() => api.post(`/cards/${d.id}/state`, { state: to, note: note || undefined }));
+  // QA-42: and a move that worked says so, rather than only closing the panel.
+  const move = (to) => act(async () => {
+    const r = await api.post(`/cards/${d.id}/state`, { state: to, note: note || undefined });
+    return `${d.product_name} is now ${STATE_LABEL[r.to] ?? r.to}.`;
+  });
 
   const perform = async (action) => {
     if (!action || !action.allowed) return;
@@ -110,6 +119,7 @@ export default function ProductPanel({ cardId, onClose, onDone, onError, onConta
       wide
     >
       <div className="stack" style={{ gap: 14 }}>
+        <ErrorBanner error={failed} onDismiss={() => setFailed(null)} />
 
         {/* 1 — the directive. Named, not implied. */}
         <div className={`next-step ${next.urgent ? 'is-urgent' : ''}`}>
@@ -152,11 +162,15 @@ export default function ProductPanel({ cardId, onClose, onDone, onError, onConta
               </div>
               <div className="row wrap" style={{ gap: 6 }}>
                 {next.alternatives.map((a) => (
-                  <button key={a.to} className="btn-sm" disabled={busy} onClick={() => move(a.to)}>
+                  <button key={a.to} className="btn-sm" disabled={busy || a.allowed === false}
+                    title={a.blocked_reason ?? undefined} onClick={() => move(a.to)}>
                     {a.label}
                   </button>
                 ))}
               </div>
+              {next.alternatives.some((a) => a.allowed === false) && (
+                <div className="tiny muted">A greyed move is one your role cannot make.</div>
+              )}
             </div>
           )}
         </div>
