@@ -135,6 +135,15 @@ const login = async (email, password = 'bonanza') => {
 /* ------------------------------------------------------------ fixtures */
 
 const T = {};      // role → token
+
+/** An approved template for a channel, which a campaign is created with
+    (QA-30). Read as the superadmin, who sees both books' templates. */
+async function approvedTemplateId(channel) {
+  const { data } = await req('/api/admin/templates', { token: T.superadmin, expect: 200 });
+  const t = (data ?? []).find((x) => x.channel === channel && x.approved);
+  if (!t) throw new Error(`no approved ${channel} template to build a campaign from`);
+  return t.id;
+}
 const REF = {};    // reference records created by the suite
 
 /**
@@ -1072,7 +1081,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
 
     const { data: made } = await req('/api/admin/campaigns', {
       method: 'POST', token: T.superadmin, expect: 201,
-      body: { name: `Book check ${RUN}`, channel: 'whatsapp', list_id: audience.id },
+      body: { name: `Book check ${RUN}`, channel: 'whatsapp', list_id: audience.id, template_id: await approvedTemplateId('whatsapp') },
     });
     eq(made.sales_org, 'BIGUL', 'a campaign on a Bigul list was created into the other book');
 
@@ -4397,7 +4406,7 @@ await check('a per-channel withdrawal closes only that channel', async () => {
 
     const { data } = await req('/api/admin/campaigns', {
       method: 'POST', token: T.marketing_manager, expect: 201,
-      body: { name: `E2E campaign ${RUN}`, channel: 'whatsapp', list_id: REF.listId },
+      body: { name: `E2E campaign ${RUN}`, channel: 'whatsapp', list_id: REF.listId, template_id: await approvedTemplateId('whatsapp') },
     });
     REF.campaignId = data.id;
     eq(data.status, 'Draft', 'a new campaign should start as a draft');
@@ -4416,7 +4425,7 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     for (const role of ['superadmin', 'admin']) {
       const { data } = await req('/api/admin/campaigns', {
         method: 'POST', token: T[role], expect: 201,
-        body: { name: `E2E ${role} ${RUN}`, channel: 'email', list_id: REF.listId },
+        body: { name: `E2E ${role} ${RUN}`, channel: 'email', list_id: REF.listId, template_id: await approvedTemplateId('email') },
       });
       await req(`/api/admin/campaigns/${data.id}`, { method: 'DELETE', token: T[role], expect: 200 });
     }
@@ -4504,7 +4513,7 @@ await check('a per-channel withdrawal closes only that channel', async () => {
   await check('duplicate makes a fresh draft', async () => {
     const { data: made } = await req('/api/admin/campaigns', {
       method: 'POST', token: T.marketing_manager, expect: 201,
-      body: { name: `Dup source ${RUN}`, channel: 'sms', list_id: REF.listId },
+      body: { name: `Dup source ${RUN}`, channel: 'sms', list_id: REF.listId, template_id: await approvedTemplateId('sms') },
     });
     const { data: copy } = await req(`/api/admin/campaigns/${made.id}/duplicate`, {
       method: 'POST', token: T.marketing_manager, expect: 201,
@@ -4538,7 +4547,7 @@ await check('a per-channel withdrawal closes only that channel', async () => {
   await check('pausing a draft is refused with the reason', async () => {
     const { data: made } = await req('/api/admin/campaigns', {
       method: 'POST', token: T.marketing_manager, expect: 201,
-      body: { name: `Draft ${RUN}`, channel: 'sms', list_id: REF.listId },
+      body: { name: `Draft ${RUN}`, channel: 'sms', list_id: REF.listId, template_id: await approvedTemplateId('sms') },
     });
     const { data } = await req(`/api/admin/campaigns/${made.id}/pause`, {
       method: 'POST', token: T.marketing_manager, expect: 409,
@@ -5191,7 +5200,7 @@ await check('a per-channel withdrawal closes only that channel', async () => {
   await check('a campaign may not send to a dynamic list', async () => {
     const { data: campaign } = await req('/api/admin/campaigns', {
       method: 'POST', token: T.admin, expect: 201,
-      body: { name: `Dynamic guard ${RUN}`, channel: 'sms', list_id: dynamicList.id },
+      body: { name: `Dynamic guard ${RUN}`, channel: 'sms', list_id: dynamicList.id, template_id: await approvedTemplateId('sms') },
     });
     const { data } = await req(`/api/admin/campaigns/${campaign.id}/send`, {
       method: 'POST', token: T.admin, expect: 409,
@@ -5202,7 +5211,7 @@ await check('a per-channel withdrawal closes only that channel', async () => {
   await check('a campaign may send to a refreshable list', async () => {
     const { data: campaign } = await req('/api/admin/campaigns', {
       method: 'POST', token: T.admin, expect: 201,
-      body: { name: `Refreshable ok ${RUN}`, channel: 'sms', list_id: refreshableList.id },
+      body: { name: `Refreshable ok ${RUN}`, channel: 'sms', list_id: refreshableList.id, template_id: await approvedTemplateId('sms') },
     });
     await req(`/api/admin/campaigns/${campaign.id}/send`, { method: 'POST', token: T.admin, expect: 200 });
   });

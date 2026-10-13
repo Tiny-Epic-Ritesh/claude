@@ -1082,7 +1082,14 @@ router.patch('/leads/:id', (req, res) => {
     return res.status(403).json({ error: 'Reassignment requires a Sales Supervisor or Admin', required: 'lead.reassign' });
   }
 
-  const invalid = validate(body, { mobile: ['mobile'], email: ['email'], pan: ['pan'], name: ['max:120'] });
+  /* QA-26. Creation required a name and the edit did not, so clearing it got
+     as far as the database and came back as "NOT NULL constraint failed:
+     leads.name". An edit need not mention the name; if it does, it may not
+     blank it -- and whitespace is blank, which `validate` already knows. */
+  const invalid = validate(body, {
+    mobile: ['mobile'], email: ['email'], pan: ['pan'],
+    name: body.name !== undefined ? ['required', 'max:120'] : ['max:120'],
+  });
   if (invalid) return res.status(400).json(invalid);
 
   /* Configured validation rules, enforced at the API rather than in the form.
@@ -1871,13 +1878,24 @@ router.post('/tasks', (req, res) => {
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' });
   if (!due_at) return res.status(400).json({ error: 'A due date is required — tasks without one cannot be created' });
 
-  /* The lead named in the body, checked like one named in the path.
+  /* Every link named in the body, checked like an id named in the path.
    *
    * An id in the path gets checked; an id in the body did not, and this route
-   * put a task on any lead in either business. A task carries its lead's name,
-   * so it carries its lead's book. */
-  if (lead_id) {
-    const inBook = loadInBook(req, 'lead', lead_id);
+   * put a task on any lead in either business. A task carries its record's
+   * name, so it carries its record's book -- a case, a partner or a product
+   * card as much as a lead. Only the lead was checked until QA-08. */
+  const links = [['lead', lead_id], ['card', card_id], ['ticket', ticket_id], ['partner', partner_id]]
+    .filter(([, id]) => id !== undefined && id !== null && id !== '');
+
+  /* QA-08. The BRD says every task is linked to something, and the Tasks page
+     says so above its own form -- which offered no way to link one, while this
+     route took the task anyway: "Linked to —". A task about nothing is a
+     reminder nobody can act on from the record it concerns. */
+  if (!links.length) {
+    return res.status(400).json({ error: 'Link the task to a lead, case, partner or product card', field: 'lead_id' });
+  }
+  for (const [kind, id] of links) {
+    const inBook = loadInBook(req, kind, id);
     if (inBook.error) return res.status(inBook.status).json({ error: inBook.error });
   }
 

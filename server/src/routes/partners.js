@@ -440,6 +440,11 @@ router.post('/:id/lms/:module', requirePermission('partner.create'), (req, res) 
   res.json({ ok: true, modules: lmsSync(found.partner.id) });
 });
 
+/** Onboarding steps not yet done. One definition, so the request and the
+    activation cannot disagree about it again (QA-33). */
+const stepsOutstanding = (partnerId) =>
+  one("SELECT COUNT(*) n FROM partner_steps WHERE partner_id = ? AND status != 'done'", [partnerId]).n;
+
 /**
  * Elevation is a staged, audited workflow (BRD risk register):
  * Partner RM requests → Admin approves → system creates the entity + portal login.
@@ -449,8 +454,8 @@ router.post('/:id/request-elevation', requirePermission('partner.elevate.request
   if (found.error) return res.status(found.status).json({ error: found.error });
   const { partner } = found;
 
-  const pending = one("SELECT COUNT(*) n FROM partner_steps WHERE partner_id = ? AND status != 'done'", [req.params.id]);
-  if (pending.n > 0) return res.status(400).json({ error: `${pending.n} onboarding step(s) still incomplete`, pending: pending.n });
+  const pending = stepsOutstanding(partner.id);
+  if (pending > 0) return res.status(400).json({ error: `${pending} onboarding step(s) still incomplete`, pending });
 
   for (const admin of all("SELECT id FROM users WHERE role IN ('admin','superadmin') AND active = 1")) {
     notify(admin.id, 'Partner elevation requested', `${req.user.name} has requested elevation for ${partner.name}.`, `/partners/${partner.id}`);
@@ -466,6 +471,16 @@ router.post('/:id/elevate', requirePermission('partner.elevate'), async (req, re
   if (found.error) return res.status(found.status).json({ error: found.error });
   const { partner } = found;
   if (partner.state_code === 'ACTIVE') return res.status(400).json({ error: 'Partner is already active' });
+
+  /* QA-33. The request held this gate and the activation did not, so one
+     Superadmin click made a 0-of-8 prospect ACTIVE, issued its partner code
+     and switched on its portal login. Both routes now ask the same question.
+     An audited override for an emergency would be a separate, explicit
+     decision; it is not built here. */
+  const pending = stepsOutstanding(partner.id);
+  if (pending > 0) {
+    return res.status(400).json({ error: `${pending} onboarding step(s) still incomplete`, pending });
+  }
 
   const code = `BNZ-P${String(partner.id).padStart(4, '0')}`;
   const password = req.body.portal_password || `partner${partner.id}`;

@@ -206,6 +206,9 @@ function ProductEditor({ product, onClose, onSaved, onError }) {
     requires_kyc: Boolean(product.requires_kyc),
   });
   const [busy, setBusy] = useState(false);
+  /* QA-32. A refusal went to the page behind this dialog, where the dialog
+     covered it; the auditor had to cancel to read why Save had failed. */
+  const [error, setError] = useState(null);
 
   const set = (k) => (e) => setForm((f) => ({
     ...f, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value,
@@ -213,8 +216,9 @@ function ProductEditor({ product, onClose, onSaved, onError }) {
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!form.name.trim()) { onError('A product needs a name'); return; }
+    if (!form.name.trim()) { setError('A product needs a name'); return; }
     setBusy(true);
+    setError(null);
     try {
       const body = {
         ...form,
@@ -226,7 +230,7 @@ function ProductEditor({ product, onClose, onSaved, onError }) {
       if (making) await api.post('/admin/products', body);
       else await api.patch(`/admin/products/${product.id}`, body);
       onSaved();
-    } catch (err) { onError(err.message); setBusy(false); }
+    } catch (err) { setError(err.message); setBusy(false); }
   };
 
   return (
@@ -237,6 +241,7 @@ function ProductEditor({ product, onClose, onSaved, onError }) {
       wide
     >
       <form onSubmit={submit} className="form-grid">
+        {error && <div className="span-2"><ErrorBanner error={error} /></div>}
         <div className="glass notice span-2">
           <Icon name="lock" size={16} />
           <div>

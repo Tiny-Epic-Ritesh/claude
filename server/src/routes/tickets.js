@@ -9,6 +9,7 @@ import { loadInBook } from '../engine/bookscope.js';
 import { assertValid } from '../engine/validation.js';
 import { recordChange } from '../engine/metadata.js';
 import { applySla, sweepSla, handleStatusChange, slaRemaining, DEFAULT_SLA } from '../engine/sla.js';
+import { openCase } from '../engine/cases.js';
 import { send } from '../integrations.js';
 import * as ai from '../ai/index.js';
 
@@ -271,42 +272,17 @@ router.post('/', requirePermission('ticket.create'), async (req, res) => {
     return res.status(403).json({ error: 'That record belongs to another book' });
   }
 
-  /* Auto-assignment by category, round-robin by current open load (BRD §7.10),
-     and within the case's own book — an agent cannot work a queue they cannot
-     read, so assigning across the book leaves the case stranded. Unassigned in
-     the right book beats assigned in the wrong one, so there is no fallback to
-     just anybody. */
-  /* The book test is `mayUseOrg` -- the same definition the gate above used to
-     refuse the author, and the one `orgsFor` actually implements.
-
-     It was `sales_org = ? OR org_access LIKE ?`, which reads like the same rule
-     and is not. `org_access` *replaces* a user's own book rather than adding to
-     it, so someone moved off this desk by their access list still matched on
-     `sales_org` and still drew cases they could no longer open. The `LIKE` is
-     the second half of the problem: it is a substring test against the JSON
-     text, so it answers for any org code that happens to sit inside another. */
-  const assignee = all(
-    `SELECT id, role, sales_org, org_access,
-            (SELECT COUNT(*) FROM tickets
-              WHERE assignee_id = users.id AND status NOT IN ('Resolved','Closed')) AS open_load
-      FROM users
-      WHERE role = ? AND active = 1
-      ORDER BY open_load, id`,
-    [category?.auto_assign_role ?? 'customer_care'],
-  ).find((u) => mayUseOrg(u, org)) ?? null;
-
-  const result = run(
-    `INSERT INTO tickets (subject, description, priority, category_id, lead_id, card_id, partner_id, channel, assignee_id, created_by, status, sales_org)
-     VALUES (?,?,?,?,?,?,?,?,?,?,'Open',?)`,
-    [subject, description || null, priority, category_id || null, lead_id || null, card_id || null, partner_id || null,
-      channel, assignee?.id || null, req.user.id, org],
-  );
-  const id = Number(result.lastInsertRowid);
-  run('UPDATE tickets SET ref = ? WHERE id = ?', [
-    `${org === 'BIGUL' ? 'BGL' : 'BNZ'}-${String(id).padStart(5, '0')}`, id,
-  ]);
-
-  applySla(id);
+  /* Auto-assignment by category, by current open load (BRD 7.10), within the
+     case's own book; the reference and the SLA clock. The same for every door
+     a case comes in by, so they are decided in one place -- engine/cases.js,
+     after the portal and the AI disposition were found doing neither (QA-03,
+     QA-28). */
+  if (category_id && !category) return res.status(400).json({ error: 'That category does not exist' });
+  const { id, assignee } = openCase({
+    subject, description: description || null, priority, categoryId: category?.id ?? null,
+    leadId: lead_id || null, cardId: card_id || null, partnerId: partner_id || null,
+    channel, createdBy: req.user.id, org,
+  });
 
   if (lead_id) {
     run('INSERT INTO activities (lead_id, card_id, type, direction, subject, body, user_id) VALUES (?,?,?,?,?,?,?)', [

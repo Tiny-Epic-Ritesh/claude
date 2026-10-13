@@ -125,11 +125,18 @@ await test('a task you give yourself is not news', async () => {
      learn to ignore the bell. */
   const before = one('SELECT COUNT(*) n FROM notifications WHERE user_id = ?', [sup.id]).n;
 
+  /* Linked to a lead, as every task now is (QA-08). Without one the route
+     refuses, and this test would go on to pass without a task having been
+     made at all -- so the creation is asserted, not assumed. */
+  const leads = await (await fetch(`${BASE}/api/leads?limit=1`, { headers: await H() })).json();
+  assert(leads[0], 'the supervisor can see no lead to link the task to');
+
   const res = await fetch(`${BASE}/api/tasks`, {
     method: 'POST',
     headers: await H(),
-    body: JSON.stringify({ title: 'My own probe task', assignee_id: sup.id, due_at: '2026-12-31 10:00:00' }),
+    body: JSON.stringify({ title: 'My own probe task', lead_id: leads[0].id, assignee_id: sup.id, due_at: '2026-12-31 10:00:00' }),
   });
+  assert.equal(res.status, 201, `the task was not created: HTTP ${res.status}`);
   const task = await res.json();
 
   try {

@@ -234,6 +234,8 @@ function NewCampaign({ lists, templates, onClose, onDone, onError }) {
 
   // A campaign may only send to a list whose membership holds still (Q-25).
   const eligible = lists.filter((l) => l.kind !== 'dynamic');
+  // Already approved-only: the parent filters before passing them in.
+  const approved = templates.filter((t) => t.channel === form.channel);
   const dynamicCount = lists.length - eligible.length;
 
   const submit = async (e) => {
@@ -246,7 +248,7 @@ function NewCampaign({ lists, templates, onClose, onDone, onError }) {
         template_id: form.template_id || null,
       });
       onDone();
-    } catch (err) { onError(err.message); }
+    } catch (err) { onError(err.message); setSaving(false); }
   };
 
   return (
@@ -259,7 +261,7 @@ function NewCampaign({ lists, templates, onClose, onDone, onError }) {
         </div>
         <div className="field">
           <label htmlFor="c-channel">Channel</label>
-          <select id="c-channel" value={form.channel} onChange={(e) => set('channel', e.target.value)}>
+          <select id="c-channel" value={form.channel} onChange={(e) => { set('channel', e.target.value); set('template_id', ''); }}>
             <option value="whatsapp">WhatsApp</option>
             <option value="sms">SMS</option>
             <option value="email">Email</option>
@@ -283,15 +285,21 @@ function NewCampaign({ lists, templates, onClose, onDone, onError }) {
           <label htmlFor="c-template">Template</label>
           <select id="c-template" value={form.template_id} onChange={(e) => set('template_id', e.target.value)}>
             <option value="">Choose an approved template…</option>
-            {templates.filter((t) => t.channel === form.channel).map((t) => (
+            {approved.map((t) => (
               <option key={t.id} value={t.id}>{t.name}</option>
             ))}
           </select>
-          <span className="tiny muted">Only approved templates can be sent to clients.</span>
+          {/* QA-30. Only approved templates were ever offered; what was missing
+              was a rule that one be chosen. Now an empty channel says why. */}
+          <span className="tiny muted">
+            {approved.length
+              ? 'Only approved templates can be sent to clients.'
+              : `No approved ${form.channel === 'sms' ? 'SMS' : form.channel === 'email' ? 'email' : 'WhatsApp'} template yet — one has to be approved in Setup → Templates first.`}
+          </span>
         </div>
         <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
           <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn-primary" disabled={saving || !form.name.trim()}>
+          <button type="submit" className="btn-primary" disabled={saving || !form.name.trim() || !form.template_id}>
             {saving ? 'Creating…' : 'Create'}
           </button>
         </div>

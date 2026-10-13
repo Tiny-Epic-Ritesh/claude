@@ -116,7 +116,7 @@ each comparable in size to everything delivered in Round 1.
 
 ---
 
-## 3d · Round 4 — an independent QA audit, 43 findings, none started
+## 3d · Round 4 — an independent QA audit, 43 findings, eight fixed 13 Oct
 
 Received **13 October 2026**; the audit ran 30 September–1 October against
 labs.tinyepic.in, which was `1cff7c3` (18 September). No commit landed between
@@ -144,7 +144,9 @@ routes contain no field validation at all), QA-36 (needs one read of the unmask
 gate).
 
 **Eight of those are surgical** — QA-01, QA-03, QA-33, QA-26, QA-08, QA-28,
-QA-32, QA-30 — and belong in one pass with tests. **QA-02 is a design change**
+QA-32, QA-30 — and belong in one pass with tests. **Fixed 13 October**, with 28
+tests of which 20 fail on the unfixed code; eight defects found beside them are
+listed in the triage, unfixed, each wanting its own OPS id. **QA-02 is a design change**
 with 48,000 rows to reconcile and wants its own scoping and sign-off. **QA-34 is
 medium**, because the same values arrive from DKYC, from import and from
 automation writes.

@@ -10,7 +10,7 @@ import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
 import { requirePartner } from '../auth.js';
 import { portalLeadScope } from '../auth.js';
-import { applySla } from '../engine/sla.js';
+import { openCase, categoryNamed } from '../engine/cases.js';
 import { LMS_MODULES } from './partners.js';
 import { generateCards } from './crm.js';
 import { leastLoadedRm } from '../engine/assignment.js';
@@ -158,16 +158,16 @@ router.post('/tickets', (req, res) => {
   const { subject, description, priority = 'Medium' } = req.body;
   if (!subject?.trim()) return res.status(400).json({ error: 'Subject is required' });
 
-  const assignee = one("SELECT id FROM users WHERE role = 'customer_care' AND active = 1 ORDER BY (SELECT COUNT(*) FROM tickets WHERE assignee_id = users.id AND status NOT IN ('Resolved','Closed')) LIMIT 1");
-
-  const result = run(
-    `INSERT INTO tickets (subject, description, priority, partner_id, channel, assignee_id, status)
-     VALUES (?,?,?,?,'Portal',?,'Open')`,
-    [subject, description || null, priority, req.partner.id, assignee?.id || null],
-  );
-  const id = Number(result.lastInsertRowid);
-  run('UPDATE tickets SET ref = ? WHERE id = ?', [`BNZ-${String(id).padStart(5, '0')}`, id]);
-  applySla(id);
+  /* QA-03. A partner's ticket is a Partner Support case in the partner's own
+     book, worked by whoever that category names -- a Partner RM, per Setup ->
+     SLA -- and never by somebody in the other business. It took the least
+     loaded Customer Care agent across both books, carried no book and no
+     category, and was numbered BNZ- whoever raised it. */
+  const { id, assignee } = openCase({
+    subject, description: description || null, priority,
+    categoryId: categoryNamed('Partner Support')?.id ?? null,
+    partnerId: req.partner.id, channel: 'Portal', org: req.partner.sales_org,
+  });
 
   if (assignee?.id) notify(assignee.id, 'Partner raised a ticket', subject, `/tickets/${id}`);
   res.status(201).json(one('SELECT id, ref, subject, status FROM tickets WHERE id = ?', [id]));

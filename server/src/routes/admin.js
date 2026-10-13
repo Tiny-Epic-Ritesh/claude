@@ -147,25 +147,67 @@ router.get('/roles', requireUser, (_req, res) => {
 
 router.get('/products', (_req, res) => res.json(all('SELECT * FROM product_types ORDER BY sort_order')));
 
+/**
+ * The permanent code a new product is issued (QA-32).
+ *
+ * The screen has always promised a generated code and offered no field to type
+ * one, and this route has always refused without it -- "Code and name are
+ * required" on a form with no Code -- so no product could be made from Setup.
+ *
+ * Derived from the name in the catalogue's own style, with Bigul's BG- prefix,
+ * and numbered when taken, because the column is unique across both
+ * businesses. Nothing changes a code after this, which is what "permanent"
+ * on the screen promises.
+ */
+export function issueProductCode(name, org) {
+  const stem = String(name ?? '').normalize('NFKD').toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+    .slice(0, 16).replace(/-+$/, '') || 'PRODUCT';
+  const base = org === 'BIGUL' && !stem.startsWith('BG-') ? `BG-${stem}` : stem;
+  let code = base;
+  for (let n = 2; one('SELECT 1 v FROM product_types WHERE code = ?', [code]); n += 1) code = `${base}-${n}`;
+  return code;
+}
+
 router.post('/products', requirePermission('admin.products'), (req, res) => {
   const { code, name, category, min_investment, lock_in, risk_category, pitch_points, objections, requires_kyc = 1 } = req.body;
-  if (!code?.trim() || !name?.trim()) return res.status(400).json({ error: 'Code and name are required' });
+  if (!name?.trim()) return res.status(400).json({ error: 'A product needs a name' });
+
+  /* A product belongs to a business, as a lead does, and this route never
+     said which -- the column default made every new product Bonanza's. */
+  const org = activeOrg(req) || req.user.sales_org;
+  if (!orgsFor(req.user).includes(org)) {
+    return res.status(403).json({ error: `You cannot add products to ${org}` });
+  }
+
+  // An API caller may still name a code; the screen never does.
+  const issued = code?.trim() ? code.trim().toUpperCase() : issueProductCode(name, org);
+  if (one('SELECT 1 v FROM product_types WHERE code = ?', [issued])) {
+    return res.status(409).json({ error: `The code ${issued} is already taken` });
+  }
 
   const maxOrder = one('SELECT COALESCE(MAX(sort_order), 0) v FROM product_types').v;
   const result = run(
-    `INSERT INTO product_types (code, name, category, min_investment, lock_in, risk_category, pitch_points, objections, requires_kyc, sort_order)
-     VALUES (?,?,?,?,?,?,?,?,?,?)`,
-    [code.toUpperCase(), name, category || null, min_investment || null, lock_in || null, risk_category || null,
+    `INSERT INTO product_types (sales_org, code, name, category, min_investment, lock_in, risk_category, pitch_points, objections, requires_kyc, sort_order)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    [org, issued, name.trim(), category || null, min_investment || null, lock_in || null, risk_category || null,
       JSON.stringify(pitch_points || []), JSON.stringify(objections || []), requires_kyc ? 1 : 0, maxOrder + 1],
   );
   const id = Number(result.lastInsertRowid);
 
-  // A new product type immediately generates a card on every existing lead.
-  for (const lead of all('SELECT id FROM leads WHERE deleted_at IS NULL')) {
+  /* A new product puts a card on every existing lead -- in its own business.
+     This put one on every lead in both, against the rule `generateCards`
+     states for new leads: "A Bonanza lead has no business carrying a Bigul
+     Connect card". It never fired, because no product could be created; the
+     QA-32 fix above is what would have switched it on. */
+  for (const lead of all('SELECT id FROM leads WHERE deleted_at IS NULL AND sales_org = ?', [org])) {
     run('INSERT OR IGNORE INTO product_cards (lead_id, product_type_id, state) VALUES (?,?,?)', [lead.id, id, 'INACTIVE']);
   }
-  audit(req.user.id, 'product_created', 'product_type', id, { code });
-  res.status(201).json({ id, cards_generated: one('SELECT COUNT(*) n FROM product_cards WHERE product_type_id = ?', [id]).n });
+  audit(req.user.id, 'product_created', 'product_type', id, { code: issued, sales_org: org });
+  res.status(201).json({
+    id, code: issued, sales_org: org,
+    cards_generated: one('SELECT COUNT(*) n FROM product_cards WHERE product_type_id = ?', [id]).n,
+  });
 });
 
 /* ------------------------------------------------- product brochure (P3-15)
@@ -1142,6 +1184,29 @@ router.get('/campaigns/archived', requirePermission('campaign.manage'), (_req, r
   `));
 });
 
+/**
+ * The approved content a campaign sends (QA-30).
+ *
+ * The form said "Choose an approved template… Only approved templates can be
+ * sent to clients", and nothing enforced either half: the picker listed
+ * unapproved templates, a campaign could be made with none, and a send
+ * without one went out as a stock "Bonanza update" that nobody had written or
+ * approved. The content of a mass message is the thing compliance signs off,
+ * so a campaign carries an approved template for its own channel from the
+ * moment it exists -- and the send asks again, because approval can be
+ * withdrawn after the campaign was made.
+ */
+function approvedTemplate(templateId, channel) {
+  if (!templateId) return { error: 'Choose an approved template for this campaign', status: 400 };
+  const template = one('SELECT * FROM templates WHERE id = ?', [templateId]);
+  if (!template) return { error: 'That template does not exist', status: 400 };
+  if (template.channel !== channel) {
+    return { error: `"${template.name}" is a ${template.channel} template, and this campaign sends by ${channel}`, status: 400 };
+  }
+  if (!template.approved) return { error: `"${template.name}" is not approved for sending`, status: 409 };
+  return { template };
+}
+
 router.post('/campaigns', requirePermission('campaign.manage'), (req, res) => {
   const { name, channel, template_id, list_id, scheduled_at } = req.body ?? {};
   if (!name?.trim()) return res.status(400).json({ error: 'Give the campaign a name' });
@@ -1165,10 +1230,13 @@ router.post('/campaigns', requirePermission('campaign.manage'), (req, res) => {
     return res.status(403).json({ error: 'That list belongs to another book' });
   }
 
+  const content = approvedTemplate(template_id, channel);
+  if (content.error) return res.status(content.status).json({ error: content.error });
+
   const result = run(
     `INSERT INTO campaigns (name, channel, template_id, list_id, scheduled_at, status, created_by, sales_org)
      VALUES (?,?,?,?,?,?,?,?)`,
-    [name.trim(), channel, template_id || null, list_id, scheduled_at || null,
+    [name.trim(), channel, content.template.id, list_id, scheduled_at || null,
       scheduled_at ? 'Scheduled' : 'Draft', req.user.id, org],
   );
   audit(req.user.id, 'campaign_created', 'campaign', Number(result.lastInsertRowid), { name, channel });
@@ -1190,6 +1258,16 @@ router.patch('/campaigns/:id', requirePermission('campaign.manage'), (req, res) 
       error: `"${campaign.name}" has already gone out and cannot be changed`,
       fix: 'Duplicate it to make a new version — the sent one stays as a record of what was sent.',
     });
+  }
+
+  /* QA-30. A draft can change its channel or its template, and the pair it
+     ends up with must still be approved content for that channel. */
+  if (req.body?.template_id !== undefined || req.body?.channel !== undefined) {
+    const content = approvedTemplate(
+      req.body.template_id !== undefined ? req.body.template_id : campaign.template_id,
+      req.body.channel !== undefined ? req.body.channel : campaign.channel,
+    );
+    if (content.error) return res.status(content.status).json({ error: content.error });
   }
 
   const fields = ['name', 'channel', 'template_id', 'list_id', 'scheduled_at'];
@@ -1218,6 +1296,13 @@ router.patch('/campaigns/:id', requirePermission('campaign.manage'), (req, res) 
 router.post('/campaigns/:id/duplicate', requirePermission('campaign.manage'), (req, res) => {
   const c = one('SELECT * FROM campaigns WHERE id = ?', [req.params.id]);
   if (!c) return res.status(404).json({ error: 'Campaign not found' });
+
+  /* QA-30. A duplicate is a new campaign, so it is made on the same terms.
+     The auditor's #4 was a copy of #3, which had no content at all; copying
+     the template id blindly carried that forward, and would carry forward a
+     template that has since lost its approval. */
+  const content = approvedTemplate(c.template_id, c.channel);
+  if (content.error) return res.status(content.status).json({ error: content.error });
 
   const result = run(
     `INSERT INTO campaigns (name, channel, template_id, list_id, status, created_by)
@@ -1313,8 +1398,9 @@ router.post('/campaigns/:id/test', requirePermission('campaign.manage'), async (
   const campaign = one('SELECT * FROM campaigns WHERE id = ?', [req.params.id]);
   if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
-  const template = campaign.template_id
-    ? one('SELECT * FROM templates WHERE id = ?', [campaign.template_id]) : null;
+  const content = approvedTemplate(campaign.template_id, campaign.channel);
+  if (content.error) return res.status(content.status).json({ error: content.error });
+  const { template } = content;
 
   const to = campaign.channel === 'email' ? req.user.email : (req.user.phone || req.user.whatsapp);
   if (!to) {
@@ -1327,7 +1413,7 @@ router.post('/campaigns/:id/test', requirePermission('campaign.manage'), async (
   const { send } = await import('../integrations.js');
   send(campaign.channel, {
     to,
-    body: `[TEST] ${(template?.body || 'Bonanza update').replace(/\{\{name\}\}/g, req.user.name)}`,
+    body: `[TEST] ${template.body.replace(/\{\{name\}\}/g, req.user.name)}`,
     subject: template?.subject ? `[TEST] ${template.subject}` : undefined,
     templateId: campaign.template_id,
   });
@@ -1361,8 +1447,11 @@ router.post('/campaigns/:id/send', requirePermission('campaign.manage'), async (
     });
   }
 
-  const template = campaign.template_id
-    ? one('SELECT * FROM templates WHERE id = ?', [campaign.template_id]) : null;
+  /* Asked after the dynamic-list refusal, so a campaign that fails both is
+     told about its audience first: that is the one it cannot fix by editing. */
+  const content = approvedTemplate(campaign.template_id, campaign.channel);
+  if (content.error) return res.status(content.status).json({ error: content.error });
+  const { template } = content;
 
   /**
    * The consent gate, on the path that carries the volume.
@@ -1378,7 +1467,7 @@ router.post('/campaigns/:id/send', requirePermission('campaign.manage'), async (
   for (const lead of reachable) {
     send(campaign.channel, {
       to: campaign.channel === 'email' ? lead.email : lead.mobile,
-      body: (template?.body || 'Bonanza update').replace(/\{\{name\}\}/g, lead.name),
+      body: template.body.replace(/\{\{name\}\}/g, lead.name),
       subject: template?.subject,
       leadId: lead.id,
       templateId: campaign.template_id,

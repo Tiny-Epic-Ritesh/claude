@@ -32,17 +32,65 @@ their code state.
 
 | ID | Pri | Status | Cause, in code |
 |---|---|---|---|
-| QA-01 | P0 | **not started** · verified | The server already gets precedence right, and did in the tested build: `crm.js` line 978, `const routable = req.body.route ?? (!owner_id && INBOUND_SOURCES.has(...))`. The bug is in the client. `Leads.jsx` line 594 renders *Assign to me* as `<option value="">`, so the form posts an empty owner, `!owner_id` is true, and a Website lead routes away from the person who just claimed it. **Narrow the finding: not "routing overrides the selection" but "the selection is never sent."** Fix at both ends — carry the creator's id in the option, and have the server distinguish an absent owner from one explicitly set. The report's second observation, that the form offers owners a Sales RM should not see, is separate and also open. |
+| QA-01 | P0 | **fixed** 13 Oct · verified | The server already gets precedence right, and did in the tested build: `crm.js` line 978, `const routable = req.body.route ?? (!owner_id && INBOUND_SOURCES.has(...))`. The bug is in the client. `Leads.jsx` line 594 renders *Assign to me* as `<option value="">`, so the form posts an empty owner, `!owner_id` is true, and a Website lead routes away from the person who just claimed it. **Narrow the finding: not "routing overrides the selection" but "the selection is never sent."** Fix at both ends — carry the creator's id in the option, and have the server distinguish an absent owner from one explicitly set. The report's second observation, that the form offers owners a Sales RM should not see, is separate and also open. |
 | QA-02 | P0 | **not started** · verified | `engine/rules.js` has no idempotency of any kind: no key, no already-fired check, no bounded retry. It writes `rule_runs` (line 539) but never reads it to decide whether to act. Nothing stops a sweep re-firing against a record it has already acted on, which is what 48,243 firings against 41 leads describes. |
-| QA-03 | P0 | **not started** · verified | `portal.js` line 161: `SELECT id FROM users WHERE role = 'customer_care' AND active = 1 ORDER BY (...) LIMIT 1` — **no `sales_org` filter**, so a Bonanza partner's ticket goes to whichever Customer Care user is least loaded in either book. The INSERT on line 164 carries no `sales_org` and no `category_id`, which is why the case reads *Uncategorised*. And hard-coding `role = 'customer_care'` bypasses the SLA category table that says `Partner Support → Partner RM`. Three defects in one query. **This is the fifth instance of the book-boundary class behind OPS-05, OPS-06, OPS-07 and OPS-08** — all fixed 17–18 September, all in other routes. The portal was missed. |
-| QA-33 | P0 | **not started** · verified | `partners.js` line 447, `POST /:id/request-elevation`, refuses with "N onboarding step(s) still incomplete". Line 462, `POST /:id/elevate`, checks `partner.elevate` and nothing else. The auditor's narrowing is exactly right: the guard exists on the normal path and is absent on the privileged one. |
-| QA-28 | P1 | **not started** · verified | Three case-creation paths, three different levels of completeness. `tickets.js` line 299 inserts `category_id` and `sales_org` and calls `applySla` (line 309). `portal.js` line 164 calls `applySla` but inserts neither. `ai.js` line 235 inserts neither **and never calls `applySla` at all** — hence a High compliance case with no category and no due timestamps. |
-| QA-30 | P1 | **not started** · verified | `admin.js`, the send handler from line 1340: `const template = campaign.template_id ? one(...) : null`. The template is optional and a null one falls through to a default body, which is the "Bonanza update" the auditor saw. There is no approved-content guard at the API. |
-| QA-32 | P1 | **not started** · verified | `admin.js` line 152 refuses unless `code` is present. The screen promises a generated permanent code and offers no Code input, so the form cannot satisfy it. Either generate server-side or expose the field; the screen's promise says generate. |
+| QA-03 | P0 | **fixed** 13 Oct · verified | `portal.js` line 161: `SELECT id FROM users WHERE role = 'customer_care' AND active = 1 ORDER BY (...) LIMIT 1` — **no `sales_org` filter**, so a Bonanza partner's ticket goes to whichever Customer Care user is least loaded in either book. The INSERT on line 164 carries no `sales_org` and no `category_id`, which is why the case reads *Uncategorised*. And hard-coding `role = 'customer_care'` bypasses the SLA category table that says `Partner Support → Partner RM`. Three defects in one query. **This is the fifth instance of the book-boundary class behind OPS-05, OPS-06, OPS-07 and OPS-08** — all fixed 17–18 September, all in other routes. The portal was missed. |
+| QA-33 | P0 | **fixed** 13 Oct · verified | `partners.js` line 447, `POST /:id/request-elevation`, refuses with "N onboarding step(s) still incomplete". Line 462, `POST /:id/elevate`, checks `partner.elevate` and nothing else. The auditor's narrowing is exactly right: the guard exists on the normal path and is absent on the privileged one. |
+| QA-28 | P1 | **fixed** 13 Oct · verified | Three case-creation paths, three different levels of completeness. `tickets.js` line 299 inserts `category_id` and `sales_org` and calls `applySla` (line 309). `portal.js` line 164 calls `applySla` but inserts neither. `ai.js` line 235 inserts neither **and never calls `applySla` at all** — hence a High compliance case with no category and no due timestamps. |
+| QA-30 | P1 | **fixed** 13 Oct · verified | `admin.js`, the send handler from line 1340: `const template = campaign.template_id ? one(...) : null`. The template is optional and a null one falls through to a default body, which is the "Bonanza update" the auditor saw. There is no approved-content guard at the API. |
+| QA-32 | P1 | **fixed** 13 Oct · verified | `admin.js` line 152 refuses unless `code` is present. The screen promises a generated permanent code and offers no Code input, so the form cannot satisfy it. Either generate server-side or expose the field; the screen's promise says generate. |
 | QA-34 | P1 | **not started** · verified | `kyc.js` contains no field validation whatsoever — no `validate()` call, no format check on PAN, mobile, IFSC or PIN, and no nominee total. `ifsc` is passed straight through (line 316). Every value the auditor pushed through is accepted because nothing looks at any of them. |
-| QA-26 | P1 | **not started** · verified | A one-word asymmetry. `POST /leads` validates `name: ['required', 'max:120']` (line 885). `PATCH /leads/:id` validates `name: ['max:120']` (line 1085) — **no `required`** — so an empty name passes the API and the database raises `NOT NULL constraint failed: leads.name`. |
-| QA-08 | P1 | **not started** · verified | `POST /tasks` (line 1869) requires a title and a due date, and checks the book of `lead_id` when one is given, but nothing requires *any* of `lead_id`, `card_id`, `ticket_id` or `partner_id`. All four default to null. The page's mandatory-link promise is unenforced and has no selector. |
+| QA-26 | P1 | **fixed** 13 Oct · verified | A one-word asymmetry. `POST /leads` validates `name: ['required', 'max:120']` (line 885). `PATCH /leads/:id` validates `name: ['max:120']` (line 1085) — **no `required`** — so an empty name passes the API and the database raises `NOT NULL constraint failed: leads.name`. |
+| QA-08 | P1 | **fixed** 13 Oct · verified | `POST /tasks` (line 1869) requires a title and a due date, and checks the book of `lead_id` when one is given, but nothing requires *any* of `lead_id`, `card_id`, `ticket_id` or `partner_id`. All four default to null. The page's mandatory-link promise is unenforced and has no selector. |
 | QA-36 | P1 | **needs one check** | The client deliberately re-fetches `/leads/:id?unmask=true` for the edit form (`LeadDetail.jsx` line 1014), with a comment that the parameter is refused without `pii.unmask`. If that refusal holds, a Sales RM's form should not have been populated — so either the server gate does not cover this role or it does not cover this route. That is one read of `unmaskRequested`/`maskFor` and I have not done it. |
+
+## Fixed on 13 October
+
+The eight surgical fixes, in one pass. `server/test/round4.test.mjs` carries
+28 tests through the shipped routes. Run against the unfixed code (`b0920fd`),
+**20 fail, and every one of the eight findings has at least one that does**; the
+other eight pass on both, because they guard what must keep working.
+
+| ID | What changed |
+|---|---|
+| QA-01 | The New lead form sends `route: false`. The server's precedence rule was right and is untouched. The biting test is a check of the form's source -- weaker than a behavioural one, and the best available without a browser. |
+| QA-03, QA-28 | One way to open a case, `engine/cases.js`, used by the case screen, the Partner Portal and the AI disposition. Each case now gets its book, its category, the least-loaded agent **in that book**, a `BNZ-`/`BGL-` reference by book, and its SLA clock. A portal ticket is Partner Support; a Complaint flag is a Complaint case. The AI door had the portal's cross-book defect too: `role = 'customer_care' LIMIT 1`. |
+| QA-33 | `POST /:id/elevate` asks the same onboarding question as `request-elevation`, through one helper. No override was built. |
+| QA-26 | A lead PATCH that mentions the name may not blank it, whitespace included. |
+| QA-08 | `POST /tasks` needs at least one link, and **every** link is now book-checked -- only the lead was, so a partner, case or card id from the other book went straight in. The Tasks page gained a lead search, and shows a refusal instead of swallowing it. |
+| QA-32 | The server issues the code the screen promised: from the name, in the catalogue's style, `BG-` for Bigul, numbered when taken. The product gets its business, and the dialog shows its own errors. |
+| QA-30 | A campaign carries an approved template for its own channel from creation, an edit cannot strip or mismatch it, a duplicate is made on the same terms, and test-send and send ask again. The stock "Bonanza update" body is gone. |
+
+**Fixing QA-32 would have switched on a dormant cross-book defect**, so it was
+fixed in the same change rather than left: a new product put a card on every
+lead in **both** businesses, against the rule `generateCards` states for new
+leads. It never fired only because no product could be created.
+
+Existing tests were updated where they encoded the old contract: the e2e
+suite created seven campaigns with no content, and a supervisor test
+created an unlinked task without checking that it had been created at all.
+
+### Found beside the fixes, and deliberately not widened into them
+
+Eight of them.
+
+Each wants its own OPS id.
+
+| | What | Where |
+|---|---|---|
+| a | **Every partner activated from the screen has the portal password `partner<id>`.** The route defaults to it when given none, the screen never sends one (`PartnerProfile.jsx` posts `{}`), and the response returns it in plain text. The auditor's partner #9 on labs.tinyepic.in is ACTIVE with `partner9`. Guessable by anyone who knows a partner's number. | `partners.js`, `/:id/elevate` |
+| b | The partner code is `BNZ-P####` for every partner, Bigul's included. | same route |
+| c | `POST /partners` never sets the partner's business, so every new prospect is Bonanza's by column default -- the defect tickets, campaigns and now products each had. | `partners.js` |
+| d | The AI disposition confirm loads its lead with no book check, so any user can change card states, the score and raise cases on a lead in either business. **One of `N-12`'s cases.** | `ai.js`, `/disposition/confirm` |
+| e | The New lead form offers owners a Sales RM may not assign, and `POST /leads` takes any active owner in the book without `lead.reassign`, which the edit requires. The second half of the auditor's QA-01. | `Leads.jsx`, `crm.js` |
+| f | Product create silently drops the brochure and apply URLs the form sends. | `admin.js`, `POST /products` |
+| g | A campaign's template is checked for approval and channel, not for business: a Bonanza campaign can send a Bigul template. | `admin.js` |
+| h | Duplicating a campaign never sets the copy's business, so a Bigul campaign's copy is filed in Bonanza's book -- the defect the create route's own comment describes fixing. | `admin.js`, `/campaigns/:id/duplicate` |
+
+And two rulings: which category each of the other four compliance flags opens
+(mis-selling risk, a guaranteed-return expectation, a regulatory mention,
+urgency on funds -- uncategorised until then, with their deadlines), and
+whether a Superadmin needs an audited emergency override for QA-33.
 
 ## Decisions only Ritesh can make
 
@@ -106,3 +154,5 @@ QA-33 first. Of those, three are small and one is not:
 What I propose: the eight surgical fixes first, in one pass with tests, then
 QA-02 scoped separately, then QA-34. The four decisions above can be answered in
 parallel and do not block that work.
+
+**13 October:** the eight are done. QA-02 and QA-34 are next.

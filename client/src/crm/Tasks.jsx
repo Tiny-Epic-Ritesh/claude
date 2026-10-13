@@ -26,6 +26,59 @@ function Th({ label, col, className, sort, dir, onSort }) {
   );
 }
 
+/**
+ * The lead a new task is about (QA-08).
+ *
+ * The page has always said every task is linked to something, and had no way
+ * to link one. Leads only, because that is what this page's tasks are about: a
+ * case, partner or product task is made on that record's own screen, where
+ * the link is already known. The search is the one the Leads screen uses, so
+ * it offers only leads this person can open.
+ */
+function LeadLink({ value, onChange }) {
+  const [q, setQ] = useState('');
+  const [rows, setRows] = useState([]);
+
+  useEffect(() => {
+    let live = true;
+    const term = q.trim();
+    if (term.length < 2) { setRows([]); return undefined; }
+    const timer = setTimeout(() => {
+      api.get(`/leads?q=${encodeURIComponent(term)}&limit=8`)
+        .then((r) => { if (live) setRows(Array.isArray(r) ? r : []); })
+        .catch(() => { if (live) setRows([]); });
+    }, 250);
+    return () => { live = false; clearTimeout(timer); };
+  }, [q]);
+
+  if (value) {
+    return (
+      <div className="row" style={{ gap: 6, alignItems: 'center', minHeight: 36 }}>
+        <Icon name="person" size={16} />
+        <strong className="small">{value.name}</strong>
+        <button type="button" className="btn-ghost" onClick={() => { onChange(null); setQ(''); }}>Change</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name, mobile or email" aria-label="Link the task to a lead" />
+      {q.trim().length >= 2 && (
+        <div className="card" style={{ position: 'absolute', zIndex: 5, left: 0, right: 0, marginTop: 4, padding: 4 }}>
+          {rows.map((l) => (
+            <button key={l.id} type="button" className="btn-ghost" style={{ display: 'block', width: '100%', textAlign: 'left' }}
+              onClick={() => { onChange({ id: l.id, name: l.name }); setRows([]); setQ(''); }}>
+              {l.name} <span className="tiny muted">{l.stage}{l.owner_name ? ` · ${l.owner_name}` : ''}</span>
+            </button>
+          ))}
+          {!rows.length && <span className="tiny muted">No lead you can open matches that.</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Tasks({ session }) {
   const canSeeTeam = session.permissions.includes('report.team');
   const [scope, setScope] = useState('mine');
@@ -35,6 +88,8 @@ export default function Tasks({ session }) {
   const [typed, setTyped] = useState('');
   const [q, setQ] = useState('');
   const [form, setForm] = useState({ title: '', due_at: '', priority: 'Normal', assignee_id: '' });
+  const [linked, setLinked] = useState(null);
+  const [addError, setAddError] = useState(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -71,12 +126,19 @@ export default function Tasks({ session }) {
 
   async function add(e) {
     e.preventDefault();
-    if (!form.title.trim() || !form.due_at) return;
+    if (!form.title.trim() || !form.due_at || !linked) return;
     setBusy(true);
+    setAddError(null);
     try {
-      await api.post('/tasks', { ...form, due_at: form.due_at.replace('T', ' '), assignee_id: form.assignee_id || undefined });
+      await api.post('/tasks', {
+        ...form, lead_id: linked.id, due_at: form.due_at.replace('T', ' '), assignee_id: form.assignee_id || undefined,
+      });
       setForm({ title: '', due_at: '', priority: 'Normal', assignee_id: '' });
+      setLinked(null);
       reload();
+    } catch (err) {
+      // A refusal used to vanish: the add had a finally and no catch.
+      setAddError(err.message);
     } finally { setBusy(false); }
   }
 
@@ -97,10 +159,15 @@ export default function Tasks({ session }) {
 
       <section className="card" style={{ marginBottom: 14 }}>
         <div className="card-body">
+          <ErrorBanner error={addError} />
           <form onSubmit={add} className="row wrap" style={{ alignItems: 'flex-end' }}>
             <div className="field" style={{ flex: '2 1 260px', marginBottom: 0 }}>
               <label>New task</label>
               <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Follow up on the pending KYC step…" />
+            </div>
+            <div className="field" style={{ flex: '2 1 240px', marginBottom: 0 }}>
+              <label>Linked to</label>
+              <LeadLink value={linked} onChange={setLinked} />
             </div>
             <div className="field" style={{ flex: '1 1 190px', marginBottom: 0 }}>
               <label>Due</label>
@@ -121,7 +188,7 @@ export default function Tasks({ session }) {
                 </select>
               </div>
             )}
-            <button className="btn-primary" disabled={busy || !form.title.trim() || !form.due_at}>{busy ? <Spinner /> : 'Add task'}</button>
+            <button className="btn-primary" disabled={busy || !form.title.trim() || !form.due_at || !linked}>{busy ? <Spinner /> : 'Add task'}</button>
           </form>
         </div>
       </section>

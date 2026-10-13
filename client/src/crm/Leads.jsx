@@ -554,7 +554,15 @@ function NewLead({ meta, onClose, onCreated }) {
     setBusy(true);
     setError(null);
     try {
-      const lead = await api.post('/leads', { ...form, owner_id: form.owner_id || undefined });
+      /* QA-01. This form is a hand entry, so it never routes.
+
+         "Assign to me" is the empty option, and an empty owner was sent as no
+         owner at all -- which the server reads, correctly, as "nobody has
+         decided, let the router choose". For a Website or campaign source it
+         did: the lead went to the Digital Desk and its creator was told it was
+         outside their visibility scope. The server has always taken `route` as
+         the explicit answer; the form never gave it. */
+      const lead = await api.post('/leads', { ...form, owner_id: form.owner_id || undefined, route: false });
       onCreated(lead.id);
     } catch (err) {
       setError(err.message);
