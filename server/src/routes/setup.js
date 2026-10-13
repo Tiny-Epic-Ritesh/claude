@@ -19,6 +19,7 @@
  * exactly this — attribution that cannot be traced to a human.
  */
 
+import { listPolicies, setPolicy } from '../engine/policies.js';
 import { Router } from 'express';
 import { all, one, run, audit, transact, SALES_ORGS, CARD_STATES, ROLES } from '../db.js';
 /* The activity types a person can log by hand. Imported rather than restated:
@@ -3438,6 +3439,20 @@ router.delete('/webhook-endpoints/:id', requirePermission('admin.system'), (req,
   run('DELETE FROM webhook_endpoint WHERE id = ?', [existing.id]);
   audit(req.user.id, 'webhook_endpoint_deleted', 'webhook_endpoint', existing.id, { name: existing.name, url: existing.url });
   return res.json({ ok: true });
+});
+
+/* ------------------------------------------------- business policies */
+
+/** QA-13, QA-06. What the business has decided, and may change. */
+router.get('/policies', requirePermission('admin.policies'), (_req, res) => {
+  res.json({ policies: listPolicies() });
+});
+
+router.put('/policies/:key', requirePermission('admin.policies'), (req, res) => {
+  const out = setPolicy(req.params.key, req.body?.value, req.user.id);
+  if (out.error) return res.status(400).json({ error: out.error, field: 'value' });
+  audit(req.user.id, 'policy_changed', 'policy', null, { key: out.key, value: out.value });
+  return res.json(out);
 });
 
 export default router;

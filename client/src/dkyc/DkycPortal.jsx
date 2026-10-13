@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { dkycApi, mins, rupees } from '../api.js';
 import { ErrorBanner, Spinner, Loading } from '../components/ui.jsx';
 import { ProgressRing } from '../components/charts.jsx';
@@ -25,12 +25,23 @@ import BrandLogo from '../components/BrandLogo.jsx';
  * an applicant nothing while "Bank account, 2 of 3" tells them they are nearly
  * through a section.
  */
+/* QA-13 (Ritesh, 13 Oct): a page per business. /dkyc is Bonanza's and
+   /dkyc?business=bigul is Bigul's; a resumed application is its product's
+   business's, whichever link it was started from. */
+const BrandContext = createContext({ brand: { code: 'BONANZA', name: 'Bonanza', legal_name: 'Bonanza Portfolio Ltd.' }, setBrand: () => {} });
+const useBrand = () => useContext(BrandContext);
+
+/** The legal entity, for the regulatory line: "Bonanza Portfolio Ltd. (Bigul)" is offered by "Bonanza Portfolio Ltd.". */
+const entityOf = (brand) => String(brand?.legal_name ?? 'Bonanza Portfolio Ltd.').replace(/\s*\(.*\)\s*$/, '');
+
 export default function DkycPortal() {
+  const [brand, setBrand] = useState({ code: 'BONANZA', name: 'Bonanza', legal_name: 'Bonanza Portfolio Ltd.' });
   return (
+    <BrandContext.Provider value={{ brand, setBrand }}>
     <div className="portal">
       <header className="portal-head">
         <div className="portal-id">
-          <BrandLogo org="BONANZA" height={30} />
+          <BrandLogo org={brand.code} height={30} />
           <div>
             <div className="portal-sub">Open your account online</div>
           </div>
@@ -52,6 +63,7 @@ export default function DkycPortal() {
         <Route path="/resume/:tokenId" element={<Journey />} />
       </Routes>
     </div>
+    </BrandContext.Provider>
   );
 }
 
@@ -67,6 +79,9 @@ const JOURNEY_PREVIEW = [
 ];
 
 function Start() {
+  const { brand, setBrand } = useBrand();
+  const [params] = useSearchParams();
+  const business = (params.get('business') || 'BONANZA').toUpperCase();
   const [products, setProducts] = useState(null);
   const [selected, setSelected] = useState(null);
   const [mobile, setMobile] = useState('');
@@ -74,14 +89,17 @@ function Start() {
   const [error, setError] = useState(null);
   const navigate = useNavigate();
 
-  useEffect(() => { dkycApi.get('/products').then(setProducts).catch((e) => setError(e.message)); }, []);
+  useEffect(() => {
+    dkycApi.get(`/business?business=${business}`).then(setBrand).catch((e) => setError(e.message));
+    dkycApi.get(`/products?business=${business}`).then(setProducts).catch((e) => setError(e.message));
+  }, [business, setBrand]);
 
   async function start() {
     if (!selected) { setError('Please choose what you would like to open.'); return; }
     setBusy(true);
     setError(null);
     try {
-      const res = await dkycApi.post('/start', { product_type_id: selected, mobile: mobile || undefined });
+      const res = await dkycApi.post('/start', { product_type_id: selected, mobile: mobile || undefined, business: brand.code });
       navigate(`/dkyc/resume/${res.resume_token}`);
     } catch (err) { setError(err.message); setBusy(false); }
   }
@@ -93,7 +111,7 @@ function Start() {
       <section className="dkyc-hero glass">
         <div className="dkyc-hero-text">
           <span className="eyebrow">Account opening</span>
-          <h1>Open your Bonanza account in about 15&nbsp;minutes.</h1>
+          <h1>Open your {brand.name} account in about 15&nbsp;minutes.</h1>
           <p>
             Complete it yourself, online, end to end. You will need your PAN, an Aadhaar-linked
             mobile number and your bank details. Pause whenever you like — the same link brings
@@ -143,7 +161,7 @@ function Start() {
         <div className="section-head">
           <div>
             <h2><span className="step-num">2</span> Your mobile number</h2>
-            <p>If you have already spoken to a Bonanza representative, use the same number so your application links up with that conversation.</p>
+            <p>If you have already spoken to a {brand.name} representative, use the same number so your application links up with that conversation.</p>
           </div>
         </div>
 
@@ -212,13 +230,16 @@ function Start() {
  * to, and the "we call you" promise is implemented by the stall detector.
  */
 function TrustPanel() {
+  const { brand } = useBrand();
   return (
     <section className="trust-panel glass">
       <div className="trust-item">
         <span className="material-symbols-rounded" aria-hidden>gavel</span>
         <div>
           <strong>SEBI-registered broker</strong>
-          <p>Bonanza Portfolio Ltd is a registered member of NSE, BSE, MCX and NCDEX, and a CDSL/NSDL depository participant.</p>
+          <p>
+            {brand.code === 'BONANZA' ? entityOf(brand) : `${brand.name} is offered by ${entityOf(brand)}, which`} is a registered member of NSE, BSE, MCX and NCDEX, and a CDSL/NSDL depository participant.
+          </p>
         </div>
       </div>
       <div className="trust-item">
@@ -249,6 +270,7 @@ function TrustPanel() {
 /* -------------------------------------------------------------- journey */
 
 function Journey() {
+  const { brand, setBrand } = useBrand();
   const { tokenId } = useParams();
   const [journey, setJourney] = useState(null);
   const [values, setValues] = useState({});
@@ -258,7 +280,11 @@ function Journey() {
   const [elapsed, setElapsed] = useState(0);
   const tick = useRef(null);
 
-  const load = () => dkycApi.get(`/resume/${tokenId}`).then((j) => { setJourney(j); setElapsed(j.elapsed_s); }).catch((e) => setError(e.message));
+  const load = () => dkycApi.get(`/resume/${tokenId}`).then((j) => {
+    setJourney(j);
+    setElapsed(j.elapsed_s);
+    if (j.business) setBrand(j.business);
+  }).catch((e) => setError(e.message));
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [tokenId]);
 
@@ -305,7 +331,7 @@ function Journey() {
             You were on “{journey.steps.find((s) => s.status === 'stalled')?.label || 'a verification step'}” for over an hour,
             so we paused it for your security. Nothing you entered has been lost.
           </p>
-          <p>A Bonanza representative will call you shortly to finish it with you.</p>
+          <p>A {brand.name} representative will call you shortly to finish it with you.</p>
           <div className="notice" style={{ textAlign: 'left', width: '100%' }}>
             <span className="material-symbols-rounded" aria-hidden>call</span>
             <div>
@@ -630,6 +656,7 @@ function Field({ field, value, onChange, onSendOtp }) {
  * put in front of them until a reviewer decides what has to change.
  */
 function Objected({ journey }) {
+  const { brand } = useBrand();
   return (
     <div className="portal-body">
       <section className="glass section-card outcome-card">
@@ -638,7 +665,7 @@ function Objected({ journey }) {
         <p className="muted">{journey.objection?.text}</p>
         <p>
           Nothing you sent has been lost, and your application has not been rejected.
-          A Bonanza representative will call you to put this right.
+          A {brand.name} representative will call you to put this right.
         </p>
 
         <div className="notice" style={{ textAlign: 'left', width: '100%' }}>

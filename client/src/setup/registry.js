@@ -30,6 +30,7 @@ const TabVisibility = lazy(() => import('../crm/TabVisibility.jsx'));
 const Dispositions = lazy(() => import('../crm/Dispositions.jsx'));
 const KraSetup = lazy(() => import('../crm/KraSetup.jsx'));
 const FieldMasking = lazy(() => import('../crm/FieldMasking.jsx'));
+const BusinessPolicies = lazy(() => import('../crm/BusinessPolicies.jsx'));
 const GroupsSetup = lazy(() => import('../crm/GroupsSetup.jsx'));
 const ObjectManager = lazy(() => import('../crm/ObjectManager.jsx'));
 const RolesSetup = lazy(() => import('../crm/RolesSetup.jsx'));
@@ -127,6 +128,16 @@ export const SECTIONS = [
     blurb: 'Which roles see mobile numbers and PAN in the clear',
     keywords: ['mask', 'pan', 'mobile', 'pii', 'unmask', 'redact', 'privacy', 'dpdp', 'personal data', 'hide'],
     Component: FieldMasking,
+  },
+  {
+    key: 'policies',
+    label: 'Business policies',
+    group: 'people',
+    icon: 'gavel',
+    needs: ['admin.policies'],
+    blurb: 'What partners may refer, and how exports carry personal data',
+    keywords: ['policy', 'partner', 'referral', 'cross', 'bigul', 'bonanza', 'business', 'export', 'pii', 'rule', 'allow'],
+    Component: BusinessPolicies,
   },
   {
     key: 'targets',

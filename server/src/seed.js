@@ -259,7 +259,8 @@ function seedDiallerCampaigns() {
 
 const PRODUCTS = [
   ['EQD', 'Equity & Derivatives', 'Broking', 0, 'None', 'High',
-    ['Zero brokerage on delivery with the Bigul flat plan', 'NSE, BSE cash and F&O in one account', 'Margin against approved securities', 'In-house research calls with entry, target and stop-loss'],
+    /* QA-13. Bonanza's Equity product pitched "the Bigul flat plan". */
+    ['A flat-fee or a percentage brokerage plan, whichever costs you less', 'NSE, BSE cash and F&O in one account', 'Margin against approved securities', 'In-house research calls with entry, target and stop-loss'],
     [['Brokerage looks high', 'Compare the flat plan against a percentage plan on your actual monthly turnover — for most clients the flat plan is lower.'],
       ['I already have a demat account', 'You can keep it. Most clients run a second account for the research and the flat-fee trading.']]],
   ['DP', 'Demat / Depository', 'Broking', 0, 'None', 'Low',

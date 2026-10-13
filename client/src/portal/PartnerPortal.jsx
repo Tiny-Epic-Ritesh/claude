@@ -621,6 +621,7 @@ function ProductCatalogue({ data, onRefer }) {
               facts={[
                 minimumFact(p),
                 { label: 'Your clients', value: sold.get(p.code) || 0 },
+                ...(new Set(data.products.map((x) => x.sales_org)).size > 1 ? [{ label: 'Business', value: p.business_name }] : []),
               ]}
               actions={(
                 <button type="button" className="btn btn-primary btn-sm" onClick={onRefer}>
@@ -780,7 +781,7 @@ function ReferModal({ products, onClose, onDone }) {
   }
 
   return (
-    <Modal title="Refer a client" subtitle="Your referral goes straight into the Bonanza CRM, attributed to you." onClose={done ? onDone : onClose}>
+    <Modal title="Refer a client" subtitle="Your referral goes straight to your relationship team, attributed to you." onClose={done ? onDone : onClose}>
       {done ? (
         <div style={{ textAlign: 'center', padding: '18px 0' }}>
           <div style={{ fontSize: 30 }}>✓</div>
@@ -805,7 +806,13 @@ function ReferModal({ products, onClose, onDone }) {
             <label>Interested in</label>
             <select value={form.product_type_id} onChange={set('product_type_id')}>
               <option value="">Not sure yet</option>
-              {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              {/* QA-13. Only the partner's business's products unless Setup
+                  allows the other's; then each says whose. */}
+              {products.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {new Set(products.map((x) => x.sales_org)).size > 1 ? `${p.name} — ${p.business_name}` : p.name}
+                </option>
+              ))}
             </select>
           </div>
           <div className="field">

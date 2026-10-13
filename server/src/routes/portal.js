@@ -15,6 +15,7 @@ import { LMS_MODULES } from './partners.js';
 import { generateCards } from './crm.js';
 import { leastLoadedRm } from '../engine/assignment.js';
 import { kycStatusSql } from '../engine/kycstatus.js';
+import { referrableBooks, bookName } from '../engine/policies.js';
 
 const router = Router();
 router.use(requirePartner);
@@ -69,9 +70,22 @@ router.get('/dashboard', (req, res) => {
     // Enough to render a product as a card rather than a line: what it is,
     // what it costs to start, what it is good for. `pitch_points` is already
     // the curated feature list — no need for a second one in the client.
-    products: all(`SELECT id, code, name, category, min_investment, lock_in,
-                          risk_category, pitch_points, brochure_url
-                   FROM product_types WHERE active = 1 ORDER BY sort_order`),
+    /* QA-13. It listed every active product in both businesses, so a Bonanza
+       partner was offered Bigul's -- two Mutual Funds, two Global Investing --
+       and a referral for one landed in Bonanza with no product on it. The
+       partner's own business only, unless the policy for it in Setup lets them
+       refer the other; then the other's are offered too, each saying whose. */
+    products: (() => {
+      const books = referrableBooks(req.partner.sales_org);
+      return all(
+        `SELECT id, code, name, category, min_investment, lock_in,
+                risk_category, pitch_points, brochure_url, sales_org
+           FROM product_types
+          WHERE active = 1 AND sales_org IN (${books.map(() => '?').join(',')})
+          ORDER BY sort_order`,
+        books,
+      ).map((p) => ({ ...p, business_name: bookName(p.sales_org) }));
+    })(),
   });
 });
 
@@ -85,8 +99,25 @@ router.post('/referrals', (req, res) => {
 
   /* A referral lands in the partner's own book (Ritesh, 11 Sep 2026) -- they
      sell for one of the two businesses, and that is the one they are referring
-     into. Everything below is asked of that book and no other. */
-  const org = req.partner.sales_org;
+     into. Everything below is asked of that book and no other.
+
+     QA-13 (Ritesh, 13 Oct): the other business's products are referrable only
+     while Setup's policy for the partner's business allows it. Then a referral
+     for one becomes a lead in that product's business, attributed to the
+     partner -- the product decides, as it does for a DKYC journey. Off, a
+     referral for one is refused rather than landing with no product on it. */
+  let org = req.partner.sales_org;
+  if (product_type_id) {
+    const product = one('SELECT id, sales_org, active FROM product_types WHERE id = ?', [Number(product_type_id) || -1]);
+    if (!product || !product.active) return res.status(400).json({ error: 'Choose a product from the list', field: 'product_type_id' });
+    if (!referrableBooks(req.partner.sales_org).includes(product.sales_org)) {
+      return res.status(400).json({
+        error: `${bookName(req.partner.sales_org)} partners cannot refer ${bookName(product.sales_org)} products`,
+        field: 'product_type_id',
+      });
+    }
+    org = product.sales_org;
+  }
 
   /* Matched within the book, never across it: the same person can be a lead in
      both businesses, so a match in the other one is a different relationship

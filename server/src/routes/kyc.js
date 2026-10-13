@@ -217,11 +217,28 @@ internal.post('/sweep', (_req, res) => res.json(kyc.sweepKyc()));
 
 export const dkyc = Router();
 
-/** Products a walk-in applicant can open an account for. */
-dkyc.get('/products', (_req, res) => {
+/* QA-13 (Ritesh, 13 Oct): a page per business. /dkyc is Bonanza's and
+   /dkyc?business=bigul is Bigul's. The one page said "Open your Bonanza
+   account" over both businesses' products. */
+const dkycBusiness = (req) => {
+  const code = String(req.query?.business ?? req.body?.business ?? 'BONANZA').toUpperCase();
+  return one('SELECT code, name, legal_name FROM sales_orgs WHERE code = ? AND active = 1', [code]);
+};
+
+/** Products a walk-in applicant can open an account for, in the page's business. */
+dkyc.get('/products', (req, res) => {
+  const business = dkycBusiness(req);
+  if (!business) return res.status(404).json({ error: 'We could not find that business' });
   res.json(all(`SELECT id, code, name, category, min_investment, lock_in, risk_category,
                        pitch_points, brochure_url, requires_kyc
-                FROM product_types WHERE active = 1 AND requires_kyc = 1 ORDER BY sort_order`));
+                FROM product_types WHERE active = 1 AND requires_kyc = 1 AND sales_org = ? ORDER BY sort_order`, [business.code]));
+});
+
+/** Whose page this is: the name and the legal entity the page speaks for. */
+dkyc.get('/business', (req, res) => {
+  const business = dkycBusiness(req);
+  if (!business) return res.status(404).json({ error: 'We could not find that business' });
+  res.json(business);
 });
 
 dkyc.get('/steps/:productId', (req, res) => {
@@ -241,6 +258,11 @@ dkyc.post('/start', (req, res) => {
    * does not exist names no book, and is refused rather than guessed at. */
   const product = one('SELECT id, sales_org FROM product_types WHERE id = ?', [Number(product_type_id)]);
   if (!product) return res.status(400).json({ error: 'Please choose a product to continue' });
+  /* A page names its business, and offers only its products (QA-13). A start
+     that names one business and the other's product is refused. */
+  if (req.body?.business && String(req.body.business).toUpperCase() !== product.sales_org) {
+    return res.status(400).json({ error: 'Please choose one of the products on this page' });
+  }
 
   /* Recognise an existing lead by mobile so the journey attaches to the CRM
      record — within the product's book, never across it. The same person can be
@@ -406,6 +428,10 @@ function publicView(j) {
     steps_total: j.steps_total,
     elapsed_s: j.elapsed_s,
     product: j.product ? { id: j.product.id, name: j.product.name, code: j.product.code } : null,
+    /* So a resumed application carries its own business's name (QA-13). */
+    business: j.product?.sales_org
+      ? one('SELECT code, name, legal_name FROM sales_orgs WHERE code = ?', [j.product.sales_org])
+      : null,
     form: j.form,
     steps: j.steps
       .filter((s) => s.applies)

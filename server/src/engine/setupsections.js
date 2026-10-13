@@ -20,6 +20,7 @@ export const SETUP_SECTIONS = [
   { key: 'navigation', label: 'Navigation', needs: ['admin.roles'] },
   { key: 'groups', label: 'Sales groups', needs: ['admin.users'] },
   { key: 'masking', label: 'Field masking', needs: ['admin.users'] },
+  { key: 'policies', label: 'Business policies', needs: ['admin.policies'] },
   { key: 'targets', label: 'Targets & incentives', needs: ['admin.rules'] },
   { key: 'objects', label: 'Objects & fields', needs: ['admin.objects'] },
   { key: 'products', label: 'Products', needs: ['admin.products'] },

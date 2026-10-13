@@ -96,6 +96,7 @@ export const CAPABILITY_CATALOGUE = [
   ['admin.templates', 'Manage templates', 'Setup', null, 0],
   ['admin.content', 'Manage content library', 'Setup', null, 0],
   ['admin.objects', 'Configure objects & fields', 'Setup', 'Add fields, rename labels, edit picklists', 1],
+  ['admin.policies', 'Manage business policies', 'Setup', 'What partners may refer, and how exports carry personal data', 1],
   ['admin.system', 'System configuration', 'Setup', 'Sales orgs, integrations, platform settings', 1],
 
   // Marketing

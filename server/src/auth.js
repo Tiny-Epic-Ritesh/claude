@@ -10,6 +10,7 @@
  * ("enforced at the API level") — the UI only hides what the API already refuses.
  */
 
+import { referrableBooks } from './engine/policies.js';
 import { one, run, audit, SALES_ORGS } from './db.js';
 import { authenticate as authenticateKey, scopedCapabilities } from './engine/apikeys.js';
 import { queueScopeSql } from './engine/queues.js';
@@ -141,6 +142,7 @@ export const PERMISSIONS = {
   'export.partner':       ['superadmin', 'admin', 'sales_supervisor'],
   'export.user':          ['superadmin', 'admin'],
   'admin.objects':        ['superadmin', 'admin'],
+  'admin.policies':       ['superadmin', 'admin'],         // QA-13, QA-06: business policies in Setup
   'admin.system':         ['superadmin'],
 
   // Marketing
@@ -810,9 +812,12 @@ export function portalLeadScope(partner, alias = 'l') {
     params: grants.flatMap((g) => g.params),
   };
 
+  /* QA-13. The partner's own book, and the other while Setup lets them refer
+     into it -- a lead they referred there is still theirs to follow. */
+  const books = referrableBooks(partner.sales_org);
   return {
-    sql: `(${reach.sql}) AND (${alias}.sales_org = ?) AND ${alias}.deleted_at IS NULL`,
-    params: [...reach.params, partner.sales_org],
+    sql: `(${reach.sql}) AND (${alias}.sales_org IN (${books.map(() => '?').join(',')})) AND ${alias}.deleted_at IS NULL`,
+    params: [...reach.params, ...books],
   };
 }
 

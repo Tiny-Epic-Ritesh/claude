@@ -18,7 +18,7 @@ answered. *unverified* — the auditor's evidence stands but I have not traced i
 to a line yet. *environment* — a change to labs.tinyepic.in itself, not the code. *closed by
 ruling* — Ritesh ruled that the behaviour reported is the behaviour wanted.
 
-**Today, of the 43 IDs: 21 fixed · 1 closed by ruling · 5 partly fixed · 16
+**Today, of the 43 IDs: 21 fixed · 1 closed by ruling · 6 partly fixed · 15
 open · none waiting on a decision.** Every decision asked for was answered on 13
 October; QA-37's is answered once its recommendations are in. Plus the points
 below the table, which are not IDs but are as much part of the report.
@@ -39,7 +39,7 @@ below the table, which are not IDs but are as much part of the report.
 | QA-10 | P1 | not started | A UI build: an opaque, scrollable call panel with a visible End call and state-aware actions. Confirmed by the report; needs a design pass in both themes. |
 | QA-11 | P1 | **fixed** `eaf4743` | One resolver, `fill()` in the merge engine, for the composer, test-send and campaign send. A field masked for the sender is refused by name. **`{{name}}` in campaigns is now the first name**, as the picker always said. The picker's static examples are untouched. |
 | QA-12 | P1 | **partly fixed** `eaf4743` | The screen shows `CRM_PUBLIC_URL` or the origin it is itself using — https. Refusing a key sent over plain http needs the proxy to say the scheme (`X-Forwarded-Proto`), which is nginx, which I do not touch. |
-| QA-13 | P1 | open · **ruled 13 Oct** | A Bonanza partner cannot refer Bigul products today, and the business wants to be able to allow it later: a Setup control for Admins and Superadmins, off by default. The DKYC half of the question was not part of the answer and stays as built -- a journey takes its product's book (`OPS-05`). |
+| QA-13 | P1 | **partly fixed** · QA-13 commit | Ruled 13 Oct and built. **Setup → Business policies** (new, `admin.policies`, Admins and Superadmins, draft until Save, every change in the configuration audit) holds one switch per business — *Bonanza partners may refer Bigul products* and the reverse — both **off**. Off, the portal offers the partner's own business's products only and refuses a referral for the other's; on, the other's are offered labelled with their business, a referral for one becomes a lead in that business attributed to the partner, and the partner can follow it in the portal. The public account-opening page is **a page per business**, as ruled: `/dkyc` is Bonanza's, `/dkyc?business=bigul` Bigul's, each with its own products, name, logo and regulatory line, and a resumed application wears its own business's name. Bonanza Equity no longer pitches "the Bigul flat plan". **Still open, needing the business's words:** the brokerage-plan choices in the DKYC journey (*Bigul Flat ₹0 Delivery* is offered on Bonanza applications too — what are Bonanza's plans called?), and the help-line number shown on the Bigul page, which is Bonanza's. Commission on a cross-business referral is not defined. |
 | QA-14 | P2 | not started | Pipeline multi-select products and per-stage filters. |
 | QA-15 | P2 | not started | Pagination and column sorting, `P3-36`/`37`/`39`. |
 | QA-16 | P2 | not started | Report builder and dashboard creation, `P3-06`/`P2-17` — gated on `N-4a`. |
@@ -73,8 +73,8 @@ below the table, which are not IDs but are as much part of the report.
 
 Counted: **fixed 21** — QA-01, 02, 03, 04, 08, 11, 19, 20, 21, 23, 26, 27, 28,
 30, 31, 32, 33, 38, 39, 40, 41. **Closed by ruling 1** — QA-36. **Partly fixed
-5** — QA-05, 12, 25, 34, 43. **Open 16** — QA-06, 09,
-13, 24 and 35 (ruled 13 Oct, to build); QA-37 (recommendations due); QA-07 and
+6** — QA-05, 12, 13, 25, 34, 43. **Open 15** — QA-06, 09,
+24 and 35 (ruled 13 Oct, to build); QA-37 (recommendations due); QA-07 and
 QA-10 (UI builds); QA-14 to QA-18 and QA-22 (feature requests under earlier
 IDs); and QA-29 and QA-42, which the code does not explain and need a
 reproduction. Every open ID is traced or classified; none is "unverified". The
@@ -118,7 +118,8 @@ practice) · 3. QA-06 export (allowed, with a masked/unmasked Setup control) ·
 4. QA-37 (recommendations first) · 7. OPS ids (assigned) · 8. QA-02 (signed off) ·
 9. QA-36 (yes) · 10. QA-34 (industry practice). **Still open:** 5. the category
 for each of the four unmapped compliance flags (QA-28) · 6. whether a Superadmin
-needs an audited emergency elevation (QA-33) · and the DKYC half of QA-13.
+needs an audited emergency elevation (QA-33). The DKYC half of QA-13 was
+answered the same day: a separate page per business.
 
 ## Read this first: the build they tested is the build we have
 

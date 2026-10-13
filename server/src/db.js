@@ -3106,6 +3106,20 @@ if (!hadFirings) {
 }
 
 /**
+ * Business policies (QA-13, QA-06): decisions the business can change in Setup
+ * without a release. A key nobody has set reads as the default declared in
+ * engine/policies.js. Changes go to config_audit.
+ */
+db.exec(`
+CREATE TABLE IF NOT EXISTS business_policy (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`);
+
+/**
  * Every migration landed.
  *
  * The loop above skips a table it has not reached yet, because tables are
