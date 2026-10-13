@@ -104,8 +104,8 @@ function DashboardView({ id, onBack, onError }) {
   const [data, { loading, error, reload }] = useApi(`/dashboards/${id}?range=${range}`);
   const [adding, setAdding] = useState(false);
 
-  if (loading || !data) return <Loading />;
   if (error) return <ErrorBanner error={error} />;
+  if (loading || !data) return <Loading />;
 
   const d = data.dashboard;
 

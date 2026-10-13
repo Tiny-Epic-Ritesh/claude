@@ -118,7 +118,7 @@ export default function KycConsole({ session }) {
 }
 
 function JourneyModal({ journey, session, onClose, onChanged, onError }) {
-  const [full, { reload }] = useApi(`/kyc/journeys/${journey.id}`);
+  const [full, { reload, error: loadError }] = useApi(`/kyc/journeys/${journey.id}`);
   const [coach, setCoach] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -139,7 +139,10 @@ function JourneyModal({ journey, session, onClose, onChanged, onError }) {
       onClose={onClose}
       wide
     >
-      {!full ? <Loading /> : (
+      {/* QA-43. A journey the list showed and the detail refused (403) spun
+          forever: there was no error branch. The scope disagreement itself is
+          one of N-12's cases. */}
+      {loadError ? <ErrorBanner error={loadError} /> : !full ? <Loading /> : (
         <>
           <div className="row-between" style={{ marginBottom: 12 }}>
             <div className="row wrap">

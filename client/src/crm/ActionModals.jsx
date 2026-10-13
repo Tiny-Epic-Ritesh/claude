@@ -570,7 +570,7 @@ function DeleteModal({ lead, onClose, onDone, onNotice }) {
     try {
       await api.del(`/leads/${lead.id}`);
       onNotice?.(`${lead.name} moved to the recycle bin.`);
-      onDone();
+      onDone({ deleted: true, name: lead.name });
     } catch (err) { setError(err.message); setBusy(false); }
   }
 

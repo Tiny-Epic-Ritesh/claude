@@ -34,8 +34,8 @@ export default function Libraries() {
   const [problem, setProblem] = useState(null);
   const [notice, setNotice] = useState(null);
 
-  if (loading || !data) return <Loading />;
   if (error) return <ErrorBanner error={error} />;
+  if (loading || !data) return <Loading />;
 
   const waiting = data.libraries.reduce((s, l) => s + l.awaiting, 0);
 
@@ -182,8 +182,8 @@ function LibraryView({ id, onBack, onError, onNotice }) {
   const [adding, setAdding] = useState(false);
   const [rejecting, setRejecting] = useState(null);
 
-  if (loading || !data) return <Loading />;
   if (error) return <ErrorBanner error={error} />;
+  if (loading || !data) return <Loading />;
 
   const move = async (item, status, reason = null) => {
     try {

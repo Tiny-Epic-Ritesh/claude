@@ -27,8 +27,8 @@ export default function ValidationRules({ entity }) {
   const [adding, setAdding] = useState(false);
   const [problem, setProblem] = useState(null);
 
-  if (loading || !data) return <Loading />;
   if (error) return <ErrorBanner error={error} />;
+  if (loading || !data) return <Loading />;
 
   const close = () => { setEditing(null); setAdding(false); reload(); };
 

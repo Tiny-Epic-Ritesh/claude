@@ -95,7 +95,7 @@ export function routeFor(capability) {
  * decides what that payload may contain and where it may go, verifies the
  * decision, records it, and restores identity in the answer.
  */
-export async function withResidency(capability, { payload, context = {}, call }) {
+export async function withResidency(capability, { payload, context = {}, call, servedBy = null, live = null }) {
   const route = routeFor(capability);
 
   // No de-identification required: the payload goes to an in-country provider as-is.
@@ -128,6 +128,10 @@ export async function withResidency(capability, { payload, context = {}, call })
 
   audit(null, 'ai_egress', 'ai', null, {
     capability, provider: route.provider, class: route.class, redacted: vault.summary(),
+    /* QA-23. The route says where a call MAY go; this says what actually
+       answered it. With no frontier key the local stub answers, and the
+       evidence table called every such row "Sent". */
+    served_by: servedBy, live,
   });
 
   // Put the real names back before the answer reaches the user.

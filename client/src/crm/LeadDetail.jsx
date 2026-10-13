@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, money, rupees, shortDate, dateTime, mins, STATE_LABEL, ROLE_LABEL, appUrl } from '../api.js';
 import { checkField, checkAll, fieldErrorsFrom } from '../fieldRules.js';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, AgeBadge, PriorityBadge, Progress, CardDot, Icon, kycBadge } from '../components/ui.jsx';
@@ -29,6 +29,7 @@ export default function LeadDetail({ session }) {
   const [inCall, setInCall] = useState(false);
   const [editing, setEditing] = useState(false);
   const [notice, setNotice] = useState(null);
+  const navigate = useNavigate();
   const [actionError, setActionError] = useState(null);
   const [nba, setNba] = useState(null);
   const [nbaBusy, setNbaBusy] = useState(false);
@@ -60,8 +61,11 @@ export default function LeadDetail({ session }) {
     { key: 'market', label: 'Market' },
     { key: 'activity', label: 'Activity', count: lead.activities.length },
     { key: 'notes', label: 'Notes', count: lead.notes.length },
-    { key: 'tasks', label: 'Tasks', count: lead.tasks.filter((t) => t.status === 'Open').length },
-    { key: 'tickets', label: 'Tickets', count: lead.tickets.filter((t) => !['Resolved', 'Closed'].includes(t.status)).length },
+    /* QA-20. "Tasks (2)" over three rows read as a miscount: these two
+       counted open items while listing every one, and every other tab counts
+       what it lists. Now they do too. */
+    { key: 'tasks', label: 'Tasks', count: lead.tasks.length },
+    { key: 'tickets', label: 'Tickets', count: lead.tickets.length },
     { key: 'kyc', label: 'KYC', count: lead.journeys.length },
   ];
 
@@ -238,7 +242,7 @@ export default function LeadDetail({ session }) {
       <Tabs tabs={tabs} active={tab} onChange={setTab} />
 
       {tab === 'cards' && (
-          <Cards lead={lead} session={session} reload={reload} onError={setActionError}
+          <Cards lead={lead} session={session} reload={reload} onError={setActionError} onNotice={setNotice}
             showAll={showAllProducts} onShowAll={setShowAllProducts}
             onContact={(channel) => actions.run(channel, lead)} />
         )}
@@ -264,7 +268,16 @@ export default function LeadDetail({ session }) {
         state={actions.modal}
         session={session}
         onClose={() => actions.setModal(null)}
-        onDone={() => { actions.setModal(null); reload(); }}
+        onDone={(result) => {
+          actions.setModal(null);
+          /* QA-27. Reloading a record that was just deleted can only say
+             "Lead not found". Back to the list, which says what happened. */
+          if (result?.deleted) {
+            navigate('/leads', { state: { notice: `${result.name} moved to the recycle bin.` } });
+            return;
+          }
+          reload();
+        }}
         onNotice={setNotice}
       />
 
@@ -364,7 +377,7 @@ const NEXT_MOVE = {
   LOST: 'Review',
 };
 
-function Cards({ lead, session, reload, onError, onContact, showAll, onShowAll }) {
+function Cards({ lead, session, reload, onError, onNotice, onContact, showAll, onShowAll }) {
   const [open, setOpen] = useState(null);
   /* Owned by the lead screen rather than here, because the next-step button in
      the header opens this list and cannot reach state that lives inside the
@@ -434,7 +447,7 @@ function Cards({ lead, session, reload, onError, onContact, showAll, onShowAll }
         <ProductPanel
           cardId={open.id}
           onClose={() => setOpen(null)}
-          onDone={() => { setOpen(null); reload(); }}
+          onDone={(msg) => { setOpen(null); if (msg) onNotice?.(msg); reload(); }}
           onError={onError}
           onContact={(channel) => { setOpen(null); onContact?.(channel); }}
           onCrossSell={() => { setOpen(null); setShowAll(true); }}

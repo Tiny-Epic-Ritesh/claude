@@ -278,7 +278,8 @@ function ProductEditor({ product, onClose, onSaved, onError }) {
         <label>
           <span>Minimum investment</span>
           <input
-            type="number" min="0" step="1000"
+            // QA-31. step="1000" made ₹500 and ₹2,999 -- both in the catalogue -- invalid.
+            type="number" min="0" step="1"
             value={form.min_investment}
             onChange={set('min_investment')}
             placeholder="Leave empty for no minimum"

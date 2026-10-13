@@ -1008,6 +1008,8 @@ router.post('/:id/bulk/message', requirePermission('lead.contact'), (req, res) =
       subject: channel === 'email' ? `A note from ${req.user.name}` : undefined,
       leadId: id,
       userName: req.user.name,
+      // QA-39. The name was passed for the message text; the id never was.
+      userId: req.user.id,
     });
     run(
       `INSERT INTO activities (lead_id, type, direction, subject, body, user_id)

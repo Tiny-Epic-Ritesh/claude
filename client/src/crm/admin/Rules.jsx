@@ -11,11 +11,12 @@ import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Icon } from '../..
 /* ---------------------------------------------------------------- rules */
 
 export function Rules() {
-  const [data, { loading, reload }] = useApi('/admin/rules');
+  const [data, { loading, reload, error: loadError }] = useApi('/admin/rules');
   const [meta] = useApi('/meta');
   const [result, setResult] = useState(null);
   const [editing, setEditing] = useState(null);   // rule | 'new'
   const [busy, setBusy] = useState(false);
+  if (loadError) return <ErrorBanner error={loadError} />;
   if (loading || !data) return <Loading />;
 
   const dryRun = async (id) => {

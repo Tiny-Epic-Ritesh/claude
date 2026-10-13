@@ -260,8 +260,8 @@ export function copilot({ question, snapshot }) {
     const b = snapshot.tickets.filter((t) => t.breached);
     return {
       reply: b.length
-        ? `${b.length} ticket(s) have breached SLA:\n${b.map((t) => `- ${t.ref} [${t.priority}] ${t.subject}`).join('\n')}`
-        : `No SLA breaches. ${snapshot.tickets.length} ticket(s) open.`,
+        ? `${b.length} of the open ticket(s) ${snapshot.ticket_scope ?? 'you can see'} have breached SLA:\n${b.map((t) => `- ${t.ref} [${t.priority}] ${t.subject}`).join('\n')}`
+        : `No SLA breaches among the ${snapshot.tickets.length} open ticket(s) ${snapshot.ticket_scope ?? 'you can see'}.`,
     };
   }
 

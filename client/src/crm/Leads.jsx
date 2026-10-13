@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { useNavigate, useSearchParams, useLocation, Link } from 'react-router-dom';
 import { api, money, shortDate, STATE_LABEL } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty, Modal, Spinner, CardStrip, AgeBadge, kycBadge } from '../components/ui.jsx';
 import ColumnChooser from '../components/ColumnChooser.jsx';
@@ -129,12 +129,21 @@ export default function Leads({ session }) {
    * survives a refresh.
    */
   const [search, setSearch] = useSearchParams();
+  const location = useLocation();
+  const [arrived, setArrived] = useState(() => location.state?.notice ?? null);
   const [filters, setFilters] = useState(() => ({
     q: search.get('q') ?? '',
     stage: search.get('stage') ?? '',
     band: search.get('band') ?? '',
     card_state: search.get('card_state') ?? '',
     product_id: search.get('product_id') ?? '',
+    /* QA-04. A Home tile links here with its date window, and the route has
+       always honoured one -- but these were not read, so "New leads 3" opened
+       on 39 leads from April onwards. */
+    created_from: search.get('created_from') ?? '',
+    created_to: search.get('created_to') ?? '',
+    // The source chart on Home drills through with this, the same way.
+    source: search.get('source') ?? '',
   }));
 
   /* Order and position. P3-36, P3-37.
@@ -165,6 +174,9 @@ export default function Leads({ session }) {
       band: search.get('band') ?? '',
       card_state: search.get('card_state') ?? '',
       product_id: search.get('product_id') ?? '',
+      created_from: search.get('created_from') ?? '',
+      created_to: search.get('created_to') ?? '',
+      source: search.get('source') ?? '',
     });
   }, [search]);
   const query = useMemo(() => {
@@ -267,8 +279,36 @@ export default function Leads({ session }) {
         {canCreate && <button className="btn-primary" onClick={() => setCreating(true)}>New lead</button>}
       </div>
 
+      {/* QA-27. A delete from the lead's own page lands here with what it did,
+          rather than leaving the reader on "Lead not found". */}
+      {arrived && (
+        <div className="glass notice notice-ok row-between" style={{ marginBottom: 'var(--gap)' }}>
+          <span>
+            <Icon name="check_circle" /> {arrived}
+            {session.permissions?.includes('lead.delete') && <> <Link to="/data?tab=recycle">Open the recycle bin</Link></>}
+          </span>
+          <button className="btn-ghost btn-sm" onClick={() => setArrived(null)}>Dismiss</button>
+        </div>
+      )}
+
       <section className="card" style={{ marginBottom: 12 }}>
         <div className="card-body row wrap" style={{ gap: 10 }}>
+          {/* A filter nobody can see is the drill-through problem again, from
+              the other side: the list would be right and look wrong. */}
+          {(filters.created_from || filters.created_to) && (
+            <span className="badge" style={{ alignSelf: 'center' }}>
+              Created {dmy(filters.created_from) || '…'} – {dmy(filters.created_to) || '…'}
+              <button type="button" className="btn-ghost btn-sm" aria-label="Clear the date window"
+                onClick={() => goto({ created_from: null, created_to: null, offset: null })}>×</button>
+            </span>
+          )}
+          {filters.source && (
+            <span className="badge" style={{ alignSelf: 'center' }}>
+              Source: {filters.source}
+              <button type="button" className="btn-ghost btn-sm" aria-label="Clear the source"
+                onClick={() => goto({ source: null, offset: null })}>×</button>
+            </span>
+          )}
           <input placeholder="Search name, mobile, email or PAN…" value={filters.q} onChange={set('q')} style={{ flex: '2 1 240px' }} />
           <select value={filters.stage} onChange={set('stage')} style={{ flex: '0 1 150px' }}>
             <option value="">Any stage</option>
@@ -542,6 +582,9 @@ export default function Leads({ session }) {
     </>
   );
 }
+
+/** DD-MM-YYYY, from the YYYY-MM-DD a link carries. */
+const dmy = (d) => (d ? String(d).slice(0, 10).split('-').reverse().join('-') : '');
 
 function NewLead({ meta, onClose, onCreated }) {
   const [form, setForm] = useState({ name: '', mobile: '', email: '', city: '', source: 'Website', risk_profile: 'Moderate', language: 'English', owner_id: '' });

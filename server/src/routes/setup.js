@@ -1790,7 +1790,12 @@ router.get('/api-credentials', requirePermission('admin.system'), (req, res) => 
   res.json({
     // What an integration is told to call. Never guessed from the request host,
     // which behind a proxy is the proxy.
-    base_url: process.env.CRM_PUBLIC_URL || `${req.protocol}://${req.get('host')}`,
+    /* QA-12. And then it was guessed from the request host: behind the TLS
+       proxy Node sees plain http, so the screen told integrators to send their
+       key and secret to http://labs.tinyepic.in. Configured, or null -- and
+       the screen falls back to the origin the browser is already using, which
+       is the one place the scheme is known to be right. */
+    base_url: process.env.CRM_PUBLIC_URL || null,
     credentials: listCredentials(orgsFor(req.user)),
     /* Only users who could hold a key. A credential bound to somebody who
        leaves is a credential that outlives them, so service accounts are the
@@ -1971,7 +1976,11 @@ router.get('/database/export', requirePermission('report.system'), (req, res) =>
 router.get('/logs', requirePermission('report.system'), (req, res) => {
   res.json({
     kinds: retention(),
-    counts: setupCounts(orgsFor(req.user)),
+    /* QA-40. This called setupCounts, the Setup-health tally imported beside
+       it, whose keys are not log kinds -- so every tab read undefined and
+       showed 0 over tables holding thousands of rows. The log engine's own
+       counts() was imported and never called. */
+    counts: counts(orgsFor(req.user)),
   });
 });
 

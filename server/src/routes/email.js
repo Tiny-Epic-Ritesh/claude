@@ -29,7 +29,7 @@ import { decryptField } from '../security.js';
 import { checkConsent } from '../engine/consent.js';
 import { send } from '../integrations.js';
 import { sanitizeHtml, htmlToText, isEmptyHtml } from '../engine/sanitize.js';
-import { availableMergeFields, unknownTokens } from '../engine/mergefields.js';
+import { availableMergeFields, unknownTokens, valuesFor, maskedTokens } from '../engine/mergefields.js';
 
 const router = Router();
 router.use(requireUser);
@@ -313,12 +313,14 @@ router.post('/send', requirePermission('lead.contact'), (req, res) => {
     return res.status(400).json({ error: 'Those brochures come to more than a client mailbox will accept. Send fewer.' });
   }
 
-  const vars = {
-    name: (lead.name || '').split(' ')[0],
-    full_name: lead.name,
-    rm: req.user.name,
-    org: lead.sales_org === 'BIGUL' ? 'Bigul' : 'Bonanza',
-  };
+  /* QA-11. The values come from the merge engine, which is what the picker
+     offers; this list was written by hand and carried four of them. A field
+     masked for the sender is refused here rather than merged. */
+  const hidden = maskedTokens(`${subject ?? ''} ${safeBody ?? ''} ${textBody ?? ''}`, req.user.role, mayUnmask(req));
+  if (hidden.length) {
+    return res.status(400).json({ error: `{{${hidden[0]}}} is masked for your role, so it cannot be merged into a message`, field: hidden[0] });
+  }
+  const vars = valuesFor(lead, req.user);
   const finalSubject = merge(subject, vars);
   // Merged after sanitising: a merge field resolving to a client's own name is
   // data, and running it through the sanitiser would escape apostrophes in it.

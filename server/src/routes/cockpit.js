@@ -739,8 +739,10 @@ const ACTION = {
   Merge: { icon: 'merge', kind: 'pick', to: '/tickets', hint: 'Choose the case', needs: 'ticket.merge' },
   'Send CSAT': { icon: 'sentiment_satisfied', kind: 'pick', to: '/tickets', hint: 'Choose the case', needs: 'ticket.reply' },
 
+  /* QA-19. Lead Lists was built for BUG-25; this still said it was not. */
+  'Create list': { icon: 'format_list_bulleted', kind: 'go', to: '/lists', needs: 'list.create' },
+
   /* ---- honestly not built ---- */
-  'Create list': { icon: 'format_list_bulleted', kind: 'soon', label: 'Lead Lists is still in build' },
   'Reassign product card': { icon: 'swap_horiz', kind: 'soon', label: 'Bulk card reassignment is still in build' },
   'Override KYC step': { icon: 'edit', kind: 'pick', to: '/kyc', hint: 'Choose the journey', needs: 'kyc.override' },
   'Escalate stalled KYC': { icon: 'priority_high', kind: 'pick', to: '/kyc', hint: 'Choose the journey', needs: 'kyc.view' },

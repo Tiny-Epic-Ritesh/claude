@@ -132,9 +132,16 @@ export function Residency({ session }) {
                     <td className="tiny muted num" style={{ width: 150 }}>{dateTime(e.created_at)}</td>
                     <td className="small">{e.meta?.capability}</td>
                     <td>
+                      {/* QA-23. "Sent" for every row overstated it: with no
+                          frontier key the local stub answers. Rows from before
+                          13 Oct did not record which, so they say so. */}
                       {e.action === 'ai_egress_blocked'
                         ? <span className="badge badge-red">Blocked</span>
-                        : <span className="badge badge-green">Sent</span>}
+                        : e.meta?.live === true
+                          ? <span className="badge badge-green">Sent abroad</span>
+                          : e.meta?.live === false
+                            ? <span className="badge" title="No frontier provider is configured, so the local stub answered">Served locally</span>
+                            : <span className="badge" title="Recorded before the CRM noted which provider answered">Not recorded</span>}
                     </td>
                     <td className="tiny">
                       {Object.entries(e.meta?.redacted || {}).map(([kind, n]) => (

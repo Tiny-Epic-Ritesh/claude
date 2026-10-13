@@ -50,7 +50,7 @@ const FIELD_TYPES = [
 ];
 
 export function CaptureForms({ session }) {
-  const [data, { loading, reload }] = useApi('/setup/forms');
+  const [data, { loading, reload, error: loadError }] = useApi('/setup/forms');
   const [type, setType] = useState('Call');
   const [order, setOrder] = useState([]);
   const [dirty, setDirty] = useState(false);
@@ -70,6 +70,7 @@ export function CaptureForms({ session }) {
     setDirty(false);
   }, [data, type]);
 
+  if (loadError) return <ErrorBanner error={loadError} />;
   if (loading || !data) return <Loading />;
 
   const byName = new Map(data.fields.map((f) => [f.api_name, f]));

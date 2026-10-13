@@ -1505,7 +1505,9 @@ router.post('/cards/:id/request-product-rm', requirePermission('card.request.pro
    * better homes for it -- the High-priority task on this lead, the audit row
    * below, and the card's own history. */
   audit(req.user.id, 'product_rm_requested', 'product_card', card.id, { reason: req.body.reason });
-  res.json({ requested: true, notified: rms.length, texted });
+  /* QA-21. Named, so the person asking learns who now holds it rather than
+     that "something happened". */
+  res.json({ requested: true, notified: rms.length, texted, product_rms: rms.map((r) => r.name), product: card.product_name });
 });
 
 /**
@@ -1727,7 +1729,12 @@ router.post('/leads/:id/message', requirePermission('lead.contact'), (req, res) 
   const text = (body || template?.body || '').replace(/\{\{name\}\}/g, lead.name);
   if (!text.trim()) return res.status(400).json({ error: 'Message body is required' });
 
-  const entry = send(channel, { to: lead.mobile || lead.email, body: text, subject: subject || template?.subject, leadId: lead.id, templateId: template_id });
+  /* QA-39. send() writes the timeline entry and names its author from
+     userId; this never passed one, so a message a person typed read "system". */
+  const entry = send(channel, {
+    to: lead.mobile || lead.email, body: text, subject: subject || template?.subject,
+    leadId: lead.id, templateId: template_id, userId: req.user.id,
+  });
   applyScore(lead.id, channel === 'email' ? 'Email' : channel === 'sms' ? 'SMS' : 'WhatsApp');
   res.status(201).json(entry);
 });

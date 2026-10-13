@@ -7,6 +7,7 @@
  */
 
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../api.js';
 import { useApi, Loading, ErrorBanner, Empty, Tabs, Spinner, Icon } from '../components/ui.jsx';
 import { dateTime } from '../api.js';
@@ -324,7 +325,10 @@ export default function DataTools({ session }) {
     has('lead.delete') && { key: 'recycle', label: 'Recycle bin' },
   ].filter(Boolean);
 
-  const [tab, setTab] = useState(tabs[0]?.key);
+  /* ?tab=recycle opens the bin directly, for the notice a delete leaves. */
+  const [params] = useSearchParams();
+  const asked = params.get('tab');
+  const [tab, setTab] = useState(tabs.some((t) => t.key === asked) ? asked : tabs[0]?.key);
 
   if (!tabs.length) return <Empty>You do not have access to the data tools.</Empty>;
 

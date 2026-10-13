@@ -16,11 +16,12 @@ import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Icon } from '../co
 const TONE = { Pending: '', Approved: 'badge-green', Rejected: 'badge-red', Withdrawn: 'badge-amber' };
 
 export default function Approvals() {
-  const [data, { loading, reload }] = useApi('/approvals');
+  const [data, { loading, reload, error: loadError }] = useApi('/approvals');
   const [deciding, setDeciding] = useState(null);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
 
+  if (loadError) return <ErrorBanner error={loadError} />;
   if (loading || !data) return <Loading />;
 
   const withdraw = async (id) => {

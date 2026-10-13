@@ -32,8 +32,8 @@ export default function Telephony() {
   const [problem, setProblem] = useState(null);
   const [notice, setNotice] = useState(null);
 
-  if (loading || !data) return <Loading />;
   if (error) return <ErrorBanner error={error} />;
+  if (loading || !data) return <Loading />;
 
   const done = (msg) => { setNotice(msg); reload(); };
 

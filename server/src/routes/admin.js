@@ -5,7 +5,8 @@
 
 import express, { Router } from 'express';
 import { all, one, run, audit, ROLES, ROLE_LABELS } from '../db.js';
-import { requireUser, requirePermission, permissionsFor, orgsFor, activeOrg, mayUseOrg, PERMISSIONS } from '../auth.js';
+import { requireUser, requirePermission, permissionsFor, orgsFor, activeOrg, mayUseOrg, mayUnmask, PERMISSIONS } from '../auth.js';
+import { fill, maskedTokens } from '../engine/mergefields.js';
 import { hashPassword } from '../security.js';
 import { CONDITION_FIELDS, ACTION_TYPES, runRule } from '../engine/rules.js';
 import { MASTER_STEPS } from '../engine/kyc.js';
@@ -173,6 +174,14 @@ router.post('/products', requirePermission('admin.products'), (req, res) => {
   const { code, name, category, min_investment, lock_in, risk_category, pitch_points, objections, requires_kyc = 1 } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'A product needs a name' });
 
+  /* QA-31. Zero is a minimum; empty is "not set". `min_investment || null`
+     turned the first into the second, and nothing refused a negative. */
+  const minimum = min_investment === undefined || min_investment === null || min_investment === ''
+    ? null : Number(min_investment);
+  if (minimum !== null && !(Number.isFinite(minimum) && minimum >= 0)) {
+    return res.status(400).json({ error: 'The minimum investment must be a sum of zero or more', field: 'min_investment' });
+  }
+
   /* A product belongs to a business, as a lead does, and this route never
      said which -- the column default made every new product Bonanza's. */
   const org = activeOrg(req) || req.user.sales_org;
@@ -190,7 +199,7 @@ router.post('/products', requirePermission('admin.products'), (req, res) => {
   const result = run(
     `INSERT INTO product_types (sales_org, code, name, category, min_investment, lock_in, risk_category, pitch_points, objections, requires_kyc, sort_order)
      VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-    [org, issued, name.trim(), category || null, min_investment || null, lock_in || null, risk_category || null,
+    [org, issued, name.trim(), category || null, minimum, lock_in || null, risk_category || null,
       JSON.stringify(pitch_points || []), JSON.stringify(objections || []), requires_kyc ? 1 : 0, maxOrder + 1],
   );
   const id = Number(result.lastInsertRowid);
@@ -297,6 +306,12 @@ router.delete('/products/:id/brochure', requirePermission('admin.products'), (re
 });
 
 router.patch('/products/:id', requirePermission('admin.products'), (req, res) => {
+  if (req.body.min_investment !== undefined && req.body.min_investment !== null && req.body.min_investment !== '') {
+    const minimum = Number(req.body.min_investment);
+    if (!(Number.isFinite(minimum) && minimum >= 0)) {
+      return res.status(400).json({ error: 'The minimum investment must be a sum of zero or more', field: 'min_investment' });
+    }
+  }
   const fields = ['name', 'category', 'min_investment', 'lock_in', 'risk_category', 'brochure_url', 'apply_url', 'active', 'sort_order', 'requires_kyc'];
   const sets = [];
   const params = [];
@@ -1402,6 +1417,12 @@ router.post('/campaigns/:id/test', requirePermission('campaign.manage'), async (
   if (content.error) return res.status(content.status).json({ error: content.error });
   const { template } = content;
 
+  /* QA-11. Refused by name rather than merged, as the composer refuses it. */
+  const hidden = maskedTokens(`${template.subject ?? ''} ${template.body}`, req.user.role, mayUnmask(req));
+  if (hidden.length) {
+    return res.status(400).json({ error: `{{${hidden[0]}}} is masked for your role, so this template cannot be sent by you`, field: hidden[0] });
+  }
+
   const to = campaign.channel === 'email' ? req.user.email : (req.user.phone || req.user.whatsapp);
   if (!to) {
     return res.status(400).json({
@@ -1413,7 +1434,8 @@ router.post('/campaigns/:id/test', requirePermission('campaign.manage'), async (
   const { send } = await import('../integrations.js');
   send(campaign.channel, {
     to,
-    body: `[TEST] ${template.body.replace(/\{\{name\}\}/g, req.user.name)}`,
+    // Filled as if the sender were the client, which is what a test is for.
+    body: `[TEST] ${fill(template.body, { name: req.user.name, email: req.user.email, mobile: req.user.phone, sales_org: campaign.sales_org }, req.user)}`,
     subject: template?.subject ? `[TEST] ${template.subject}` : undefined,
     templateId: campaign.template_id,
   });
@@ -1453,6 +1475,11 @@ router.post('/campaigns/:id/send', requirePermission('campaign.manage'), async (
   if (content.error) return res.status(content.status).json({ error: content.error });
   const { template } = content;
 
+  const hidden = maskedTokens(`${template.subject ?? ''} ${template.body}`, req.user.role, mayUnmask(req));
+  if (hidden.length) {
+    return res.status(400).json({ error: `{{${hidden[0]}}} is masked for your role, so this template cannot be sent by you`, field: hidden[0] });
+  }
+
   /**
    * The consent gate, on the path that carries the volume.
    *
@@ -1467,8 +1494,10 @@ router.post('/campaigns/:id/send', requirePermission('campaign.manage'), async (
   for (const lead of reachable) {
     send(campaign.channel, {
       to: campaign.channel === 'email' ? lead.email : lead.mobile,
-      body: template.body.replace(/\{\{name\}\}/g, lead.name),
-      subject: template?.subject,
+      /* QA-11. Every offered token, not only {{name}} -- and {{name}} now
+         means what the picker has always said it means, the first name. */
+      body: fill(template.body, lead, req.user),
+      subject: template.subject ? fill(template.subject, lead, req.user) : undefined,
       leadId: lead.id,
       templateId: campaign.template_id,
     });

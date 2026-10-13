@@ -29,8 +29,8 @@ export default function ApiAccess() {
   const [revealed, setRevealed] = useState(null);
   const [problem, setProblem] = useState(null);
 
-  if (loading || !data) return <Loading />;
   if (error) return <ErrorBanner error={error} />;
+  if (loading || !data) return <Loading />;
 
   const rotate = async (c) => {
     try {
@@ -57,7 +57,11 @@ export default function ApiAccess() {
           </div>
         </div>
         <dl className="setup-facts">
-          <div><dt>Base URL</dt><dd className="api-name">{data.base_url}</dd></div>
+          {/* QA-12. Configured (CRM_PUBLIC_URL), or the origin this screen is
+              itself calling the API on -- the one address whose scheme is
+              known to be right behind the TLS proxy. It used to be guessed
+              from the request and came out http://. */}
+          <div><dt>Base URL</dt><dd className="api-name">{data.base_url ?? window.location.origin}</dd></div>
           <div><dt>Key header</dt><dd className="api-name">X-Api-Key</dd></div>
           <div><dt>Secret header</dt><dd className="api-name">X-Api-Secret</dd></div>
         </dl>

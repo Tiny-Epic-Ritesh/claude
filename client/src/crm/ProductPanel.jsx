@@ -52,7 +52,8 @@ export default function ProductPanel({ cardId, onClose, onDone, onError, onConta
 
   const act = async (fn) => {
     setBusy(true);
-    try { await fn(); onDone?.(); }
+    // A step that has something to say returns it as a string (QA-21).
+    try { const said = await fn(); onDone?.(typeof said === 'string' ? said : undefined); }
     catch (e) { onError?.(e.message); setBusy(false); }
   };
 
@@ -62,9 +63,17 @@ export default function ProductPanel({ cardId, onClose, onDone, onError, onConta
     if (!action || !action.allowed) return;
     switch (action.kind) {
       case 'state': return move(action.to);
-      case 'rm': return act(() => api.post(`/cards/${d.id}/request-product-rm`, {
-        reason: note || 'Sales RM requested product expertise',
-      }));
+      case 'rm': return act(async () => {
+        const r = await api.post(`/cards/${d.id}/request-product-rm`, {
+          reason: note || 'Sales RM requested product expertise',
+        });
+        /* QA-21. The route makes each of them a High-priority task due in four
+           hours and a notification; say who, instead of a generic "done". */
+        const who = r.product_rms ?? [];
+        return who.length
+          ? `Asked ${who.join(', ')}, the ${r.product} Product RM${who.length === 1 ? '' : 's'}. A High-priority task due in 4 hours is on ${who.length === 1 ? 'their' : 'each of their'} list.`
+          : `No Product RM is set up for ${r.product ?? 'this product'}, so nobody was asked.`;
+      });
       case 'kyc': return act(async () => {
         const j = await api.post('/kyc/journeys', { lead_id: d.lead_id, card_id: d.id });
         window.open(appUrl(`/dkyc/resume/${j.resume_token}`), '_blank', 'noopener');

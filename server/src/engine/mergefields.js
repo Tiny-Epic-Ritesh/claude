@@ -23,6 +23,7 @@
  */
 
 import { all, one } from '../db.js';
+import { maskedFieldsFor } from './masking.js';
 
 /** Types that read sensibly in a sentence written to a client. */
 const MERGEABLE_TYPES = new Set([
@@ -88,6 +89,39 @@ export function availableMergeFields(entity = 'lead') {
     }));
 
   return [...computed, ...stored];
+}
+
+/**
+ * Fill a body for one lead and one sender (QA-11).
+ *
+ * The one resolver. The composer built its own four-entry list and sent
+ * {{owner}}, {{city}}, {{mobile}} and {{email}} literally although its own
+ * picker offered them; a campaign replaced {{name}} and nothing else. Both
+ * now come here, so what the picker offers is what gets filled.
+ *
+ * The same substitution the composer's merge() makes: an offered field with
+ * no value becomes empty (valuesFor's rule, below), and a token nothing
+ * offers is left as written. Saving a template refuses unknown tokens;
+ * sending does not, so one typed into a composed message goes out as typed.
+ */
+export function fill(text, lead, user) {
+  const vars = valuesFor(lead, user);
+  return String(text ?? '').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (m, key) => (
+    vars[key] != null ? String(vars[key]) : m
+  ));
+}
+
+/**
+ * Tokens this sender may not merge (QA-11).
+ *
+ * A field masked for the sender's role, who may not unmask it, cannot be
+ * merged: the filled message lands on the timeline, where the same person
+ * reads it back unmasked. Refused before sending, by name.
+ */
+export function maskedTokens(text, role, mayUnmask) {
+  if (mayUnmask) return [];
+  const masked = maskedFieldsFor(role);
+  return tokensIn(text).filter((t) => masked.has(t));
 }
 
 /** Every {{token}} in a body or subject, in the order they appear. */

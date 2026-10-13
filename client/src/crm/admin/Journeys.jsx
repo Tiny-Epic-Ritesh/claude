@@ -1,4 +1,4 @@
-import { useApi, Loading } from '../../components/ui.jsx';
+import { useApi, Loading, ErrorBanner } from '../../components/ui.jsx';
 
 /*
  * Lifted out of Admin.jsx, which held eleven Setup screens in one file and so
@@ -9,7 +9,8 @@ import { useApi, Loading } from '../../components/ui.jsx';
 /* ------------------------------------------------------- KYC composer */
 
 export function Journeys() {
-  const [data, { loading }] = useApi('/admin/kyc/journeys');
+  const [data, { loading, error: loadError }] = useApi('/admin/kyc/journeys');
+  if (loadError) return <ErrorBanner error={loadError} />;
   if (loading || !data) return <Loading />;
 
   return (

@@ -70,7 +70,8 @@ const CAP_LABEL = {
  * how integrations get signed off before they work.
  */
 function Connection() {
-  const [data, { loading }] = useApi('/admin/connectors/meta');
+  const [data, { loading, error: loadError }] = useApi('/admin/connectors/meta');
+  if (loadError) return <ErrorBanner error={loadError} />;
   if (loading || !data) return <Loading />;
 
   return (
@@ -215,8 +216,9 @@ function SourcePicker({ value, options, busy, onPick, onCreate, onError }) {
 }
 
 function Forms({ onError }) {
-  const [data, { loading, reload }] = useApi('/admin/connectors/meta/forms');
+  const [data, { loading, reload, error: loadError }] = useApi('/admin/connectors/meta/forms');
   const [busy, setBusy] = useState(null);
+  if (loadError) return <ErrorBanner error={loadError} />;
   if (loading || !data) return <Loading />;
 
   const save = async (formId, patch) => {
@@ -342,8 +344,9 @@ function Forms({ onError }) {
  * decision is pending — but a note is not a field you can filter or report on.
  */
 function Mapping({ onError }) {
-  const [data, { loading, reload }] = useApi('/admin/connectors/meta/field-map');
+  const [data, { loading, reload, error: loadError }] = useApi('/admin/connectors/meta/field-map');
   const [adding, setAdding] = useState('');
+  if (loadError) return <ErrorBanner error={loadError} />;
   if (loading || !data) return <Loading />;
 
   const set = async (question, crmField, formId = '*') => {
@@ -457,7 +460,8 @@ const OUTCOME = {
  * only evidence that lead ever existed.
  */
 function Deliveries() {
-  const [data, { loading, reload }] = useApi('/admin/connectors/meta/deliveries');
+  const [data, { loading, reload, error: loadError }] = useApi('/admin/connectors/meta/deliveries');
+  if (loadError) return <ErrorBanner error={loadError} />;
   if (loading || !data) return <Loading />;
 
   const totals = data.totals ?? {};
@@ -702,9 +706,10 @@ function AdCampaigns({ onError }) {
  * from the same screen that sends it.
  */
 function Audiences({ onError }) {
-  const [data, { loading, reload }] = useApi('/admin/connectors/meta/audiences');
+  const [data, { loading, reload, error: loadError }] = useApi('/admin/connectors/meta/audiences');
   const [draft, setDraft] = useState({ name: '', list_id: '' });
   const [busy, setBusy] = useState(false);
+  if (loadError) return <ErrorBanner error={loadError} />;
   if (loading || !data) return <Loading />;
 
   const push = async () => {
@@ -815,8 +820,9 @@ function Audiences({ onError }) {
  * the same time.
  */
 function Messages({ onError }) {
-  const [data, { loading, reload }] = useApi('/admin/connectors/meta/messages');
+  const [data, { loading, reload, error: loadError }] = useApi('/admin/connectors/meta/messages');
   const [linking, setLinking] = useState(null);
+  if (loadError) return <ErrorBanner error={loadError} />;
   if (loading || !data) return <Loading />;
 
   return (

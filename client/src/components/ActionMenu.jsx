@@ -35,7 +35,8 @@ import { useDropUp } from './ui.jsx';
  *
  *   needs        capability required; null means everyone signed in
  *   channel      which contactability entry gates it, if any
- *   intent       marketing or service — decides whether an opt-out blocks it
+ *   intent       marketing, service, or any (a dialog that asks which) —
+ *                decides whether an opt-out blocks it
  *   group        separator grouping, in the order listed
  *   danger       renders in the destructive tone
  *   detailOnly   not offered from a list row (needs the full record)
@@ -43,9 +44,13 @@ import { useDropUp } from './ui.jsx';
 export const LEAD_ACTIONS = [
   // Reach out
   { key: 'call', label: 'Call', icon: 'call', needs: 'lead.contact', channel: 'call', intent: 'service', group: 'contact' },
-  { key: 'whatsapp', label: 'Send WhatsApp', icon: 'chat', needs: 'lead.contact', channel: 'whatsapp', intent: 'marketing', group: 'contact' },
-  { key: 'sms', label: 'Send SMS', icon: 'sms', needs: 'lead.contact', channel: 'sms', intent: 'marketing', group: 'contact' },
-  { key: 'email', label: 'Send email', icon: 'mail', needs: 'lead.contact', channel: 'email', intent: 'marketing', group: 'contact' },
+  /* QA-38. These open a dialog that asks Service or Marketing and enforces
+     the answer, as the API does. Gating the opener on marketing blocked a
+     service message to an opted-out client from the menu while the header's
+     email button allowed it. The opener asks whether any purpose is open. */
+  { key: 'whatsapp', label: 'Send WhatsApp', icon: 'chat', needs: 'lead.contact', channel: 'whatsapp', intent: 'any', group: 'contact' },
+  { key: 'sms', label: 'Send SMS', icon: 'sms', needs: 'lead.contact', channel: 'sms', intent: 'any', group: 'contact' },
+  { key: 'email', label: 'Send email', icon: 'mail', needs: 'lead.contact', channel: 'email', intent: 'any', group: 'contact' },
 
   // Record what happened
   { key: 'activity', label: 'Log an activity', icon: 'edit_note', needs: 'lead.contact', group: 'record' },
@@ -86,7 +91,8 @@ export function resolveActions(lead, permissions, { listMode = false } = {}) {
       const gate = a.channel ? lead?.contactability?.[a.channel] : null;
       if (!gate) return { ...a, blocked: false };
 
-      const allowed = a.intent === 'service' ? gate.service : gate.marketing;
+      const allowed = a.intent === 'any' ? (gate.service || gate.marketing)
+        : a.intent === 'service' ? gate.service : gate.marketing;
       return { ...a, blocked: !allowed, blockedReason: allowed ? null : gate.reason };
     });
 }

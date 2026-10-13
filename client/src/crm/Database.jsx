@@ -58,8 +58,8 @@ export default function Database() {
     } catch (err) { setProblem(err.message); } finally { setExporting(false); }
   };
 
-  if (loading || !data) return <Loading />;
   if (error) return <ErrorBanner error={error} />;
+  if (loading || !data) return <Loading />;
 
   const objectBytes = data.objects.reduce((s, o) => s + o.bytes, 0);
   const otherBytes = data.other.reduce((s, o) => s + o.bytes, 0);

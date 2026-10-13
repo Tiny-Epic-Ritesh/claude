@@ -155,6 +155,10 @@ export function copilotSnapshot(user) {
     user_name: user.name,
     generatedAt: new Date().toISOString(),
     leads, cardStates, pipelineValue, tickets, journeys, tasks, partners,
+    /* QA-25. Customer Care's tickets are its own queue, everyone else's are
+       those on leads they hold. An answer that does not say which reads as
+       the whole book's. */
+    ticket_scope: user.role === 'customer_care' ? 'assigned to you' : 'on the leads you hold',
   };
 }
 
@@ -193,7 +197,7 @@ export function partnerInsightContext(partnerId) {
  */
 
 const route = (capability, payload, context, fn) =>
-  withResidency(capability, { payload, context, call: fn });
+  withResidency(capability, { payload, context, call: fn, servedBy: provider.name, live: isLive });
 
 export async function disposition(ctx) {
   // PII_RAW: a transcript cannot be reliably de-identified, so it stays in country.

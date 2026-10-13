@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, dateTime, shortDate } from '../api.js';
 import {
   useApi, Icon, Loading, ErrorBanner, Empty, Spinner, PriorityBadge, Tabs, Modal,
@@ -53,7 +53,15 @@ function Th({ label, col, className, sort, dir, onSort }) {
 /* ---------------------------------------------------------------- queue */
 
 function TicketQueue({ session }) {
-  const [filter, setFilter] = useState(session.role === 'customer_care' ? 'mine' : 'open');
+  /* QA-05. Home's "Open cases 4" links here as ?open=true and landed on
+     "Assigned to me · 2", because the view came from the role alone. A link
+     names its view now; ?view= takes any tab, and ?open=true is kept for
+     links already sent. */
+  const [linked] = useSearchParams();
+  const askedView = linked.get('view') ?? (linked.get('open') === 'true' ? 'open' : null);
+  const [filter, setFilter] = useState(['mine', 'open', 'breached', 'all'].includes(askedView)
+    ? askedView
+    : session.role === 'customer_care' ? 'mine' : 'open');
   const [sort, setSort] = useState(null);
   const [dir, setDir] = useState('desc');
   const [offset, setOffset] = useState(0);

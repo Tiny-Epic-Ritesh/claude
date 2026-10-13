@@ -133,8 +133,8 @@ function ObjectDetail({ entity, onBack }) {
   const [saving, setSaving] = useState(false);
   const [orderError, setOrderError] = useState(null);
 
-  if (loading || !data) return <Loading />;
   if (error) return <ErrorBanner error={error} />;
+  if (loading || !data) return <Loading />;
 
   const fillRate = new Map((usage?.fields ?? []).map((f) => [f.api_name, f.fill_rate]));
   const reordering = draft !== null;

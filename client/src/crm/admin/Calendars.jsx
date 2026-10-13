@@ -23,9 +23,10 @@ import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Icon } from '../..
  * leaving them out.
  */
 export function Calendars() {
-  const [data, { loading, reload }] = useApi('/admin/calendars');
+  const [data, { loading, reload, error: loadError }] = useApi('/admin/calendars');
   const [adding, setAdding] = useState(null);   // kind
   const [error, setError] = useState(null);
+  if (loadError) return <ErrorBanner error={loadError} />;
   if (loading || !data) return <Loading />;
 
   const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];

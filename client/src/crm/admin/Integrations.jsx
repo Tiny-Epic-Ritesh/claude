@@ -1,4 +1,4 @@
-import { useApi, Loading, Empty } from '../../components/ui.jsx';
+import { useApi, Loading, Empty, ErrorBanner } from '../../components/ui.jsx';
 
 /*
  * Lifted out of Admin.jsx, which held eleven Setup screens in one file and so
@@ -7,7 +7,8 @@ import { useApi, Loading, Empty } from '../../components/ui.jsx';
  */
 
 export function Integrations() {
-  const [data, { loading, reload }] = useApi('/admin/integrations');
+  const [data, { loading, reload, error: loadError }] = useApi('/admin/integrations');
+  if (loadError) return <ErrorBanner error={loadError} />;
   if (loading || !data) return <Loading />;
 
   return (

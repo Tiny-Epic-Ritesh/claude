@@ -147,8 +147,11 @@ gate).
 
 **Eight of those are surgical** — QA-01, QA-03, QA-33, QA-26, QA-08, QA-28,
 QA-32, QA-30 — and belong in one pass with tests. **Fixed 13 October**, with 28
-tests of which 20 fail on the unfixed code; eight defects found beside them are
-listed in the triage, unfixed, each wanting its own OPS id. **QA-02 is a design change**
+tests of which 20 fail on the unfixed code; ten defects found beside them are
+listed in the triage, unfixed, each wanting its own OPS id. **A second batch,
+same day,** fixed twelve more and part of four, after tracing all twenty that
+were still unverified: 20 fixed of 43, with every open item now traced or
+classified. **QA-02 is a design change**
 with 48,000 rows to reconcile and wants its own scoping and sign-off. **QA-34 is
 medium**, because the same values arrive from DKYC, from import and from
 automation writes.

@@ -10,16 +10,17 @@ against this document and earlier feedback IDs." This is that document.
 ## The ledger — every point in the report, and where it stands
 
 Kept current: a commit that closes a point changes its row here and says so.
-Last updated **13 October 2026**, at `84c2c2f`.
+Last updated **13 October 2026**, at batch 2 (the second commit after `52ecf88`).
 
 **States.** *fixed* — in code, tested, pushed. *not started* — open, no
 blocker. *needs decision* — waiting on Ritesh, and nothing is built until it is
 answered. *unverified* — the auditor's evidence stands but I have not traced it
 to a line yet. *environment* — a change to labs.tinyepic.in itself, not the code.
 
-**Today, of the 43 IDs: 8 fixed · 29 open · 4 waiting on a decision · 2 split**
-(open work with a decision inside, QA-06 and QA-35). Plus the points below the
-table, which are not IDs but are as much part of the report.
+**Today, of the 43 IDs: 20 fixed · 4 partly fixed · 12 open · 5 waiting on a
+decision · 2 split** (open work with a decision inside, QA-06 and QA-35). Plus
+the points below the table, which are not IDs but are as much part of the
+report.
 
 ### The 43 findings
 
@@ -28,51 +29,55 @@ table, which are not IDs but are as much part of the report.
 | QA-01 | P0 | **fixed** `84c2c2f` | Form sends `route: false`. Its second half is adjacent (e). |
 | QA-02 | P0 | not started | Design change: idempotency, retry bound, retention, reconciling ~48,000 rows. Wants scoping and sign-off. |
 | QA-03 | P0 | **fixed** `84c2c2f` | `engine/cases.js`. |
-| QA-04 | P1 | not started · unverified | Drill-through drops the date predicate. `ENH-05`/`05a`, `P2-13`/`P2-17c`. |
-| QA-05 | P1 | not started · unverified | Care tiles and case filters disagree. |
+| QA-04 | P1 | **fixed** batch 2 | The Leads page reads the date window — and the source chart's `source` — a tile sends, and shows each as a removable chip. Tile and list compare the same dates. Both compare IST dates against UTC timestamps: adjacent (j). |
+| QA-05 | P1 | **partly fixed** batch 2 | "Open cases" opens on All open (`?view=`, `?open=true`). The case-summary strip is still not clickable, and "Resolved today" was not traced. |
 | QA-06 | P1 | not started · **half needs decision** | Marketing may view unmasked PII (decided) — the work. Export is the open decision. |
-| QA-07 | P1 | not started · unverified | Case review and confirmation step (Ritesh's Part 4). |
+| QA-07 | P1 | not started | A UI build: draft-until-Save on Manage, and a consequence summary with Confirm for Escalate and Resolve (Ritesh's Part 4). Confirmed by the report; no code defect to trace. |
 | QA-08 | P1 | **fixed** `84c2c2f` | Every link book-checked too. |
 | QA-09 | P1 | **needs decision** | Stage / Trading / Active / UCC / accrued vs paid commission. |
-| QA-10 | P1 | not started · unverified | The call panel in both themes. |
-| QA-11 | P1 | not started · unverified | Offered merge fields left unresolved in the sent body. |
-| QA-12 | P1 | not started · needs one check | `base_url` is server-composed; whether it says `http://`. |
+| QA-10 | P1 | not started | A UI build: an opaque, scrollable call panel with a visible End call and state-aware actions. Confirmed by the report; needs a design pass in both themes. |
+| QA-11 | P1 | **fixed** batch 2 | One resolver, `fill()` in the merge engine, for the composer, test-send and campaign send. A field masked for the sender is refused by name. **`{{name}}` in campaigns is now the first name**, as the picker always said. The picker's static examples are untouched. |
+| QA-12 | P1 | **partly fixed** batch 2 | The screen shows `CRM_PUBLIC_URL` or the origin it is itself using — https. Refusing a key sent over plain http needs the proxy to say the scheme (`X-Forwarded-Proto`), which is nginx, which I do not touch. |
 | QA-13 | P1 | **needs decision** | May a Bonanza partner refer Bigul products; may Bonanza DKYC open Bigul accounts. |
 | QA-14 | P2 | not started | Pipeline multi-select products and per-stage filters. |
 | QA-15 | P2 | not started | Pagination and column sorting, `P3-36`/`37`/`39`. |
 | QA-16 | P2 | not started | Report builder and dashboard creation, `P3-06`/`P2-17` — gated on `N-4a`. |
 | QA-17 | P2 | not started | One `DD-MM-YYYY` display formatter. |
 | QA-18 | P2 | not started | App Launcher outside-click, `P3-31`. |
-| QA-19 | P2 | not started · unverified | Marketing Home's stale "Create list". |
-| QA-20 | P2 | not started · unverified | "Tasks (2)" over three rows — label the open count. |
-| QA-21 | P2 | not started · unverified | The handoff acknowledgement is generic. |
+| QA-19 | P2 | **fixed** batch 2 | "Create list" goes to Lead Lists for whoever holds `list.create`. |
+| QA-20 | P2 | **fixed** batch 2 | Tasks and Tickets count what they list, like every other tab. |
+| QA-21 | P2 | **fixed** batch 2 | The handoff names the Product RM(s) asked and the High-priority task it gave them. 60-second timing still unmeasured. |
 | QA-22 | P2 | not started | Market headlines are not links, `ENH-09`. |
-| QA-23 | P2 | not started · unverified | Residency "Sent" versus "served locally". |
+| QA-23 | P2 | **fixed** batch 2 | An egress row records what actually answered; the table says Sent abroad, Served locally, or — for rows before 13 Oct — Not recorded. |
 | QA-24 | P2 | **needs decision** | What `Won` means — the same conflation as QA-09. |
-| QA-25 | P2 | not started · unverified | Copilot's breach answer does not state its scope. |
+| QA-25 | P2 | **partly fixed** batch 2 | The breach answer says whose tickets it counted. The drawer covering dashboard cards is untouched. |
 | QA-26 | P1 | **fixed** `84c2c2f` | |
-| QA-27 | P2 | not started · unverified | "Lead not found" after a successful delete. |
+| QA-27 | P2 | **fixed** batch 2 | A delete returns to the list with a confirmation and a link straight to the recycle bin. |
 | QA-28 | P1 | **fixed** `84c2c2f` | Four compliance flags still need a category ruling. |
-| QA-29 | P2 | not started · unverified | Static list stale after import. |
+| QA-29 | P2 | not started · **needs a reproduction** | Not explained by the code: the server counts live, nothing caches, and Done reloads. Needs watching in a browser. |
 | QA-30 | P1 | **fixed** `84c2c2f` | Including duplication. |
-| QA-31 | P2 | not started · unverified | Minimum amount accepts only multiples of ₹1,000. |
+| QA-31 | P2 | **fixed** batch 2 | Any whole-rupee minimum; zero is zero, not "not set"; a negative is refused on create and edit. |
 | QA-32 | P1 | **fixed** `84c2c2f` | And the cross-book backfill it would have switched on. |
 | QA-33 | P0 | **fixed** `84c2c2f` | Override question open; partner #9 cleanup is *environment*, below. |
 | QA-34 | P1 | not started · verified | No field validation in the KYC routes at all. Medium: DKYC, import and automation all write these. |
 | QA-35 | P2 | not started · **half needs decision** | The summary query is a bug; what Active means is QA-09's decision. |
-| QA-36 | P1 | not started · needs one check | Whether the server's unmask gate covers the edit fetch. |
+| QA-36 | P1 | **needs decision** | Not a bypass: Sales RM and Sales Supervisor hold `pii.unmask`, so the edit form's unmask is permitted and audited. Should opening the editor reveal contact details without a click? |
 | QA-37 | P2 | **needs decision** | Which entities get rename / retire / archive. |
-| QA-38 | P2 | not started · unverified | Two email entry points, two purpose rules. |
-| QA-39 | P2 | not started · unverified | Timeline names "system" for a person's message. |
-| QA-40 | P2 | not started · unverified | Counters read 0 over 8,646 rows. |
-| QA-41 | P2 | not started · unverified | A refused tab spins forever. |
-| QA-42 | P1 | not started · unverified | Dealer's Start engaging does nothing. |
-| QA-43 | P1 | not started | List and detail disagree on scope — one of `N-12`'s cases. |
+| QA-38 | P2 | **fixed** batch 2 | Send email / SMS / WhatsApp open when any purpose is allowed; the dialog asks Service or Marketing and the API enforces it. |
+| QA-39 | P2 | **fixed** batch 2 | The manual message and the list bulk send name their sender. Automated sends stay "system". The bulk send writes two entries per lead: adjacent (i). |
+| QA-40 | P2 | **fixed** batch 2 | The log tabs called the Setup-health counter; they call the log counter. |
+| QA-41 | P2 | **fixed** batch 2 | A refusal shows, on all fourteen screens that put the spinner first. |
+| QA-42 | P1 | not started · **needs a reproduction** | Not explained by the code: a Dealer holds `card.mark.exploring` and the panel offers Mark as Exploring. Needs watching as a Dealer. |
+| QA-43 | P1 | **partly fixed** batch 2 | The detail shows the refusal instead of spinning. List and detail still disagree on scope — one of `N-12`'s cases. |
 
-Counted: **fixed 8** — QA-01, 03, 08, 26, 28, 30, 32, 33. **Waiting on a
-decision 4** — QA-09, 13, 24, 37. **Split 2** — QA-06, 35. **Open 29**, of which
-18 are not yet traced to a line and 2 need one check. The rulings inside QA-28
-and QA-33 are listed below rather than counted, because those IDs are fixed.
+Counted: **fixed 20** — QA-01, 03, 04, 08, 11, 19, 20, 21, 23, 26, 27, 28, 30,
+31, 32, 33, 38, 39, 40, 41. **Partly fixed 4** — QA-05, 12, 25, 43. **Waiting on
+a decision 5** — QA-09, 13, 24, 36, 37. **Split 2** — QA-06, 35. **Open 12** —
+QA-02 and QA-34 (designed, not built), QA-07 and QA-10 (UI builds), QA-14 to
+QA-18 and QA-22 (feature requests under earlier IDs), and QA-29 and QA-42, which
+the code does not explain and need a reproduction. Every open ID is now traced
+or classified; none is "unverified". The rulings inside QA-28 and QA-33 are
+listed below rather than counted, because those IDs are fixed.
 
 ### Everything else the report asks for
 
@@ -104,7 +109,8 @@ first.
 1. QA-13 · 2. QA-09/24/35 · 3. QA-06 export · 4. QA-37 lifecycle ·
 5. the category for each of the four unmapped compliance flags (QA-28) ·
 6. whether a Superadmin needs an audited emergency elevation (QA-33) ·
-7. OPS ids for (a)–(h) · 8. sign-off to scope QA-02.
+7. OPS ids for (a)–(j) · 8. sign-off to scope QA-02 · 9. QA-36: should the
+editor reveal contact details without a click.
 
 ## Read this first: the build they tested is the build we have
 
@@ -141,7 +147,7 @@ their code state.
 | QA-34 | P1 | **not started** · verified | `kyc.js` contains no field validation whatsoever — no `validate()` call, no format check on PAN, mobile, IFSC or PIN, and no nominee total. `ifsc` is passed straight through (line 316). Every value the auditor pushed through is accepted because nothing looks at any of them. |
 | QA-26 | P1 | **fixed** 13 Oct · verified | A one-word asymmetry. `POST /leads` validates `name: ['required', 'max:120']` (line 885). `PATCH /leads/:id` validates `name: ['max:120']` (line 1085) — **no `required`** — so an empty name passes the API and the database raises `NOT NULL constraint failed: leads.name`. |
 | QA-08 | P1 | **fixed** 13 Oct · verified | `POST /tasks` (line 1869) requires a title and a due date, and checks the book of `lead_id` when one is given, but nothing requires *any* of `lead_id`, `card_id`, `ticket_id` or `partner_id`. All four default to null. The page's mandatory-link promise is unenforced and has no selector. |
-| QA-36 | P1 | **needs one check** | The client deliberately re-fetches `/leads/:id?unmask=true` for the edit form (`LeadDetail.jsx` line 1014), with a comment that the parameter is refused without `pii.unmask`. If that refusal holds, a Sales RM's form should not have been populated — so either the server gate does not cover this role or it does not cover this route. That is one read of `unmaskRequested`/`maskFor` and I have not done it. |
+| QA-36 | P1 | **needs decision** — traced 13 Oct, see the ledger | The client deliberately re-fetches `/leads/:id?unmask=true` for the edit form (`LeadDetail.jsx` line 1014), with a comment that the parameter is refused without `pii.unmask`. If that refusal holds, a Sales RM's form should not have been populated — so either the server gate does not cover this role or it does not cover this route. That is one read of `unmaskRequested`/`maskFor` and I have not done it. |
 
 ## Fixed on 13 October
 
@@ -171,7 +177,7 @@ created an unlinked task without checking that it had been created at all.
 
 ### Found beside the fixes, and deliberately not widened into them
 
-Eight of them.
+Ten of them.
 
 Each wants its own OPS id.
 
@@ -184,6 +190,8 @@ Each wants its own OPS id.
 | e | The New lead form offers owners a Sales RM may not assign, and `POST /leads` takes any active owner in the book without `lead.reassign`, which the edit requires. The second half of the auditor's QA-01. | `Leads.jsx`, `crm.js` |
 | f | Product create silently drops the brochure and apply URLs the form sends. | `admin.js`, `POST /products` |
 | g | A campaign's template is checked for approval and channel, not for business: a Bonanza campaign can send a Bigul template. | `admin.js` |
+| i | A list bulk send writes **two** timeline entries per lead — `send()` writes one and the route writes its own — against non-negotiable 1, one shared timeline. Found fixing QA-39, which now signs both. | `lists.js`, `/:id/bulk/message` |
+| j | Date windows compare IST dates with UTC timestamps, so a lead made between midnight and 05:30 IST counts on the day before — in the tile and the list alike, so they agree, and both are off. | `engine/daterange.js` |
 | h | Duplicating a campaign never sets the copy's business, so a Bigul campaign's copy is filed in Bonanza's book -- the defect the create route's own comment describes fixing. | `admin.js`, `/campaigns/:id/duplicate` |
 
 And two rulings: which category each of the other four compliance flags opens
@@ -219,6 +227,10 @@ The auditor cross-references these themselves; I have not re-verified them.
 | QA-03 | older handoff `B-02` | Same cross-business assignment, now with a reproduction. |
 
 ## Unverified, and needing a pass of their own
+
+**Spent, 13 October.** All twenty below were traced the same day; where each
+landed is in the ledger at the top. What follows is the list as it stood that
+morning.
 
 QA-07, QA-10, QA-11, QA-12, QA-19, QA-20, QA-21, QA-23, QA-25, QA-27, QA-29,
 QA-31, QA-38, QA-39, QA-40, QA-41, QA-42, QA-43.
