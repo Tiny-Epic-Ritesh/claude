@@ -164,6 +164,73 @@ The response is a load report, which is genuinely useful — `Rejected`,
 `DuplicateRows` and `PhoneNoLength` let us show the user why 40 of 500 leads
 did not arrive instead of reporting a silent partial success.
 
+**Maximum 100 leads per request.** The portal states it on this endpoint and
+nowhere else. It is the one hard number in the whole specification, and the
+first reading of the portal missed it — see the 12 October note below.
+
+---
+
+### Re-read 12 October 2026: the contract holds, one number was missed
+
+Ritesh sent the portal URL again while we were chasing a 401 on the Setup
+screen's Test connection button. The whole specification was read a second time,
+endpoint by endpoint, against `src/vendors/quickcall.js`.
+
+**Nothing in the contract has changed since 31 August.** Every path, every field
+name and every response shape in §2 still matches, including the two
+inconsistencies worth re-stating because they are the kind of thing that gets
+"tidied up" by a later reader:
+
+- `AuthClick2Call` takes **`CampaignID`**; `AuthLogin`, `AuthCallLog` and
+  `Uploadlead61.php` take **`CampaignId`**. Same for `AgentID` / `AgentId` and
+  `ClientID` / `ClientId`. The adapter sends each endpoint its own spelling, and
+  that is not a typo to be normalised.
+- `AuthClick2Call` answers in lowercase `status` / `callID` / `message`; every
+  other endpoint answers `Api` / `Status`.
+
+Two things the second reading settled that the first did not:
+
+**1. The 100-lead cap, and a real defect.** The portal says "Upload maximum 100
+leads per request" on `Uploadlead61.php`. `loadCampaign` was chunking at 500 —
+five times the cap — on an explicit comment that "the specification does not
+state a limit". It does. Fixed, with `UPLOAD_MAX` exported so the number has one
+home, and `loadCampaign` now reports `batches` so the chunk size is visible from
+outside and testable. No dial list has been pushed in anger yet, so nothing was
+lost; what a 500-row request actually does is CUBE's choice — reject, truncate
+silently at 100, or accept — and only the first of those is safe to find out by
+experiment.
+
+**2. The 401 is the credential, not the path.** `AuthToken` takes `UserID` and
+`Password` and nothing else — no campaign, no extension, no agent. The portal's
+own example values are `UserID: "Cubxxxx"`, `Password: "Cs@xxxxx"`: a
+CUBE-issued tenant account, not an agent login. The agent credential
+(`api_test1` + PIN + extension + campaign) belongs to **`AuthLogin`**, a
+different endpoint this adapter deliberately never calls — see §7. Supplying an
+agent login to `AuthToken` produces exactly the
+`{"Status":"Failed","Reason":"Invalid Credentials"}` seen on 12 October. This is
+blocker 1 in "What is actually outstanding from Cube" below, unchanged since
+3 September; it is a procurement question, not an engineering one.
+
+**And one thing the portal confirms by its silence: there is still no webhook.**
+Eighteen endpoints, and not one of them registers a callback URL or describes a
+payload CUBE would post to us. Call history is **pulled** — `AuthCallLog`, by
+campaign and time window, returning six fields per record (§4). So the
+`CUBE_QUICKCALL_WEBHOOK_SECRET` box on the Telephony screen has no counterpart in
+the documented API, and leaving it blank is correct. It stays in the product
+because the Agent Popup bundle really does expose `getSaveCallPostAPIurl` — an
+undocumented Save Call post — and because that is the only route by which an
+*inbound* call could reach us. Until CUBE tells us what they would send and how
+we verify it, the route refuses every request, which is the right default for an
+endpoint that writes to a client timeline.
+
+**Also unchanged, and still wrong:** `uat-raphsody.in` is listed as the UAT
+server in the portal and still has no DNS record, six weeks on. And the two
+legacy PHP endpoints are still declared with **no security scheme at all** —
+`DisposeCall.php` and `Uploadlead61.php` take no token. A lead-upload and a
+call-disposition endpoint reachable without authentication is worth raising with
+CUBE in writing for a SEBI-regulated firm, whatever the answer turns out to be.
+We call `Uploadlead61.php`; we do not call `DisposeCall.php`.
+
 ---
 
 ## 3. There is no DID field

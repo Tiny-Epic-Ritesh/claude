@@ -308,23 +308,43 @@ export async function makeCall({ agentId, mobile, leadId, leadName, campaign, re
 /* ------------------------------------------------- pushing a dial list */
 
 /**
+ * The most leads CUBE will take in one Uploadlead61 request.
+ *
+ * When this adapter was written the specification did not state a limit, so it
+ * chunked at 500 on the general principle that campaign-load endpoints cap the
+ * batch. CUBE's Swagger portal — https://raphsody.in/cubeapidocs/, read
+ * 12 October — states the number outright: "Upload maximum 100 leads per
+ * request."
+ *
+ * So 500 was five times the real cap. What a 500-row request does is CUBE's
+ * choice and not ours: reject the lot, truncate silently at 100, or accept it.
+ * Only the first is safe to discover. Nobody has pushed a dial list in anger
+ * yet, so this is being corrected before a campaign load quietly drops four
+ * fifths of its leads.
+ */
+export const UPLOAD_MAX = 100;
+
+/**
  * Push leads into a campaign for progressive/predictive dialling.
  *
- * Chunked, because campaign-load endpoints commonly cap the batch size and the
- * specification does not state a limit. The response is a genuine load report —
- * rejected, duplicate and malformed counts — so a partial load is reported as a
- * partial load rather than as success.
+ * Chunked at `UPLOAD_MAX`, which is CUBE's documented limit rather than a guess.
+ * The response is a genuine load report — rejected, duplicate and malformed
+ * counts — so a partial load is reported as a partial load rather than as
+ * success, and `batches` says how many requests it took, which is the number an
+ * operator needs to make sense of a load that failed halfway.
  */
 export async function loadCampaign({ campaign, leads = [], fixedAgent = null } = {}) {
   const campaignId = campaign || cfg.campaign;
   if (!campaignId) throw new VendorError(name, 'No CUBE campaign is configured for this upload');
 
-  const CHUNK = 500;
+  const CHUNK = UPLOAD_MAX;
   const totals = { records: 0, inserted: 0, rejected: 0, duplicates: 0, malformed: 0 };
+  let batches = 0;
   let simulated = false;
 
   for (let i = 0; i < leads.length; i += CHUNK) {
     const batch = leads.slice(i, i + CHUNK);
+    batches += 1;
     // eslint-disable-next-line no-await-in-loop
     const { data, simulated: sim } = await request('/QuickCallRaphsody/Uploadlead61.php', {
       CampaignId: campaignId,
@@ -346,7 +366,7 @@ export async function loadCampaign({ campaign, leads = [], fixedAgent = null } =
     totals.malformed += (Number(r.AlphaNumeric) || 0) + (Number(r.PhoneNoLength) || 0);
   }
 
-  return { campaign: campaignId, ...totals, simulated };
+  return { campaign: campaignId, ...totals, batches, simulated };
 }
 
 /* ------------------------------------------------------- reading calls */

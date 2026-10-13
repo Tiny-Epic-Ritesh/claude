@@ -18,7 +18,7 @@
 
 import { strict as assert } from 'node:assert';
 import {
-  makeCall, loadCampaign, fetchCallLog, parseCallEvent,
+  makeCall, loadCampaign, UPLOAD_MAX, fetchCallLog, parseCallEvent,
   normaliseMsisdn, wasAnswered, resetToken, isLive,
 } from '../src/vendors/quickcall.js';
 
@@ -165,10 +165,34 @@ await test('the load report is surfaced, so a partial load is not called a succe
 });
 
 await test('an upload larger than one batch still reports one total', async () => {
-  // Chunked at 500; the totals must accumulate rather than report the last chunk.
+  // The totals must accumulate rather than report the last chunk.
   const leads = Array.from({ length: 1100 }, (_, i) => ({ id: i + 1, name: `L${i}`, mobile: '9899978503' }));
   const res = await loadCampaign({ campaign: 'CubeTest', leads });
   assert.equal(res.records, 1100, `chunk totals did not accumulate: got ${res.records}`);
+});
+
+await test('no batch exceeds the 100 leads CUBE documents', async () => {
+  /*
+   * CUBE's Swagger portal states "Upload maximum 100 leads per request". This
+   * adapter chunked at 500 for six weeks on the assumption that the limit was
+   * undocumented. The batch count is the only way to see the chunk size from
+   * outside, which is why loadCampaign reports it.
+   */
+  assert.equal(UPLOAD_MAX, 100, 'the documented cap was changed without the specification changing');
+
+  const leads = Array.from({ length: 250 }, (_, i) => ({ id: i + 1, name: `L${i}`, mobile: '9899978503' }));
+  const res = await loadCampaign({ campaign: 'CubeTest', leads });
+
+  assert.equal(res.records, 250, 'the whole list did not reach CUBE');
+  assert.equal(res.batches, 3, `250 leads went up in ${res.batches} request(s), so the batch size is not 100`);
+  assert(Math.ceil(250 / res.batches) <= UPLOAD_MAX,
+    `a batch carried more than ${UPLOAD_MAX} leads`);
+});
+
+await test('a list that exactly fills a batch does not send an empty one', async () => {
+  const leads = Array.from({ length: UPLOAD_MAX }, (_, i) => ({ id: i + 1, name: `L${i}`, mobile: '9899978503' }));
+  const res = await loadCampaign({ campaign: 'CubeTest', leads });
+  assert.equal(res.batches, 1, `${UPLOAD_MAX} leads went up in ${res.batches} requests`);
 });
 
 await test('an empty upload does not call CUBE at all', async () => {
