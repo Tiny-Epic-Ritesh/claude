@@ -1,4 +1,4 @@
-# Outstanding — what is not done, across all three feedback rounds
+# Outstanding — what is not done, across all four feedback rounds
 
 **Compiled:** 9 September 2026, from the three source documents now in this folder.
 **Method:** every ticket ID cross-referenced against git history and the code. Where
@@ -11,6 +11,7 @@ The three source documents are checked in beside this one:
 | 1 | `ROUND-1-source.md` | 43 |
 | 2 | `ROUND-2-source.md` | 25 |
 | 3 | `ROUND-3-source.md` | 44 |
+| 4 | `ROUND-4-source.md` | 43 |
 
 ---
 
@@ -112,6 +113,53 @@ each comparable in size to everything delivered in Round 1.
 | ID | Title | State |
 |---|---|---|
 | P3-40 | Lead Details layout and UI rework | Built and committed (`5642968`). **10 Sep — Ritesh wants to look again before signing off.** Pointed at the live screen rather than at another image. |
+
+---
+
+## 3d · Round 4 — an independent QA audit, 43 findings, none started
+
+Received **13 October 2026**; the audit ran 30 September–1 October against
+labs.tinyepic.in, which was `1cff7c3` (18 September). No commit landed between
+27 September and 3 October, so the build they tested is the build we have, and
+the seventeen commits since are N-6, N-10, OPS-14 and documentation — none aimed
+at anything in this report.
+
+**Per-ID status is in [ROUND-4-TRIAGE.md](ROUND-4-TRIAGE.md).** That is the
+document to keep current; this is the summary.
+
+Eleven findings are traced to a line. Four P0s:
+
+| ID | Title | Cause |
+|---|---|---|
+| QA-01 | Routing takes a lead off the Sales RM who claimed it | Client, not server: *Assign to me* is `<option value="">`, so no owner is sent and the server's own precedence rule never sees one |
+| QA-02 | Scheduled rules repeat — 48,243 firings, 10,477 tasks, 41 leads | `engine/rules.js` has no idempotency key, no already-fired check, no retry bound |
+| QA-03 | A Bonanza partner's ticket is assigned to Bigul staff | The assignee query has no `sales_org` filter, the insert carries no book and no category, and hard-coding `customer_care` bypasses the SLA category table. **The fifth instance of the OPS-05/06/07/08 class** |
+| QA-33 | Superadmin activates a partner at 0/8 onboarding | `POST /:id/elevate` has no onboarding gate; `request-elevation` does |
+
+And seven more with causes identified: QA-08 (tasks need no link), QA-26 (lead
+PATCH omits `required` on name where POST has it), QA-28 (the AI case path never
+calls `applySla`), QA-30 (campaign send has no approved-content guard), QA-32
+(product create demands a code the screen promises to generate), QA-34 (the KYC
+routes contain no field validation at all), QA-36 (needs one read of the unmask
+gate).
+
+**Eight of those are surgical** — QA-01, QA-03, QA-33, QA-26, QA-08, QA-28,
+QA-32, QA-30 — and belong in one pass with tests. **QA-02 is a design change**
+with 48,000 rows to reconcile and wants its own scoping and sign-off. **QA-34 is
+medium**, because the same values arrive from DKYC, from import and from
+automation writes.
+
+**Four need a decision before any fix:** QA-13 (may a Bonanza partner refer
+Bigul products, and may Bonanza DKYC open Bigul accounts), QA-09/24/35 (what
+`Won`, `Trading`, `Active`, UCC and accrued-versus-paid commission each mean),
+QA-06 (Marketing PII view is decided; **export is not**), QA-37 (which entities
+get retire/archive and which keep immutable history).
+
+Nine more re-evidence work already open under its own ID — QA-04/05 against
+`ENH-05`/`05a` and `P2-13`/`P2-17c`, QA-15 against `P3-36`–`39`, QA-16 against
+`P3-06` and `P2-17`, QA-18 against `P3-31`, QA-22 against `ENH-09` — and
+**QA-43 is one of `N-12`'s cases**: a record-id route whose list and detail
+disagree about scope.
 
 ---
 
