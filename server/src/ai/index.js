@@ -7,7 +7,7 @@
  */
 
 import { all, one, daysSince, ageBand } from '../db.js';
-import { leadScope } from '../auth.js';
+import { leadScope, orgsFor } from '../auth.js';
 import { withoutPortalSecret } from '../security.js';
 import * as mock from './mock.js';
 import { withResidency, routeFor, residencyReport, MODE } from './residency.js';
@@ -146,9 +146,15 @@ export function copilotSnapshot(user) {
     [user.id],
   );
 
-  const partners = ['partner_rm', 'admin', 'superadmin', 'sales_supervisor'].includes(user.role)
-    ? all(`SELECT p.*, (SELECT COUNT(*) FROM leads WHERE partner_id = p.id) AS sourced_count FROM partners p ${user.role === 'partner_rm' ? 'WHERE p.owner_id = ?' : ''} ORDER BY sourced_count DESC LIMIT 20`,
-      user.role === 'partner_rm' ? [user.id] : []).map(withoutPortalSecret)   // OPS-26: not into the AI's context
+  /* OPS-27. An administrator's copilot listed partners from both businesses:
+     the query had no book at all. The reader's books, and for a Partner RM
+     their own partners within them. */
+  const books = orgsFor(user);
+  const partners = ['partner_rm', 'admin', 'superadmin', 'sales_supervisor'].includes(user.role) && books.length
+    ? all(`SELECT p.*, (SELECT COUNT(*) FROM leads WHERE partner_id = p.id) AS sourced_count FROM partners p
+            WHERE p.sales_org IN (${books.map(() => '?').join(',')}) ${user.role === 'partner_rm' ? 'AND p.owner_id = ?' : ''}
+            ORDER BY sourced_count DESC LIMIT 20`,
+      [...books, ...(user.role === 'partner_rm' ? [user.id] : [])]).map(withoutPortalSecret)   // OPS-26: not into the AI's context
     : [];
 
   return {

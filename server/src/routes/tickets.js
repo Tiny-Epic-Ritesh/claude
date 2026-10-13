@@ -5,7 +5,7 @@
 import { exportHeldMasked } from '../engine/policies.js';
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
-import { can, requireUser, requirePermission, mayUseOrg, activeOrg, reqTicketScope, maskFor } from '../auth.js';
+import { can, requireUser, requirePermission, requireAnyPermission, mayUseOrg, activeOrg, reqTicketScope, maskFor, orgScope } from '../auth.js';
 import { maskRecord } from '../security.js';
 import { loadInBook } from '../engine/bookscope.js';
 import { assertValid } from '../engine/validation.js';
@@ -547,18 +547,26 @@ router.post('/export', requirePermission('export.case'), (req, res) => {
   });
 });
 
-router.post('/sweep', (_req, res) => {
+/* OPS-29. Any signed-in user could close every case resolved over 72 hours
+   ago and run the SLA sweep. It belongs to whoever manages the case queue --
+   Customer Care runs it from the Tickets screen -- or administers the SLA. */
+router.post('/sweep', requireAnyPermission('ticket.reassign', 'admin.sla'), (_req, res) => {
   run("UPDATE tickets SET status = 'Closed', closed_at = datetime('now') WHERE status = 'Resolved' AND resolved_at <= datetime('now', '-72 hours')");
   res.json(sweepSla());
 });
 
-router.get('/reports/summary', requirePermission('report.team'), (_req, res) => {
+router.get('/reports/summary', requirePermission('report.team'), (req, res) => {
+  /* OPS-28. Counted both businesses' cases -- categories, agents, breaches and
+     CSAT -- for anyone with report.team. The reader's books, and the one the
+     switcher is narrowed to. */
+  const book = orgScope(req.user, 't', activeOrg(req));
   const byCategory = all(`
     SELECT COALESCE(c.name, 'Uncategorised') AS category, COUNT(*) n,
            SUM(CASE WHEN t.breached = 1 THEN 1 ELSE 0 END) breached,
            AVG(CASE WHEN t.resolved_at IS NOT NULL THEN (julianday(t.resolved_at) - julianday(t.created_at)) * 24 END) avg_hours
     FROM tickets t LEFT JOIN ticket_categories c ON c.id = t.category_id
-    GROUP BY category ORDER BY n DESC`);
+    WHERE ${book.sql}
+    GROUP BY category ORDER BY n DESC`, book.params);
 
   const byAgent = all(`
     SELECT u.name AS agent, COUNT(*) n,
@@ -566,14 +574,15 @@ router.get('/reports/summary', requirePermission('report.team'), (_req, res) => 
            SUM(CASE WHEN t.breached = 1 THEN 1 ELSE 0 END) breached,
            AVG(t.csat) avg_csat
     FROM tickets t JOIN users u ON u.id = t.assignee_id
-    GROUP BY u.id ORDER BY n DESC`);
+    WHERE ${book.sql}
+    GROUP BY u.id ORDER BY n DESC`, book.params);
 
   res.json({
     totals: {
-      open: one("SELECT COUNT(*) n FROM tickets WHERE status NOT IN ('Resolved','Closed')").n,
-      breached: one('SELECT COUNT(*) n FROM tickets WHERE breached = 1').n,
-      resolved_today: one("SELECT COUNT(*) n FROM tickets WHERE date(resolved_at, '+330 minutes') = date('now', '+330 minutes')").n,
-      avg_csat: one('SELECT ROUND(AVG(csat), 2) v FROM tickets WHERE csat IS NOT NULL').v,
+      open: one(`SELECT COUNT(*) n FROM tickets t WHERE status NOT IN ('Resolved','Closed') AND ${book.sql}`, book.params).n,
+      breached: one(`SELECT COUNT(*) n FROM tickets t WHERE breached = 1 AND ${book.sql}`, book.params).n,
+      resolved_today: one(`SELECT COUNT(*) n FROM tickets t WHERE date(resolved_at, '+330 minutes') = date('now', '+330 minutes') AND ${book.sql}`, book.params).n,
+      avg_csat: one(`SELECT ROUND(AVG(csat), 2) v FROM tickets t WHERE csat IS NOT NULL AND ${book.sql}`, book.params).v,
     },
     by_category: byCategory,
     by_agent: byAgent,

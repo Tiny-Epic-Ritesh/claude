@@ -104,11 +104,13 @@ those IDs are fixed.
 
 **Ids assigned 13 Oct:** (a) `OPS-15`, (b) `OPS-16`, (c) `OPS-17`, (d) `OPS-18`,
 (e) `OPS-19`, (f) `OPS-20`, (g) `OPS-21`, (h) `OPS-22`, (i) `OPS-23`, (j)
-`OPS-24`. Fixing (a) found two more, fixed with it on approval — `OPS-25`, an
-elevation approval that skipped the onboarding check, and `OPS-26`, partner
-responses carrying the stored password hash — and one recorded open, `OPS-27`.
-**Fixed:** all ten, and OPS-25 and 26. Fixing (j) found two more, recorded open:
-`OPS-28` and `OPS-29`. State of each is in the OPS table at the top
+`OPS-24`. Fixing (a) found three more: `OPS-25`, an elevation approval that
+skipped the onboarding check, and `OPS-26`, partner responses carrying the
+stored password hash, both fixed with it on approval; and `OPS-27`, the
+copilot listing both businesses' partners. Four more turned up later —
+`OPS-28` and `OPS-29` fixing (j), `OPS-30` building QA-02, `OPS-31` fixing
+QA-06 — all book-boundary and permission gaps. **Fixed:** all ten, and
+`OPS-25` to `OPS-31`, the last five on Ritesh's yes of 13 Oct. State of each is in the OPS table at the top
 of [OUTSTANDING.md](OUTSTANDING.md). Not counted above: they are not report IDs.
 
 ### Rulings asked for

@@ -860,7 +860,17 @@ export function assist(journeyId, userId) {
 }
 
 /** KYC health across all live journeys — feeds the Product Supervisor cockpit. */
-export function kycHealth(productTypeId = null) {
+export function kycHealth(productTypeId = null, books = null) {
+  /* OPS-31. Given the reader's books, only journeys in them: a journey's book
+     is its product's. Without, every journey, for callers that filter by a
+     scope of their own. */
+  const where = [];
+  const params = [];
+  if (productTypeId) { where.push('j.product_type_id = ?'); params.push(productTypeId); }
+  if (books) {
+    where.push(books.length ? `p.sales_org IN (${books.map(() => '?').join(',')})` : '1 = 0');
+    params.push(...books);
+  }
   const rows = all(`
     SELECT j.*, p.name AS product_name, l.name AS lead_name, u.name AS product_rm_name
     FROM kyc_journeys j
@@ -868,9 +878,9 @@ export function kycHealth(productTypeId = null) {
     LEFT JOIN leads l ON l.id = j.lead_id
     LEFT JOIN product_cards pc ON pc.id = j.card_id
     LEFT JOIN users u ON u.id = pc.product_rm_id
-    ${productTypeId ? 'WHERE j.product_type_id = ?' : ''}
+    ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
     ORDER BY j.created_at DESC
-  `, productTypeId ? [productTypeId] : []);
+  `, params);
 
   return rows.map((r) => {
     const full = getJourney(r.id);

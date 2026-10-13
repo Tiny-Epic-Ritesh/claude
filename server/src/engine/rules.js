@@ -18,6 +18,7 @@ import { isSnapshot } from './leadlists.js';
    pick, for the reason set out on the distribute_lead case below. */
 import { assignLead, leastLoadedForRole } from './assignment.js';
 import { columnRefusal } from './metadata.js';
+import { mayUseOrg } from '../auth.js';
 
 /* -------------------------------------------------------------- scoring */
 
@@ -298,9 +299,13 @@ export function runAction(action, facts, { dryRun, firingId = null }) {
     }
     case 'notify': {
       if (!action.params.role_or_user) return { ...describe, skipped: 'nobody named on the card' };
+      /* OPS-30. A role names a desk, and both businesses have one: everyone in
+         the role was notified, so a Bigul lead's automation reached Bonanza's
+         Product RMs with a link they cannot open. The lead's book only. */
       const targets = /^\d+$/.test(String(action.params.role_or_user))
         ? [{ id: Number(action.params.role_or_user) }]
-        : all('SELECT id FROM users WHERE role = ? AND active = 1', [action.params.role_or_user]);
+        : all('SELECT id, sales_org, org_access FROM users WHERE role = ? AND active = 1', [action.params.role_or_user])
+          .filter((u) => mayUseOrg(u, lead.sales_org));
       for (const t of targets) notify(t.id, 'Automation', action.params.message || 'Rule fired', `/leads/${lead.id}`);
       break;
     }
@@ -502,7 +507,8 @@ export function runAction(action, facts, { dryRun, firingId = null }) {
       const ids = new Set();
       for (const item of spec) {
         if (/^\d+$/.test(item)) ids.add(Number(item));
-        else for (const u of all('SELECT id FROM users WHERE role = ? AND active = 1', [item])) ids.add(u.id);
+        // OPS-30: the lead's book only, as for notify.
+        else for (const u of all('SELECT id, sales_org, org_access FROM users WHERE role = ? AND active = 1', [item])) if (mayUseOrg(u, lead.sales_org)) ids.add(u.id);
       }
       if (!ids.size) return { ...describe, skipped: 'nobody active matched' };
 

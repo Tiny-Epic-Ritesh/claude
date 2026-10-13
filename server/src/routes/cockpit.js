@@ -12,7 +12,7 @@
 
 import { Router } from 'express';
 import { all, one, daysSince, ageBand, CARD_COLOUR } from '../db.js';
-import { requireUser, leadScope, unmaskRequested, maskFor, activeOrg, orgScope } from '../auth.js';
+import { requireUser, leadScope, unmaskRequested, maskFor, activeOrg, orgScope, orgsFor } from '../auth.js';
 import { maskRecords, withoutPortalSecret } from '../security.js';
 import { maskedFieldsFor } from '../engine/masking.js';
 import { kycHealth } from '../engine/kyc.js';
@@ -524,7 +524,7 @@ const COCKPITS = {
 
   /* ---- P3: Product Supervisor ---------------------------------------- */
   product_supervisor: (user, active) => {
-    const journeys = kycHealth();
+    const journeys = kycHealth(null, active ? [active] : orgsFor(user));   // OPS-31: the same board, a second door
     const team = all("SELECT * FROM users WHERE role = 'product_rm' AND active = 1");
 
     const scorecard = team.map((rm) => ({

@@ -8,7 +8,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit } from '../db.js';
-import { requireUser, requirePermission, reqScope, maskFor } from '../auth.js';
+import { requireUser, requirePermission, reqScope, maskFor, orgsFor, activeOrg } from '../auth.js';
 import { maskRecord, maskRecords } from '../security.js';
 import * as kyc from '../engine/kyc.js';
 import { digilockerFetch, pennyDrop, esign, sendOtp, verifyOtp, DEMO_OTP } from '../integrations.js';
@@ -24,10 +24,14 @@ internal.use(requireUser);
 
 internal.get('/master-steps', (_req, res) => res.json(kyc.MASTER_STEPS));
 
-internal.get('/health', (req, res) => {
+/* OPS-31. It needed only a sign-in and read every journey in both businesses:
+   applicants' names, stages and products. kyc.view, the reader's books, and the
+   one the switcher is narrowed to. */
+internal.get('/health', requirePermission('kyc.view'), (req, res) => {
   const productId = req.query.product_id || (req.user.role === 'product_rm' ? req.user.product_type_id : null);
+  const books = activeOrg(req) ? [activeOrg(req)] : orgsFor(req.user);
   // QA-06: applicant_mobile and applicant_email were in the clear for every reader.
-  res.json(maskRecords(kyc.kycHealth(productId ? Number(productId) : null), maskFor(req, 'kyc_health')));
+  res.json(maskRecords(kyc.kycHealth(productId ? Number(productId) : null, books), maskFor(req, 'kyc_health')));
 });
 
 internal.get('/journeys/:id', (req, res) => {

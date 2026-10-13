@@ -105,7 +105,10 @@ function TicketQueue({ session }) {
           <h1>Tickets</h1>
           <p>SLA timers count business hours only and pause while a ticket is waiting on the client.</p>
         </div>
-        <button onClick={async () => { await api.post('/tickets/sweep'); reload(); }}>Run SLA sweep</button>
+        {/* OPS-29: offered to those the sweep accepts. */}
+        {(session.permissions.includes('ticket.reassign') || session.permissions.includes('admin.sla')) && (
+          <button onClick={async () => { await api.post('/tickets/sweep'); reload(); }}>Run SLA sweep</button>
+        )}
       </div>
 
       {report && (
