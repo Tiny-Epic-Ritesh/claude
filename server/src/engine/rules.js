@@ -6,7 +6,8 @@
  * Dry-run evaluates and reports without performing any action.
  */
 
-import { all, one, run, notify, audit, daysSince, ageBand } from '../db.js';
+import { all, one, run, notify, audit, daysSince, ageBand, transact } from '../db.js';
+import { isWorkingTime } from './calendar.js';
 import { rebuild } from './metrics.js';
 import { send } from '../integrations.js';
 import { kycStatusSql, kycStatusFor } from './kycstatus.js';
@@ -63,6 +64,15 @@ export function leadFacts(leadId) {
     [leadId],
   );
   const ageDays = daysSince(lead.created_at) ?? 0;
+  /* An open High or Critical case on the journey's card freezes its clock in
+     the KYC sweep (BRD §7.6). The waterfall reads the same thing, so nothing
+     goes to an applicant while their complaint is open (QA-02). */
+  const onHold = journey?.card_id
+    ? one(
+      "SELECT COUNT(*) n FROM tickets WHERE card_id = ? AND priority IN ('Critical','High') AND status NOT IN ('Resolved','Closed')",
+      [journey.card_id],
+    ).n > 0
+    : false;
 
   return {
     lead_age_days: ageDays,
@@ -73,6 +83,7 @@ export function leadFacts(leadId) {
     kyc_status: kycStatusFor(lead.id),
     kyc_step: journey?.current_step ?? null,
     kyc_journey_status: journey?.status ?? null,
+    kyc_on_hold: onHold,
     open_ticket_count: openTickets.n,
     has_open_ticket: openTickets.n > 0,
     days_since_contact: lastContact?.at ? daysSince(lastContact.at) : 999,
@@ -112,6 +123,7 @@ export const CONDITION_FIELDS = [
   { field: 'kyc_status', label: 'KYC status', type: 'enum', options: ['Not Started', 'In Progress', 'Stalled', 'Abandoned', 'Complete'] },
   { field: 'kyc_journey_status', label: 'KYC journey status', type: 'enum', options: ['In Progress', 'Stalled', 'Abandoned', 'Complete'] },
   { field: 'kyc_step', label: 'KYC step', type: 'text' },
+  { field: 'kyc_on_hold', label: 'KYC paused by an open High or Critical case', type: 'bool' },
   { field: 'has_open_ticket', label: 'Has open ticket', type: 'bool' },
   { field: 'open_ticket_count', label: 'Open ticket count', type: 'number' },
   { field: 'days_since_contact', label: 'Days since last contact', type: 'number' },
@@ -188,7 +200,7 @@ export function evaluate(conditions, facts) {
 /* Exported so engine/automation.js performs an action the same way a rule does.
    Two implementations of "send a WhatsApp" would drift, and only one of them
    would be the one with the consent check in it. */
-export function runAction(action, facts, { dryRun }) {
+export function runAction(action, facts, { dryRun, firingId = null }) {
   const lead = facts._lead;
   const describe = { action: action.type, params: action.params };
 
@@ -255,15 +267,34 @@ export function runAction(action, facts, { dryRun }) {
       send('ivr', { to: lead.mobile, body: action.params.script, leadId: lead.id });
       break;
     }
-    case 'task':
-      run('INSERT INTO tasks (title, lead_id, assignee_id, created_by, due_at, priority) VALUES (?,?,?,NULL,datetime(\'now\', ?),?)', [
-        action.params.title || 'Automated follow-up',
-        lead.id,
-        action.params.assignee === 'owner' ? lead.owner_id : (Number(action.params.assignee) || lead.owner_id),
-        `+${Number(action.params.due_in_hours) || 4} hours`,
-        action.params.priority || 'Normal',
-      ]);
+    case 'task': {
+      /* `kyc_product_rm` is the Product RM on the card of the lead's latest KYC
+         journey: who an abandoned application belongs to (QA-02). The owner
+         when there is none. */
+      const kycRm = action.params.assignee === 'kyc_product_rm'
+        ? one(
+          `SELECT pc.product_rm_id AS id FROM kyc_journeys j JOIN product_cards pc ON pc.id = j.card_id
+            WHERE j.lead_id = ? ORDER BY j.created_at DESC, j.id DESC LIMIT 1`,
+          [lead.id],
+        )?.id
+        : null;
+      const assignee = action.params.assignee === 'owner' ? lead.owner_id
+        : action.params.assignee === 'kyc_product_rm' ? (kycRm ?? lead.owner_id)
+          : (Number(action.params.assignee) || lead.owner_id);
+      run(
+        `INSERT INTO tasks (title, lead_id, assignee_id, created_by, due_at, priority, rule_firing_id)
+         VALUES (?,?,?,NULL,datetime('now', ?),?,?)`,
+        [
+          action.params.title || 'Automated follow-up',
+          lead.id,
+          assignee,
+          `+${Number(action.params.due_in_hours) || 4} hours`,
+          action.params.priority || 'Normal',
+          firingId,
+        ],
+      );
       break;
+    }
     case 'notify': {
       if (!action.params.role_or_user) return { ...describe, skipped: 'nobody named on the card' };
       const targets = /^\d+$/.test(String(action.params.role_or_user))
@@ -484,81 +515,292 @@ export function runAction(action, facts, { dryRun }) {
   return { ...describe, executed: true };
 }
 
-/** Run one rule across every live lead. */
-export function runRule(ruleId, { dryRun = false, leadIds = null } = {}) {
+/* ------------------------------------------------------------- firing */
+
+/**
+ * A rule fires when a lead starts to match, not at every sweep (QA-02).
+ *
+ * This used to act on every lead that matched *now*, every five minutes, with
+ * nothing recording that it already had. A lead that stayed Warm got a new
+ * four-hour task twelve times an hour -- 10,477 tasks for 41 leads on labs --
+ * and a stalled KYC applicant got a WhatsApp every sweep. The auditor counted
+ * 48,243 of those; on labs every provider is simulated, and in production each
+ * one would have reached the client.
+ *
+ * `rule_firings` is the record that was missing. One open row per rule and
+ * lead while the lead matches:
+ *
+ *   matches, no open row        -> arm it, and run what is due
+ *   matches, open row           -> run only what is due: a delayed stage, a
+ *                                  failed action's retry, or a repeat the rule
+ *                                  asked for
+ *   no longer matches, open row -> clear it, so a later match is a new event
+ *
+ * An action may carry `after_minutes`: a stage, run that long after the first
+ * actions of the firing actually ran, if the lead still matches -- the KYC
+ * waterfall's SMS thirty minutes after its WhatsApp. A rule repeats only if its
+ * schedule says `repeat_hours`; repetition is something somebody chose, not
+ * an accident of the sweep interval.
+ *
+ * Each lead's firing is one transaction: the firing row, every side effect and
+ * the run record commit together, so a sweep that dies halfway leaves no task
+ * behind it to be made again. A task records the firing that made it.
+ */
+const MAX_ATTEMPTS = 3;
+
+const sqlTime = (d) => d.toISOString().slice(0, 19).replace('T', ' ');
+const minutesSince = (from, now) => (now.getTime() - new Date(`${String(from).replace(' ', 'T')}Z`).getTime()) / 60_000;
+
+/** The schedule a rule declared -- stored on every seeded rule and, until QA-02, never read. */
+export function scheduleOf(rule) {
+  let s = null;
+  try { s = rule?.schedule ? JSON.parse(rule.schedule) : null; } catch { s = null; }
+  return {
+    business_hours: Boolean(s?.business_hours),
+    skip_weekends: Boolean(s?.skip_weekends),
+    max_per_day: Number(s?.max_per_day) > 0 ? Number(s.max_per_day) : null,
+    repeat_hours: Number(s?.repeat_hours) > 0 ? Number(s.repeat_hours) : null,
+  };
+}
+
+/** Why the rule may not act on this lead at this moment, or null when it may. */
+function holdFor(schedule, ruleId, leadId, now) {
+  if (schedule.skip_weekends && [0, 6].includes(now.getDay())) return 'it is the weekend';
+  if (schedule.business_hours && !isWorkingTime(now, 'office')) return 'outside office hours';
+  if (schedule.max_per_day) {
+    const today = one(
+      `SELECT COUNT(*) n FROM rule_runs
+        WHERE rule_id = ? AND lead_id = ? AND dry_run = 0
+          AND date(created_at, '+330 minutes') = date(?, '+330 minutes')`,
+      [ruleId, leadId, sqlTime(now)],
+    ).n;
+    if (today >= schedule.max_per_day) return `it has acted on this lead ${today} times today, its daily limit`;
+  }
+  return null;
+}
+
+const parseFiring = (row) => (row ? {
+  ...row,
+  done: JSON.parse(row.done || '[]'),
+  gave_up: JSON.parse(row.gave_up || '[]'),
+  attempts: JSON.parse(row.attempts || '{}'),
+} : null);
+
+/** Which of the rule's actions are due on this firing now. */
+function dueActions(actions, firing, now) {
+  const done = new Set(firing.done);
+  const hasImmediate = actions.some((a) => !(Number(a.after_minutes) > 0));
+  // Stages count from when the firing's first actions ran, so a WhatsApp held
+  // overnight by office hours is still followed by its SMS half an hour later.
+  const anchor = firing.cycle_fired_at ?? (hasImmediate ? null : firing.cycle_armed_at);
+  return actions
+    .map((action, index) => ({ action, index }))
+    .filter(({ action, index }) => {
+      if (done.has(index)) return false;
+      const after = Number(action.after_minutes) || 0;
+      if (!after) return true;
+      return anchor ? minutesSince(anchor, now) >= after : false;
+    });
+}
+
+/** Run one rule across every live lead, or the ones named. */
+export function runRule(ruleId, { dryRun = false, leadIds = null, now = new Date(), retry = false } = {}) {
   const rule = one('SELECT * FROM rules WHERE id = ?', [ruleId]);
   if (!rule) return { error: 'Rule not found' };
 
   const conditions = JSON.parse(rule.conditions || '[]');
   const actions = JSON.parse(rule.actions || '[]');
+  const schedule = scheduleOf(rule);
+  const stamp = sqlTime(now);
 
   const targets = leadIds
     ? leadIds.map((id) => ({ id }))
     : all('SELECT id FROM leads WHERE deleted_at IS NULL');
 
+  const open = new Map(
+    all('SELECT * FROM rule_firings WHERE rule_id = ? AND cleared_at IS NULL', [ruleId])
+      .map((r) => [r.lead_id, parseFiring(r)]),
+  );
+
   const matched = [];
+  const matching = new Set();
+  let fired = 0;
+  let failed = 0;
+
   for (const t of targets) {
     const facts = leadFacts(t.id);
     if (!facts || !evaluate(conditions, facts)) continue;
+    matching.add(t.id);
 
-    /**
-     * Each action is attempted independently, and a failure is captured rather
-     * than thrown.
-     *
-     * Before this, one action throwing — a dead WhatsApp number, a template
-     * that had been deleted — aborted the whole run. Every lead after the
-     * failing one was silently skipped, and nothing recorded that it had
-     * happened. Non-negotiable 12 asks for a failure queue precisely because
-     * automation that fails quietly is worse than automation that does not run.
-     */
-    const performed = [];
-    const failures = [];
-    for (const a of actions) {
-      try {
-        performed.push(runAction(a, facts, { dryRun }));
-      } catch (err) {
-        const failure = { type: a.type, error: err.message };
-        performed.push({ ...failure, failed: true });
-        failures.push(failure);
-
-        if (!dryRun) {
-          run(
-            `INSERT INTO rule_failures (rule_id, lead_id, action_type, error, payload)
-             VALUES (?,?,?,?,?)`,
-            [ruleId, t.id, a.type, err.message, JSON.stringify(a.params ?? {})],
-          );
-        }
-      }
+    let firing = open.get(t.id) ?? null;
+    const isNew = !firing;
+    if (isNew) {
+      firing = {
+        id: null, armed_at: stamp, cycle_armed_at: stamp, cycle_fired_at: null, last_fired_at: null,
+        cycles: 1, done: [], gave_up: [], attempts: {},
+      };
     }
 
-    matched.push({
-      lead_id: t.id, lead_name: facts._lead.name, actions: performed,
-      failed: failures.length,
+    /* A failure-queue retry puts back what was given up, so it runs now. */
+    if (retry && firing.gave_up.length) {
+      firing.done = firing.done.filter((i) => !firing.gave_up.includes(i));
+      for (const i of firing.gave_up) delete firing.attempts[i];
+      firing.gave_up = [];
+    }
+
+    /* A repeat, only for a rule that asked for one, once every action of the
+       last cycle has run and the interval has passed. */
+    const cycleComplete = actions.every((_, i) => firing.done.includes(i));
+    if (!isNew && cycleComplete && schedule.repeat_hours && firing.last_fired_at
+        && minutesSince(firing.last_fired_at, now) >= schedule.repeat_hours * 60) {
+      firing = {
+        ...firing, cycle_armed_at: stamp, cycle_fired_at: null, cycles: firing.cycles + 1,
+        done: [], gave_up: [], attempts: {},
+      };
+    }
+
+    const due = dueActions(actions, firing, now);
+    const entry = { lead_id: t.id, lead_name: facts._lead.name, firing_id: firing.id, actions: [], failed: 0 };
+
+    if (!due.length) {
+      entry.state = isNew ? 'armed' : (actions.every((_, i) => firing.done.includes(i)) ? 'already_fired' : 'scheduled');
+      matched.push(entry);
+      if (isNew && !dryRun) {
+        firing.id = Number(run(
+          `INSERT INTO rule_firings (rule_id, lead_id, armed_at, cycle_armed_at, cycles, done, gave_up, attempts)
+           VALUES (?,?,?,?,1,'[]','[]','{}')`,
+          [ruleId, t.id, stamp, stamp],
+        ).lastInsertRowid);
+        entry.firing_id = firing.id;
+      }
+      continue;
+    }
+
+    const hold = holdFor(schedule, ruleId, t.id, now);
+    if (hold) {
+      entry.state = 'waiting';
+      entry.reason = hold;
+      matched.push(entry);
+      if (isNew && !dryRun) {
+        firing.id = Number(run(
+          `INSERT INTO rule_firings (rule_id, lead_id, armed_at, cycle_armed_at, cycles, done, gave_up, attempts)
+           VALUES (?,?,?,?,1,'[]','[]','{}')`,
+          [ruleId, t.id, stamp, stamp],
+        ).lastInsertRowid);
+        entry.firing_id = firing.id;
+      }
+      continue;
+    }
+
+    if (dryRun) {
+      entry.state = 'would_fire';
+      entry.actions = due.map(({ action }) => runAction(action, facts, { dryRun: true }));
+      matched.push(entry);
+      continue;
+    }
+
+    /* All of this lead's firing, or none of it. */
+    transact(() => {
+      if (isNew) {
+        firing.id = Number(run(
+          `INSERT INTO rule_firings (rule_id, lead_id, armed_at, cycle_armed_at, cycles, done, gave_up, attempts)
+           VALUES (?,?,?,?,1,'[]','[]','{}')`,
+          [ruleId, t.id, stamp, stamp],
+        ).lastInsertRowid);
+        entry.firing_id = firing.id;
+      }
+
+      /**
+       * Each action is attempted independently, and a failure is captured rather
+       * than thrown.
+       *
+       * Before this, one action throwing — a dead WhatsApp number, a template
+       * that had been deleted — aborted the whole run. Every lead after the
+       * failing one was silently skipped, and nothing recorded that it had
+       * happened. Non-negotiable 12 asks for a failure queue precisely because
+       * automation that fails quietly is worse than automation that does not run.
+       *
+       * A failure is retried at the next sweep, up to three attempts, and then
+       * left in the failure queue for a person -- instead of failing silently,
+       * or retrying forever.
+       */
+      let ran = false;
+      for (const { action, index } of due) {
+        try {
+          entry.actions.push(runAction(action, facts, { dryRun: false, firingId: firing.id }));
+          firing.done.push(index);
+          ran = true;
+        } catch (err) {
+          const attempt = (firing.attempts[index] ?? 0) + 1;
+          firing.attempts[index] = attempt;
+          entry.actions.push({ action: action.type, error: err.message, failed: true, attempt });
+          entry.failed += 1;
+          if (attempt >= MAX_ATTEMPTS) {
+            firing.done.push(index);
+            firing.gave_up.push(index);
+            run(
+              `INSERT INTO rule_failures (rule_id, lead_id, action_type, error, payload)
+               VALUES (?,?,?,?,?)`,
+              [ruleId, t.id, action.type, err.message, JSON.stringify(action.params ?? {})],
+            );
+          }
+        }
+      }
+
+      if (ran) {
+        firing.cycle_fired_at ??= stamp;
+        firing.last_fired_at = stamp;
+      }
+      run(
+        `UPDATE rule_firings SET cycle_armed_at = ?, cycle_fired_at = ?, last_fired_at = ?, cycles = ?,
+                done = ?, gave_up = ?, attempts = ?
+          WHERE id = ?`,
+        [firing.cycle_armed_at, firing.cycle_fired_at, firing.last_fired_at, firing.cycles,
+          JSON.stringify(firing.done), JSON.stringify(firing.gave_up), JSON.stringify(firing.attempts), firing.id],
+      );
+      /* The run log records what happened, not what was looked at: a row per
+         firing or failure, not per match per sweep. */
+      run('INSERT INTO rule_runs (rule_id, lead_id, dry_run, matched, detail, created_at) VALUES (?,?,0,1,?,?)', [
+        ruleId, t.id, JSON.stringify(entry.actions), stamp,
+      ]);
     });
 
-    run('INSERT INTO rule_runs (rule_id, lead_id, dry_run, matched, detail) VALUES (?,?,?,1,?)', [
-      ruleId, t.id, dryRun ? 1 : 0, JSON.stringify(performed),
-    ]);
+    entry.state = entry.failed ? 'failed' : 'fired';
+    if (entry.actions.some((a) => !a.failed)) fired += 1;
+    failed += entry.failed;
+    matched.push(entry);
   }
 
-  if (!dryRun && matched.length) {
-    run("UPDATE rules SET fire_count = fire_count + ?, last_fired = datetime('now') WHERE id = ?", [matched.length, ruleId]);
-    audit(null, 'rule_fired', 'rule', ruleId, { matched: matched.length });
+  /* A lead that has stopped matching closes its firing, so matching again is a
+     new event. Only leads this run looked at, when it was asked about some. */
+  const evaluated = leadIds ? new Set(leadIds.map(Number)) : null;
+  const stale = [...open.values()].filter((f) => !matching.has(f.lead_id) && (!evaluated || evaluated.has(f.lead_id)));
+  if (!dryRun && stale.length) {
+    for (const f of stale) run('UPDATE rule_firings SET cleared_at = ? WHERE id = ?', [stamp, f.id]);
   }
 
-  const failed = matched.reduce((n, m) => n + (m.failed ?? 0), 0);
+  if (!dryRun && fired) {
+    run("UPDATE rules SET fire_count = fire_count + ?, last_fired = datetime('now') WHERE id = ?", [fired, ruleId]);
+    audit(null, 'rule_fired', 'rule', ruleId, { fired });
+  }
+
+  const count = (state) => matched.filter((m) => m.state === state).length;
   return {
     rule: rule.name,
     dry_run: dryRun,
     evaluated: targets.length,
     matched_count: matched.length,
+    fired_count: dryRun ? count('would_fire') : fired,
+    waiting_count: count('waiting'),
+    already_count: count('already_fired') + count('scheduled') + count('armed'),
+    cleared_count: stale.length,
     failed,
     matched,
   };
 }
 
 /** Fire every enabled rule — called on the server's automation tick. */
-export function runEnabledRules() {
+export function runEnabledRules(options = {}) {
   const rules = all('SELECT id FROM rules WHERE enabled = 1 ORDER BY priority');
-  return rules.map((r) => runRule(r.id, { dryRun: false }));
+  return rules.map((r) => runRule(r.id, { dryRun: false, ...options }));
 }

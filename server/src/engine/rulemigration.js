@@ -77,6 +77,7 @@ const NO_EQUIVALENT = {
   kyc_journey_status: 'the registry carries KYC status, not the journey’s own state',
   kyc_step: 'the registry has no KYC step field yet',
   has_open_ticket: 'use Open cases is greater than 0 instead',
+  kyc_on_hold: 'the registry has no KYC hold field yet',
 };
 
 /** How many leaves a converted tree actually kept. */

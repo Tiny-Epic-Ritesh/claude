@@ -91,6 +91,17 @@ export const LOG_KINDS = [
       + 'some margin, because it keeps the payloads — which is the point of it.',
   },
   {
+    /* QA-02. Written only when a rule fires or fails -- it was written for every
+       match at every sweep, 29.5 MB on labs for 41 leads. Ninety days, as
+       signed off: what a rule did to a lead -- the message, the task, the
+       notification -- is kept with the lead under its own period. */
+    kind: 'automation',
+    label: 'Automation runs',
+    source: 'rule_runs',
+    days: 90,
+    note: 'What each rule did, and to which lead. The messages, tasks and notifications themselves are kept with the lead.',
+  },
+  {
     kind: 'config',
     label: 'Configuration changes',
     source: 'audit_log',
@@ -148,6 +159,8 @@ export function purge() {
       n = run("DELETE FROM request_log WHERE at < datetime('now', ?)", [cutoff]).changes;
     } else if (k.source === 'config_audit') {
       n = run("DELETE FROM config_audit WHERE at < datetime('now', ?)", [cutoff]).changes;
+    } else if (k.source === 'rule_runs') {
+      n = run("DELETE FROM rule_runs WHERE created_at < datetime('now', ?)", [cutoff]).changes;
     } else if (k.source === 'audit_log') {
       // audit_log stamps created_at, not at. The three log tables were not
       // designed together, which is exactly why this module exists.
@@ -273,6 +286,31 @@ export function readLog(kind, {
         `SELECT a.id, a.created_at AS at, a.action, a.entity, a.entity_id, a.actor, u.name AS user_name
          ${joined} WHERE ${where.join(' AND ')}
          ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?`,
+        [...params, Number(limit), Number(offset)],
+      ),
+      total: one(`SELECT COUNT(*) n ${joined} WHERE ${where.join(' AND ')}`, params).n,
+    };
+  }
+
+  if (def.source === 'rule_runs') {
+    /* Book scope through the lead, as for vendor traffic. Shaped like an
+       integration row, so the screen's general table shows it. */
+    const where = ['r.dry_run = 0', `(r.lead_id IS NULL OR le.sales_org IN (${marks}))`];
+    const params = [...orgs];
+    if (q) { where.push('(ru.name LIKE ? OR le.name LIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
+    const range = dateRange('r.created_at', from, to);
+    where.push(...range.where);
+    params.push(...range.params);
+
+    const joined = 'FROM rule_runs r LEFT JOIN rules ru ON ru.id = r.rule_id LEFT JOIN leads le ON le.id = r.lead_id';
+    return {
+      source: def.source,
+      rows: all(
+        `SELECT r.id, r.created_at AS at, ru.name AS summary, 'automation' AS kind, le.name AS lead_name,
+                NULL AS reference,
+                CASE WHEN r.detail LIKE '%"failed":true%' THEN 'failed' ELSE 'fired' END AS status
+         ${joined} WHERE ${where.join(' AND ')}
+         ORDER BY r.created_at DESC, r.id DESC LIMIT ? OFFSET ?`,
         [...params, Number(limit), Number(offset)],
       ),
       total: one(`SELECT COUNT(*) n ${joined} WHERE ${where.join(' AND ')}`, params).n,

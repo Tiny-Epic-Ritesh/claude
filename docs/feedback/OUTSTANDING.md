@@ -67,6 +67,7 @@ and this table is the mapping.
 | `OPS-27` | The copilot's snapshot lists partners for an Admin, Superadmin or Sales Supervisor with no book filter, so a Bonanza administrator's copilot context includes Bigul's partners. Found 13 Oct while fixing OPS-26. Open, not widened into it. |
 | `OPS-28` | `GET /tickets/reports/summary` counts cases, agents, breaches and CSAT across both businesses with no book filter, for anyone holding `report.team`. Found 13 Oct while fixing OPS-24. Open. |
 | `OPS-29` | `POST /tickets/sweep` closes every case resolved more than 72 hours ago and runs the SLA sweep for any signed-in user, with no permission check. Found 13 Oct while fixing OPS-24. Open. |
+| `OPS-30` | The automation `notify` action, given a role, notifies every active user in that role in **both** businesses, so a Bigul lead's automation reaches Bonanza's Product RMs with a link they cannot open. The KYC waterfall's Product RM notice is one. Found 13 Oct while building QA-02. Open. |
 
 ---
 

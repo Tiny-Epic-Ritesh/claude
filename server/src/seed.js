@@ -1417,10 +1417,22 @@ const RULES = [
     [{ type: 'notify', params: { role_or_user: 'product_rm', message: 'Warm MF card with direct contact flag' } },
       { type: 'task', params: { title: 'Contact lead — warm MF card', assignee: 'owner', due_in_hours: 4 } }], 1, 10],
 
-  ['KYC escalation waterfall', 'Stalled KYC: WhatsApp now, then SMS, then RM alert. The full waterfall from BRD §7.7.',
-    [{ field: 'kyc_journey_status', op: 'eq', value: 'Stalled' }],
-    [{ type: 'whatsapp', params: { message: 'Hi {{name}}, your Bonanza application is one step from done. Reply HELP and we will finish it with you.' } },
-      { type: 'notify', params: { role_or_user: 'product_rm', message: 'KYC stalled — assisted completion may be needed' } }], 1, 20],
+  /* QA-02, as signed off 13 Oct: once per stall, in stages, and never while a
+     High or Critical case is open on the card. A WhatsApp at the stall and the
+     Product RM told; an SMS thirty minutes later if it is still stalled. The
+     sweep abandons a journey stalled for an hour, and the rule below turns
+     that into a task. Service messages, since they are about the applicant's
+     own application, and in neither business's name -- one rule serves both. */
+  ['KYC escalation waterfall', 'Stalled KYC: a WhatsApp at the stall and the Product RM told, then an SMS 30 minutes later if it is still stalled. Nothing goes to the applicant while a High or Critical case is open on the card. BRD §7.7, QA-02.',
+    [{ field: 'kyc_journey_status', op: 'eq', value: 'Stalled' },
+      { field: 'kyc_on_hold', op: 'eq', value: false, join: 'AND' }],
+    [{ type: 'whatsapp', params: { intent: 'service', message: 'Hi {{name}}, your account application is one step from done. Reply HELP and we will finish it with you.' } },
+      { type: 'notify', params: { role_or_user: 'product_rm', message: 'KYC stalled — assisted completion may be needed' } },
+      { type: 'sms', after_minutes: 30, params: { intent: 'service', message: 'Your account application is still one step from done. Reply HELP and we will complete it with you.' } }], 1, 20],
+
+  ['KYC abandoned → assisted completion', 'A journey abandoned after an hour stalled becomes one High-priority task for the Product RM on its card. BRD §7.7, QA-02.',
+    [{ field: 'kyc_status', op: 'eq', value: 'Abandoned' }],
+    [{ type: 'task', params: { title: 'Assisted KYC completion — the applicant abandoned the journey', assignee: 'kyc_product_rm', due_in_hours: 4, priority: 'High' } }], 1, 21],
 
   ['Cold lead re-engagement', 'Leads with no contact for 30+ days get a re-engagement message and a task.',
     [{ field: 'days_since_contact', op: 'gt', value: 30 },

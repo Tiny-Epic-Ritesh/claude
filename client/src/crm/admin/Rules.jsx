@@ -28,7 +28,8 @@ export function Rules() {
   return (
     <>
       <div className="notice">
-        IF / AND / THEN automation. <strong>Dry-run</strong> evaluates every lead and reports what would happen without sending anything.
+        IF / AND / THEN automation. A rule acts on a lead once, when the lead starts to match, and again only after it has stopped matching — or on the interval you set.{' '}
+        <strong>Dry-run</strong> evaluates every lead and reports what would happen without sending anything.
       </div>
 
       <div className="row-between" style={{ marginBottom: 'var(--gap)' }}>
@@ -48,13 +49,18 @@ export function Rules() {
               </div>
               <div className="row">
                 <span className={`badge ${r.enabled ? 'badge-green' : ''}`}>{r.enabled ? 'Enabled' : 'Disabled'}</span>
-                <span className="badge">fired {r.fire_count}×</span>
+                <span className="badge" title="Times this rule has acted on a lead">fired {r.fire_count}×</span>
+                {r.open_firings > 0 && (
+                  <span className="badge" title="Leads it has acted on that still match. It does not act on them again until they stop matching.">
+                    holding {r.open_firings}
+                  </span>
+                )}
                 <button className="btn-sm" disabled={busy} onClick={() => dryRun(r.id)}>Dry run</button>
                 <button className="btn-sm" onClick={() => setEditing(r)}>Edit</button>
                 <button className="btn-sm" onClick={async () => {
                   await api.post('/admin/rules', {
                     name: `${r.name} (copy)`, description: r.description,
-                    conditions: r.conditions, actions: r.actions, enabled: 0, priority: r.priority,
+                    conditions: r.conditions, actions: r.actions, schedule: r.schedule, enabled: 0, priority: r.priority,
                   });
                   reload();
                 }}>Duplicate</button>
@@ -75,8 +81,13 @@ export function Rules() {
               </div>
               <div className="small" style={{ marginTop: 6 }}>
                 <strong>THEN</strong>{' '}
-                {r.actions.map((a, i) => <span key={i} className="badge badge-blue" style={{ marginRight: 4 }}>{a.type}</span>)}
+                {r.actions.map((a, i) => (
+                  <span key={i} className="badge badge-blue" style={{ marginRight: 4 }}>
+                    {a.type}{Number(a.after_minutes) > 0 ? ` · after ${delayLabel(a.after_minutes)}` : ''}
+                  </span>
+                ))}
               </div>
+              <div className="tiny muted" style={{ marginTop: 6 }}>{scheduleWords(r.schedule)}</div>
             </div>
           </section>
         ))}
@@ -99,18 +110,27 @@ export function Rules() {
       )}
 
       {result && (
-        <Modal title={`Dry run — ${result.rule}`} subtitle={`${result.matched_count} of ${result.evaluated} leads matched. Nothing was sent.`} onClose={() => setResult(null)} wide>
+        <Modal
+          title={`Dry run — ${result.rule}`}
+          subtitle={`${result.matched_count} of ${result.evaluated} leads match. ${result.fired_count} would be acted on now, ${result.already_count} already have been, ${result.waiting_count} waiting. Nothing was sent.`}
+          onClose={() => setResult(null)}
+          wide
+        >
           {!result.matched.length ? <Empty>No leads matched these conditions.</Empty> : (
             <table>
-              <thead><tr><th>Lead</th><th>Actions that would run</th></tr></thead>
+              <thead><tr><th>Lead</th><th>What would happen now</th></tr></thead>
               <tbody>
                 {result.matched.map((m) => (
                   <tr key={m.lead_id}>
                     <td style={{ fontWeight: 545 }}>{m.lead_name}</td>
                     <td className="small">
-                      {m.actions.map((a, i) => (
+                      {m.state === 'would_fire' && m.actions.map((a, i) => (
                         <div key={i}><span className="badge badge-blue">{a.action}</span> <span className="muted">{JSON.stringify(a.params).slice(0, 120)}</span></div>
                       ))}
+                      {m.state === 'already_fired' && <span className="muted">Already acted on. Nothing more until this lead stops matching.</span>}
+                      {m.state === 'scheduled' && <span className="muted">Already acted on; a later step is still to come.</span>}
+                      {m.state === 'armed' && <span className="muted">Starts now; its first step is delayed.</span>}
+                      {m.state === 'waiting' && <span className="muted">Waiting: {m.reason}.</span>}
                     </td>
                   </tr>
                 ))}
@@ -170,6 +190,12 @@ function RuleBuilder({ rule, fields, actionTypes, templates, products, onClose, 
   const [actions, setActions] = useState(
     rule?.actions?.length ? rule.actions.map((a) => ({ ...a, params: { ...a.params } })) : [blankAction()],
   );
+  /* QA-02. The schedule was stored on every rule and read by nothing; the
+     builder never showed it. It is now how a rule fires, so it is on screen. */
+  const [schedule, setSchedule] = useState({
+    business_hours: false, skip_weekends: false, max_per_day: '', repeat_hours: '',
+    ...(rule?.schedule ?? {}),
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -198,6 +224,11 @@ function RuleBuilder({ rule, fields, actionTypes, templates, products, onClose, 
         ...form,
         conditions,
         actions,
+        schedule: {
+          ...schedule,
+          max_per_day: Number(schedule.max_per_day) > 0 ? Number(schedule.max_per_day) : null,
+          repeat_hours: Number(schedule.repeat_hours) > 0 ? Number(schedule.repeat_hours) : null,
+        },
         // Always created disabled. Enabling is a separate, deliberate click.
         enabled: rule?.enabled ?? 0,
       };
@@ -320,7 +351,7 @@ function RuleBuilder({ rule, fields, actionTypes, templates, products, onClose, 
         <div className="span-2 rule-block">
           <div className="rule-block-head">
             <span className="rule-kw is-then">THEN</span>
-            <span className="tiny muted">run these, in order, for every lead that matched</span>
+            <span className="tiny muted">run these, in order, when a lead starts to match. A later step can wait, and runs only if the lead still matches by then.</span>
           </div>
 
           {actions.map((a, i) => {
@@ -332,6 +363,15 @@ function RuleBuilder({ rule, fields, actionTypes, templates, products, onClose, 
                   {actionTypes.map((t) => <option key={t.type} value={t.type}>{t.label}</option>)}
                 </select>
 
+                {i > 0 && (
+                  <select
+                    aria-label={`When action ${i + 1} runs`}
+                    value={a.after_minutes ?? 0}
+                    onChange={(e) => setAct(i, { after_minutes: Number(e.target.value) || undefined })}
+                  >
+                    {DELAYS.map(([m, l]) => <option key={m} value={m}>{l}</option>)}
+                  </select>
+                )}
                 {(def?.params ?? []).map((p) => (
                   <ActionParam
                     key={p}
@@ -360,6 +400,48 @@ function RuleBuilder({ rule, fields, actionTypes, templates, products, onClose, 
             onClick={() => setActions((as) => [...as, blankAction()])}>
             <Icon name="add" /> Add action
           </button>
+        </div>
+
+        {/* ---------------------------------------------------- WHEN */}
+        <div className="span-2 rule-block">
+          <div className="rule-block-head">
+            <span className="rule-kw">WHEN</span>
+            <span className="tiny muted">how often it may act on the same lead</span>
+          </div>
+          <div className="rule-row">
+            <select
+              aria-label="Repeat"
+              value={Number(schedule.repeat_hours) > 0 ? 'interval' : 'once'}
+              onChange={(e) => setSchedule({ ...schedule, repeat_hours: e.target.value === 'interval' ? (Number(schedule.repeat_hours) || 24) : '' })}
+            >
+              <option value="once">Once each time a lead starts to match</option>
+              <option value="interval">Again while it still matches, every…</option>
+            </select>
+            {Number(schedule.repeat_hours) > 0 && (
+              <select aria-label="Repeat every" value={schedule.repeat_hours} onChange={(e) => setSchedule({ ...schedule, repeat_hours: Number(e.target.value) })}>
+                {[4, 12, 24, 48, 72, 168].map((h) => <option key={h} value={h}>{h < 24 ? `${h} hours` : `${h / 24} day${h > 24 ? 's' : ''}`}</option>)}
+              </select>
+            )}
+          </div>
+          <div className="rule-row">
+            <label className="row" style={{ gap: 6 }}>
+              <input type="checkbox" checked={Boolean(schedule.business_hours)} onChange={(e) => setSchedule({ ...schedule, business_hours: e.target.checked })} />
+              <span className="small">Only during office hours</span>
+            </label>
+            <label className="row" style={{ gap: 6 }}>
+              <input type="checkbox" checked={Boolean(schedule.skip_weekends)} onChange={(e) => setSchedule({ ...schedule, skip_weekends: e.target.checked })} />
+              <span className="small">Not on Saturday or Sunday</span>
+            </label>
+            <label className="row" style={{ gap: 6 }}>
+              <span className="small">At most</span>
+              <input
+                type="number" min="1" style={{ width: 70 }} value={schedule.max_per_day ?? ''}
+                onChange={(e) => setSchedule({ ...schedule, max_per_day: e.target.value })}
+                aria-label="At most this many times a day for one lead"
+              />
+              <span className="small">a day for one lead</span>
+            </label>
+          </div>
         </div>
 
         {problems.length > 0 && (
@@ -394,6 +476,21 @@ function RuleBuilder({ rule, fields, actionTypes, templates, products, onClose, 
   );
 }
 
+/** How long a later step waits after the rule first acts (QA-02). */
+const DELAYS = [[0, 'straight away'], [30, 'after 30 minutes'], [60, 'after 1 hour'], [240, 'after 4 hours'], [1440, 'after 1 day']];
+const delayLabel = (m) => DELAYS.find(([v]) => v === Number(m))?.[1].replace('after ', '') ?? `${m} minutes`;
+
+/** A rule's schedule, as a sentence. */
+function scheduleWords(s) {
+  const parts = [Number(s?.repeat_hours) > 0
+    ? `Acts on a lead when it starts to match, and again every ${s.repeat_hours} hours while it still matches`
+    : 'Acts on a lead once, when it starts to match'];
+  if (s?.business_hours) parts.push('office hours only');
+  if (s?.skip_weekends) parts.push('not at weekends');
+  if (Number(s?.max_per_day) > 0) parts.push(`at most ${s.max_per_day} a day per lead`);
+  return `${parts.join(' · ')}.`;
+}
+
 /** One action parameter, rendered by what it is rather than as raw text. */
 function ActionParam({ name, value, templates, actionType, onChange }) {
   if (name === 'template_id') {
@@ -419,6 +516,7 @@ function ActionParam({ name, value, templates, actionType, onChange }) {
       <select value={value} onChange={(e) => onChange(e.target.value)}>
         <option value="">Choose…</option>
         <option value="owner">the lead&apos;s owner</option>
+        {name === 'assignee' && <option value="kyc_product_rm">the Product RM on the lead&apos;s KYC journey</option>}
         {Object.entries(ROLE_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
       </select>
     );

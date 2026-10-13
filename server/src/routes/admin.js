@@ -713,7 +713,12 @@ router.post('/kyc/journeys/:productId', requirePermission('admin.kyc.journeys'),
 
 router.get('/rules', requirePermission('admin.rules'), (_req, res) => {
   res.json({
-    rules: all('SELECT * FROM rules ORDER BY priority, id').map((r) => ({
+    /* QA-02. The leads a rule has fired on and that still match: it will not
+       act on them again until they stop matching. */
+    rules: all(
+      `SELECT r.*, (SELECT COUNT(*) FROM rule_firings f WHERE f.rule_id = r.id AND f.cleared_at IS NULL) AS open_firings
+         FROM rules r ORDER BY r.priority, r.id`,
+    ).map((r) => ({
       ...r,
       conditions: JSON.parse(r.conditions || '[]'),
       actions: JSON.parse(r.actions || '[]'),
@@ -796,13 +801,17 @@ router.post('/rules/failures/:id/retry', requirePermission('admin.rules'), (req,
   const row = one('SELECT * FROM rule_failures WHERE id = ?', [req.params.id]);
   if (!row) return res.status(404).json({ error: 'Failure not found' });
 
-  const out = runRule(row.rule_id, { dryRun: false, leadIds: [row.lead_id] });
-  if (!out.failed) {
+  /* QA-02. A retry puts the given-up action back and runs it now. It counts as
+     resolved only if something actually ran: a rule held by office hours, or a
+     lead that no longer matches, has not been fixed by being asked again. */
+  const out = runRule(row.rule_id, { dryRun: false, leadIds: [row.lead_id], retry: true });
+  const ran = out.matched?.some((m) => m.state === 'fired') ?? false;
+  if (ran && !out.failed) {
     run("UPDATE rule_failures SET resolved_at = datetime('now'), resolved_by = ? WHERE id = ?",
       [req.user.id, req.params.id]);
   }
-  audit(req.user.id, 'rule_failure_retried', 'rule', row.rule_id, { failed: out.failed });
-  return res.json({ ...out, resolved: !out.failed });
+  audit(req.user.id, 'rule_failure_retried', 'rule', row.rule_id, { failed: out.failed, ran });
+  return res.json({ ...out, resolved: ran && !out.failed });
 });
 
 /* -------------------------------------------------------- integrations */

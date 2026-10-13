@@ -18,7 +18,7 @@ answered. *unverified* — the auditor's evidence stands but I have not traced i
 to a line yet. *environment* — a change to labs.tinyepic.in itself, not the code. *closed by
 ruling* — Ritesh ruled that the behaviour reported is the behaviour wanted.
 
-**Today, of the 43 IDs: 20 fixed · 1 closed by ruling · 5 partly fixed · 17
+**Today, of the 43 IDs: 21 fixed · 1 closed by ruling · 5 partly fixed · 16
 open · none waiting on a decision.** Every decision asked for was answered on 13
 October; QA-37's is answered once its recommendations are in. Plus the points
 below the table, which are not IDs but are as much part of the report.
@@ -28,7 +28,7 @@ below the table, which are not IDs but are as much part of the report.
 | ID | Pri | State | Note |
 |---|---|---|---|
 | QA-01 | P0 | **fixed** `84c2c2f` | Form sends `route: false`. Its second half, adjacent (e), is `OPS-19`, fixed. |
-| QA-02 | P0 | open · **signed off 13 Oct**, being built | Cause traced: every five minutes each enabled rule acts on every lead that currently matches, with no record that it already did. The KYC waterfall sends the **client** a WhatsApp each sweep. Design: [QA-02-SCHEDULER-DESIGN.md](QA-02-SCHEDULER-DESIGN.md), shown as a page and signed off with its four recommended answers: rules fire once per change; the waterfall is WhatsApp at the stall, SMS 30 minutes later, an assisted-completion task at abandonment, and no client message while a High or Critical case is open; the labs-only transfer rule stays and fires once; `rule_runs` kept 90 days; the duplicates closed, not deleted, after a preview and a yes. |
+| QA-02 | P0 | **fixed** · QA-02 commit | A rule fires once per change: `rule_firings` records what each rule has done to each lead, a delayed stage runs once if the lead still matches, a repeat happens only if the rule asks, and the stored schedule — office hours, weekends, a daily limit — is read at last. The waterfall is staged as answered and holds while a High or Critical case is open; an abandoned journey becomes one task. Leads already acted on are taken as fired at deploy. The duplicates on labs: `server/scripts/qa02-duplicate-tasks.mjs`, preview by default, for Ritesh to run. [QA-02-SCHEDULER-DESIGN.md](QA-02-SCHEDULER-DESIGN.md), "As built". |
 | QA-03 | P0 | **fixed** `84c2c2f` | `engine/cases.js`. |
 | QA-04 | P1 | **fixed** `eaf4743` | The Leads page reads the date window — and the source chart's `source` — a tile sends, and shows each as a removable chip. Tile and list compare the same dates. Both compared IST dates against UTC timestamps: adjacent (j), `OPS-24`, fixed — both read IST days now. |
 | QA-05 | P1 | **partly fixed** `eaf4743` | "Open cases" opens on All open (`?view=`, `?open=true`). The case-summary strip is still not clickable, and "Resolved today" was not traced. |
@@ -71,9 +71,9 @@ below the table, which are not IDs but are as much part of the report.
 | QA-42 | P1 | not started · **needs a reproduction** | Not explained by the code: a Dealer holds `card.mark.exploring` and the panel offers Mark as Exploring. Needs watching as a Dealer. |
 | QA-43 | P1 | **partly fixed** `eaf4743` | The detail shows the refusal instead of spinning. List and detail still disagree on scope — one of `N-12`'s cases. |
 
-Counted: **fixed 20** — QA-01, 03, 04, 08, 11, 19, 20, 21, 23, 26, 27, 28, 30,
-31, 32, 33, 38, 39, 40, 41. **Closed by ruling 1** — QA-36. **Partly fixed 5** —
-QA-05, 12, 25, 34, 43. **Open 17** — QA-02 (signed off, being built); QA-06, 09,
+Counted: **fixed 21** — QA-01, 02, 03, 04, 08, 11, 19, 20, 21, 23, 26, 27, 28,
+30, 31, 32, 33, 38, 39, 40, 41. **Closed by ruling 1** — QA-36. **Partly fixed
+5** — QA-05, 12, 25, 34, 43. **Open 16** — QA-06, 09,
 13, 24 and 35 (ruled 13 Oct, to build); QA-37 (recommendations due); QA-07 and
 QA-10 (UI builds); QA-14 to QA-18 and QA-22 (feature requests under earlier
 IDs); and QA-29 and QA-42, which the code does not explain and need a
@@ -96,7 +96,7 @@ those IDs are fixed.
 | BRD gate P3 — DKYC validation, timers, abandonment, audited override | §1 | QA-34 not started; the rest untested |
 | BRD gate P4 — SLA sweep and reopen, live delivery, CSAT | §1 | QA-30 fixed; the rest untested |
 | Pilot gates: credential hashing, session expiry and revocation, server-side authorisation, partner isolation, KYC document encryption and retention, consent and DND, India residency, the pilot database, latency and availability | §1 | not started as an **evidence** exercise. Some exist in code (passwords are hashed; PAN is encrypted); none has been written up as the auditor asks |
-| Implementation sequence, steps 1–9 | §6 | Steps 1 (records), 5 (validation, partly), 6 (partner activation) advanced by `84c2c2f`. Step 2 is QA-02. Steps 3, 4, 7, 8, 9 not started |
+| Implementation sequence, steps 1–9 | §6 | Steps 1 (records), 5 (validation, partly), 6 (partner activation) advanced by `84c2c2f`. Step 2, QA-02, built 13 Oct. Steps 3, 4, 7, 8, 9 not started |
 | Evidence attached to each fix | §6 | Tests in `round4.test.mjs`; before/after screenshots need the deployed build |
 | Regression table against Rounds 1–3 and Ritesh's Part 4 | §4 | Each item maps to an ID above; nothing there is separate work |
 

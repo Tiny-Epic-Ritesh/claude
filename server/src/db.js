@@ -1712,6 +1712,11 @@ const COLUMNS = [
      and is checked once for the old guessable default. */
   ['partners', 'portal_password_temp', 'INTEGER NOT NULL DEFAULT 0'],
   ['partners', 'portal_password_set_at', 'TEXT'],
+  /* QA-02. A task a rule made says which firing made it, and a task can be
+     closed as cancelled -- with a reason -- rather than only done. */
+  ['tasks', 'rule_firing_id', 'INTEGER'],
+  ['tasks', 'cancelled_at', 'TEXT'],
+  ['tasks', 'cancel_reason', 'TEXT'],
 ];
 
 /**
@@ -3034,6 +3039,71 @@ CREATE TABLE IF NOT EXISTS rule_failures (
 );
 CREATE INDEX IF NOT EXISTS idx_rule_failures ON rule_failures(resolved_at, created_at DESC);
 `);
+
+/**
+ * The firing ledger (QA-02): what each rule has already done to each lead.
+ *
+ * One open row per rule and lead while the lead matches; `cleared_at` when it
+ * stops, so matching again is a new event. `done` is the indexes of the
+ * actions this cycle has run, `gave_up` those that failed three times, and
+ * `cycle_fired_at` the moment the cycle's first actions ran, from which a
+ * delayed stage counts. The partial unique index is the guard against two
+ * sweeps arming the same lead twice.
+ */
+const hadFirings = db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type = 'table' AND name = 'rule_firings'").get().n > 0;
+db.exec(`
+CREATE TABLE IF NOT EXISTS rule_firings (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  rule_id        INTEGER NOT NULL REFERENCES rules(id) ON DELETE CASCADE,
+  lead_id        INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  armed_at       TEXT NOT NULL,
+  cycle_armed_at TEXT NOT NULL,
+  cycle_fired_at TEXT,
+  last_fired_at  TEXT,
+  cycles         INTEGER NOT NULL DEFAULT 1,
+  done           TEXT NOT NULL DEFAULT '[]',
+  gave_up        TEXT NOT NULL DEFAULT '[]',
+  attempts       TEXT NOT NULL DEFAULT '{}',
+  cleared_at     TEXT,
+  UNIQUE (rule_id, lead_id, armed_at)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_rule_firings_open ON rule_firings(rule_id, lead_id) WHERE cleared_at IS NULL;
+`);
+
+/**
+ * Take a rule's past runs as already fired.
+ *
+ * The first sweep after QA-02 ships would otherwise find an empty ledger and
+ * act once more on every lead every rule had already acted on -- one more
+ * WhatsApp to each stalled applicant, one more task on each Warm card. A lead
+ * the rule has run against before, and which still matches, keeps its open
+ * firing with every action done; one that no longer matches is cleared at the
+ * next sweep. Run once for every rule when the table is created; exported so a
+ * test can plant a history and see it adopted.
+ */
+export function adoptRuleHistory(ruleId = null) {
+  const rules = db.prepare(`SELECT id, actions FROM rules ${ruleId ? 'WHERE id = ?' : ''}`).all(...(ruleId ? [ruleId] : []));
+  let adopted = 0;
+  for (const r of rules) {
+    let count = 0;
+    try { count = JSON.parse(r.actions || '[]').length; } catch { count = 0; }
+    const done = JSON.stringify(Array.from({ length: count }, (_, i) => i));
+    adopted += Number(db.prepare(
+      `INSERT OR IGNORE INTO rule_firings
+         (rule_id, lead_id, armed_at, cycle_armed_at, cycle_fired_at, last_fired_at, cycles, done)
+       SELECT rr.rule_id, rr.lead_id, MIN(rr.created_at), MIN(rr.created_at), MIN(rr.created_at), MAX(rr.created_at), 1, ?
+         FROM rule_runs rr JOIN leads l ON l.id = rr.lead_id
+        WHERE rr.rule_id = ? AND rr.dry_run = 0
+          AND NOT EXISTS (SELECT 1 FROM rule_firings f WHERE f.rule_id = rr.rule_id AND f.lead_id = rr.lead_id AND f.cleared_at IS NULL)
+        GROUP BY rr.rule_id, rr.lead_id`,
+    ).run(done, r.id).changes);
+  }
+  return adopted;
+}
+if (!hadFirings) {
+  const adopted = adoptRuleHistory();
+  if (adopted) console.log(`[db] QA-02: ${adopted} lead(s) taken as already fired from rule history`);
+}
 
 /**
  * Every migration landed.
