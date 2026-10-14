@@ -77,38 +77,53 @@ export const MASTER_STEPS = [
     conditional_on: 'penny_drop_failed',
     fields: [{ name: 'bank_proof', label: 'Cancelled cheque or bank statement', type: 'file', required: true, accept: 'image/*,application/pdf' }] },
   /*
-   * Nominees, as SEBI's circular of 10 January 2025 sets them
-   * (SEBI/HO/OIAE/OIAE_IAD-3/P/ON/2025/01650). Ruled 14 Oct: support it.
+   * Nominees, as SEBI's circular of 29 May 2026 sets them
+   * (SEBI/HO/OIAE/OIAE_IAD-3/P/CIR/2026/12676, in force from 1 Sep 2026; it
+   * supersedes the circular of 10 January 2025 this step was first built to).
+   * Ruled 14 Oct: follow it.
    *
-   *   - up to ten nominees (3.2);
-   *   - for each: one identifier -- PAN, driving licence number or the last
-   *     four digits of Aadhaar, the number only -- full contact details
-   *     (address, email, mobile) and the relationship (3.1.1); a date of
-   *     birth only for a minor, and a guardian if the investor wants one
-   *     (2.15);
-   *   - a share each, or none, in which case the assets are split equally
-   *     (2.14);
-   *   - optionally, one adult nominee empowered to operate the account if the
-   *     investor is incapacitated, up to a percentage (3.5);
-   *   - the investor's choice of what the statement of holding shows (2.13).
+   *   - up to three nominees (5.1);
+   *   - mandatory: the nominee's name and relationship, and a date of birth
+   *     when the nominee is a minor (7a);
+   *   - optional, and the applicant may give all, any or none of it (7b, 7c):
+   *     a share, mobile, email and one identifier -- Aadhaar (last four
+   *     digits), PAN, driving licence or passport, the number only -- and the
+   *     same for a minor's guardian (Annexure-A);
+   *   - no shares given: split equally, any odd lot to the first nominee (7b);
+   *   - the applicant's choice of what the statement of holding shows
+   *     (Annexure-A, 2; 10.1);
+   *   - opting out shows the Annexure-B declaration in full and the applicant
+   *     agrees to it (8b). No OTP and no video: those were the January 2025
+   *     circular's.
    *
    * The journey is the applicant's own, so the form validates as they go and
    * the server checks every rule again on submit.
    */
   { code: 'NOMINEE', label: 'Nominee details', owner_type: 'Lead', timer: 420, group: 'Nominee',
-    note: 'You can name up to 10 nominees. Give each a share, or leave every share blank and they are split equally.',
+    note: 'You can name up to 3 nominees. Only each nominee\'s name and relationship are needed, and a date of birth for a minor. Give each a share, or leave every share blank and they are split equally.',
     fields: [
       { name: 'nominee_opt', label: 'Do you want to add nominees?', type: 'select', required: true, options: ['Add nominee', 'Opt out'] },
       { name: 'nominees', label: 'Nominees', type: 'nominees', required: false, required_when_shown: true,
-        shown_when: { field: 'nominee_opt', equals: 'Add nominee' }, max: 10,
+        shown_when: { field: 'nominee_opt', equals: 'Add nominee' }, max: 3,
         relationships: ['Spouse', 'Son', 'Daughter', 'Father', 'Mother', 'Brother', 'Sister', 'Other'],
-        id_types: ['PAN', 'Driving licence', 'Aadhaar (last 4 digits)'] },
+        id_types: ['Aadhaar (last 4 digits)', 'PAN', 'Driving licence', 'Passport'] },
       { name: 'nominee_statement', label: 'On my statement of holdings, show', type: 'select', required: false, required_when_shown: true,
         shown_when: { field: 'nominee_opt', equals: 'Add nominee' },
         options: ['The names of my nominees', 'Only whether I have made a nomination'] },
+      /* Annexure-B, word for word: the regulated entity displays it and the
+         investor agrees by choosing this option (8b). */
       { name: 'optout_declaration', type: 'consent', required: false, required_when_shown: true,
         shown_when: { field: 'nominee_opt', equals: 'Opt out' },
-        label: 'I do not wish to nominate anyone. I understand that without a nominee my holdings pass to my legal heirs only after they complete the legal process to claim them.' },
+        declaration: {
+          title: 'Declaration for Opting-out of Nomination',
+          lead: 'I hereby confirm that I do not wish to appoint any nominee(s) to my demat account/ mutual fund folio at this point of time.',
+          understand: [
+            'the nomination helps to quickly identify the person for transfer of securities and helps in faster and smoother transmission of my securities to my legal heir(s) after my demise.',
+            'in the absence of a nomination, my legal heir(s) may require the submission of certain additional legal or court-issued documents which may delay the process of transmission of securities to my legal heir(s).',
+            'if no claim is made on the account / folio for a prolonged period after my demise, the holdings may be treated as unclaimed assets and they may be transferred to Investor Education and protection Fund Authority (IEPF) in accordance with the applicable regulatory framework.',
+          ],
+        },
+        label: 'I confirm that I have understood the above implications and that my decision to opt out of nomination is voluntary.' },
     ] },
   { code: 'SEGMENTS', label: 'Segment & depository selection', owner_type: 'Lead', timer: 180, group: 'Segments',
     fields: [
@@ -287,35 +302,69 @@ export function validateStepPayload(step, payload = {}, form = {}) {
   return { problems, values };
 }
 
-/* What each identifier SEBI accepts for a nominee looks like (circular 3.1.1:
-   the number only, never the document). Driving licences are the state code,
-   the RTO, then the year and serial: MH14 2011 0062821. */
+/* What each identifier SEBI accepts for a nominee looks like (Annexure-A,
+   3d: the number only, never the document). Driving licences are the state
+   code, the RTO, then the year and serial: MH14 2011 0062821. An Indian
+   passport is a letter and seven digits. */
 const NOMINEE_ID_RULES = {
   PAN: { pattern: /^[A-Z]{5}[0-9]{4}[A-Z]$/, help: 'e.g. ABCDE1234F' },
   'Driving licence': { pattern: /^[A-Z]{2}[0-9]{2}[0-9A-Z]{11,12}$/, help: '15 or 16 characters, e.g. MH1420110062821' },
   'Aadhaar (last 4 digits)': { pattern: /^[0-9]{4}$/, help: 'only the last 4 digits' },
+  Passport: { pattern: /^[A-Z][0-9]{7}$/, help: 'a letter and 7 digits, e.g. A1234567' },
 };
 
 const truthy = (v) => v === true || v === 'true';
 const blank = (v) => v === undefined || v === null || String(v).trim() === '';
 
 /**
- * Check a list of nominees against SEBI's nomination rules (January 2025).
+ * Check a list of nominees against SEBI's nomination rules (May 2026).
  *
  * Returns `{ problems, nominees }`: each problem names the nominee by number,
  * and `nominees` is the list as it should be stored -- trimmed, identifiers
- * upper-cased, a minor's date of birth kept and an adult's dropped, shares as
- * numbers or null when they are to be split equally.
+ * upper-cased, a minor's date of birth and guardian kept and an adult's
+ * dropped, shares as numbers or null when they are to be split equally, and
+ * an optional detail nobody gave stored as null rather than as an empty
+ * string.
+ *
+ * Only the name and relationship are required, and a minor's date of birth
+ * (7a). Everything else is optional (7b) and the applicant may give all, any
+ * or none of it (7c) -- but what is given is checked, because a mobile that
+ * cannot be dialled is worse than none: it is the number somebody will try
+ * when the investor has died.
  */
 export function validateNominees(list, field, { applicantPan = null, today = new Date().toISOString().slice(0, 10) } = {}) {
   const problems = [];
   const say = (message, nominee = null) => problems.push({ field: 'nominees', nominee, message });
-  const max = field?.max ?? 10;
+  const max = field?.max ?? 3;
   const relationships = field?.relationships ?? [];
   const idTypes = field?.id_types ?? Object.keys(NOMINEE_ID_RULES);
+  const idNames = idTypes.map((t) => (t.startsWith('Aadhaar') ? 'the last 4 digits of Aadhaar' : t)).join(', ');
 
   if (!Array.isArray(list) || !list.length) { say('Add at least one nominee, or choose to opt out'); return { problems, nominees: [] }; }
   if (list.length > max) { say(`You can name up to ${max} nominees`); return { problems, nominees: [] }; }
+
+  /* One optional contact-and-identifier set, checked only where given. Used
+     for a nominee and for a minor's guardian alike (Annexure-A, note ***). */
+  const optionalDetails = (n, prefix, who, i) => {
+    const text = (k) => String(n[`${prefix}${k}`] ?? '').trim();
+    const mobile = text('mobile').replace(/\D/g, '').slice(-10);
+    const email = text('email');
+    const idNumber = text('id_number').toUpperCase().replace(/[\s-]/g, '');
+    const idType = idNumber ? text('id_type') : '';
+    if (mobile && !/^[6-9][0-9]{9}$/.test(mobile)) say(`${who}: a mobile number is 10 digits — or leave it blank`, i);
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) say(`${who}: that email address is not valid — or leave it blank`, i);
+    if (idNumber) {
+      const rule = NOMINEE_ID_RULES[idType];
+      if (!idTypes.includes(idType) || !rule) say(`${who}: say which identifier that is — ${idNames}`, i);
+      else if (!rule.pattern.test(idNumber)) say(`${who}: the ${idType} number is not valid — ${rule.help}`, i);
+    }
+    return {
+      [`${prefix}mobile`]: mobile || null,
+      [`${prefix}email`]: email || null,
+      [`${prefix}id_type`]: idNumber ? idType : null,
+      [`${prefix}id_number`]: idNumber || null,
+    };
+  };
 
   const nominees = list.map((raw, i) => {
     const n = raw && typeof raw === 'object' ? raw : {};
@@ -324,39 +373,32 @@ export function validateNominees(list, field, { applicantPan = null, today = new
     const out = {
       name: text('name'),
       relationship: text('relationship'),
-      id_type: text('id_type'),
-      id_number: text('id_number').toUpperCase().replace(/[\s-]/g, ''),
-      address: text('address'),
-      mobile: text('mobile').replace(/\D/g, '').slice(-10),
-      email: text('email'),
+      ...optionalDetails(n, '', who, i),
       minor: truthy(n.minor),
       dob: null,
-      guardian_name: text('guardian_name') || null,
-      guardian_relation: text('guardian_relation') || null,
+      guardian_name: null,
+      guardian_relation: null,
+      guardian_mobile: null,
+      guardian_email: null,
+      guardian_id_type: null,
+      guardian_id_number: null,
       share: blank(n.share) ? null : Number(n.share),
-      may_operate: truthy(n.may_operate),
-      operate_limit_pct: blank(n.operate_limit_pct) ? null : Number(n.operate_limit_pct),
     };
 
     if (out.name.length < 2) say(`${who}: give their full name`, i);
     if (!relationships.includes(out.relationship)) say(`${who}: choose their relationship to you`, i);
-    const rule = NOMINEE_ID_RULES[out.id_type];
-    if (!idTypes.includes(out.id_type) || !rule) say(`${who}: choose PAN, driving licence or the last 4 digits of Aadhaar`, i);
-    else if (!rule.pattern.test(out.id_number)) say(`${who}: the ${out.id_type} number is not valid — ${rule.help}`, i);
-    if (out.address.length < 5) say(`${who}: give their postal address`, i);
-    if (!/^[6-9][0-9]{9}$/.test(out.mobile)) say(`${who}: give a 10-digit Indian mobile number`, i);
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(out.email)) say(`${who}: give a valid email address`, i);
 
-    /* Date of birth only for a minor (3.1.1 d); a guardian is optional (2.15). */
+    /* A minor's date of birth is required (7a); their guardian, and the
+       guardian's details, are optional (7b). */
     if (out.minor) {
       const dob = text('dob');
       const ok = /^\d{4}-\d{2}-\d{2}$/.test(dob) && !Number.isNaN(Date.parse(`${dob}T00:00:00Z`)) && dob <= today && dob >= '1900-01-01';
       if (!ok) say(`${who}: give a minor nominee's date of birth`, i);
       else if (yearsOld(dob, today) >= 18) say(`${who} is 18 or over, so not a minor`, i);
       else out.dob = dob;
-    } else {
-      out.guardian_name = null;
-      out.guardian_relation = null;
+      out.guardian_name = text('guardian_name') || null;
+      out.guardian_relation = text('guardian_relation') || null;
+      Object.assign(out, optionalDetails(n, 'guardian_', `${who}'s guardian`, i));
     }
 
     // A tolerance, not equality: 33.33 * 100 is 3332.9999999999995 in floating point.
@@ -364,14 +406,12 @@ export function validateNominees(list, field, { applicantPan = null, today = new
       || Math.abs(Math.round(out.share * 100) - out.share * 100) > 1e-6)) {
       say(`${who}: a share is a percentage above 0 and up to 100, to two decimal places`, i);
     }
-    if (!out.may_operate) out.operate_limit_pct = null;
-    else if (out.operate_limit_pct !== null && (!Number.isFinite(out.operate_limit_pct) || out.operate_limit_pct <= 0 || out.operate_limit_pct > 100)) {
-      say(`${who}: the limit they may encash is a percentage above 0 and up to 100`, i);
-    }
     return out;
   });
 
-  /* Shares (2.14): every one, adding up to 100, or none, split equally. */
+  /* Shares (7b): every one, adding up to 100, or none, split equally with any
+     odd lot to the first nominee. A share for some and not others cannot be
+     split either way, so it is asked about rather than guessed. */
   const given = nominees.filter((n) => n.share !== null);
   if (given.length && given.length !== nominees.length) {
     say('Give every nominee a share, or leave every share blank to split equally');
@@ -380,14 +420,11 @@ export function validateNominees(list, field, { applicantPan = null, today = new
     if (total !== 100) say(`Your nominees' shares add up to ${total}%; they must add up to 100%`);
   }
 
-  /* One adult may operate the account if the investor is incapacitated (3.5). */
-  const operators = nominees.filter((n) => n.may_operate);
-  if (operators.length > 1) say('Only one nominee can operate your account if you are incapacitated');
-  if (operators.some((n) => n.minor)) say('A minor nominee cannot operate your account');
-
-  /* Two nominees cannot be one person, and nobody can nominate themselves. */
+  /* Two nominees cannot be one person, and nobody can nominate themselves --
+     checked where an identifier was given, which is the only way to tell. */
   nominees.forEach((n, i) => {
-    const first = nominees.findIndex((m) => m.id_type === n.id_type && m.id_number && m.id_number === n.id_number);
+    if (!n.id_number) return;
+    const first = nominees.findIndex((m) => m.id_type === n.id_type && m.id_number === n.id_number);
     if (first !== -1 && first < i) say(`Nominee ${i + 1} has the same ${n.id_type} number as nominee ${first + 1}`, i);
     if (n.id_type === 'PAN' && applicantPan && n.id_number === String(applicantPan).toUpperCase()) {
       say(`Nominee ${i + 1}: you cannot nominate yourself`, i);

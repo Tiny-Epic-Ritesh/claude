@@ -576,6 +576,19 @@ function Field({ field, value, onChange, onSendOtp }) {
   if (field.type === 'consent') {
     return (
       <div className="field">
+        {/* SEBI's Annexure-B, May 2026: the regulated entity displays the
+            declaration and the investor agrees to it (8b). In full, before the
+            box, so what is ticked is what was read. */}
+        {field.declaration && (
+          <div className="card" style={{ padding: 14, marginBottom: 10 }}>
+            <strong>{field.declaration.title}</strong>
+            <p className="small" style={{ margin: '8px 0' }}>{field.declaration.lead}</p>
+            <p className="small" style={{ margin: '8px 0 4px' }}>I understand that -</p>
+            <ol type="i" className="small" style={{ margin: 0, paddingLeft: 22 }}>
+              {field.declaration.understand.map((line) => <li key={line} style={{ marginBottom: 4 }}>{line}</li>)}
+            </ol>
+          </div>
+        )}
         <label className="row" style={{ alignItems: 'flex-start', gap: 8 }}>
           <input type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)} style={{ width: 16, height: 16, marginTop: 2 }} />
           <span style={{ color: 'var(--text)', fontWeight: 500 }}>{field.label}</span>
@@ -693,22 +706,25 @@ function Field({ field, value, onChange, onSendOtp }) {
 /* ------------------------------------------------------------- nominees */
 
 const EMPTY_NOMINEE = {
-  name: '', relationship: '', id_type: 'PAN', id_number: '', address: '', mobile: '', email: '',
-  minor: false, dob: '', guardian_name: '', guardian_relation: '', share: '', may_operate: false, operate_limit_pct: '',
+  name: '', relationship: '', id_type: '', id_number: '', mobile: '', email: '',
+  minor: false, dob: '', guardian_name: '', guardian_relation: '',
+  guardian_mobile: '', guardian_email: '', guardian_id_type: '', guardian_id_number: '', share: '',
 };
 
 /**
- * Up to ten nominees, as SEBI's January 2025 circular allows.
+ * Up to three nominees, as SEBI's May 2026 circular allows.
  *
- * Each nominee is a small form of its own: who they are, one identity number
- * (the number only, never the document), how to reach them, and their share.
- * A minor nominee also needs a date of birth, and can have a guardian. Shares
- * are all given and add up to 100, or all left blank and split equally; the
- * running total says which. The server checks all of it again.
+ * Each nominee is a small form of its own. Only who they are is required --
+ * name and relationship, and a date of birth for a minor. Everything else is
+ * offered and optional, as the circular asks (7c): a share, a mobile and
+ * email so the firm can reach them, and one identity number (the number
+ * only, never the document); a minor's guardian can be named with the same.
+ * Shares are all given and add up to 100, or all left blank and split
+ * equally; the running total says which. The server checks all of it again.
  */
 function NomineesField({ field, value, onChange }) {
   const list = Array.isArray(value) && value.length ? value : [EMPTY_NOMINEE];
-  const max = field.max ?? 10;
+  const max = field.max ?? 3;
 
   /* Choosing "Add nominee" starts with one nominee to fill in. */
   useEffect(() => {
@@ -717,8 +733,6 @@ function NomineesField({ field, value, onChange }) {
   }, []);
 
   const update = (i, patch) => onChange(list.map((n, j) => (j === i ? { ...n, ...patch } : n)));
-  // One nominee at most may operate the account; choosing one clears the rest.
-  const setOperator = (i, on) => onChange(list.map((n, j) => ({ ...n, may_operate: j === i ? on : (on ? false : n.may_operate) })));
   const given = list.filter((n) => String(n.share ?? '').trim() !== '');
   const total = Math.round(given.reduce((s, n) => s + Number(n.share || 0), 0) * 100) / 100;
 
@@ -735,6 +749,33 @@ function NomineesField({ field, value, onChange }) {
             <input id={id(k)} value={n[k] ?? ''} onChange={(e) => update(i, { [k]: e.target.value })} {...props} />
           </div>
         );
+        /* One identity number, the number only: for the nominee, or with
+           `prefix` 'guardian_' for a minor's guardian. Optional, so the type
+           starts unchosen rather than defaulting to one the applicant may not
+           have. */
+        const identity = (prefix, who) => {
+          const type = n[`${prefix}id_type`] ?? '';
+          return (
+            <div className="field">
+              <label htmlFor={id(`${prefix}id_type`)}>{who} identity number (optional)</label>
+              <div className="row">
+                <select id={id(`${prefix}id_type`)} value={type}
+                  onChange={(e) => update(i, { [`${prefix}id_type`]: e.target.value, [`${prefix}id_number`]: '' })} style={{ maxWidth: 230 }}>
+                  <option value="">None</option>
+                  {(field.id_types ?? []).map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+                {type && (
+                  <input aria-label={`${who} ${type} number`} value={n[`${prefix}id_number`] ?? ''}
+                    onChange={(e) => update(i, { [`${prefix}id_number`]: e.target.value.toUpperCase() })}
+                    inputMode={type.startsWith('Aadhaar') ? 'numeric' : undefined}
+                    maxLength={type.startsWith('Aadhaar') ? 4 : 20}
+                    placeholder={{ PAN: 'ABCDE1234F', Passport: 'A1234567', 'Driving licence': 'MH1420110062821' }[type] ?? 'Last 4 digits'} />
+                )}
+              </div>
+              <div className="hint">The number only. You do not need to upload the document.</div>
+            </div>
+          );
+        };
         return (
           <fieldset key={i} className="card" style={{ padding: 14, marginBottom: 12 }}>
             <legend className="row" style={{ gap: 8 }}>
@@ -751,48 +792,35 @@ function NomineesField({ field, value, onChange }) {
                 {(field.relationships ?? []).map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
-            <div className="field">
-              <label htmlFor={id('id_type')}>Identity number</label>
-              <div className="row">
-                <select id={id('id_type')} value={n.id_type} onChange={(e) => update(i, { id_type: e.target.value, id_number: '' })} style={{ maxWidth: 230 }}>
-                  {(field.id_types ?? []).map((t) => <option key={t} value={t}>{t}</option>)}
-                </select>
-                <input aria-label={`Nominee ${i + 1} ${n.id_type} number`} value={n.id_number}
-                  onChange={(e) => update(i, { id_number: e.target.value.toUpperCase() })}
-                  inputMode={n.id_type.startsWith('Aadhaar') ? 'numeric' : undefined}
-                  maxLength={n.id_type.startsWith('Aadhaar') ? 4 : 20}
-                  placeholder={n.id_type === 'PAN' ? 'ABCDE1234F' : n.id_type.startsWith('Aadhaar') ? 'Last 4 digits' : 'MH1420110062821'} />
-              </div>
-              <div className="hint">The number only. You do not need to upload the document.</div>
-            </div>
-            <div className="field">
-              <label htmlFor={id('address')}>Postal address</label>
-              <textarea id={id('address')} value={n.address} onChange={(e) => update(i, { address: e.target.value })} style={{ minHeight: 56 }} />
-            </div>
-            <div className="row wrap" style={{ gap: 12 }}>
-              {input({ key: 'mobile', label: 'Mobile number', type: 'tel', inputMode: 'numeric', maxLength: 10 })}
-              {input({ key: 'email', label: 'Email address', type: 'email' })}
-            </div>
             <label className="row" style={{ gap: 8, margin: '6px 0' }}>
-              <input type="checkbox" checked={!!n.minor} onChange={(e) => update(i, { minor: e.target.checked, may_operate: e.target.checked ? false : n.may_operate })} />
+              <input type="checkbox" checked={!!n.minor} onChange={(e) => update(i, { minor: e.target.checked })} />
               <span>This nominee is under 18</span>
             </label>
+            {n.minor && input({ key: 'dob', label: 'Date of birth', type: 'date', max: new Date().toISOString().slice(0, 10) })}
+
+            <div className="hint" style={{ margin: '10px 0 4px' }}>
+              Optional. With a mobile or email we can reach your nominee when they need us.
+            </div>
+            <div className="row wrap" style={{ gap: 12 }}>
+              {input({ key: 'mobile', label: 'Mobile number (optional)', type: 'tel', inputMode: 'numeric', maxLength: 10 })}
+              {input({ key: 'email', label: 'Email address (optional)', type: 'email' })}
+            </div>
+            {identity('', 'Their')}
+            {input({ key: 'share', label: 'Share (%) (optional)', type: 'number', min: 0.01, max: 100, step: 0.01, placeholder: 'Leave blank to split equally' })}
+
             {n.minor && (
-              <div className="row wrap" style={{ gap: 12 }}>
-                {input({ key: 'dob', label: 'Date of birth', type: 'date', max: new Date().toISOString().slice(0, 10) })}
-                {input({ key: 'guardian_name', label: 'Guardian (optional)' })}
-                {input({ key: 'guardian_relation', label: 'Guardian\'s relationship to the nominee (optional)' })}
+              <div className="card" style={{ padding: 12, marginTop: 8 }}>
+                <div className="small" style={{ fontWeight: 600, marginBottom: 6 }}>Guardian (optional)</div>
+                <div className="row wrap" style={{ gap: 12 }}>
+                  {input({ key: 'guardian_name', label: 'Guardian\'s name' })}
+                  {input({ key: 'guardian_relation', label: 'Relationship to the nominee' })}
+                </div>
+                <div className="row wrap" style={{ gap: 12 }}>
+                  {input({ key: 'guardian_mobile', label: 'Guardian\'s mobile', type: 'tel', inputMode: 'numeric', maxLength: 10 })}
+                  {input({ key: 'guardian_email', label: 'Guardian\'s email', type: 'email' })}
+                </div>
+                {identity('guardian_', 'Guardian\'s')}
               </div>
-            )}
-            {input({ key: 'share', label: 'Share (%)', type: 'number', min: 0.01, max: 100, step: 0.01, placeholder: 'Leave blank to split equally' })}
-            {!n.minor && (
-              <>
-                <label className="row" style={{ gap: 8, margin: '6px 0' }}>
-                  <input type="checkbox" checked={!!n.may_operate} onChange={(e) => setOperator(i, e.target.checked)} />
-                  <span>May operate my account if I become physically incapacitated (optional)</span>
-                </label>
-                {n.may_operate && input({ key: 'operate_limit_pct', label: 'Up to this share of my holdings (%)', type: 'number', min: 1, max: 100, placeholder: 'Leave blank for no limit' })}
-              </>
             )}
           </fieldset>
         );
@@ -800,7 +828,7 @@ function NomineesField({ field, value, onChange }) {
       <div className="row" style={{ justifyContent: 'space-between' }}>
         <span className="hint">
           {given.length === 0
-            ? `Shares split equally: ${Math.round(10000 / list.length) / 100}% each.`
+            ? `Shares split equally${list.length > 1 ? ', any odd lot to nominee 1' : ''}: ${Math.round(10000 / list.length) / 100}% each.`
             : given.length === list.length ? `Shares add up to ${total}%${total === 100 ? '.' : ' — they must add up to 100%.'}`
               : 'Give every nominee a share, or leave every share blank to split equally.'}
         </span>

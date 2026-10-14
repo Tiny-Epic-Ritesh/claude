@@ -6,8 +6,8 @@
  *
  *   one nominee holds 100%, because the depositories' forms require the
  *   shares to add up to 100% and this journey took one nominee -- since 14
- *   Oct it takes up to ten (nominees.test.mjs), and a lone nominee's share
- *   is still the whole of it
+ *   Oct it takes up to three, as SEBI's May 2026 circular sets
+ *   (nominees.test.mjs), and a lone nominee's share is still the whole of it
  *
  * and the auditor's other point: the journey asked again for the mobile it was
  * started with. It now holds it from the start, and the portal offers it to

@@ -357,10 +357,14 @@ export const MASK_ALIASES = {
   applicant_mobile: 'mobile',
   lead_email: 'email',
   applicant_email: 'email',
-  /* A nominee's PAN or driving licence number, masked as a PAN is. The last
-     four digits of Aadhaar stay as they are: they are what a masked Aadhaar
-     shows anyway. */
+  /* A nominee's PAN, driving licence or passport number, masked as a PAN is.
+     The last four digits of Aadhaar stay as they are: they are what a masked
+     Aadhaar shows anyway. */
   id_number: 'pan',
+  // A minor nominee's guardian, under the same rule (SEBI, May 2026: Annexure-A).
+  guardian_mobile: 'mobile',
+  guardian_email: 'email',
+  guardian_id_number: 'pan',
 };
 
 /** Which masker applies to which field name. */
