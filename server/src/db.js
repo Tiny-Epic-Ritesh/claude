@@ -1740,6 +1740,9 @@ const COLUMNS = [
   ['partners', 'emergency_activated_by', 'INTEGER'],
   ['partners', 'emergency_reason', 'TEXT'],
   ['partners', 'emergency_steps_open', 'INTEGER'],
+  /* How a cross-business referral is paid, as the policy stood when it was
+     made (14 Oct): JSON, null for a referral within the partner's business. */
+  ['leads', 'referral_commission_basis', 'TEXT'],
 ];
 
 /**

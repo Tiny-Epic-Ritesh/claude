@@ -46,12 +46,19 @@ is gone for good, with a confirmation that names it.
 ## Retention, the floor under all of it
 
 - Broker books and records: **8 years** under the SEBI (Stock Brokers)
-  Regulations, 2026 (raised from five; reported by KPMG and LiveLaw, to be
-  confirmed against regulation 16 in the Gazette text).
+  Regulations, 2026, regulation 16 (raised from five) -- confirmed 14 Oct
+  against several published summaries of the regulation, and stated as eight
+  years in a broker's own published referral policy.
 - Transaction records under the PMLA: **5 years** from the transaction.
 - Personal data under the DPDP Act, 2023: erased once its purpose is served,
-  unless a law requires it kept. A purge period for leads that never became
-  clients is Compliance's number, set in Setup the way log periods already are.
+  unless a law requires it kept (section 8(7)). The DPDP Rules, 2025 use three
+  years of inactivity for the classes they name.
+
+Ruled 14 Oct ("keep it as standard practice suggests, configurable"): two
+Business policies, changed by an Admin or Superadmin in Setup. Clients are kept
+**at least 8 years** after the account closes, and the setting cannot go lower.
+Leads that never became clients may be erased after **3 years** without
+activity.
 
 ## The auditor's cleanup ask
 
@@ -63,3 +70,9 @@ data, with a reason, and never deletes them.
 - Partner portal access can be withdrawn and re-issued (`OPS-15`).
 - Tasks have a *Cancelled* status with a reason (QA-02), used by the
   duplicates script; no screen yet.
+- Campaigns already did what the table asks: a draft only is edited, a sent
+  one is archived rather than deleted, and only a draft never sent is deleted.
+- **Lead purge (14 Oct):** Data tools → Recycle bin lists what has reached its
+  retention -- deleted, never an account, untouched for the period -- and an
+  Admin erases it with a reason and the word PURGE. The audit keeps the ids,
+  the reason and the period, never a name. Clients are not purged.

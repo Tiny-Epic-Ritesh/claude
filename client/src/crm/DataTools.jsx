@@ -289,6 +289,7 @@ function RecycleBin() {
         <h2>Recycle bin</h2>
         <span className="tiny muted">{rows.length} deleted lead{rows.length === 1 ? '' : 's'}</span>
       </div>
+      <Purge onDone={reload} />
       <table>
         <thead><tr><th>Lead</th><th>City</th><th>Source</th><th>Deleted</th><th /></tr></thead>
         <tbody>
@@ -309,10 +310,84 @@ function RecycleBin() {
       </table>
       <p className="tiny muted" style={{ padding: '10px 14px', margin: 0 }}>
         Deleting a lead hides it from every list but destroys nothing — the record, its cards, its activity history and
-        its tickets all survive, and restoring puts them all back. Permanent erasure is a separate, audited process for
-        a data-subject request, not something a user does by clicking Delete.
+        its tickets all survive, and restoring puts them all back. Erasing one for good is possible only once its
+        retention has run out, set in Setup → Business policies, and only with a reason, which the audit log keeps.
       </p>
     </section>
+  );
+}
+
+/**
+ * Erase the leads whose retention has run out (QA-37, with the period ruled 14 Oct).
+ *
+ * Only what is in the bin, never became an account, and has had nothing on it
+ * for the whole retention period. It cannot be undone, so it asks for a reason
+ * and for the word PURGE.
+ */
+function Purge({ onDone }) {
+  const [data, { reload }] = useApi('/recycle-bin/purgeable');
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [done, setDone] = useState(null);
+
+  if (!data) return null;
+
+  async function purge() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api.post('/recycle-bin/purge', { reason, confirm });
+      setDone(res.purged);
+      setOpen(false);
+      setReason('');
+      setConfirm('');
+      reload();
+      onDone();
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="card-body" style={{ borderBottom: '1px solid var(--border)' }}>
+      {done != null && <div className="notice notice-ok">{done} lead{done === 1 ? '' : 's'} erased for good.</div>}
+      {data.count === 0 ? (
+        <span className="small muted">
+          Nothing here has reached its retention yet: a lead can be erased once it has had no activity for {data.years}{' '}
+          year{data.years === 1 ? '' : 's'} and never became a client.
+        </span>
+      ) : !open ? (
+        <div className="row-between">
+          <span className="small">
+            <strong>{data.count}</strong> lead{data.count === 1 ? ' has' : 's have'} had no activity for {data.years} years and never
+            became a client. Their retention has run out.
+          </span>
+          <button className="btn-danger btn-sm" onClick={() => setOpen(true)}>Erase them</button>
+        </div>
+      ) : (
+        <div className="stack" style={{ gap: 8 }}>
+          <ErrorBanner error={error} onDismiss={() => setError(null)} />
+          <span className="small">
+            This erases {data.count} lead{data.count === 1 ? '' : 's'} permanently, with their cards and activity. It cannot be undone.
+          </span>
+          <div className="field">
+            <label htmlFor="purge-reason">Why</label>
+            <textarea id="purge-reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
+          </div>
+          <div className="field">
+            <label htmlFor="purge-confirm">Type PURGE to confirm</label>
+            <input id="purge-confirm" value={confirm} onChange={(e) => setConfirm(e.target.value)} style={{ maxWidth: 160 }} />
+          </div>
+          <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn-sm" onClick={() => setOpen(false)} disabled={busy}>Cancel</button>
+            <button className="btn-danger btn-sm" disabled={busy || reason.trim().length < 10 || confirm !== 'PURGE'} onClick={purge}>
+              {busy ? <Spinner /> : `Erase ${data.count}`}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

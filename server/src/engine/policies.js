@@ -60,6 +60,91 @@ export const POLICIES = [
     type: 'bool',
     default: false,
   },
+
+  /*
+   * How a cross-business referral is paid (Ritesh, 14 Oct: "check the
+   * standard across the industry, map it, keep it configurable").
+   *
+   * What the industry does, as published: an Authorised Person earns a
+   * revenue share of the net brokerage on the clients mapped to them --
+   * commonly 20 to 70 per cent, set in the agreement with the broker -- and
+   * some brokers add an incentive per account opened; Bigul's own Ambassador
+   * scheme pays both, monthly. A referral is paid by the business that earns
+   * the revenue, on that business's terms; a referrer who is not an
+   * Authorised Person is typically paid a fixed incentive, not a share of
+   * brokerage. So the default here is the product's business's plan, and the
+   * other three are the arrangements firms actually run.
+   *
+   * Applies only while the matching "may refer" policy above is on. The CRM
+   * does not compute payouts -- they come from brokerage the back office
+   * holds -- so the basis in force is recorded on each referral when it is
+   * made, for the payout run and an auditor to read.
+   */
+  {
+    key: 'referral_commission.cross_book',
+    area: 'Partners',
+    label: 'How a referral for the other business\'s product is paid',
+    help: 'Applies when a partner refers a product of the other business (allowed by the two policies above). '
+      + 'The basis in force is recorded on each referral as it is made.',
+    type: 'choice',
+    options: [
+      { value: 'product_business_plan', label: 'Under the plan of the business whose product it is' },
+      { value: 'referrer_plan', label: 'Under the referring partner\'s own plan' },
+      { value: 'split', label: 'A share of the product business\'s plan (the percentage below)' },
+      { value: 'incentive_only', label: 'A fixed incentive per account opened, no brokerage share (the amount below)' },
+    ],
+    default: 'product_business_plan',
+  },
+  {
+    key: 'referral_commission.cross_book_split_pct',
+    area: 'Partners',
+    label: 'Share of the product business\'s plan, for a cross-business referral',
+    help: 'Used only when referrals are paid "a share of the product business\'s plan". 50 means half of what that business would pay its own partner.',
+    type: 'number', min: 1, max: 100, unit: '%',
+    default: 50,
+  },
+  {
+    key: 'referral_commission.cross_book_incentive_inr',
+    area: 'Partners',
+    label: 'Incentive per account opened, for a cross-business referral',
+    help: 'Used only when referrals are paid "a fixed incentive per account opened". Set it before choosing that basis.',
+    type: 'number', min: 0, max: 100000, unit: '₹',
+    default: 0,
+  },
+
+  /*
+   * How long personal data is kept (Ritesh, 14 Oct: "check the standard
+   * industry practice, keep it as it suggests, keep it configurable").
+   *
+   *   Clients: the SEBI (Stock Brokers) Regulations, 2026 require books and
+   *   records to be kept for at least eight years (regulation 16, up from
+   *   five), and the PMLA five years from the end of the relationship; the
+   *   longer governs. Eight is the floor, so this cannot be set lower.
+   *
+   *   Leads who never became clients: no regulation sets a number. The DPDP
+   *   Act, 2023 says erase personal data once its purpose is served unless a
+   *   law requires it kept (section 8(7)), and the DPDP Rules, 2025 put that
+   *   at three years of inactivity for the classes they name. Three is the
+   *   default here, for the same reason.
+   */
+  {
+    key: 'retention.lead_years',
+    area: 'Retention',
+    label: 'Leads that never became clients are erased after this long without activity',
+    help: 'A deleted lead with no activity for this long, and no account, can be purged from the recycle bin. '
+      + 'The DPDP Act asks for erasure once the purpose is served; the DPDP Rules, 2025 use three years of inactivity.',
+    type: 'number', min: 1, max: 8, unit: 'years',
+    default: 3,
+  },
+  {
+    key: 'retention.client_years',
+    area: 'Retention',
+    label: 'Client records are kept for at least this long after the account closes',
+    help: 'SEBI (Stock Brokers) Regulations, 2026, regulation 16: books and records for at least eight years. '
+      + 'It can be longer, never shorter. A lead that became a client is never purged as a lead.',
+    type: 'number', min: 8, max: 20, unit: 'years',
+    default: 8,
+  },
 ];
 
 export const policyDef = (key) => POLICIES.find((p) => p.key === key) ?? null;
@@ -80,6 +165,10 @@ export function policyRefusal(key, value) {
   if (def.type === 'bool' && typeof value !== 'boolean') return `${def.label}: choose on or off`;
   if (def.type === 'choice' && !def.options.some((o) => o.value === value)) {
     return `${def.label}: choose one of ${def.options.map((o) => o.label).join(', ')}`;
+  }
+  if (def.type === 'number') {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return `${def.label}: give a number`;
+    if (value < def.min || value > def.max) return `${def.label}: between ${def.min} and ${def.max}${def.unit ? ` ${def.unit}` : ''}`;
   }
   return null;
 }
@@ -130,6 +219,29 @@ export function referrableBooks(org) {
 }
 
 export const bookName = (org) => BOOK_NAME[org] ?? org;
+
+/**
+ * The commission basis a referral is made under, as it stands right now.
+ *
+ * Recorded on the lead when a partner refers the other business's product,
+ * so a later change to the policy does not rewrite what earlier referrals
+ * were promised. A referral within the partner's own business is paid under
+ * the partner's own plan and records nothing.
+ */
+export function referralCommissionBasis(partnerOrg, productOrg) {
+  if (!productOrg || productOrg === partnerOrg) return null;
+  const basis = policy('referral_commission.cross_book');
+  const label = policyDef('referral_commission.cross_book').options.find((o) => o.value === basis)?.label ?? basis;
+  return {
+    basis,
+    label,
+    referrer_business: partnerOrg,
+    product_business: productOrg,
+    ...(basis === 'split' ? { split_pct: policy('referral_commission.cross_book_split_pct') } : {}),
+    ...(basis === 'incentive_only' ? { incentive_inr: policy('referral_commission.cross_book_incentive_inr') } : {}),
+    decided_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
+  };
+}
 
 /* ------------------------------------------------------------ QA-24 */
 

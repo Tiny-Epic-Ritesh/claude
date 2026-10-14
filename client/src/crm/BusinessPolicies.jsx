@@ -2,8 +2,9 @@
  * Setup → Business policies (QA-13, QA-06).
  *
  * Answers the business gave that it may want to change later: whether a
- * partner may refer the other business's products, and -- with QA-06 -- how a
- * role's exports carry personal data. Admins and Superadmins change them here,
+ * partner may refer the other business's products and how such a referral is
+ * paid, how a role's exports carry personal data (QA-06), and how long leads
+ * and clients are kept. Admins and Superadmins change them here,
  * held as a draft until Save, and every change is in the configuration audit.
  */
 
@@ -63,6 +64,22 @@ export default function BusinessPolicies() {
                         onChange={(e) => draft.set({ key: p.key }, e.target.checked)}
                       />
                       <span className="small">{value ? 'On' : 'Off'}</span>
+                    </label>
+                  ) : p.type === 'number' ? (
+                    /* A number with its unit and its bounds; the server holds the
+                       same bounds, so a retention below the legal floor is refused. */
+                    <label className="row" style={{ gap: 6, flexShrink: 0 }}>
+                      {p.unit === '₹' && <span className="small">₹</span>}
+                      <input
+                        type="number"
+                        id={`policy-${p.key}`}
+                        value={value}
+                        min={p.min}
+                        max={p.max}
+                        onChange={(e) => draft.set({ key: p.key }, e.target.value === '' ? '' : Number(e.target.value))}
+                        style={{ width: 110 }}
+                      />
+                      {p.unit && p.unit !== '₹' && <span className="small">{p.unit}</span>}
                     </label>
                   ) : (
                     <select

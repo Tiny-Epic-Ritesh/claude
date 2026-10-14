@@ -16,7 +16,7 @@ import { LMS_MODULES } from './partners.js';
 import { generateCards } from './crm.js';
 import { leastLoadedRm } from '../engine/assignment.js';
 import { kycStatusSql } from '../engine/kycstatus.js';
-import { referrableBooks, bookName } from '../engine/policies.js';
+import { referrableBooks, bookName, referralCommissionBasis } from '../engine/policies.js';
 
 const router = Router();
 router.use(requirePartner);
@@ -153,10 +153,17 @@ router.post('/referrals', (req, res) => {
   // Round-robin to the least-loaded Sales RM in that same book.
   const owner = leastLoadedRm(org);
 
+  /* How this referral is paid, as the policy says today (14 Oct). Recorded on
+     the lead, so changing the policy later does not change what an earlier
+     referral was made under. Null for a referral within the partner's own
+     business, which is paid under their own plan. */
+  const basis = referralCommissionBasis(req.partner.sales_org, org);
+
   const result = run(
-    `INSERT INTO leads (sales_org, name, mobile, email, city, source, stage, owner_id, partner_id)
-     VALUES (?,?,?,?,?,?,'New',?,?)`,
-    [org, name, mobile, email || null, city || null, `Partner referral — ${req.partner.name}`, owner, req.partner.id],
+    `INSERT INTO leads (sales_org, name, mobile, email, city, source, stage, owner_id, partner_id, referral_commission_basis)
+     VALUES (?,?,?,?,?,?,'New',?,?,?)`,
+    [org, name, mobile, email || null, city || null, `Partner referral — ${req.partner.name}`, owner, req.partner.id,
+      basis ? JSON.stringify(basis) : null],
   );
   const leadId = Number(result.lastInsertRowid);
   generateCards(leadId);
@@ -178,8 +185,14 @@ router.post('/referrals', (req, res) => {
   if (owner) notify(owner, 'New partner referral', `${name} referred by ${req.partner.name}.`, `/leads/${leadId}`);
   if (req.partner.owner_id) notify(req.partner.owner_id, 'Partner sourced a lead', `${req.partner.name} referred ${name}.`, `/partners/${req.partner.id}`);
 
-  audit(null, 'partner_referral', 'lead', leadId, { partner_id: req.partner.id, sales_org: org });
-  res.status(201).json({ lead_id: leadId, message: 'Referral received. Your RM will pick it up shortly.' });
+  audit(null, 'partner_referral', 'lead', leadId, { partner_id: req.partner.id, sales_org: org, commission_basis: basis?.basis ?? null });
+  res.status(201).json({
+    lead_id: leadId,
+    message: basis
+      ? `Referral received for ${bookName(org)}. It is paid ${basis.label.charAt(0).toLowerCase()}${basis.label.slice(1)}. Your RM will pick it up shortly.`
+      : 'Referral received. Your RM will pick it up shortly.',
+    commission_basis: basis,
+  });
 });
 
 /* ------------------------------------------------------------- tickets */

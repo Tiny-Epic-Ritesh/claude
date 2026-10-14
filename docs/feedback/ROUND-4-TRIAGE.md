@@ -10,7 +10,7 @@ against this document and earlier feedback IDs." This is that document.
 ## The ledger — every point in the report, and where it stands
 
 Kept current: a commit that closes a point changes its row here and says so.
-Last updated **14 October 2026**: `84c2c2f`, `eaf4743`, `d34bb6b`, the rulings of 13 October, `72fa94d` (OPS-15, 16, 17, 25, 26), `e02fb6d` (OPS-18 to 24), `1c3b18c` (QA-02), `ca7d4ee` (QA-13), `9aa78bf` (QA-06), `a3be2c1` (QA-09, 24, 34, 35), `93607f5` (OPS-27 to 31), `b9b3807` (QA-29, QA-42), `b663fb4` (OPS-32 recorded open; a Dealer may mark Warm), the rulings of 14 October, `0efa39b` (the QA-02 cleanup workflow; help lines), `826ae09` (QA-33's emergency activation), `f54c4f6` (QA-28's categories and the Compliance role), and the commit after it (multiple nominees, QA-34).
+Last updated **14 October 2026**: `84c2c2f`, `eaf4743`, `d34bb6b`, the rulings of 13 October, `72fa94d` (OPS-15, 16, 17, 25, 26), `e02fb6d` (OPS-18 to 24), `1c3b18c` (QA-02), `ca7d4ee` (QA-13), `9aa78bf` (QA-06), `a3be2c1` (QA-09, 24, 34, 35), `93607f5` (OPS-27 to 31), `b9b3807` (QA-29, QA-42), `b663fb4` (OPS-32 recorded open; a Dealer may mark Warm), the rulings of 14 October, `0efa39b` (the QA-02 cleanup workflow; help lines), `826ae09` (QA-33's emergency activation), `f54c4f6` (QA-28's categories and the Compliance role), `88c2c67` (multiple nominees, QA-34), and the commit after it (referral commission and retention policies; QA-37's lead purge).
 
 **States.** *fixed* — in code, tested, pushed. *not started* — open, no
 blocker. *needs decision* — waiting on Ritesh, and nothing is built until it is

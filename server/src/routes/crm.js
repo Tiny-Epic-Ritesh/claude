@@ -2,7 +2,8 @@
  * Core CRM routes — leads, product cards, activities, tasks, notes and lists.
  */
 
-import { exportHeldMasked, wonRefusal } from '../engine/policies.js';
+import { exportHeldMasked, wonRefusal, policy } from '../engine/policies.js';
+import { purgeableLeads, purgeLeads } from '../engine/retention.js';
 import { Router } from 'express';
 import { all, one, run, audit, notify, daysSince, ageBand, AGE_BANDS, CARD_COLOUR, CARD_STATES } from '../db.js';
 import { can, requireUser, requirePermission, reqScope, isReadOnlyOnLeads, unmaskRequested, maskFor, orgsFor, activeOrg, mayUseOrg } from '../auth.js';
@@ -1225,6 +1226,25 @@ router.post('/leads/:id/restore', requirePermission('lead.delete'), (req, res) =
   run('UPDATE leads SET deleted_at = NULL WHERE id = ?', [gone.id]);
   audit(req.user.id, 'lead_restored', 'lead', gone.id, {});
   res.json({ restored: true });
+});
+
+/* QA-37 (accepted 13 Oct), with the retention ruled 14 Oct. What in the
+   recycle bin may be erased for good -- in the reader's books, narrowed by the
+   switcher -- and the erasing, which an Admin does with a reason. */
+const purgeBooks = (req) => (activeOrg(req) ? [activeOrg(req)] : orgsFor(req.user));
+
+router.get('/recycle-bin/purgeable', requirePermission('lead.delete'), (req, res) => {
+  const leads = purgeableLeads(purgeBooks(req));
+  res.json({ years: policy('retention.lead_years'), count: leads.length, leads });
+});
+
+router.post('/recycle-bin/purge', requirePermission('lead.delete'), (req, res) => {
+  const reason = String(req.body?.reason ?? '').trim();
+  if (reason.length < 10) return res.status(400).json({ error: 'Say why these leads are being erased', field: 'reason' });
+  /* Typed, because it cannot be undone: a button is easy to press twice. */
+  if (req.body?.confirm !== 'PURGE') return res.status(400).json({ error: 'Type PURGE to confirm', field: 'confirm' });
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : null;
+  res.json(purgeLeads({ books: purgeBooks(req), ids, user: req.user, reason }));
 });
 
 /**

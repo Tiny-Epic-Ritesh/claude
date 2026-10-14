@@ -236,6 +236,11 @@ export default function LeadDetail({ session }) {
              as part of the name rather than as where the lead came from. */
           sub={lead.partner_name ? `via ${lead.partner_name}` : lead.source ? `from ${lead.source}` : null}
         />
+        {referralBasis(lead) && (
+          /* A cross-business referral says how it is paid, as the policy stood
+             when the partner made it (14 Oct). */
+          <Stat label="Referral paid" value={referralBasis(lead)} sub="cross-business referral" />
+        )}
         <Stat
           label="Last contact"
           value={lead.days_since_contact == null ? 'never' : `${lead.days_since_contact}d ago`}
@@ -330,6 +335,19 @@ function riskTone(risk) {
   if (/high|aggress/.test(r)) return 'warn';
   if (/low|conserv/.test(r)) return 'good';
   return null;
+}
+
+/** How a cross-business referral is paid, in a few words, or null. */
+function referralBasis(lead) {
+  let b = null;
+  try { b = lead.referral_commission_basis ? JSON.parse(lead.referral_commission_basis) : null; } catch { b = null; }
+  if (!b) return null;
+  return {
+    product_business_plan: 'Product business\'s plan',
+    referrer_plan: 'Partner\'s own plan',
+    split: `${b.split_pct}% of product business's plan`,
+    incentive_only: `₹${b.incentive_inr} per account`,
+  }[b.basis] ?? b.label ?? null;
 }
 
 /**
