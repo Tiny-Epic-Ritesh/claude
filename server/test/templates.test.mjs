@@ -522,7 +522,8 @@ await test('a template still in use cannot be deleted', async () => {
 });
 
 await test('an unused template deletes', async () => {
-  const res = await call('DELETE', `/admin/templates/${created}`);
+  // QA-37: typed, not clicked.
+  const res = await call('DELETE', `/admin/templates/${created}`, { confirm_name: WA.name });
   assert.equal(res.status, 200, `delete failed: ${JSON.stringify(res.body)}`);
   assert(!one('SELECT id FROM templates WHERE id = ?', [created]), 'the row survived');
 });
@@ -641,7 +642,7 @@ await test('a template in the other book cannot be deleted', async () => {
 
   /* Refused before the in-use check, not after. "Still used by 3 campaigns"
      counts the other book's campaigns, which is a fact about their business. */
-  assert(!/still used by/i.test(res.body?.error ?? ''), `the refusal counted the other book's campaigns: ${res.body?.error}`);
+  assert(!/used by/i.test(res.body?.error ?? ''), `the refusal counted the other book's campaigns: ${res.body?.error}`);
 });
 
 /* ------------------------------------------- the same boundary, other screens */

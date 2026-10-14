@@ -21,7 +21,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { api } from '../../api.js';
+import { api, shortDate } from '../../api.js';
 import { useApi, Loading, Icon, Modal, ErrorBanner, Empty, Spinner, Tabs } from '../../components/ui.jsx';
 import RichText from '../../components/RichText.jsx';
 
@@ -32,23 +32,27 @@ const BODY_ID = 'tmpl-body';
 const CHANNEL_LABEL = { whatsapp: 'WhatsApp', email: 'Email', sms: 'SMS' };
 
 export function Templates() {
-  const [rows, { loading, reload }] = useApi('/admin/templates');
+  /* QA-37. Retired templates come back too, because this is the one screen
+     that restores them; every picker asks without the flag and never sees one. */
+  const [rows, { loading, reload }] = useApi('/admin/templates?retired=include');
   const [spec] = useApi('/admin/templates/spec');
   const [channel, setChannel] = useState('all');
+  const [showRetired, setShowRetired] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [ending, setEnding] = useState(null);
   const [problem, setProblem] = useState(null);
+  const [done, setDone] = useState(null);
 
   if (loading) return <Loading />;
 
-  const shown = channel === 'all' ? rows : rows.filter((t) => t.channel === channel);
-  const counts = rows.reduce((acc, t) => ({ ...acc, [t.channel]: (acc[t.channel] ?? 0) + 1 }), {});
+  const inView = rows.filter((t) => Boolean(t.retired_at) === showRetired);
+  const shown = channel === 'all' ? inView : inView.filter((t) => t.channel === channel);
+  const counts = inView.reduce((acc, t) => ({ ...acc, [t.channel]: (acc[t.channel] ?? 0) + 1 }), {});
+  const retiredCount = rows.filter((t) => t.retired_at).length;
 
-  const remove = async (t) => {
-    setProblem(null);
-    try {
-      await api.del(`/admin/templates/${t.id}`);
-      reload();
-    } catch (err) { setProblem(err.message); }
+  const act = async (work) => {
+    setProblem(null); setDone(null);
+    try { await work(); reload(); } catch (err) { setProblem(err.message); }
   };
 
   return (
@@ -56,7 +60,7 @@ export function Templates() {
       <div className="row-between">
         <Tabs
           tabs={[
-            { key: 'all', label: `All ${rows.length}` },
+            { key: 'all', label: `All ${inView.length}` },
             ...Object.keys(CHANNEL_LABEL).map((c) => ({
               key: c, label: `${CHANNEL_LABEL[c]} ${counts[c] ?? 0}`,
             })),
@@ -64,15 +68,29 @@ export function Templates() {
           active={channel}
           onChange={setChannel}
         />
-        <button className="btn btn-primary" onClick={() => setEditing({ channel: channel === 'all' ? 'whatsapp' : channel })}>
-          <Icon name="add" size={16} /> New template
-        </button>
+        <div className="row" style={{ gap: 8 }}>
+          <button className="btn-ghost" onClick={() => setShowRetired((v) => !v)}>
+            {showRetired ? 'Show templates in use' : `Show retired ${retiredCount}`}
+          </button>
+          <button className="btn btn-primary" onClick={() => setEditing({ channel: channel === 'all' ? 'whatsapp' : channel })}>
+            <Icon name="add" size={16} /> New template
+          </button>
+        </div>
       </div>
 
       <ErrorBanner error={problem} onDismiss={() => setProblem(null)} />
+      {done && (
+        <div className="notice notice-ok">
+          <Icon name="check_circle" size={17} /> <span>{done}</span>
+        </div>
+      )}
 
       {!shown.length ? (
-        <Empty>No templates yet.</Empty>
+        <Empty>
+          {showRetired
+            ? 'No retired templates. A template something has used is retired rather than deleted.'
+            : 'No templates yet.'}
+        </Empty>
       ) : (
         <section className="card">
           <div className="table-scroll">
@@ -83,26 +101,46 @@ export function Templates() {
               <tbody>
                 {shown.map((t) => (
                   <tr key={t.id}>
-                    <td style={{ fontWeight: 545 }}>{t.name}</td>
+                    <td style={{ fontWeight: 545 }}>
+                      {t.name}
+                      {t.retired_at && (
+                        <div className="tiny muted" style={{ fontWeight: 400 }}>
+                          Retired {shortDate(t.retired_at)}{t.retire_reason ? `: ${t.retire_reason}` : ''}
+                        </div>
+                      )}
+                    </td>
                     <td><span className="badge">{CHANNEL_LABEL[t.channel] ?? t.channel}</span></td>
                     <td className="small muted" style={{ maxWidth: 420 }}>
                       {t.body.slice(0, 120)}{t.body.length > 120 ? '…' : ''}
                     </td>
                     <td>
-                      <button
-                        className="btn-sm"
-                        onClick={async () => {
-                          await api.patch(`/admin/templates/${t.id}`, { approved: t.approved ? 0 : 1 });
-                          reload();
-                        }}
-                      >
-                        {t.approved ? 'Approved' : 'Approve'}
-                      </button>
+                      {t.retired_at ? (
+                        <span className="badge">Retired</span>
+                      ) : (
+                        <button
+                          className="btn-sm"
+                          onClick={() => act(() => api.patch(`/admin/templates/${t.id}`, { approved: t.approved ? 0 : 1 }))}
+                        >
+                          {t.approved ? 'Approved' : 'Approve'}
+                        </button>
+                      )}
                     </td>
                     <td className="num">
                       <div className="row" style={{ gap: 6, justifyContent: 'flex-end' }}>
-                        <button className="btn-sm" onClick={() => setEditing(t)}>Edit</button>
-                        <button className="btn-sm" onClick={() => remove(t)}>Delete</button>
+                        {t.retired_at ? (
+                          <button className="btn-sm" onClick={() => act(async () => {
+                            const res = await api.post(`/admin/templates/${t.id}/restore`);
+                            setDone(`${res.message}. It is back in the pickers${t.approved ? '' : ' once it is approved'}.`);
+                          })}>
+                            Restore
+                          </button>
+                        ) : (
+                          <>
+                            <button className="btn-sm" onClick={() => setEditing(t)}>Edit</button>
+                            <button className="btn-sm" onClick={() => setEnding({ template: t, what: 'retire' })}>Retire</button>
+                          </>
+                        )}
+                        <button className="btn-sm" onClick={() => setEnding({ template: t, what: 'delete' })}>Delete</button>
                       </div>
                     </td>
                   </tr>
@@ -118,11 +156,111 @@ export function Templates() {
           template={editing}
           spec={spec}
           onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); reload(); }}
+          onSaved={(res) => {
+            setEditing(null);
+            setProblem(null);
+            /* Said, because the Approved button flipping back is easy to miss
+               and the first anybody would otherwise hear of it is a refused send. */
+            setDone(res?.approval_reset
+              ? `Saved. "${editing.name}" changed, so it goes back for approval before anything can send it.`
+              : null);
+            reload();
+          }}
           onError={setProblem}
         />
       )}
+
+      {ending && (
+        <TemplateLifecycle
+          template={ending.template}
+          what={ending.what}
+          onSwitch={(what) => setEnding({ ...ending, what })}
+          onClose={() => setEnding(null)}
+          onDone={(message) => { setEnding(null); setProblem(null); setDone(message); reload(); }}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * Retire or delete a template (QA-37).
+ *
+ * Retiring asks why, because it takes the template out of every send.
+ * Deleting asks for the template's name, because it cannot be undone -- and
+ * the server refuses it for a template a campaign or rule has used, saying to
+ * retire it instead, which this then offers in place.
+ */
+function TemplateLifecycle({ template, what, onSwitch, onClose, onDone }) {
+  const [reason, setReason] = useState('');
+  const [confirmName, setConfirmName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [retireInstead, setRetireInstead] = useState(false);
+
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      if (what === 'retire') {
+        const res = await api.post(`/admin/templates/${template.id}/retire`, { reason });
+        onDone(`${res.message}. It has left every picker, and nothing new can send it until it is restored.`);
+      } else {
+        const res = await api.del(`/admin/templates/${template.id}`, { confirm_name: confirmName });
+        onDone(res.message);
+      }
+    } catch (err) {
+      setError(err.message);
+      setRetireInstead(Boolean(err.payload?.retire_instead));
+      setBusy(false);
+    }
+  }
+
+  const ready = what === 'retire' ? reason.trim().length >= 5 : confirmName === template.name;
+
+  return (
+    <Modal title={what === 'retire' ? `Retire "${template.name}"` : `Delete "${template.name}"`} onClose={onClose}>
+      <form onSubmit={submit} className="stack" style={{ gap: 12 }}>
+        <ErrorBanner error={error} />
+        {retireInstead && !template.retired_at && (
+          <button type="button" className="btn-sm" style={{ alignSelf: 'flex-start' }}
+            onClick={() => { setError(null); setRetireInstead(false); onSwitch('retire'); }}>
+            Retire it instead
+          </button>
+        )}
+        {what === 'retire' ? (
+          <>
+            <p className="small">
+              It leaves every picker and nothing new can send it -- not a campaign, a rule or a message from a lead.
+              What was already sent keeps its record. It can be restored.
+            </p>
+            <div className="field">
+              <label htmlFor="tmpl-retire-reason">Why</label>
+              <textarea id="tmpl-retire-reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="small">
+              This removes the template for good. One a campaign or an automation rule has used cannot be deleted, and
+              is retired instead.
+            </p>
+            <div className="field">
+              <label htmlFor="tmpl-confirm-name">Type the template's name to confirm</label>
+              <input id="tmpl-confirm-name" value={confirmName} onChange={(e) => setConfirmName(e.target.value)}
+                placeholder={template.name} autoFocus />
+            </div>
+          </>
+        )}
+        <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+          <button type="button" className="btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className={what === 'delete' ? 'btn-danger' : 'btn-primary'} disabled={busy || !ready}>
+            {busy ? 'Working…' : what === 'retire' ? 'Retire' : 'Delete for good'}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -220,9 +358,10 @@ function TemplateBuilder({ template, spec, onClose, onSaved, onError }) {
   const save = async () => {
     setBusy(true);
     try {
-      if (making) await api.post('/admin/templates', draft);
-      else await api.patch(`/admin/templates/${template.id}`, draft);
-      onSaved();
+      const res = making
+        ? await api.post('/admin/templates', draft)
+        : await api.patch(`/admin/templates/${template.id}`, draft);
+      onSaved(res);
     } catch (err) { onError(err.message); setBusy(false); }
   };
 

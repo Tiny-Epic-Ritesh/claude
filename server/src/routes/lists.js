@@ -156,12 +156,17 @@ router.get('/meta', (req, res) => res.json({
 
 router.get('/', (req, res) => {
   const orgs = orgsFor(req.user);
+  /* QA-37. Archived lists are out of the default list -- an expired snapshot
+     was archived and still listed beside the live ones -- and `?archived=only`
+     shows them on their own. */
+  const archived = req.query.archived === 'only' ? 'll.archived_at IS NOT NULL' : 'll.archived_at IS NULL';
   const rows = all(
-    `SELECT ll.*, u.name AS owner_name, r.name AS refreshed_by_name
+    `SELECT ll.*, u.name AS owner_name, r.name AS refreshed_by_name, ab.name AS archived_by_name
        FROM lead_lists ll
        LEFT JOIN users u ON u.id = ll.owner_id
        LEFT JOIN users r ON r.id = ll.last_refreshed_by
-      WHERE ll.sales_org IN (${orgs.map(() => '?').join(',') || "''"})
+       LEFT JOIN users ab ON ab.id = ll.archived_by
+      WHERE ll.sales_org IN (${orgs.map(() => '?').join(',') || "''"}) AND ${archived}
       ORDER BY ll.created_at DESC`,
     orgs,
   ).filter((l) => mayReadList(l, req.user));
@@ -246,6 +251,67 @@ router.post('/', requirePermission('list.create'), (req, res) => {
   res.status(201).json({ ...list, member_count: memberCount(list, req) });
 });
 
+/* --------------------------------------------------------- lifecycle */
+
+/*
+ * QA-37 (accepted 13 Oct): a static list can be renamed and described, have a
+ * member removed (the lead stays), be archived and restored, and be deleted
+ * only if nothing was ever sent to it.
+ *
+ * An archived list is read-only. Nothing changes through it -- its members,
+ * its definition or columns, nor a bulk action or a send run from it -- until
+ * somebody restores it. Reading, previewing and exporting it still work, and
+ * so do restoring and deleting it. One guard here rather than a check in each
+ * of the dozen routes, which would be a dozen chances to forget one.
+ */
+const OPEN_WHEN_ARCHIVED = new Set(['/preview', '/export', '/restore', '/archive']);
+router.use('/:id', (req, res, next) => {
+  if (req.method === 'GET' || !/^\d+$/.test(req.params.id)) return next();
+  if (OPEN_WHEN_ARCHIVED.has(req.path) || (req.method === 'DELETE' && req.path === '/')) return next();
+  const list = loadList(req);
+  // Somebody who cannot read it is answered by the route, as before.
+  if (!list || !mayReadList(list, req.user) || !list.archived_at) return next();
+  return res.status(409).json({ error: `"${list.name}" is archived, so it cannot change. Restore it first.`, archived: true });
+});
+
+router.patch('/:id', (req, res) => {
+  const list = loadList(req);
+  if (!list || !mayReadList(list, req.user)) return res.status(404).json({ error: 'List not found' });
+  if (!mayWriteList(list, req.user)) return res.status(403).json({ error: 'Only the list owner or an admin can rename it' });
+  const name = req.body?.name !== undefined ? String(req.body.name).trim() : list.name;
+  const description = req.body?.description !== undefined ? (String(req.body.description).trim() || null) : list.description;
+  if (!name || name.length > 120) return res.status(400).json({ error: 'A list needs a name of up to 120 characters', field: 'name' });
+  run('UPDATE lead_lists SET name = ?, description = ?, updated_at = datetime(\'now\') WHERE id = ?', [name, description, list.id]);
+  audit(req.user.id, 'list.update', 'lead_list', list.id, { before: { name: list.name, description: list.description }, after: { name, description } });
+  res.json(one('SELECT * FROM lead_lists WHERE id = ?', [list.id]));
+});
+
+router.post('/:id/archive', (req, res) => {
+  const list = loadList(req);
+  if (!list || !mayReadList(list, req.user)) return res.status(404).json({ error: 'List not found' });
+  if (!mayWriteList(list, req.user)) return res.status(403).json({ error: 'Only the list owner or an admin can archive it' });
+  if (list.archived_at) return res.status(409).json({ error: `"${list.name}" is already archived` });
+  const reason = String(req.body?.reason ?? '').trim();
+  if (reason.length < 5) return res.status(400).json({ error: 'Say why it is being archived', field: 'reason' });
+  run("UPDATE lead_lists SET archived_at = datetime('now'), archived_by = ?, archive_reason = ? WHERE id = ?", [req.user.id, reason, list.id]);
+  audit(req.user.id, 'list.archive', 'lead_list', list.id, { name: list.name, reason });
+  res.json({ archived: true });
+});
+
+router.post('/:id/restore', (req, res) => {
+  const list = loadList(req);
+  if (!list || !mayReadList(list, req.user)) return res.status(404).json({ error: 'List not found' });
+  if (!mayWriteList(list, req.user)) return res.status(403).json({ error: 'Only the list owner or an admin can restore it' });
+  if (!list.archived_at) return res.status(409).json({ error: `"${list.name}" is not archived` });
+  /* A snapshot archived by its expiry would be archived again by the next
+     sweep, so it comes back with a fresh expiry -- and says so. */
+  const lapsed = list.expires_at && one("SELECT date(?, '+330 minutes') < date('now', '+330 minutes') v", [list.expires_at]).v;
+  const expires = lapsed ? defaultExpiry() : list.expires_at;
+  run('UPDATE lead_lists SET archived_at = NULL, archived_by = NULL, archive_reason = NULL, expires_at = ? WHERE id = ?', [expires, list.id]);
+  audit(req.user.id, 'list.restore', 'lead_list', list.id, { name: list.name, new_expiry: lapsed ? expires : null });
+  res.json({ restored: true, expires_at: expires, expiry_renewed: Boolean(lapsed) });
+});
+
 /* ------------------------------------------------------------- detail */
 
 router.get('/:id', (req, res) => {
@@ -325,6 +391,7 @@ router.get('/:id', (req, res) => {
     criteria,
     criteria_text: criteria ? describe(criteria) : null,
     member_count: total,
+    archived_by_name: list.archived_by ? one('SELECT name FROM users WHERE id = ?', [list.archived_by])?.name ?? null : null,
     may_edit: mayWriteList(list, req.user),
     // Stated on the list itself, so nobody has to remember the rule.
     campaign_safe: normaliseKind(list.kind) !== 'dynamic',
@@ -1049,8 +1116,24 @@ router.delete('/:id', (req, res) => {
   if (!list || !mayReadList(list, req.user)) return res.status(404).json({ error: 'List not found' });
   if (!mayWriteList(list, req.user)) return res.status(403).json({ error: 'Only the list owner or an admin can delete it' });
 
-  // A campaign pointing at a deleted list would lose its audience record, and
-  // with it the ability to say who a send went to.
+  /* QA-37: deleted only if nothing was ever sent to it. A list a campaign went
+     out to, or a bulk message was sent from, is the record of who received
+     it -- archived, never deleted, even after the campaign is detached. */
+  const campaignsSent = one(
+    "SELECT COUNT(*) n FROM campaigns WHERE list_id = ? AND (status IN ('Sent', 'Sending') OR sent > 0)", [list.id],
+  ).n;
+  const bulkSends = one(
+    "SELECT COUNT(*) n FROM audit_log WHERE action = 'lead.message' AND json_valid(detail) AND json_extract(detail, '$.via_list') = ?",
+    [list.id],
+  ).n;
+  if (campaignsSent || bulkSends) {
+    return res.status(409).json({
+      error: `Messages have been sent to "${list.name}", so it is kept as the record of who received them. Archive it instead.`,
+      archive_instead: true,
+    });
+  }
+
+  // A draft campaign pointing at a deleted list would lose its audience.
   const used = one('SELECT COUNT(*) n FROM campaigns WHERE list_id = ?', [list.id]).n;
   if (used) {
     return res.status(409).json({
@@ -1058,9 +1141,14 @@ router.delete('/:id', (req, res) => {
     });
   }
 
+  /* Named, because it cannot be undone (QA-37). */
+  if (String(req.body?.confirm_name ?? '').trim() !== list.name) {
+    return res.status(400).json({ error: `Type the list's name, "${list.name}", to delete it`, field: 'confirm_name' });
+  }
+
   run('DELETE FROM lead_lists WHERE id = ?', [list.id]);
   audit(req.user.id, 'list.delete', 'lead_list', list.id, { name: list.name });
-  res.json({ ok: true });
+  res.json({ ok: true, deleted: list.name });
 });
 
 export default router;

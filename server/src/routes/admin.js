@@ -398,9 +398,12 @@ router.get('/templates', (req, res) => {
   const orgs = orgsFor(req.user);
   if (!orgs.length) return res.json([]);          // fail closed: no book, no templates
 
+  /* QA-37. A retired template is out of every picker; the Templates screen,
+     which restores them, asks for them with `?retired=include`. */
+  const retired = req.query.retired === 'include' ? '' : 'AND retired_at IS NULL';
   return res.json(all(
     `SELECT * FROM templates
-      WHERE sales_org IN (${orgs.map(() => '?').join(',')})
+      WHERE sales_org IN (${orgs.map(() => '?').join(',')}) ${retired}
       ORDER BY channel, name`,
     orgs,
   ));
@@ -580,6 +583,10 @@ router.patch('/templates/:id', requirePermission('admin.templates'), (req, res) 
   if (!mayUseOrg(req.user, current.sales_org)) {
     return res.status(403).json({ error: 'That template belongs to another book' });
   }
+  // QA-37: retired is read-only, approval included, until it is restored.
+  if (current.retired_at) {
+    return res.status(409).json({ error: `"${current.name}" is retired, so it cannot change. Restore it first.`, retired: true });
+  }
 
   /* Checked as the template WOULD be, not as the patch arrives. Somebody
      editing only the body still has a header and buttons, and validating the
@@ -598,10 +605,20 @@ router.patch('/templates/:id', requirePermission('admin.templates'), (req, res) 
     }
   }
 
+  /* QA-37. What was approved is the text a client receives, so changing that
+     text sends an approved template back for approval -- in a separate act,
+     not in the same request that changed it. The builder resends every field
+     on save, so this compares values, not which fields arrived. */
+  const resetApproval = Boolean(current.approved) && contentChanged(current, req.body);
+
   const fields = ['name', 'subject', 'body', 'approved', 'product_type_id'];
   const sets = [];
   const params = [];
-  for (const f of fields) if (req.body[f] !== undefined) { sets.push(`${f} = ?`); params.push(req.body[f]); }
+  for (const f of fields) {
+    if (f === 'approved' && resetApproval) continue;
+    if (req.body[f] !== undefined) { sets.push(`${f} = ?`); params.push(req.body[f]); }
+  }
+  if (resetApproval) sets.push('approved = 0');
   if (req.body.components !== undefined) {
     sets.push('components = ?');
     params.push(req.body.components ? JSON.stringify(req.body.components) : null);
@@ -610,8 +627,69 @@ router.patch('/templates/:id', requirePermission('admin.templates'), (req, res) 
   const templateVersion = sets.length
     ? snapshot('template', Number(req.params.id), { note: req.body.note ?? null, userId: req.user.id })
     : null;
-  audit(req.user.id, 'template_updated', 'template', Number(req.params.id), req.body);
-  res.json({ ok: true, version: templateVersion?.version ?? null });
+  audit(req.user.id, 'template_updated', 'template', Number(req.params.id),
+    resetApproval ? { ...req.body, approval_reset: true } : req.body);
+  res.json({ ok: true, version: templateVersion?.version ?? null, approval_reset: resetApproval });
+});
+
+/* Key order is not content: the builder rebuilds components from the saved
+   JSON, so an untouched template can come back with its keys reordered. */
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map((k) => [k, canonical(value[k])]));
+  }
+  return value;
+}
+
+/** Whether a patch changes what a client would receive: subject, body or components. */
+function contentChanged(current, patch) {
+  const text = (v) => (v == null ? '' : String(v));
+  if (patch.body !== undefined && text(patch.body) !== text(current.body)) return true;
+  if (patch.subject !== undefined && text(patch.subject) !== text(current.subject)) return true;
+  if (patch.components !== undefined) {
+    const before = JSON.stringify(canonical(JSON.parse(current.components || '{}') ?? {}));
+    const after = JSON.stringify(canonical(patch.components ?? {}));
+    if (before !== after) return true;
+  }
+  return false;
+}
+
+/**
+ * Retire a template: QA-37.
+ *
+ * The way out for a template anything has used. It leaves every picker and
+ * every new send, stays readable where it was used, and can be restored.
+ */
+router.post('/templates/:id/retire', requirePermission('admin.templates'), (req, res) => {
+  const template = one('SELECT * FROM templates WHERE id = ?', [req.params.id]);
+  if (!template) return res.status(404).json({ error: 'Template not found' });
+  if (!mayUseOrg(req.user, template.sales_org)) {
+    return res.status(403).json({ error: 'That template belongs to another book' });
+  }
+  if (template.retired_at) return res.status(409).json({ error: `"${template.name}" is already retired` });
+  const reason = String(req.body?.reason ?? '').trim();
+  if (reason.length < 5) {
+    return res.status(400).json({ error: 'Say why it is being retired, in a few words', field: 'reason' });
+  }
+
+  run("UPDATE templates SET retired_at = datetime('now'), retired_by = ?, retire_reason = ? WHERE id = ?",
+    [req.user.id, reason, template.id]);
+  audit(req.user.id, 'template_retired', 'template', template.id, { name: template.name, reason });
+  return res.json({ ok: true, message: `Retired ${template.name}` });
+});
+
+router.post('/templates/:id/restore', requirePermission('admin.templates'), (req, res) => {
+  const template = one('SELECT * FROM templates WHERE id = ?', [req.params.id]);
+  if (!template) return res.status(404).json({ error: 'Template not found' });
+  if (!mayUseOrg(req.user, template.sales_org)) {
+    return res.status(403).json({ error: 'That template belongs to another book' });
+  }
+  if (!template.retired_at) return res.status(409).json({ error: `"${template.name}" is not retired` });
+
+  run('UPDATE templates SET retired_at = NULL, retired_by = NULL, retire_reason = NULL WHERE id = ?', [template.id]);
+  audit(req.user.id, 'template_restored', 'template', template.id, { name: template.name });
+  return res.json({ ok: true, message: `Restored ${template.name}` });
 });
 
 /**
@@ -639,16 +717,24 @@ router.delete('/templates/:id', requirePermission('admin.templates'), (req, res)
   const rules = all("SELECT name FROM rules WHERE actions LIKE ?", [`%"template_id":${template.id}%`]);
   if (rules.length) usedBy.push(`${rules.length} automation rule${rules.length === 1 ? '' : 's'}`);
 
+  /* QA-37: delete is for a template nothing has used. One that something has
+     used is retired, which keeps it readable and takes it out of every send. */
   if (usedBy.length) {
     return res.status(409).json({
-      error: `${template.name} is still used by ${usedBy.join(' and ')}. Change those first.`,
+      error: `${template.name} is used by ${usedBy.join(' and ')}, so it cannot be deleted. Retire it instead.`,
       used_by: usedBy,
+      retire_instead: true,
     });
+  }
+
+  // Typed, not clicked: a delete is the one change here that cannot be undone.
+  if (String(req.body?.confirm_name ?? '').trim() !== template.name) {
+    return res.status(400).json({ error: `Type the template's name, ${template.name}, to delete it`, field: 'confirm_name' });
   }
 
   run('DELETE FROM templates WHERE id = ?', [template.id]);
   audit(req.user.id, 'template_deleted', 'template', template.id, { name: template.name, channel: template.channel });
-  return res.json({ ok: true });
+  return res.json({ ok: true, deleted: template.name, message: `Deleted ${template.name}` });
 });
 
 /* ------------------------------------------------------ content library */
@@ -1245,6 +1331,10 @@ router.get('/campaigns/archived', requirePermission('campaign.manage'), (_req, r
  */
 const BOOK_NAME = { BONANZA: 'Bonanza', BIGUL: 'Bigul' };
 
+/* QA-37. An archived list is out of use: nothing is sent to it until it is
+   restored, a campaign included -- made, re-pointed or sent. */
+const archivedListError = (list) => `"${list.name}" is archived, so nothing can be sent to it. Restore it first.`;
+
 function approvedTemplate(templateId, channel, org) {
   if (!templateId) return { error: 'Choose an approved template for this campaign', status: 400 };
   const template = one('SELECT * FROM templates WHERE id = ?', [templateId]);
@@ -1262,6 +1352,8 @@ function approvedTemplate(templateId, channel, org) {
     };
   }
   if (!template.approved) return { error: `"${template.name}" is not approved for sending`, status: 409 };
+  // QA-37: retired is out of every new use, a send included.
+  if (template.retired_at) return { error: `"${template.name}" is retired, so nothing new can send it`, status: 409 };
   return { template };
 }
 
@@ -1281,12 +1373,13 @@ router.post('/campaigns', requirePermission('campaign.manage'), (req, res) => {
    * business.
    *
    * The list decides, because that is who receives the send. */
-  const audience = one('SELECT sales_org FROM lead_lists WHERE id = ?', [list_id]);
+  const audience = one('SELECT sales_org, name, archived_at FROM lead_lists WHERE id = ?', [list_id]);
   if (!audience) return res.status(400).json({ error: 'That list does not exist' });
   const org = audience.sales_org ?? activeOrg(req) ?? req.user.sales_org;
   if (!orgsFor(req.user).includes(org)) {
     return res.status(403).json({ error: 'That list belongs to another book' });
   }
+  if (audience.archived_at) return res.status(409).json({ error: archivedListError(audience) });
 
   const content = approvedTemplate(template_id, channel, org);
   if (content.error) return res.status(content.status).json({ error: content.error });
@@ -1327,6 +1420,10 @@ router.patch('/campaigns/:id', requirePermission('campaign.manage'), (req, res) 
       campaign.sales_org,
     );
     if (content.error) return res.status(content.status).json({ error: content.error });
+  }
+  if (req.body?.list_id) {
+    const audience = one('SELECT name, archived_at FROM lead_lists WHERE id = ?', [req.body.list_id]);
+    if (audience?.archived_at) return res.status(409).json({ error: archivedListError(audience) });
   }
 
   const fields = ['name', 'channel', 'template_id', 'list_id', 'scheduled_at'];
@@ -1520,6 +1617,7 @@ router.post('/campaigns/:id/send', requirePermission('campaign.manage'), async (
       error: `"${list.name}" is a dynamic list — its membership changes as it is read, so a send could not be evidenced afterwards. Convert it to Refreshable, or snapshot it to a static list first.`,
     });
   }
+  if (list?.archived_at) return res.status(409).json({ error: archivedListError(list) });
 
   /* Asked after the dynamic-list refusal, so a campaign that fails both is
      told about its audience first: that is the one it cannot fix by editing. */

@@ -234,6 +234,8 @@ export function runAction(action, facts, { dryRun, firingId = null }) {
       if (!template && !action.params.message) {
         return { ...describe, skipped: action.params.template_id ? 'that template no longer exists' : 'no template or message on the card' };
       }
+      // QA-37: retired is out of every new send. Said, not sent quietly.
+      if (template?.retired_at) return { ...describe, skipped: 'that template is retired' };
 
       const body = (template?.body || action.params.message).replace(/\{\{name\}\}/g, lead.name);
       send(action.type, { to: lead.mobile || lead.email, body, subject: template?.subject, leadId: lead.id });
@@ -251,6 +253,7 @@ export function runAction(action, facts, { dryRun, firingId = null }) {
 
       const template = action.params.template_id ? one('SELECT * FROM templates WHERE id = ?', [action.params.template_id]) : null;
       if (!template && !action.params.message) return { ...describe, skipped: 'no template or message on the card' };
+      if (template?.retired_at) return { ...describe, skipped: 'that template is retired' };
       const body = (template?.body || action.params.message).replace(/\{\{name\}\}/g, lead.name);
       send('email', {
         to: lead.email,

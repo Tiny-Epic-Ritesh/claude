@@ -115,6 +115,7 @@ export default function ListDetail({ session }) {
   const [tool, setTool] = useState(null);
   const [problem, setProblem] = useState(null);
   const [done, setDone] = useState(null);
+  const [lifecycle, setLifecycle] = useState(null);
 
   const caps = new Set(session?.permissions ?? []);
   const allowed = ACTIONS.filter((a) => !a.needs || caps.has(a.needs));
@@ -128,6 +129,29 @@ export default function ListDetail({ session }) {
   if (loading) return <Loading label="Loading list…" />;
   if (error) return <ErrorBanner error={error} />;
   if (!list) return <Empty>That list does not exist, or has not been shared with you.</Empty>;
+
+  /* QA-37. An archived list is read-only: nothing that would change it is offered. */
+  const archived = Boolean(list.archived_at);
+  const mayRemoveMember = list.may_edit && isSnapshot && !archived;
+
+  async function restore() {
+    setProblem(null);
+    try {
+      const r = await api.post(`/lists/${list.id}/restore`);
+      setDone(r.expiry_renewed ? `Restored. Its expiry had passed, so it now lapses on ${r.expires_at}.` : 'Restored.');
+      reload();
+    } catch (err) { setProblem(err.message); }
+  }
+
+  async function removeMember(e, m) {
+    e.stopPropagation();
+    setProblem(null);
+    try {
+      await api.del(`/lists/${list.id}/members/${m.id}`);
+      setDone(`${m.name} taken out of the list. The lead itself is unchanged.`);
+      reload();
+    } catch (err) { setProblem(err.message); }
+  }
 
   return (
     <div>
@@ -148,11 +172,30 @@ export default function ListDetail({ session }) {
                 · {list.last_refreshed_at ? `refreshed ${dateTime(list.last_refreshed_at)}` : 'never refreshed'}
               </span>
             )}
+            {archived && <span className="badge">Archived</span>}
           </div>
         </div>
+        {list.may_edit && (
+          <div className="row wrap" style={{ gap: 6 }}>
+            {!archived && <button className="btn-sm" onClick={() => setLifecycle('rename')}>Rename</button>}
+            {archived
+              ? <button className="btn-sm" onClick={restore}>Restore</button>
+              : <button className="btn-sm" onClick={() => setLifecycle('archiving')}>Archive</button>}
+            <button className="btn-sm btn-danger-ghost" onClick={() => setLifecycle('delete')}>Delete</button>
+          </div>
+        )}
       </div>
 
       <ErrorBanner error={problem} onDismiss={() => setProblem(null)} />
+      {archived && (
+        <div className="notice notice-warn" style={{ marginBottom: 14 }}>
+          <Icon name="inventory_2" size={17} />
+          <span>
+            Archived {dateTime(list.archived_at)}{list.archived_by_name ? ` by ${list.archived_by_name}` : ', when its expiry passed'}
+            {list.archive_reason ? `: ${list.archive_reason}` : ''}. Nothing about it can change until it is restored.
+          </span>
+        </div>
+      )}
       {done && (
         <div className="notice notice-ok" style={{ marginBottom: 14 }}>
           <Icon name="check_circle" size={17} /> <span>{done.text ?? done}</span>
@@ -199,7 +242,7 @@ export default function ListDetail({ session }) {
       </div>
 
       {/* Bulk bar */}
-      {list.member_count > 0 && allowed.length > 0 && (
+      {list.member_count > 0 && allowed.length > 0 && !archived && (
         <div className="card" style={{ marginBottom: 14 }}>
           <div className="card-body row wrap" style={{ gap: 8 }}>
             <span className="tiny muted">Apply to all {list.member_count}</span>
@@ -246,8 +289,8 @@ export default function ListDetail({ session }) {
             </span>
             {/* The round trip, brought inside. */}
             <button className="btn-ghost btn-sm" onClick={() => { setDone(null); setTool('columns'); }}
-              disabled={!list.may_edit}
-              title={list.may_edit ? 'Choose which columns this list shows' : 'Only the owner of a list can change its columns'}>
+              disabled={!list.may_edit || archived}
+              title={archived ? 'An archived list cannot change' : list.may_edit ? 'Choose which columns this list shows' : 'Only the owner of a list can change its columns'}>
               <Icon name="view_column" size={15} /> Columns
             </button>
             <button className="btn-ghost btn-sm" onClick={() => { setDone(null); setTool('export'); }}>
@@ -256,7 +299,7 @@ export default function ListDetail({ session }) {
             {/* Import only where it means something: a live list is defined by
                 its filter, so pasting rows into one would make the filter a
                 lie. Hidden rather than shown-and-refused. */}
-            {list.may_edit && isSnapshot && (
+            {list.may_edit && isSnapshot && !archived && (
               <button className="btn-ghost btn-sm" onClick={() => { setDone(null); setTool('import'); }}>
                 <Icon name="upload" size={15} /> Import
               </button>
@@ -304,6 +347,7 @@ export default function ListDetail({ session }) {
                     </th>
                   ))}
                   <th>Contactable</th>
+                  {mayRemoveMember && <th aria-label="Remove from list" />}
                 </tr>
               </thead>
               <tbody>
@@ -325,6 +369,13 @@ export default function ListDetail({ session }) {
                           && <span className="tiny muted">—</span>}
                       </div>
                     </td>
+                    {/* QA-37: out of the list, and only out of the list -- the lead stays. */}
+                    {mayRemoveMember && (
+                      <td className="num">
+                        <button className="btn-ghost btn-sm" title="Take this lead out of the list. The lead itself is unchanged."
+                          onClick={(e) => removeMember(e, m)}>Remove</button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -380,7 +431,105 @@ export default function ListDetail({ session }) {
           onDone={(msg) => { setTool(null); setDone(msg); reload(); }}
           onError={(msg) => { setTool(null); setProblem(msg); }} />
       )}
+      {lifecycle && (
+        <ListLifecycle list={list} what={lifecycle}
+          onClose={() => setLifecycle(null)}
+          onDone={(msg) => {
+            setLifecycle(null);
+            if (lifecycle === 'delete') navigate('/lists');
+            else { setDone(msg); reload(); }
+          }} />
+      )}
     </div>
+  );
+}
+
+/**
+ * Rename, archive or delete a list (QA-37).
+ *
+ * Archiving asks why, because it takes the list out of use. Deleting asks for
+ * the list's name, because it cannot be undone -- and the server refuses it
+ * for a list anything was sent to, which is then kept as the record of who
+ * received what; the refusal says to archive instead.
+ */
+function ListLifecycle({ list, what, onClose, onDone }) {
+  const [name, setName] = useState(list.name);
+  const [description, setDescription] = useState(list.description ?? '');
+  const [reason, setReason] = useState('');
+  const [confirmName, setConfirmName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      if (what === 'rename') {
+        await api.patch(`/lists/${list.id}`, { name, description });
+        onDone('Saved.');
+      } else if (what === 'archiving') {
+        await api.post(`/lists/${list.id}/archive`, { reason });
+        onDone(`"${list.name}" is archived. It stays readable, and nothing about it can change until it is restored.`);
+      } else {
+        await api.del(`/lists/${list.id}`, { confirm_name: confirmName });
+        onDone(`Deleted "${list.name}".`);
+      }
+    } catch (err) { setError(err.message); setBusy(false); }
+  }
+
+  const title = { rename: 'Rename this list', archiving: `Archive "${list.name}"`, delete: `Delete "${list.name}"` }[what];
+  const ready = what === 'rename' ? name.trim().length > 0
+    : what === 'archiving' ? reason.trim().length >= 5 : confirmName === list.name;
+
+  return (
+    <Modal title={title} onClose={onClose}>
+      <form onSubmit={submit} className="stack" style={{ gap: 12 }}>
+        <ErrorBanner error={error} />
+        {what === 'rename' && (
+          <>
+            <div className="field">
+              <label htmlFor="list-name">Name</label>
+              <input id="list-name" value={name} maxLength={120} onChange={(e) => setName(e.target.value)} autoFocus />
+            </div>
+            <div className="field">
+              <label htmlFor="list-description">Description</label>
+              <textarea id="list-description" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />
+            </div>
+          </>
+        )}
+        {what === 'archiving' && (
+          <>
+            <p className="small">
+              It leaves the list of lists and nothing can change it -- members, columns, bulk actions or sends -- until it
+              is restored. It can still be opened, previewed and exported.
+            </p>
+            <div className="field">
+              <label htmlFor="list-archive-reason">Why</label>
+              <textarea id="list-archive-reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
+            </div>
+          </>
+        )}
+        {what === 'delete' && (
+          <>
+            <p className="small">
+              This removes the list for good; the leads in it are not touched. A list anything was sent to cannot be
+              deleted -- it is the record of who received what -- and is archived instead.
+            </p>
+            <div className="field">
+              <label htmlFor="list-confirm-name">Type the list's name to confirm</label>
+              <input id="list-confirm-name" value={confirmName} onChange={(e) => setConfirmName(e.target.value)} placeholder={list.name} autoFocus />
+            </div>
+          </>
+        )}
+        <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+          <button type="button" className="btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className={what === 'delete' ? 'btn-danger' : 'btn-primary'} disabled={busy || !ready}>
+            {busy ? 'Working…' : { rename: 'Save', archiving: 'Archive', delete: 'Delete for good' }[what]}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

@@ -1756,6 +1756,10 @@ router.post('/leads/:id/message', requirePermission('lead.contact'), (req, res) 
   }
 
   const template = template_id ? one('SELECT * FROM templates WHERE id = ?', [template_id]) : null;
+  // QA-37: a retired template is out of every new send, this door included.
+  if (template?.retired_at) {
+    return res.status(409).json({ error: `"${template.name}" is retired, so nothing new can send it` });
+  }
   const text = (body || template?.body || '').replace(/\{\{name\}\}/g, lead.name);
   if (!text.trim()) return res.status(400).json({ error: 'Message body is required' });
 

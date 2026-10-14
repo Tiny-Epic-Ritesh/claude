@@ -65,7 +65,8 @@ export const api = {
   post: (p, body, kind) => request(`/api${p}`, { method: 'POST', body, kind }),
   patch: (p, body, kind) => request(`/api${p}`, { method: 'PATCH', body, kind }),
   put: (p, body, kind) => request(`/api${p}`, { method: 'PUT', body, kind }),
-  del: (p, kind) => request(`/api${p}`, { method: 'DELETE', kind }),
+  // A body for the deletes that ask for a named confirmation (QA-37).
+  del: (p, body, kind) => request(`/api${p}`, { method: 'DELETE', body, kind }),
 
   /**
    * Fetch a file rather than JSON.

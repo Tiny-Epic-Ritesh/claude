@@ -108,7 +108,7 @@ router.get('/compose/:leadId', (req, res) => {
     templates: all(
       `SELECT id, name, subject, body, product_type_id, scope
          FROM templates
-        WHERE channel = 'email'
+        WHERE channel = 'email' AND retired_at IS NULL
           AND ((scope = 'org' AND approved = 1 AND sales_org IN (${orgPlaceholders}))
                OR (scope = 'personal' AND owner_id = ?))
         ORDER BY scope DESC, name`,

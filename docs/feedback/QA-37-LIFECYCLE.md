@@ -76,3 +76,20 @@ data, with a reason, and never deletes them.
   retention -- deleted, never an account, untouched for the period -- and an
   Admin erases it with a reason and the word PURGE. The audit keeps the ids,
   the reason and the period, never a name. Clients are not purged.
+- **Lists (batch 1, 14 Oct):** the owner or an Admin renames and describes a
+  list, and removes a member without touching the lead. *Archive* asks why;
+  an archived list leaves Lead Lists for its own view, stays readable,
+  previewable and exportable, and nothing changes it -- members, columns, a
+  bulk action or a send, a campaign included -- until it is restored.
+  Restoring a snapshot whose expiry passed gives it a fresh one. *Delete*
+  needs the list's name typed, and is refused, with "archive it instead",
+  for a list a campaign went to or a bulk message was sent from.
+- **Message templates (batch 1, 14 Oct):** changing the text of an approved
+  template -- subject, body, header, buttons -- sends it back for approval,
+  which is then a separate act; a rename does not. *Retire* asks why; a
+  retired template leaves every picker and nothing new can send it -- a
+  campaign, an automation rule, a message from a lead -- and it cannot be
+  edited until it is restored. *Delete* is for a template no campaign or
+  rule has used, needs its name typed, and answers "Deleted <name>"; one
+  that has been used is refused with "retire it instead".
+  `test/lifecycle1.test.mjs`.

@@ -1743,6 +1743,15 @@ const COLUMNS = [
   /* How a cross-business referral is paid, as the policy stood when it was
      made (14 Oct): JSON, null for a referral within the partner's business. */
   ['leads', 'referral_commission_basis', 'TEXT'],
+  /* QA-37. A list archived by hand says who and why; one archived by its
+     expiry has neither. */
+  ['lead_lists', 'archived_by', 'INTEGER'],
+  ['lead_lists', 'archive_reason', 'TEXT'],
+  /* QA-37. A retired template is out of every picker and every new send,
+     still readable where it was used, and can be restored. */
+  ['templates', 'retired_at', 'TEXT'],
+  ['templates', 'retired_by', 'INTEGER'],
+  ['templates', 'retire_reason', 'TEXT'],
 ];
 
 /**

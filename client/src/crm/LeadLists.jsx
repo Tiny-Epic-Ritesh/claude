@@ -21,7 +21,11 @@ const KIND_BADGE = {
 
 export default function LeadLists({ session }) {
   const navigate = useNavigate();
-  const [lists, { loading, error, reload }] = useApi('/lists');
+  /* QA-37. Archived lists are kept, out of the way: their own view, not mixed
+     in with the lists people are working from. */
+  const [showArchived, setShowArchived] = useState(false);
+  const listsPath = showArchived ? '/lists?archived=only' : '/lists';
+  const [lists, { loading, error, reload }] = useApi(listsPath, [listsPath]);
   const [meta] = useApi('/lists/meta');
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(null);
@@ -43,16 +47,25 @@ export default function LeadLists({ session }) {
             A list is a saved question. What changes between kinds is when the answer is worked out.
           </p>
         </div>
-        <button className="btn-primary" onClick={() => setCreating(true)}>
-          <Icon name="add" size={16} /> New list
-        </button>
+        <div className="row" style={{ gap: 8 }}>
+          <button className="btn-ghost" onClick={() => setShowArchived((v) => !v)}>
+            {showArchived ? 'Show lists in use' : 'Show archived lists'}
+          </button>
+          <button className="btn-primary" onClick={() => setCreating(true)}>
+            <Icon name="add" size={16} /> New list
+          </button>
+        </div>
       </div>
 
       <ErrorBanner error={problem || error} onDismiss={() => setProblem(null)} />
       {loading && <Loading label="Loading lists…" />}
 
       {!loading && lists && lists.length === 0 && (
-        <Empty>No lists yet. Build one from a filter, or save a search from the Leads tab.</Empty>
+        <Empty>
+          {showArchived
+            ? 'No archived lists. A list is archived by hand, or when a snapshot passes its expiry.'
+            : 'No lists yet. Build one from a filter, or save a search from the Leads tab.'}
+        </Empty>
       )}
 
       <div className="grid-auto">
@@ -71,6 +84,12 @@ export default function LeadLists({ session }) {
               </div>
 
               {l.description && <div className="small muted">{l.description}</div>}
+              {l.archived_at && (
+                <div className="tiny muted">
+                  Archived {shortDate(l.archived_at)}{l.archived_by_name ? ` by ${l.archived_by_name}` : ', when it expired'}
+                  {l.archive_reason ? ` — ${l.archive_reason}` : ''}
+                </div>
+              )}
 
               {/* A refreshable list is only trustworthy if it says when it last
                   ran, so this is on the card rather than buried in detail. */}
@@ -97,7 +116,7 @@ export default function LeadLists({ session }) {
 
               <div className="row wrap" style={{ gap: 6 }}>
                 <button className="btn-sm" onClick={() => navigate(`/lists/${l.id}`)}>Open</button>
-                {l.kind === 'refreshable' && (
+                {l.kind === 'refreshable' && !l.archived_at && (
                   <button className="btn-ghost btn-sm" disabled={busy === l.id}
                     onClick={() => refresh(l.id)}>
                     {busy === l.id ? 'Refreshing…' : 'Refresh now'}
