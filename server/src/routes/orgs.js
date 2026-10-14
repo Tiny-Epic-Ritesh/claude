@@ -68,7 +68,8 @@ router.patch('/:code', requirePermission('admin.system'), (req, res) => {
   if (!org) return res.status(404).json({ error: 'Unknown sales org' });
 
   // Fixed allowlist, so no caller-supplied string ever reaches the statement.
-  const ALLOWED = ['name', 'legal_name', 'tagline', 'accent', 'accent_dark', 'kyc_url', 'active'];
+  const ALLOWED = ['name', 'legal_name', 'tagline', 'accent', 'accent_dark', 'kyc_url', 'active',
+    'support_phone', 'support_email', 'support_hours'];
   const fields = ALLOWED.filter((f) => req.body[f] !== undefined);
   if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
 

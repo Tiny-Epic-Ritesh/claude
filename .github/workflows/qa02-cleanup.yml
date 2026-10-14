@@ -1,0 +1,86 @@
+name: QA-02 duplicate-task cleanup (labs)
+
+# Before QA-02 the scheduler made a new task for every lead that still matched
+# a rule at every sweep -- 10,477 tasks for 41 leads on labs. The fix stopped
+# new ones; this closes the ones already there, as Ritesh signed off on 13
+# October: close them as Cancelled with a reason, keep the history, preview
+# first.
+#
+# Run it from Actions -> "QA-02 duplicate-task cleanup (labs)" -> Run workflow.
+# Leave "Apply" unticked to preview: nothing changes, and the log says how many
+# would close. Tick it to close them; the database is snapshotted first and the
+# snapshot kept in the box's backups/qa02 folder.
+#
+# Leads are named by id, never by name: this repository is public, and so are
+# its workflow logs.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Apply: close the duplicates (leave unticked to preview)'
+        type: boolean
+        default: false
+
+# One run at a time. A separate group from the deploy, so a push to main never
+# cancels a cleanup half way; the cleanup itself is one transaction.
+concurrency:
+  group: qa02-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: ${{ inputs.apply && 'Apply' || 'Preview' }} on labs
+    runs-on: ubuntu-latest
+    environment: uat
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check the deploy secrets exist
+        env:
+          UAT_HOST: ${{ secrets.UAT_HOST }}
+          UAT_USER: ${{ secrets.UAT_USER }}
+          UAT_SSH_KEY: ${{ secrets.UAT_SSH_KEY }}
+        run: |
+          missing=""
+          [ -z "$UAT_HOST" ]    && missing="$missing UAT_HOST"
+          [ -z "$UAT_USER" ]    && missing="$missing UAT_USER"
+          [ -z "$UAT_SSH_KEY" ] && missing="$missing UAT_SSH_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing"
+            exit 1
+          fi
+
+      - name: Run the cleanup in the labs container
+        uses: appleboy/ssh-action@v1
+        env:
+          APPLY: ${{ inputs.apply && '--apply' || '' }}
+        with:
+          host: ${{ secrets.UAT_HOST }}
+          username: ${{ secrets.UAT_USER }}
+          key: ${{ secrets.UAT_SSH_KEY }}
+          timeout: 30s
+          command_timeout: 10m
+          envs: APPLY
+          script: |
+            set -e
+            cd /www/wwwroot/labs.tinyepic.in
+
+            if ! docker exec bonanza_app test -f server/scripts/qa02-duplicate-tasks.mjs; then
+              echo "::error::The running image does not carry the cleanup script yet. Wait for the deploy of the commit that added it, then run this again."
+              exit 1
+            fi
+
+            OUT=$(docker exec bonanza_app node server/scripts/qa02-duplicate-tasks.mjs --ids-only $APPLY)
+            echo "$OUT"
+
+            # With --apply the script snapshots the database first, inside the
+            # data volume. Move it out to a folder of its own: the deploy keeps
+            # only its ten newest backups/*.db and would prune this one.
+            SNAP=$(printf '%s\n' "$OUT" | sed -n 's/^Snapshot taken first: //p')
+            if [ -n "$SNAP" ]; then
+              mkdir -p ./backups/qa02
+              docker cp "bonanza_app:$SNAP" ./backups/qa02/
+              docker exec bonanza_app rm -f "$SNAP"
+              echo "Snapshot kept at /www/wwwroot/labs.tinyepic.in/backups/qa02/$(basename "$SNAP")"
+            fi

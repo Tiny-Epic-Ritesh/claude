@@ -34,6 +34,24 @@ const useBrand = () => useContext(BrandContext);
 /** The legal entity, for the regulatory line: "Bonanza Portfolio Ltd. (Bigul)" is offered by "Bonanza Portfolio Ltd.". */
 const entityOf = (brand) => String(brand?.legal_name ?? 'Bonanza Portfolio Ltd.').replace(/\s*\(.*\)\s*$/, '');
 
+/**
+ * The business's own help line and its hours, from the business's record.
+ *
+ * Both pages used to print one number, written into this file, which was
+ * neither business's published line. A business with no number on record says
+ * "us" rather than inventing one.
+ */
+function HelpLine() {
+  const { brand } = useBrand();
+  if (!brand.support_phone) return <>us</>;
+  return (
+    <>
+      <strong>{brand.support_phone}</strong>
+      {brand.support_hours && <> ({brand.support_hours})</>}
+    </>
+  );
+}
+
 export default function DkycPortal() {
   const [brand, setBrand] = useState({ code: 'BONANZA', name: 'Bonanza', legal_name: 'Bonanza Portfolio Ltd.' });
   return (
@@ -260,7 +278,7 @@ function TrustPanel() {
         <span className="material-symbols-rounded" aria-hidden>call</span>
         <div>
           <strong>A human when you need one</strong>
-          <p>If a step takes longer than expected we notice, and a representative calls you on 022-6153-0000.</p>
+          <p>If a step takes longer than expected we notice, and a representative calls you. To reach us yourself, call <HelpLine />.</p>
         </div>
       </div>
     </section>
@@ -351,7 +369,7 @@ function Journey() {
           <div className="notice" style={{ textAlign: 'left', width: '100%' }}>
             <span className="material-symbols-rounded" aria-hidden>call</span>
             <div>
-              Need it sooner? Call <strong>022-6153-0000</strong> and quote application reference{' '}
+              Need it sooner? Call <HelpLine /> and quote application reference{' '}
               <code>{String(journey.resume_token).slice(0, 8).toUpperCase()}</code>.
             </div>
           </div>
@@ -491,7 +509,7 @@ function Journey() {
           )}
           {overTimer && (
             <div className="warnbox">
-              Taking longer than usual on this step? Call <strong>022-6153-0000</strong> and we will complete it with you.
+              Taking longer than usual on this step? Call <HelpLine /> and we will complete it with you.
             </div>
           )}
           {/* Why they are back on a step they already did. Without this the
@@ -687,7 +705,7 @@ function Objected({ journey }) {
         <div className="notice" style={{ textAlign: 'left', width: '100%' }}>
           <span className="material-symbols-rounded" aria-hidden>call</span>
           <div>
-            Want to sort it now? Call <strong>022-6153-0000</strong> and quote application reference{' '}
+            Want to sort it now? Call <HelpLine /> and quote application reference{' '}
             <code>{String(journey.resume_token).slice(0, 8).toUpperCase()}</code>.
           </div>
         </div>
@@ -733,7 +751,7 @@ function Submitted({ journey }) {
         <div className="notice" style={{ textAlign: 'left', width: '100%' }}>
           <span className="material-symbols-rounded" aria-hidden>call</span>
           <div>
-            Any questions? Call <strong>022-6153-0000</strong> and quote application reference{' '}
+            Any questions? Call <HelpLine /> and quote application reference{' '}
             <code>{String(journey.resume_token).slice(0, 8).toUpperCase()}</code>.
           </div>
         </div>

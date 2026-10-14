@@ -34,6 +34,11 @@ COPY --from=builder /build/server/node_modules ./server/node_modules
 COPY server/src/ ./server/src/
 COPY server/package.json ./server/package.json
 
+# The one maintenance script labs runs, from the "QA-02 duplicate-task cleanup
+# (labs)" workflow. Only this one: the rest of server/scripts are development
+# tools with no business in the image.
+COPY server/scripts/qa02-duplicate-tasks.mjs ./server/scripts/qa02-duplicate-tasks.mjs
+
 # Copy the built React app — Nginx will serve these as static files
 COPY --from=builder /build/client/dist ./client/dist
 

@@ -136,9 +136,12 @@ await test("a supervisor's team scorecard holds nobody from the other business",
 
 await test('team calls today are counted in one book', async () => {
   const cockpit = await cockpitFor();
+  /* "Today" is the IST day (OPS-24). This counted the UTC day, so it failed
+     whenever a seeded call landed between 18:30 and midnight UTC -- the next
+     morning in India, and so today's on the cockpit. */
   const truth = one(
     `SELECT COUNT(*) n FROM activities a JOIN leads l ON l.id = a.lead_id
-      WHERE a.type = 'Call' AND date(a.created_at) = date('now') AND l.sales_org = 'BIGUL'`,
+      WHERE a.type = 'Call' AND date(a.created_at, '+330 minutes') = date('now', '+330 minutes') AND l.sales_org = 'BIGUL'`,
   ).n;
   assert.equal(valueOf(cockpit, 'Team calls today'), truth);
 });

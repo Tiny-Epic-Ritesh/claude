@@ -2,7 +2,12 @@
  * QA-02: close the duplicate tasks and notifications the scheduler made.
  *
  *   node scripts/qa02-duplicate-tasks.mjs            preview: what would close
- *   node scripts/qa02-duplicate-tasks.mjs --apply    close them
+ *   node scripts/qa02-duplicate-tasks.mjs --apply    snapshot the database, then close them
+ *   ... --ids-only                                   name leads by id, not by name
+ *
+ * On labs it runs from GitHub Actions, "QA-02 duplicate-task cleanup (labs)",
+ * which passes --ids-only: this repository is public, so its workflow logs are
+ * too, and a lead's name has no business in one.
  *
  * Until QA-02 a rule acted on every lead that matched at every five-minute
  * sweep, so a lead that stayed Warm got a new "Contact lead — warm MF card"
@@ -22,8 +27,9 @@
  */
 
 import 'dotenv/config';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { all, one, run, transact } from '../src/db.js';
+import { all, one, run, transact, db } from '../src/db.js';
 
 export const REASON = 'Duplicate created by the scheduler (QA-02)';
 
@@ -70,6 +76,20 @@ export function preview() {
   };
 }
 
+/**
+ * A whole copy of the database, taken before anything changes.
+ *
+ * VACUUM INTO writes the snapshot from inside SQLite, so it is consistent even
+ * while the CRM goes on writing; copying the file from outside can catch it
+ * half way through a write. It lands beside the database, in the same volume,
+ * and the labs workflow moves it out to the box's backups folder.
+ */
+export function snapshot(stamp = new Date().toISOString().replace(/[:.]/g, '-')) {
+  const file = join(dirname(db.location()), `bonanza-before-qa02-${stamp}.db`);
+  db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
+  return file;
+}
+
 /** Close the duplicates. Returns how many of each it changed. */
 export function apply() {
   const titles = ruleTaskTitles();
@@ -97,10 +117,13 @@ export function apply() {
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const doApply = process.argv.includes('--apply');
+  const idsOnly = process.argv.includes('--ids-only');
   const p = preview();
   console.log(`Duplicate rule tasks: ${p.tasks_to_close} to close, in ${p.task_groups.length} group(s); the oldest of each is kept.`);
   for (const g of p.task_groups.slice(0, 20)) {
-    const lead = one('SELECT name FROM leads WHERE id = ?', [g.lead_id])?.name ?? `lead ${g.lead_id}`;
+    const lead = idsOnly
+      ? `lead ${g.lead_id}`
+      : one('SELECT name FROM leads WHERE id = ?', [g.lead_id])?.name ?? `lead ${g.lead_id}`;
     console.log(`  ${String(g.open).padStart(6)} open  "${g.title}"  on ${lead}  -- keeping task ${g.keep_id}`);
   }
   if (p.task_groups.length > 20) console.log(`  ... and ${p.task_groups.length - 20} more group(s)`);
@@ -109,6 +132,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   if (!doApply) {
     console.log('\nPreview only -- nothing was changed. Run again with --apply to close these.');
   } else {
+    // The workflow reads this line to move the snapshot off the volume.
+    console.log(`Snapshot taken first: ${snapshot()}`);
     const done = apply();
     console.log(`\nClosed ${done.tasks_closed} task(s) as Cancelled ("${REASON}") and marked ${done.notifications_marked_read} notification(s) read.`);
   }

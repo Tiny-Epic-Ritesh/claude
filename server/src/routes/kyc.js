@@ -230,9 +230,13 @@ export const dkyc = Router();
 /* QA-13 (Ritesh, 13 Oct): a page per business. /dkyc is Bonanza's and
    /dkyc?business=bigul is Bigul's. The one page said "Open your Bonanza
    account" over both businesses' products. */
+/* What the page says about its business: the name, the legal entity, and the
+   help line it gives the applicant. */
+const BUSINESS_FIELDS = 'code, name, legal_name, support_phone, support_email, support_hours';
+
 const dkycBusiness = (req) => {
   const code = String(req.query?.business ?? req.body?.business ?? 'BONANZA').toUpperCase();
-  return one('SELECT code, name, legal_name FROM sales_orgs WHERE code = ? AND active = 1', [code]);
+  return one(`SELECT ${BUSINESS_FIELDS} FROM sales_orgs WHERE code = ? AND active = 1`, [code]);
 };
 
 /** Products a walk-in applicant can open an account for, in the page's business. */
@@ -442,7 +446,7 @@ function publicView(j) {
     product: j.product ? { id: j.product.id, name: j.product.name, code: j.product.code } : null,
     /* So a resumed application carries its own business's name (QA-13). */
     business: j.product?.sales_org
-      ? one('SELECT code, name, legal_name FROM sales_orgs WHERE code = ?', [j.product.sales_org])
+      ? one(`SELECT ${BUSINESS_FIELDS} FROM sales_orgs WHERE code = ?`, [j.product.sales_org])
       : null,
     form: j.form,
     steps: j.steps

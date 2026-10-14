@@ -1717,6 +1717,12 @@ const COLUMNS = [
   ['tasks', 'rule_firing_id', 'INTEGER'],
   ['tasks', 'cancelled_at', 'TEXT'],
   ['tasks', 'cancel_reason', 'TEXT'],
+  /* Each business's help line, read by its account-opening page. The page had
+     one number written into it for both businesses, and it was neither's
+     published line. */
+  ['sales_orgs', 'support_phone', 'TEXT'],
+  ['sales_orgs', 'support_email', 'TEXT'],
+  ['sales_orgs', 'support_hours', 'TEXT'],
 ];
 
 /**
@@ -2068,6 +2074,9 @@ CREATE TABLE IF NOT EXISTS sales_orgs (
   accent_dark TEXT,
   model       TEXT,                      -- 'full_service' / 'discount_digital'
   kyc_url     TEXT,
+  support_phone TEXT,                    -- the help line its account-opening page gives
+  support_email TEXT,
+  support_hours TEXT,
   active      INTEGER NOT NULL DEFAULT 1,
   sort_order  INTEGER NOT NULL DEFAULT 0
 );
@@ -2083,6 +2092,10 @@ const SEED_ORGS = [
     accent_dark: '#5f9a2c',
     model: 'full_service',
     kyc_url: 'https://kyc.bonanzaonline.com',
+    // Customer Care, as published on bonanzaonline.com/contact.php (13 Oct 2026).
+    support_phone: '022-68363775',
+    support_email: 'customercare@bonanzaonline.com',
+    support_hours: 'Mon–Fri 9:30 am–5 pm, Sat 11:30 am–3 pm',
     sort_order: 1,
   },
   {
@@ -2094,18 +2107,31 @@ const SEED_ORGS = [
     accent_dark: '#1f52c0',
     model: 'discount_digital',
     kyc_url: 'https://kyc.bigul.co',
+    /* Customer Support, as published on bigul.co/contact (13 Oct 2026). Bigul
+       lists three lines -- Customer Support 9090491913, Call and Trade
+       9090491911, Algo Trading Support 9090491915 -- and account opening is
+       Customer Support's. Hours from its partner page's helpline note. */
+    support_phone: '9090491913',
+    support_email: 'support@bigul.co',
+    support_hours: 'Mon–Sat 10 am–7 pm',
     sort_order: 2,
   },
 ];
 
 for (const o of SEED_ORGS) {
   db.prepare(
-    `INSERT INTO sales_orgs (code, name, legal_name, tagline, accent, accent_dark, model, kyc_url, sort_order)
-     VALUES (@code, @name, @legal_name, @tagline, @accent, @accent_dark, @model, @kyc_url, @sort_order)
+    `INSERT INTO sales_orgs (code, name, legal_name, tagline, accent, accent_dark, model, kyc_url,
+                             support_phone, support_email, support_hours, sort_order)
+     VALUES (@code, @name, @legal_name, @tagline, @accent, @accent_dark, @model, @kyc_url,
+             @support_phone, @support_email, @support_hours, @sort_order)
      ON CONFLICT(code) DO UPDATE SET
        name = excluded.name, legal_name = excluded.legal_name, tagline = excluded.tagline,
        accent = excluded.accent, accent_dark = excluded.accent_dark, model = excluded.model,
-       kyc_url = excluded.kyc_url, sort_order = excluded.sort_order`,
+       kyc_url = excluded.kyc_url, sort_order = excluded.sort_order,
+       -- Filled when empty, never overwritten: a number a Superadmin changes stays changed.
+       support_phone = COALESCE(sales_orgs.support_phone, excluded.support_phone),
+       support_email = COALESCE(sales_orgs.support_email, excluded.support_email),
+       support_hours = COALESCE(sales_orgs.support_hours, excluded.support_hours)`,
   ).run(o);
 }
 
