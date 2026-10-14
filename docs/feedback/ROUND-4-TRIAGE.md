@@ -113,7 +113,12 @@ found one more, `OPS-32` -- the rest of the Product Supervisor's cockpit counts
 both businesses -- recorded open on Ritesh's choice. The work of 14 Oct found
 three more, recorded open on his yes: `OPS-33` (a business's branding reset at
 every restart), `OPS-34` (attendance on the UTC day) and `OPS-35` (the recycle
-bin listing both businesses). State of each is in the OPS table at the top
+bin listing both businesses); building QA-37 found five more, recorded open
+on his yes: `OPS-36` (templates sent from a lead or a rule unchecked for
+approval or business), `OPS-37` (campaign routes by id unchecked for business),
+`OPS-38` (a case reply's author taken from the request), `OPS-39` (a card
+showing call notes field security hides) and `OPS-40` (the content list across
+businesses). State of each is in the OPS table at the top
 of [OUTSTANDING.md](OUTSTANDING.md). Not counted above: they are not report IDs.
 
 ### Rulings asked for
