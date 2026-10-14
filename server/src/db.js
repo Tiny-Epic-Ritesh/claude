@@ -1723,6 +1723,12 @@ const COLUMNS = [
   ['sales_orgs', 'support_phone', 'TEXT'],
   ['sales_orgs', 'support_email', 'TEXT'],
   ['sales_orgs', 'support_hours', 'TEXT'],
+  /* QA-33. A partner a Superadmin activated before its onboarding was done
+     says so, permanently: who, when, why, and how many steps were open. */
+  ['partners', 'emergency_activated_at', 'TEXT'],
+  ['partners', 'emergency_activated_by', 'INTEGER'],
+  ['partners', 'emergency_reason', 'TEXT'],
+  ['partners', 'emergency_steps_open', 'INTEGER'],
 ];
 
 /**

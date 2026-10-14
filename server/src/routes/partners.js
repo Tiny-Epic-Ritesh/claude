@@ -18,6 +18,7 @@ import { lmsSync } from '../integrations.js';
 import { withoutPortalSecret } from '../security.js';
 import {
   stepsOutstanding, activatePartner, issuePortalCredential, withdrawPortalAccess,
+  emergencyActivate, EMERGENCY_FOLLOW_UP_DAYS,
 } from './partners-support.js';
 import * as ai from '../ai/index.js';
 import { applyFieldSecurity } from '../engine/metadata.js';
@@ -70,6 +71,11 @@ const decorate = (row) => {
     age_days: daysSince(p.created_at),
     has_portal_login: Boolean(row.portal_password),
     portal_password_one_time: Boolean(row.portal_password && row.portal_password_temp),
+    /* QA-33. An emergency activation is part of the partner's record for good;
+       the profile says so while the steps it skipped are still open. */
+    emergency_activated_by_name: p.emergency_activated_by
+      ? one('SELECT name FROM users WHERE id = ?', [p.emergency_activated_by])?.name ?? null
+      : null,
   };
 };
 
@@ -500,11 +506,35 @@ router.post('/:id/elevate', requirePermission('partner.elevate'), async (req, re
   /* QA-33. The request held this gate and the activation did not, so one
      Superadmin click made a 0-of-8 prospect ACTIVE, issued its partner code
      and switched on its portal login. Both routes now ask the same question.
-     An audited override for an emergency would be a separate, explicit
-     decision; it is not built here. */
+
+     Ruled 13 Oct: an audited emergency override, Superadmin only. It is never
+     the default: the caller has to ask for it, by name, and say why. */
   const pending = stepsOutstanding(partner.id);
   if (pending > 0) {
-    return res.status(400).json({ error: `${pending} onboarding step(s) still incomplete`, pending });
+    const mayOverride = req.caps?.has('partner.elevate.emergency') ?? false;
+    if (req.body?.emergency !== true) {
+      return res.status(400).json({
+        error: `${pending} onboarding step(s) still incomplete`, pending, emergency_allowed: mayOverride,
+      });
+    }
+    if (!mayOverride) {
+      return res.status(403).json({ error: 'Only a Superadmin can activate a partner whose onboarding is not finished' });
+    }
+    const reason = String(req.body?.reason ?? '').trim();
+    if (reason.length < 15) {
+      return res.status(400).json({
+        error: 'Say why this cannot wait for onboarding to finish, in a sentence',
+        field: 'reason',
+      });
+    }
+    if (reason.length > 1000) return res.status(400).json({ error: 'Keep the reason under 1,000 characters', field: 'reason' });
+
+    const done = emergencyActivate(partner, req.user, reason);
+    const portalLogin = issuePortalCredential(partner, req.user.id);
+    return res.json({
+      elevated: true, partner_code: done.code, portal_login: portalLogin,
+      emergency: { steps_open: done.steps_open, notified: done.notified, follow_up_days: EMERGENCY_FOLLOW_UP_DAYS },
+    });
   }
 
   /* OPS-15 and OPS-16. This route kept its own copy of the activation, which

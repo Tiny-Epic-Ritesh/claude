@@ -118,6 +118,11 @@ export const PERMISSIONS = {
   'partner.view.all':     ['superadmin', 'admin', 'sales_supervisor'],
   'partner.create':       ['superadmin', 'admin', 'partner_rm'],
   'partner.elevate':      ['superadmin', 'admin'],           // Partner RM initiates, Admin approves
+  /* QA-33 (Ritesh, 13 Oct: yes). Activating a partner whose onboarding is not
+     finished, when it cannot wait. Superadmin only, and never quietly: a
+     reason, the audit trail, a notice to the business's Admins, and the
+     unfinished steps left open as a task. */
+  'partner.elevate.emergency': ['superadmin'],
   'partner.elevate.request': ['partner_rm'],
   'partner.suspend':      ['superadmin', 'admin'],
 

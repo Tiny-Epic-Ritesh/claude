@@ -10,7 +10,7 @@ against this document and earlier feedback IDs." This is that document.
 ## The ledger — every point in the report, and where it stands
 
 Kept current: a commit that closes a point changes its row here and says so.
-Last updated **13 October 2026**: `84c2c2f`, `eaf4743`, `d34bb6b`, the rulings of 13 October, `72fa94d` (OPS-15, 16, 17, 25, 26), `e02fb6d` (OPS-18 to 24), `1c3b18c` (QA-02), `ca7d4ee` (QA-13), `9aa78bf` (QA-06), `a3be2c1` (QA-09, 24, 34, 35), `93607f5` (OPS-27 to 31), `b9b3807` (QA-29, QA-42), and the commit after it (OPS-32 recorded open; a Dealer may mark Warm).
+Last updated **14 October 2026**: `84c2c2f`, `eaf4743`, `d34bb6b`, the rulings of 13 October, `72fa94d` (OPS-15, 16, 17, 25, 26), `e02fb6d` (OPS-18 to 24), `1c3b18c` (QA-02), `ca7d4ee` (QA-13), `9aa78bf` (QA-06), `a3be2c1` (QA-09, 24, 34, 35), `93607f5` (OPS-27 to 31), `b9b3807` (QA-29, QA-42), `b663fb4` (OPS-32 recorded open; a Dealer may mark Warm), the rulings of 14 October, `0efa39b` (the QA-02 cleanup workflow; help lines), and the commit after it (QA-33's emergency activation).
 
 **States.** *fixed* — in code, tested, pushed. *not started* — open, no
 blocker. *needs decision* — waiting on Ritesh, and nothing is built until it is
@@ -20,9 +20,9 @@ ruling* — Ritesh ruled that the behaviour reported is the behaviour wanted.
 
 **Today, of the 43 IDs: 28 fixed · 1 closed by ruling · 5 partly fixed · 9
 open · none waiting on a decision.** Every ruling a finding needed was given on
-13 October. Two narrower questions inside fixed IDs stay open under *Rulings
-asked for*. Plus the points below the table, which are not IDs but are as much
-part of the report.
+13 October, and the two narrower questions left inside fixed IDs on 14
+October; one of them, QA-28's, is still to build. Plus the points below the
+table, which are not IDs but are as much part of the report.
 
 ### The 43 findings
 
@@ -60,7 +60,7 @@ part of the report.
 | QA-30 | P1 | **fixed** `84c2c2f` | Including duplication. |
 | QA-31 | P2 | **fixed** `eaf4743` | Any whole-rupee minimum; zero is zero, not "not set"; a negative is refused on create and edit. |
 | QA-32 | P1 | **fixed** `84c2c2f` | And the cross-book backfill it would have switched on. |
-| QA-33 | P0 | **fixed** `84c2c2f` | Override question open; partner #9 cleanup is *environment*, below. |
+| QA-33 | P0 | **fixed** `84c2c2f` | Every activation path asks whether onboarding is done. The override was ruled 14 Oct (yes) and built: a Superadmin's emergency activation, asked for by name, with a reason, in the audit trail and on the partner for good, told to the business's Admins, and the open steps left open with a task for the partner's owner. `emergencyelevation.test.mjs`. Partner #9 cleanup is *environment*, below. |
 | QA-34 | P1 | **fixed** `d34bb6b` and the definitions commit | Every DKYC step is checked against its own declaration before any vendor call, and stored normalised; all six of the auditor's values are refused. **Ruled 13 Oct, industry practice, and built:** an applicant under 18 is refused online and pointed to a guardian-opened minor account; one nominee holds 100%, since the depositories' forms require the shares to total 100% and the journey takes one nominee. The journey keeps the mobile it was started with and offers it to confirm. *Worth a decision, not built:* SEBI's revised nomination framework allows up to ten nominees and asks for an identifier for each; this journey takes one nominee with name, relationship and share. |
 | QA-35 | P2 | **fixed** · definitions commit | The lead page's AUM tile counts Active products — it said "no active products" whenever the AUM date was missing — and a new *Account* tile says whether the account is opened, with its UCC. KYC complete, operations reviewed, account opened and product Active are defined apart in the definitions note. |
 | QA-36 | P1 | **closed by ruling** 13 Oct | Not a bypass: Sales RM and Sales Supervisor hold `pii.unmask`, so the edit form's unmask is permitted and audited. Ritesh ruled that opening the editor should show contact details without a click, which is what it does. |
@@ -77,8 +77,8 @@ Counted: **fixed 28** — QA-01, 02, 03, 04, 06, 08, 09, 11, 19, 20, 21, 23, 24,
 1** — QA-36. **Partly fixed 5** — QA-05, 12, 13, 25, 43. **Open 9** — QA-37
 (ruled 13 Oct, to build); QA-07 and QA-10 (UI builds); QA-14 to QA-18 and QA-22
 (feature requests under earlier IDs). Every open ID is traced or classified;
-none is "unverified". The rulings inside QA-28 and QA-33 are listed below
-rather than counted, because those IDs are fixed.
+none is "unverified". The ruling inside QA-28 is listed below rather than
+counted, because that ID is fixed.
 
 ### Everything else the report asks for
 
@@ -120,9 +120,9 @@ Answered 13 Oct: 1. QA-13 (a Setup control, off) · 2. QA-09/24/35 (standard
 practice) · 3. QA-06 export (allowed, with a masked/unmasked Setup control) ·
 4. QA-37 (recommendations accepted as written; corrections as linked entries) · 7. OPS ids (assigned) · 8. QA-02 (signed off) ·
 9. QA-36 (yes) · 10. QA-34 (industry practice) · 11. QA-42 (a Dealer may mark
-a product Warm: the role matrix is right). **Still open:** 5. the category
-for each of the four unmapped compliance flags (QA-28) · 6. whether a Superadmin
-needs an audited emergency elevation (QA-33). The DKYC half of QA-13 was
+a product Warm: the role matrix is right). Answered 14 Oct: 6. QA-33 (yes: a
+Superadmin's audited emergency activation, built) · 5. QA-28 (the suggested
+categories, and a Compliance role to receive them; **to build**). The DKYC half of QA-13 was
 answered the same day: a separate page per business.
 
 ## Read this first: the build they tested is the build we have
@@ -173,7 +173,7 @@ other eight pass on both, because they guard what must keep working.
 |---|---|
 | QA-01 | The New lead form sends `route: false`. The server's precedence rule was right and is untouched. The biting test is a check of the form's source -- weaker than a behavioural one, and the best available without a browser. |
 | QA-03, QA-28 | One way to open a case, `engine/cases.js`, used by the case screen, the Partner Portal and the AI disposition. Each case now gets its book, its category, the least-loaded agent **in that book**, a `BNZ-`/`BGL-` reference by book, and its SLA clock. A portal ticket is Partner Support; a Complaint flag is a Complaint case. The AI door had the portal's cross-book defect too: `role = 'customer_care' LIMIT 1`. |
-| QA-33 | `POST /:id/elevate` asks the same onboarding question as `request-elevation`, through one helper. No override was built. |
+| QA-33 | `POST /:id/elevate` asks the same onboarding question as `request-elevation`, through one helper. The emergency override, ruled 14 Oct, is `partner.elevate.emergency` (Superadmin only) and `emergencyActivate` in `partners-support.js`. |
 | QA-26 | A lead PATCH that mentions the name may not blank it, whitespace included. |
 | QA-08 | `POST /tasks` needs at least one link, and **every** link is now book-checked -- only the lead was, so a partner, case or card id from the other book went straight in. The Tasks page gained a lead search, and shows a refusal instead of swallowing it. |
 | QA-32 | The server issues the code the screen promised: from the name, in the catalogue's style, `BG-` for Bigul, numbered when taken. The product gets its business, and the dialog shows its own errors. |

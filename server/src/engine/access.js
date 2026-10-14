@@ -83,6 +83,7 @@ export const CAPABILITY_CATALOGUE = [
   ['partner.view.all', 'View all partners', 'Partners', 'See every partner in the sales org, not only their own book', 0],
   ['partner.create', 'Create partners', 'Partners', null, 0],
   ['partner.elevate', 'Approve partner elevation', 'Partners', 'Issue a partner code and portal credential', 1],
+  ['partner.elevate.emergency', 'Activate a partner in an emergency', 'Partners', 'Activate before onboarding is finished, with a reason; audited, reported to the business\'s Admins, and the unfinished steps stay open', 1],
   ['partner.elevate.request', 'Request partner elevation', 'Partners', null, 0],
   ['partner.suspend', 'Suspend a partner', 'Partners', null, 1],
 

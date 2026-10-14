@@ -56,6 +56,56 @@ function WithdrawPortal({ partner, onClose, onDone }) {
   );
 }
 
+/**
+ * Activate before onboarding is finished, for a Superadmin, when it cannot wait (QA-33).
+ *
+ * It says plainly what it is doing: which steps are being skipped, who is
+ * told, and what is left behind to finish. The reason is required, and is what
+ * the Admins and the audit trail will read.
+ */
+function EmergencyActivation({ partner, openSteps, onClose, onDone }) {
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      onDone(await api.post(`/partners/${partner.id}/elevate`, { emergency: true, reason }));
+    } catch (err) { setError(err.message); setBusy(false); }
+  }
+
+  return (
+    <Modal title={`Activate ${partner.name} in an emergency`} onClose={onClose}>
+      <form onSubmit={submit}>
+        <ErrorBanner error={error} />
+        <p className="small">
+          {openSteps.length} onboarding step{openSteps.length === 1 ? ' is' : 's are'} not finished:
+        </p>
+        <ul className="small" style={{ marginTop: 0 }}>
+          {openSteps.map((s) => <li key={s.id}>{s.label}</li>)}
+        </ul>
+        <p className="small">
+          The partner becomes active and gets a partner code and portal access now. The steps stay open,
+          and {partner.owner_name ? `${partner.owner_name} gets` : 'you get'} a task to finish them. Every Admin
+          of this business is told, and the activation is recorded in the audit trail with your reason.
+        </p>
+        <div className="field">
+          <label htmlFor="emergency-reason">Why it cannot wait</label>
+          <textarea id="emergency-reason" rows={3} value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
+          <span className="tiny muted">A sentence: at least 15 characters.</span>
+        </div>
+        <div className="row" style={{ justifyContent: 'flex-end' }}>
+          <button type="button" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="btn-danger" disabled={busy || reason.trim().length < 15}>{busy ? <Spinner /> : 'Activate now'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 /** Partner Profile View (BRD §12) — replaces the lead detail view for partners. */
 export default function PartnerProfile({ session }) {
   const { id } = useParams();
@@ -67,12 +117,14 @@ export default function PartnerProfile({ session }) {
   const [elevated, setElevated] = useState(null);
   const [credential, setCredential] = useState(null);
   const [withdrawing, setWithdrawing] = useState(false);
+  const [emergency, setEmergency] = useState(false);
 
   if (loading) return <Loading />;
   if (error) return <ErrorBanner error={error} />;
 
   const can = (p) => session.permissions.includes(p);
   const isActive = partner.state_code === 'ACTIVE';
+  const openSteps = (partner.steps ?? []).filter((s) => s.status !== 'done');
 
   async function act(fn) {
     setBusy(true);
@@ -132,16 +184,49 @@ export default function PartnerProfile({ session }) {
               Elevate to partner entity
             </button>
           )}
+          {/* QA-33. Only while onboarding is unfinished, and only for a role that may override it. */}
+          {can('partner.elevate.emergency') && !isActive && openSteps.length > 0 && (
+            <button className="btn-danger" onClick={() => setEmergency(true)} disabled={busy}>Activate in an emergency</button>
+          )}
         </div>
       </div>
 
       <ErrorBanner error={actionError} onDismiss={() => setActionError(null)} />
 
+      {partner.emergency_activated_at && (
+        <div className="notice notice-warn" style={{ marginBottom: 12 }}>
+          <strong>Activated in an emergency</strong> by {partner.emergency_activated_by_name ?? 'a Superadmin'} on{' '}
+          {dateTime(partner.emergency_activated_at)}, with {partner.emergency_steps_open} onboarding step
+          {partner.emergency_steps_open === 1 ? '' : 's'} open. Reason: {partner.emergency_reason}
+          <div className="small" style={{ marginTop: 4 }}>
+            {openSteps.length
+              ? `${openSteps.length} still open: ${openSteps.map((s) => s.label).join(', ')}.`
+              : 'Every step has since been finished.'}
+          </div>
+        </div>
+      )}
+
       {elevated && (
         <div className="notice">
           <strong>{partner.name} is now an active partner.</strong> Code {elevated.partner_code} issued.
+          {elevated.emergency && (
+            <div className="small" style={{ marginTop: 4 }}>
+              Activated with {elevated.emergency.steps_open.length} step{elevated.emergency.steps_open.length === 1 ? '' : 's'} open.{' '}
+              {elevated.emergency.notified} Admin{elevated.emergency.notified === 1 ? ' was' : 's were'} told, and a task to finish the
+              steps is due in {elevated.emergency.follow_up_days} days.
+            </div>
+          )}
           {elevated.portal_login && <OneTimePassword login={elevated.portal_login} />}
         </div>
+      )}
+
+      {emergency && (
+        <EmergencyActivation
+          partner={partner}
+          openSteps={openSteps}
+          onClose={() => setEmergency(false)}
+          onDone={(result) => { setEmergency(false); setElevated(result); reload(); }}
+        />
       )}
 
       {credential && (
