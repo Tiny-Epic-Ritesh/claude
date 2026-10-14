@@ -114,3 +114,23 @@ data, with a reason, and never deletes them.
   reason or the agent's name. Only an agent's own reply is corrected, never a
   client's, a partner's or a system entry, and erasing a lead erases its
   corrections. `test/lifecycle2.test.mjs`.
+- **Library content (batch 3, 14 Oct):** the file of an approved or
+  withdrawn item is never replaced in place; *New version* adds a row linked
+  to it. In a library that requires approval it starts as a draft, the
+  current version keeps going out, and approving the new one -- by somebody
+  other than its author -- archives the old one; in one that does not, it
+  replaces it at once. The older `/admin/content/:id/version` route follows
+  the same rule and keeps the item's library and business. *Withdraw* asks
+  why and stops it going out; a withdrawn item is archived, or sent for
+  approval again. Something on offer is withdrawn before it is archived,
+  nothing changes an archived item, and there is no delete.
+- **Holidays (batch 3, 14 Oct):** a day is added or removed only if it is
+  after today in India; a day that has begun stays, because the SLA clocks
+  that ran over it were counted against it. The calendar screen offers
+  removal only on future days.
+- **Case categories (batch 3, 14 Oct):** *Rename* (names stay unique) and
+  *Retire* with a reason, or *Restore*. A retired category leaves every
+  picker and is refused for a new case or a change of category; the cases
+  that have it keep it. A category a compliance flag opens cases in is not
+  retired until the flag is routed elsewhere, and the refusal names the flag.
+  `test/lifecycle3.test.mjs`.

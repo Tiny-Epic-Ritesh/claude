@@ -15,7 +15,7 @@ import { all, one, run, audit, SALES_ORGS } from '../db.js';
 import { requireUser, requirePermission, can, mayUseOrg } from '../auth.js';
 import { validate } from '../security.js';
 import {
-  libraries, itemsIn, mayRead, mayManage, mayTransition, setStatus, expiryFor, STATUSES,
+  libraries, itemsIn, mayRead, mayManage, mayTransition, setStatus, expiryFor, STATUSES, newVersion,
 } from '../engine/library.js';
 
 const router = Router();
@@ -163,32 +163,37 @@ router.patch('/items/:itemId', (req, res) => {
     return res.status(400).json({ error: 'An item needs a name', field: 'name' });
   }
 
-  /* Editing an approved item sends it back for approval, where the library
-     asks for it. Otherwise "approve, then change the file" is a way around the
-     review, and the approval on the record would describe a document that no
-     longer exists. */
-  const reApprove = lib?.requires_approval && item.status === 'approved'
-    && (url !== undefined && url !== item.url);
+  /* QA-37. An archived item is put away; nothing about it changes. */
+  if (item.status === 'archived') {
+    return res.status(409).json({ error: `${item.name} is archived, so it stays as it is` });
+  }
+  /* The file of something that has been on offer is never replaced in place:
+     the record would then say a client was sent a document they were not. A
+     changed file is a new version (QA-37), approved before it is offered. */
+  if (url !== undefined && url !== item.url && ['approved', 'withdrawn'].includes(item.status)) {
+    return res.status(409).json({
+      error: 'A changed file is a new version. Add it as one; this version stays as it is until the new one is approved.',
+      new_version: true,
+    });
+  }
 
   run(
     `UPDATE content_items SET
        name = COALESCE(?, name), url = COALESCE(?, url),
        expiry_date = ${expiry === undefined ? 'expiry_date' : '?'},
        product_type_id = COALESCE(?, product_type_id),
-       library_id = COALESCE(?, library_id),
-       status = ?
+       library_id = COALESCE(?, library_id)
      WHERE id = ?`,
     [
       name ?? null, url ?? null,
       ...(expiry === undefined ? [] : [expiry || null]),
       productId ?? null, moveTo ?? null,
-      reApprove ? 'pending' : item.status,
       item.id,
     ],
   );
 
-  audit(req.user.id, 'content_updated', 'content_item', item.id, { re_approval: Boolean(reApprove) });
-  return res.json({ ...one('SELECT * FROM content_items WHERE id = ?', [item.id]), re_approval: Boolean(reApprove) });
+  audit(req.user.id, 'content_updated', 'content_item', item.id, {});
+  return res.json(one('SELECT * FROM content_items WHERE id = ?', [item.id]));
 });
 
 /** Move an item along the approval flow. */
@@ -208,10 +213,29 @@ router.post('/items/:itemId/status', (req, res) => {
       field: 'reason',
     });
   }
+  // QA-37: taking something out of use says why.
+  if (to === 'withdrawn' && String(req.body.reason ?? '').trim().length < 5) {
+    return res.status(400).json({ error: 'Say why it is being withdrawn, in a few words', field: 'reason' });
+  }
 
   setStatus(item, to, req.user, req.body.reason ?? null);
   audit(req.user.id, `content_${to}`, 'content_item', item.id, { name: item.name, reason: req.body.reason ?? null });
   return res.json(one('SELECT * FROM content_items WHERE id = ?', [item.id]));
+});
+
+/** A new version of an item: QA-37. The current one stays on offer until it is approved. */
+router.post('/items/:itemId/versions', (req, res) => {
+  const item = one('SELECT * FROM content_items WHERE id = ?', [req.params.itemId]);
+  if (!item) return res.status(404).json({ error: 'No such item' });
+  const lib = item.library_id ? loadLibrary(item.library_id) : null;
+  if (lib && !mayRead(lib, req.user)) return res.status(404).json({ error: 'No such item' });
+  if (lib && !mayManage(lib, req.user)) return res.status(403).json({ error: 'Only the owning role can add a version' });
+  if (!lib && !can(req.user.role, 'admin.content')) return res.status(403).json({ error: 'Managing unfiled content needs content permission' });
+
+  const out = newVersion(item, lib, req.body ?? {}, req.user);
+  if (out.error) return res.status(out.status).json({ error: out.error, field: out.field });
+  audit(req.user.id, 'content_versioned', 'content_item', out.item.id, { supersedes: item.id, version: out.item.version });
+  return res.status(201).json(out);
 });
 
 export default router;

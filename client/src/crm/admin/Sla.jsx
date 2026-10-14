@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api, ROLE_LABEL, dateTime } from '../../api.js';
-import { useApi, Loading, ErrorBanner } from '../../components/ui.jsx';
+import { useApi, Loading, ErrorBanner, Modal } from '../../components/ui.jsx';
 
 /*
  * Lifted out of Admin.jsx, which held eleven Setup screens in one file and so
@@ -12,8 +12,16 @@ import { useApi, Loading, ErrorBanner } from '../../components/ui.jsx';
 
 export function Sla() {
   const [sla, { loading }] = useApi('/admin/sla');
-  const [cats] = useApi('/admin/categories');
+  const [cats, { reload: reloadCats }] = useApi('/admin/categories');
+  const [changing, setChanging] = useState(null);
+  const [problem, setProblem] = useState(null);
   if (loading || !sla) return <Loading />;
+
+  const restore = async (c) => {
+    setProblem(null);
+    try { await api.post(`/admin/categories/${c.id}/restore`); reloadCats(); }
+    catch (err) { setProblem(err.message); }
+  };
 
   return (
     <div className="stack" style={{ gap: 16 }}>
@@ -40,12 +48,28 @@ export function Sla() {
 
         <section className="card">
           <div className="card-head"><h2>Ticket categories</h2><span className="tiny muted">Drive auto-assignment</span></div>
+          <ErrorBanner error={problem} onDismiss={() => setProblem(null)} />
           <table>
             <tbody>
               {(cats || []).map((c) => (
-                <tr key={c.id}>
-                  <td>{c.name}</td>
+                <tr key={c.id} style={c.active ? undefined : { opacity: 0.65 }}>
+                  <td>
+                    {c.name}
+                    {!c.active && (
+                      <div className="tiny muted">
+                        Retired{c.retired_at ? ` ${dateTime(c.retired_at)}` : ''}{c.retire_reason ? ` — ${c.retire_reason}` : ''}. Cases that have it keep it.
+                      </div>
+                    )}
+                  </td>
                   <td className="num"><span className="badge badge-blue">{ROLE_LABEL[c.auto_assign_role] || c.auto_assign_role || 'unassigned'}</span></td>
+                  <td className="num">
+                    <span className="row" style={{ gap: 4, justifyContent: 'flex-end' }}>
+                      <button className="btn-ghost btn-sm" onClick={() => setChanging({ category: c, what: 'rename' })}>Rename</button>
+                      {c.active
+                        ? <button className="btn-ghost btn-sm" onClick={() => setChanging({ category: c, what: 'retiring' })}>Retire</button>
+                        : <button className="btn-ghost btn-sm" onClick={() => restore(c)}>Restore</button>}
+                    </span>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -54,7 +78,67 @@ export function Sla() {
       </div>
 
       <ComplianceFlags categories={(cats || []).filter((c) => c.active)} />
+
+      {changing && (
+        <CategoryLifecycle category={changing.category} what={changing.what}
+          onClose={() => setChanging(null)} onDone={() => { setChanging(null); reloadCats(); }} />
+      )}
     </div>
+  );
+}
+
+/**
+ * Rename or retire a case category (QA-37).
+ *
+ * Never deleted -- cases point at it. Retired, it leaves every picker and goes
+ * on no new case, and it can be restored. A category a compliance flag opens
+ * cases in is refused until the flag is routed elsewhere, and the refusal says
+ * which flag.
+ */
+function CategoryLifecycle({ category, what, onClose, onDone }) {
+  const [name, setName] = useState(category.name);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      if (what === 'rename') await api.patch(`/admin/categories/${category.id}`, { name });
+      else await api.post(`/admin/categories/${category.id}/retire`, { reason });
+      onDone();
+    } catch (err) { setError(err.message); setBusy(false); }
+  }
+
+  const ready = what === 'rename' ? Boolean(name.trim()) && name.trim() !== category.name : reason.trim().length >= 5;
+
+  return (
+    <Modal title={what === 'rename' ? `Rename "${category.name}"` : `Retire "${category.name}"`} onClose={onClose}>
+      <form onSubmit={submit} className="stack" style={{ gap: 12 }}>
+        <ErrorBanner error={error} />
+        {what === 'rename' ? (
+          <div className="field">
+            <label htmlFor="category-name">Name</label>
+            <input id="category-name" value={name} maxLength={80} onChange={(e) => setName(e.target.value)} autoFocus />
+          </div>
+        ) : (
+          <>
+            <p className="small">It leaves every picker and goes on no new case. Cases that already have it keep it. It can be restored.</p>
+            <div className="field">
+              <label htmlFor="category-reason">Why</label>
+              <input id="category-reason" value={reason} onChange={(e) => setReason(e.target.value)}
+                placeholder="Merged into Account changes" autoFocus />
+            </div>
+          </>
+        )}
+        <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+          <button type="button" className="btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="btn-primary" disabled={busy || !ready}>{busy ? 'Saving…' : what === 'rename' ? 'Save' : 'Retire'}</button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

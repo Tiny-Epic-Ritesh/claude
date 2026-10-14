@@ -38,6 +38,10 @@ export const STATUSES = {
   pending: { label: 'Waiting for approval', sendable: false },
   approved: { label: 'Approved', sendable: true },
   rejected: { label: 'Sent back', sendable: false },
+  /* QA-37: "withdraw, then archive". Withdrawn is out of use with a reason,
+     and can go back for approval; archived is put away. Never deleted -- an
+     item sent to a client records what they were told. */
+  withdrawn: { label: 'Withdrawn', sendable: false },
   archived: { label: 'Superseded', sendable: false },
 };
 
@@ -90,7 +94,8 @@ export function mayTransition(item, library, user, to) {
   const owns = library ? mayManage(library, user) : can(user.role, 'admin.content');
 
   if (to === 'pending') {
-    if (item.status !== 'draft' && item.status !== 'rejected') {
+    // A withdrawn item comes back only through approval again.
+    if (!['draft', 'rejected', 'withdrawn'].includes(item.status)) {
       return 'Only a draft can be sent for approval';
     }
     return owns ? null : 'Only the library owner can send this for approval';
@@ -114,8 +119,23 @@ export function mayTransition(item, library, user, to) {
     return null;
   }
 
-  if (to === 'draft') return owns ? null : 'Only the library owner can do that';
-  if (to === 'archived') return owns ? null : 'Only the library owner can retire this';
+  /* Back to draft only from the approval queue. From approved it would be a
+     way out of use that skips the reason withdrawing asks for. */
+  if (to === 'draft') {
+    if (!['pending', 'rejected'].includes(item.status)) return 'Withdraw it instead';
+    return owns ? null : 'Only the library owner can do that';
+  }
+  if (to === 'withdrawn') {
+    if (item.status !== 'approved') return 'Only an approved item is withdrawn';
+    return owns ? null : 'Only the library owner can withdraw this';
+  }
+  /* QA-37: withdraw, then archive. Something on offer is withdrawn first, so
+     there is always a recorded reason it stopped going to clients. */
+  if (to === 'archived') {
+    if (item.status === 'approved' || item.status === 'pending') return 'Withdraw it first, then archive it';
+    if (item.status === 'archived') return 'It is already archived';
+    return owns ? null : 'Only the library owner can archive this';
+  }
   return 'That change is not allowed';
 }
 
@@ -164,8 +184,58 @@ export function setStatus(item, to, user, reason = null) {
        submitted_at   = CASE WHEN ? = 'pending'  THEN datetime('now') ELSE submitted_at END,
        approved_by    = CASE WHEN ? = 'approved' THEN ? ELSE approved_by END,
        approved_at    = CASE WHEN ? = 'approved' THEN datetime('now') ELSE approved_at END,
-       rejected_reason = CASE WHEN ? = 'rejected' THEN ? ELSE NULL END
+       rejected_reason = CASE WHEN ? = 'rejected' THEN ? ELSE NULL END,
+       withdrawn_at    = CASE WHEN ? = 'withdrawn' THEN datetime('now') ELSE withdrawn_at END,
+       withdrawn_by    = CASE WHEN ? = 'withdrawn' THEN ? ELSE withdrawn_by END,
+       withdraw_reason = CASE WHEN ? = 'withdrawn' THEN ? ELSE withdraw_reason END
      WHERE id = ?`,
-    [to, to, to, user.id, to, to, reason, item.id],
+    [to, to, to, user.id, to, to, reason, to, to, user.id, to, reason, item.id],
   );
+  /* QA-37: a new version replaces the one before it at the moment it is
+     approved, not before -- until then the old one is still what goes out. */
+  if (to === 'approved' && item.supersedes_id) supersede(item.supersedes_id);
+}
+
+/** Take the version a newer one replaces out of use. */
+function supersede(oldId) {
+  run("UPDATE content_items SET status = 'archived' WHERE id = ? AND status <> 'archived'", [oldId]);
+}
+
+/**
+ * A new version of an item (QA-37: "a new version, approved before it is
+ * offered").
+ *
+ * Its own row, linked to the one it replaces. In a library that requires
+ * approval it starts as a draft and the current version stays on offer until
+ * somebody other than its author approves the new one; in one that does not,
+ * it replaces the old one at once. The old row is never edited, so what a
+ * client was sent stays what the record says they were sent.
+ */
+export function newVersion(item, library, { url, expiry_date: expiry, name } = {}, user) {
+  if (!url || !String(url).trim()) return { error: 'A new version needs the new file or link', field: 'url', status: 400 };
+  if (!['approved', 'withdrawn'].includes(item.status)) {
+    return { error: 'Only an approved or withdrawn item gets a new version; change a draft directly', status: 409 };
+  }
+  const open = one(
+    "SELECT id FROM content_items WHERE supersedes_id = ? AND status IN ('draft', 'pending', 'rejected')",
+    [item.id],
+  );
+  if (open) return { error: 'A new version of this is already waiting. Finish that one first.', status: 409 };
+
+  const approval = Boolean(library?.requires_approval);
+  const id = Number(run(
+    `INSERT INTO content_items (name, type, url, product_type_id, kyc_step_code, version, expiry_date, owner_role,
+                                library_id, status, created_by, sales_org, supersedes_id)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [
+      String(name ?? item.name).trim(), item.type, String(url).trim(), item.product_type_id, item.kyc_step_code,
+      item.version + 1, expiryFor(library, expiry || null), item.owner_role, item.library_id,
+      approval ? 'draft' : 'approved', user.id, item.sales_org, item.id,
+    ],
+  ).lastInsertRowid);
+  if (!approval) {
+    run("UPDATE content_items SET approved_by = ?, approved_at = datetime('now') WHERE id = ?", [user.id, id]);
+    supersede(item.id);
+  }
+  return { item: one('SELECT * FROM content_items WHERE id = ?', [id]), replaces_now: !approval };
 }

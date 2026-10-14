@@ -10,6 +10,11 @@ import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Icon } from '../..
 
 /* ----------------------------------------------------------- calendars */
 
+/* The calendar's own day: India, whatever the browser's clock says. */
+const IST_MS = 330 * 60 * 1000;
+const todayInIndia = () => new Date(Date.now() + IST_MS).toISOString().slice(0, 10);
+const tomorrowInIndia = () => new Date(Date.now() + IST_MS + 86400000).toISOString().slice(0, 10);
+
 /**
  * Working calendars.
  *
@@ -78,10 +83,14 @@ export function Calendars() {
                         {d.source === 'seed' && ' · shipped'}
                       </div>
                     </div>
-                    <button className="btn btn-ghost btn-icon" aria-label={`Remove ${d.name}`}
-                      onClick={() => drop(d.id)}>
-                      <Icon name="close" size={16} />
-                    </button>
+                    {/* QA-37: future days only. A day that has begun is what the
+                        SLA clocks that ran over it were counted against. */}
+                    {d.on_date > todayInIndia() ? (
+                      <button className="btn btn-ghost btn-icon" aria-label={`Remove ${d.name}`}
+                        onClick={() => drop(d.id)}>
+                        <Icon name="close" size={16} />
+                      </button>
+                    ) : <span className="tiny muted">kept</span>}
                   </li>
                 ))}
               </ul>
@@ -126,7 +135,8 @@ function AddCalendarDay({ kind, onClose, onSaved }) {
 
         <label>
           <span>Date</span>
-          <input type="date" value={form.on_date} onChange={set('on_date')} required autoFocus />
+          <input type="date" value={form.on_date} onChange={set('on_date')} required autoFocus min={tomorrowInIndia()} />
+          <span className="tiny muted">Future days only: a day that has begun stays as it was counted.</span>
         </label>
         <label>
           <span>What is it?</span>

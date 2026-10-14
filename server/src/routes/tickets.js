@@ -286,6 +286,8 @@ router.post('/', requirePermission('ticket.create'), async (req, res) => {
      after the portal and the AI disposition were found doing neither (QA-03,
      QA-28). */
   if (category_id && !category) return res.status(400).json({ error: 'That category does not exist' });
+  // QA-37: a retired category stays on the cases that have it, and goes on no new one.
+  if (category && !category.active) return res.status(400).json({ error: `"${category.name}" is retired. Choose another category.`, field: 'category_id' });
   const { id, assignee } = openCase({
     subject, description: description || null, priority, categoryId: category?.id ?? null,
     leadId: lead_id || null, cardId: card_id || null, partnerId: partner_id || null,
@@ -397,6 +399,13 @@ router.patch('/:id', async (req, res) => {
     if (reopening && reason.length < 5) {
       return res.status(400).json({ error: 'Say why it is being reopened', field: 'reason' });
     }
+  }
+  /* QA-37: a retired category is kept by the cases that already carry it, and
+     is not given to another one. */
+  if (category_id != null && Number(category_id) !== ticket.category_id) {
+    const target = one('SELECT name, active FROM ticket_categories WHERE id = ?', [category_id]);
+    if (!target) return res.status(400).json({ error: 'That category does not exist', field: 'category_id' });
+    if (!target.active) return res.status(400).json({ error: `"${target.name}" is retired. Choose another category.`, field: 'category_id' });
   }
 
   /* Configured validation rules, enforced here rather than in the form —

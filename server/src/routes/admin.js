@@ -40,6 +40,7 @@ import {
 } from '../engine/promotion.js';
 import { sendCsv } from '../engine/csv.js';
 import { listRoutes, setRoute, CASE_PRIORITIES } from '../engine/compliance.js';
+import { newVersion as newLibraryVersion, mayRead as mayReadLibrary } from '../engine/library.js';
 import {
   accessLogSummary, crossBookReads, activityOf, readersOf, RETENTION_DAYS,
 } from '../engine/accesslog.js';
@@ -363,6 +364,50 @@ router.get('/categories', (_req, res) => res.json(all('SELECT * FROM ticket_cate
 router.post('/categories', requirePermission('admin.sla'), (req, res) => {
   const result = run('INSERT INTO ticket_categories (name, auto_assign_role) VALUES (?,?)', [req.body.name, req.body.auto_assign_role || null]);
   res.status(201).json({ id: Number(result.lastInsertRowid) });
+});
+
+/* QA-37: a case category is renamed or retired, never deleted -- cases point
+   at it. Retired, it leaves every picker and goes on no new case; the cases
+   that have it keep it, and it can be restored. */
+const loadCategory = (id) => one('SELECT * FROM ticket_categories WHERE id = ?', [id]);
+
+router.patch('/categories/:id', requirePermission('admin.sla'), (req, res) => {
+  const cat = loadCategory(req.params.id);
+  if (!cat) return res.status(404).json({ error: 'No such category' });
+  const name = req.body?.name !== undefined ? String(req.body.name).trim() : cat.name;
+  if (!name || name.length > 80) return res.status(400).json({ error: 'A category needs a name of up to 80 characters', field: 'name' });
+  if (name !== cat.name && one('SELECT id FROM ticket_categories WHERE name = ? AND id <> ?', [name, cat.id])) {
+    return res.status(409).json({ error: `There is already a category called "${name}"`, field: 'name' });
+  }
+  const role = req.body?.auto_assign_role !== undefined ? (req.body.auto_assign_role || null) : cat.auto_assign_role;
+  run('UPDATE ticket_categories SET name = ?, auto_assign_role = ? WHERE id = ?', [name, role, cat.id]);
+  audit(req.user.id, 'category_updated', 'ticket_category', cat.id, { before: { name: cat.name, auto_assign_role: cat.auto_assign_role }, after: { name, auto_assign_role: role } });
+  return res.json(loadCategory(cat.id));
+});
+
+router.post('/categories/:id/retire', requirePermission('admin.sla'), (req, res) => {
+  const cat = loadCategory(req.params.id);
+  if (!cat) return res.status(404).json({ error: 'No such category' });
+  if (!cat.active) return res.status(409).json({ error: `"${cat.name}" is already retired` });
+  const reason = String(req.body?.reason ?? '').trim();
+  if (reason.length < 5) return res.status(400).json({ error: 'Say why it is being retired, in a few words', field: 'reason' });
+  /* A compliance flag routed here would open its cases with no category. */
+  const flags = all('SELECT flag FROM compliance_flag_routes WHERE category_id = ?', [cat.id]).map((r) => r.flag);
+  if (flags.length) {
+    return res.status(409).json({ error: `The compliance flag${flags.length === 1 ? '' : 's'} ${flags.join(', ')} open${flags.length === 1 ? 's' : ''} cases here. Route ${flags.length === 1 ? 'it' : 'them'} elsewhere first.`, flags });
+  }
+  run("UPDATE ticket_categories SET active = 0, retired_at = datetime('now'), retired_by = ?, retire_reason = ? WHERE id = ?", [req.user.id, reason, cat.id]);
+  audit(req.user.id, 'category_retired', 'ticket_category', cat.id, { name: cat.name, reason });
+  return res.json(loadCategory(cat.id));
+});
+
+router.post('/categories/:id/restore', requirePermission('admin.sla'), (req, res) => {
+  const cat = loadCategory(req.params.id);
+  if (!cat) return res.status(404).json({ error: 'No such category' });
+  if (cat.active) return res.status(409).json({ error: `"${cat.name}" is not retired` });
+  run('UPDATE ticket_categories SET active = 1, retired_at = NULL, retired_by = NULL, retire_reason = NULL WHERE id = ?', [cat.id]);
+  audit(req.user.id, 'category_restored', 'ticket_category', cat.id, { name: cat.name });
+  return res.json(loadCategory(cat.id));
 });
 
 /* QA-28. Which case each AI compliance flag opens, and how urgent it is --
@@ -767,17 +812,25 @@ router.post('/content', requirePermission('admin.content'), (req, res) => {
   res.status(201).json({ id: Number(result.lastInsertRowid) });
 });
 
-/** New version supersedes the old one, which is archived and still rollback-able. */
+/**
+ * A new version of an item.
+ *
+ * QA-37: approved before it is offered. This archived the current version on
+ * the spot and inserted the new one with no library and no book, so between
+ * the two nothing was on offer, and the new row belonged to nobody. It now
+ * goes through the same rule as the library screen: the current version stays
+ * on offer until the new one is approved.
+ */
 router.post('/content/:id/version', requirePermission('admin.content'), (req, res) => {
   const item = one('SELECT * FROM content_items WHERE id = ?', [req.params.id]);
   if (!item) return res.status(404).json({ error: 'Content item not found' });
+  const lib = item.library_id ? one('SELECT * FROM content_library WHERE id = ?', [item.library_id]) : null;
+  if (lib && !mayReadLibrary(lib, req.user)) return res.status(404).json({ error: 'Content item not found' });
 
-  run("UPDATE content_items SET status = 'archived' WHERE id = ?", [req.params.id]);
-  const result = run(
-    'INSERT INTO content_items (name, type, url, product_type_id, kyc_step_code, version, expiry_date, owner_role) VALUES (?,?,?,?,?,?,?,?)',
-    [item.name, item.type, req.body.url || item.url, item.product_type_id, item.kyc_step_code, item.version + 1, req.body.expiry_date || item.expiry_date, item.owner_role],
-  );
-  res.status(201).json({ id: Number(result.lastInsertRowid), version: item.version + 1 });
+  const out = newLibraryVersion(item, lib, { url: req.body?.url || item.url, expiry_date: req.body?.expiry_date }, req.user);
+  if (out.error) return res.status(out.status).json({ error: out.error, field: out.field });
+  audit(req.user.id, 'content_versioned', 'content_item', out.item.id, { supersedes: item.id, version: out.item.version });
+  return res.status(201).json({ id: out.item.id, version: out.item.version, status: out.item.status });
 });
 
 /* --------------------------------------------------- KYC journey composer */
@@ -2059,6 +2112,9 @@ router.patch('/calendars/:kind', requirePermission('admin.sla'), (req, res) => {
 });
 
 router.post('/calendars/:kind/days', requirePermission('admin.sla'), (req, res) => {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.on_date)) && !isFutureDate(req.body.on_date)) {
+    return res.status(409).json({ error: `${req.body.on_date} has begun or passed. Only future days can be added.`, field: 'on_date' });
+  }
   const out = addDay(req.params.kind, req.body ?? {});
   if (!out.ok) return res.status(400).json(out);
   audit(req.user.id, 'calendar_day_added', 'calendar', null, { kind: req.params.kind, ...req.body });
@@ -2066,10 +2122,21 @@ router.post('/calendars/:kind/days', requirePermission('admin.sla'), (req, res) 
 });
 
 router.delete('/calendars/days/:id', requirePermission('admin.sla'), (req, res) => {
-  removeDay(Number(req.params.id));
-  audit(req.user.id, 'calendar_day_removed', 'calendar', Number(req.params.id), {});
+  /* QA-37: future dates only. A past or today's holiday is what every SLA
+     clock that ran over it was counted against; taking it out now would move
+     those due dates after the fact. */
+  const day = one('SELECT * FROM calendar_days WHERE id = ?', [Number(req.params.id)]);
+  if (!day) return res.status(404).json({ error: 'No such day' });
+  if (!isFutureDate(day.on_date)) {
+    return res.status(409).json({ error: `${day.on_date} has begun or passed, so it stays on the calendar. Only future days can be removed.` });
+  }
+  removeDay(day.id);
+  audit(req.user.id, 'calendar_day_removed', 'calendar', day.id, { on_date: day.on_date, name: day.name });
   return res.json({ deleted: true });
 });
+
+/** After today in India: the only days a holiday may be added or removed (QA-37). */
+const isFutureDate = (date) => Boolean(one("SELECT ? > date('now', '+330 minutes') v", [String(date)]).v);
 
 /** Ask the calendar a question — used by the UI to show the effect of an edit. */
 router.get('/calendars/:kind/check', requirePermission('admin.sla'), (req, res) => {

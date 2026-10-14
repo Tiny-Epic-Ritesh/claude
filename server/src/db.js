@@ -1773,6 +1773,18 @@ const COLUMNS = [
   ['templates', 'retired_at', 'TEXT'],
   ['templates', 'retired_by', 'INTEGER'],
   ['templates', 'retire_reason', 'TEXT'],
+  /* QA-37, library content. A new version is its own row, linked to the one it
+     replaces, which stays on offer until the new one is approved. Withdrawing
+     takes an item out of use, with a reason, before it is archived. */
+  ['content_items', 'supersedes_id', 'INTEGER'],
+  ['content_items', 'withdrawn_at', 'TEXT'],
+  ['content_items', 'withdrawn_by', 'INTEGER'],
+  ['content_items', 'withdraw_reason', 'TEXT'],
+  /* QA-37, case categories: retired rather than deleted, because cases point
+     at them. `active` already takes a category out of the pickers. */
+  ['ticket_categories', 'retired_at', 'TEXT'],
+  ['ticket_categories', 'retired_by', 'INTEGER'],
+  ['ticket_categories', 'retire_reason', 'TEXT'],
 ];
 
 /**

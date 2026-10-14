@@ -24,7 +24,7 @@ import { useApi, Icon, Loading, ErrorBanner, Empty, Modal, Spinner } from '../co
 
 const STATUS_TONE = {
   approved: 'badge-green', pending: 'badge-amber', rejected: 'badge-amber',
-  draft: '', archived: '',
+  draft: '', archived: '', withdrawn: 'badge-red',
 };
 
 export default function Libraries() {
@@ -181,9 +181,11 @@ function LibraryView({ id, onBack, onError, onNotice }) {
   const [data, { loading, error, reload }] = useApi(`/libraries/${id}`);
   const [adding, setAdding] = useState(false);
   const [rejecting, setRejecting] = useState(null);
+  const [changing, setChanging] = useState(null);
 
   if (error) return <ErrorBanner error={error} />;
   if (loading || !data) return <Loading />;
+  const versionOf = (id) => data.items.find((x) => x.id === id)?.version;
 
   const move = async (item, status, reason = null) => {
     try {
@@ -225,6 +227,12 @@ function LibraryView({ id, onBack, onError, onNotice }) {
                     <div style={{ fontWeight: 545 }}>{i.name}</div>
                     <div className="tiny muted">{i.type} · v{i.version} · sent {i.send_count}×</div>
                     {i.rejected_reason && <div className="tiny warn-text">Sent back: {i.rejected_reason}</div>}
+                    {i.status === 'withdrawn' && (
+                      <div className="tiny warn-text">Withdrawn {i.withdrawn_at ? shortDate(i.withdrawn_at) : ''}{i.withdraw_reason ? `: ${i.withdraw_reason}` : ''}</div>
+                    )}
+                    {i.supersedes_id && !['approved', 'archived'].includes(i.status) && (
+                      <div className="tiny muted">Replaces v{versionOf(i.supersedes_id) ?? i.version - 1} once approved; that one is still what goes out.</div>
+                    )}
                   </td>
                   <td>
                     <span className={`badge ${STATUS_TONE[i.status] ?? ''}`}>{i.status}</span>
@@ -239,8 +247,19 @@ function LibraryView({ id, onBack, onError, onNotice }) {
                   </td>
                   <td className="num">
                     <span className="row" style={{ gap: 6, justifyContent: 'flex-end' }}>
-                      {data.may_manage && (i.status === 'draft' || i.status === 'rejected') && (
+                      {data.may_manage && ['draft', 'rejected', 'withdrawn'].includes(i.status) && (
                         <button className="btn-sm" onClick={() => move(i, 'pending')}>Send for approval</button>
+                      )}
+                      {/* QA-37: a new version, approved before it is offered;
+                          withdraw, then archive; never delete. */}
+                      {data.may_manage && ['approved', 'withdrawn'].includes(i.status) && (
+                        <button className="btn-ghost btn-sm" onClick={() => setChanging({ item: i, what: 'versioning' })}>New version</button>
+                      )}
+                      {data.may_manage && i.status === 'approved' && (
+                        <button className="btn-ghost btn-sm" onClick={() => setChanging({ item: i, what: 'withdrawing' })}>Withdraw</button>
+                      )}
+                      {data.may_manage && ['withdrawn', 'draft', 'rejected'].includes(i.status) && (
+                        <button className="btn-ghost btn-sm" onClick={() => move(i, 'archived')}>Archive</button>
                       )}
                       {i.status === 'pending' && (
                         <>
@@ -273,7 +292,92 @@ function LibraryView({ id, onBack, onError, onNotice }) {
             onSent={(reason) => { setRejecting(null); move(rejecting, 'rejected', reason); }}
           />
         )}
+
+        {changing && (
+          <ItemLifecycle
+            item={changing.item}
+            what={changing.what}
+            library={l}
+            onClose={() => setChanging(null)}
+            onDone={(message) => { setChanging(null); onNotice(message); reload(); }}
+          />
+        )}
       </div>
+    </Modal>
+  );
+}
+
+/**
+ * A new version of an item, or withdrawing one (QA-37).
+ *
+ * The file of something that has been on offer is never replaced in place --
+ * the record would then say a client got a document they did not. A new
+ * version is its own row; where the library asks for approval it waits as a
+ * draft and the current one keeps going out until it is approved.
+ */
+function ItemLifecycle({ item, what, library, onClose, onDone }) {
+  const [url, setUrl] = useState('');
+  const [expiry, setExpiry] = useState('');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      if (what === 'withdrawing') {
+        await api.post(`/libraries/items/${item.id}/status`, { status: 'withdrawn', reason });
+        onDone(`${item.name} is withdrawn. Nothing sends it until it is approved again.`);
+      } else {
+        const out = await api.post(`/libraries/items/${item.id}/versions`, { url, expiry_date: expiry || null });
+        onDone(out.replaces_now
+          ? `${item.name} v${out.item.version} replaces v${item.version} now.`
+          : `${item.name} v${out.item.version} is a draft. Send it for approval; v${item.version} goes out until it is approved.`);
+      }
+    } catch (err) { setError(err.message); setBusy(false); }
+  }
+
+  const ready = what === 'withdrawing' ? reason.trim().length >= 5 : Boolean(url.trim());
+
+  return (
+    <Modal title={what === 'withdrawing' ? `Withdraw ${item.name}` : `New version of ${item.name}`} onClose={onClose}>
+      <form onSubmit={submit} className="stack" style={{ gap: 12 }}>
+        <ErrorBanner error={error} />
+        {what === 'withdrawing' ? (
+          <>
+            <p className="small">It stops going out at once. It is not deleted — what was sent stays on record — and it can be archived, or sent for approval again.</p>
+            <label>
+              <span>Why</span>
+              <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="The brokerage figures changed" autoFocus />
+            </label>
+          </>
+        ) : (
+          <>
+            <p className="small">
+              {library.requires_approval
+                ? `This library requires approval: v${item.version + 1} starts as a draft, and v${item.version} keeps going out until somebody else approves it.`
+                : `This library does not require approval, so v${item.version + 1} replaces v${item.version} as soon as it is added.`}
+            </p>
+            <label>
+              <span>Where the new version lives</span>
+              <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" autoFocus />
+            </label>
+            <label>
+              <span>Expires</span>
+              <input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} />
+            </label>
+          </>
+        )}
+        <div className="modal-actions">
+          <span style={{ flex: 1 }} />
+          <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="btn btn-primary" disabled={busy || !ready}>
+            {busy ? <Spinner /> : what === 'withdrawing' ? 'Withdraw' : 'Add version'}
+          </button>
+        </div>
+      </form>
     </Modal>
   );
 }
