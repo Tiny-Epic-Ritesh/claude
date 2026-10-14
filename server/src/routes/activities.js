@@ -18,7 +18,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit } from '../db.js';
-import { requireUser, requirePermission, reqScope } from '../auth.js';
+import { requireUser, requirePermission, reqScope, mayUseOrg } from '../auth.js';
 import { validate } from '../security.js';
 import { applyScore } from '../engine/rules.js';
 import { applyFieldSecurity, formFields, setCustomValues, customValues } from '../engine/metadata.js';
@@ -29,6 +29,7 @@ import {
   createFollowUp, followUpBoard, cancelReminders, scheduleReminders, withinBusinessHours,
 } from '../engine/followups.js';
 import * as geolocation from '../engine/geolocation.js';
+import { withCorrections, mayCorrect, addCorrection } from '../engine/corrections.js';
 
 const router = Router();
 router.use(requireUser);
@@ -99,7 +100,7 @@ router.get('/lead/:id', (req, res) => {
   // The interaction split: everyone who can see the lead sees that a call
   // happened and how it went; the notes body, the reason and the recording
   // need ownership or supervision.
-  const visible = applyFieldSecurity('interaction', rows, req.user, { caps: req.caps });
+  const visible = withCorrections('activity', applyFieldSecurity('interaction', rows, req.user, { caps: req.caps }));
 
   /* The configured fields, so what an RM typed into the call form is on the
      timeline rather than only in the database. P3-13's third acceptance point
@@ -107,6 +108,35 @@ router.get('/lead/:id', (req, res) => {
      that is captured and never shown again fails it in the way nobody notices
      until somebody goes looking for an answer they typed. */
   return res.json(visible.map((a) => ({ ...a, custom: customValues('interaction', a.id) })));
+});
+
+/**
+ * Correct an activity: QA-37.
+ *
+ * What a call or a meeting recorded is never edited after saving. Its author
+ * adds a correction linked to it; the original stays, shown as corrected, and
+ * no count anywhere sees a second activity.
+ */
+router.post('/:id/correct', (req, res) => {
+  const activity = one('SELECT * FROM activities WHERE id = ?', [req.params.id]);
+  if (!activity) return res.status(404).json({ error: 'Activity not found' });
+  /* The book of whatever it is on, answered as "not found" outside it. */
+  if (activity.lead_id) {
+    const scope = reqScope(req, 'l');
+    const inScope = one(
+      `SELECT l.id FROM leads l WHERE l.id = ? AND l.deleted_at IS NULL AND ${scope.sql}`,
+      [activity.lead_id, ...scope.params],
+    );
+    if (!inScope) return res.status(404).json({ error: 'Activity not found' });
+  } else if (activity.partner_id) {
+    const owner = one('SELECT sales_org FROM partners WHERE id = ?', [activity.partner_id]);
+    if (!owner || !mayUseOrg(req.user, owner.sales_org)) return res.status(404).json({ error: 'Activity not found' });
+  }
+  const refused = mayCorrect('activity', activity, req.user);
+  if (refused) return res.status(refused.status).json({ error: refused.error });
+  const out = addCorrection('activity', activity, req.body ?? {}, req.user);
+  if (out.error) return res.status(out.status).json({ error: out.error, field: out.field });
+  return res.status(201).json(out);
 });
 
 /** The signed-in RM's follow-up board — overdue, today, upcoming. */

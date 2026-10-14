@@ -93,3 +93,24 @@ data, with a reason, and never deletes them.
   rule has used, needs its name typed, and answers "Deleted <name>"; one
   that has been used is refused with "retire it instead".
   `test/lifecycle1.test.mjs`.
+- **Tasks (batch 2, 14 Oct):** the assignee, the creator or a supervisor
+  (report.team) changes the title, due date or assignee. *Cancel* asks why,
+  stops the task's reminders and is audited; a cancelled task stays as it is,
+  and there is no delete. The Tasks screen and a lead's Tasks tab offer
+  *Change* and *Cancel*.
+- **Cases (batch 2, 14 Oct):** priority, assignee and category change while
+  the case is open. Resolved or closed, they are refused with "reopen it
+  first", and so is escalating; a closed case is not set back to Resolved.
+  *Reopen* asks why, clears the resolved and closed times, and puts the
+  reason on the case as an internal note and in the audit trail.
+- **Corrections (batch 2, 14 Oct):** notes, activities and case replies still
+  have no edit. Their author adds a correction -- what it should say, and what
+  was wrong -- and the original stays, marked *Corrected*, with the
+  correction under it, on a lead, a partner and a case. Corrections are kept
+  in their own table, not as new notes or activities, so a corrected call is
+  never a second call to a report, KRA, the cockpit or automation. Where a
+  reader may not see an activity's notes, the correction is hidden from them
+  too. A partner sees the correction to a reply they could see, without the
+  reason or the agent's name. Only an agent's own reply is corrected, never a
+  client's, a partner's or a system entry, and erasing a lead erases its
+  corrections. `test/lifecycle2.test.mjs`.

@@ -7,6 +7,7 @@
  */
 
 import { dormantSql } from '../engine/clients.js';
+import { withCorrections } from '../engine/corrections.js';
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
 import { requirePartner } from '../auth.js';
@@ -201,10 +202,17 @@ router.get('/tickets/:id', (req, res) => {
   const ticket = one('SELECT * FROM tickets WHERE id = ? AND partner_id = ?', [req.params.id, req.partner.id]);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
 
-  res.json({
-    ...ticket,
-    replies: all("SELECT body, author_type, created_at FROM ticket_replies WHERE ticket_id = ? AND internal = 0 ORDER BY created_at", [req.params.id]),
-  });
+  /* QA-37. A reply the partner saw and its author has since corrected shows
+     the correction under it: what it should have said, and when. The
+     reason and the author's name are the firm's, not the partner's. */
+  const replies = withCorrections('reply', all(
+    "SELECT id, body, author_type, created_at FROM ticket_replies WHERE ticket_id = ? AND internal = 0 ORDER BY created_at",
+    [req.params.id],
+  )).map(({ id: _id, corrections, ...r }) => ({
+    ...r,
+    corrections: corrections.map((c) => ({ body: c.body, created_at: c.created_at })),
+  }));
+  res.json({ ...ticket, replies });
 });
 
 router.post('/tickets', (req, res) => {

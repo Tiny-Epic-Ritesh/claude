@@ -5,6 +5,7 @@ import {
   useApi, Icon, Loading, ErrorBanner, Empty, Spinner, PriorityBadge, Tabs, Modal,
 } from '../components/ui.jsx';
 import BackLink from '../components/BackLink.jsx';
+import { CorrectionList, CorrectButton, correctedStyle } from '../components/Corrections.jsx';
 
 const STATUSES = ['Open', 'Pending', 'Waiting on Client', 'Resolved', 'Closed'];
 
@@ -346,11 +347,16 @@ function TicketDetail({ id, session }) {
   const [internal, setInternal] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState(null);
+  const [reopening, setReopening] = useState(false);
 
   if (loading) return <Loading />;
   if (error) return <ErrorBanner error={error} />;
 
   const can = (p) => session.permissions.includes(p);
+  /* QA-37: details change while a case is open; resolved or closed, the way
+     back is Reopen, which asks why. */
+  const finished = ticket.status === 'Resolved' || ticket.status === 'Closed';
+  const statusChoices = !finished ? STATUSES : ticket.status === 'Resolved' ? ['Resolved', 'Closed'] : ['Closed'];
 
   async function act(fn) {
     setBusy(true);
@@ -377,9 +383,12 @@ function TicketDetail({ id, session }) {
           </div>
         </div>
         <div className="row wrap">
-          {can('ticket.escalate') && <button onClick={() => act(() => api.post(`/tickets/${id}/escalate`, { reason: 'Escalated from ticket view' }))} disabled={busy}>Escalate</button>}
-          {can('ticket.reply') && ticket.status !== 'Resolved' && (
+          {can('ticket.escalate') && !finished && <button onClick={() => act(() => api.post(`/tickets/${id}/escalate`, { reason: 'Escalated from ticket view' }))} disabled={busy}>Escalate</button>}
+          {can('ticket.reply') && !finished && (
             <button className="btn-primary" onClick={() => act(() => api.patch(`/tickets/${id}`, { status: 'Resolved' }))} disabled={busy}>Mark resolved</button>
+          )}
+          {can('ticket.reply') && finished && (
+            <button className="btn-primary" onClick={() => setReopening(true)} disabled={busy}>Reopen</button>
           )}
         </div>
       </div>
@@ -412,11 +421,18 @@ function TicketDetail({ id, session }) {
             </div>
             {ticket.replies.map((r) => (
               <div key={r.id} style={{ borderLeft: `2px solid ${r.internal ? 'var(--accent)' : r.author_type === 'client' ? 'var(--brand)' : 'var(--border)'}`, paddingLeft: 12 }}>
-                <div className="tiny muted">
-                  {r.user_name || r.author_type} · {dateTime(r.created_at)}
-                  {r.internal ? <span className="badge badge-accent" style={{ marginLeft: 6 }}>Internal</span> : null}
+                <div className="row-between">
+                  <div className="tiny muted">
+                    {r.user_name || r.author_type} · {dateTime(r.created_at)}
+                    {r.internal ? <span className="badge badge-accent" style={{ marginLeft: 6 }}>Internal</span> : null}
+                    {r.corrections?.length > 0 && <span className="badge badge-amber" style={{ marginLeft: 6 }}>Corrected</span>}
+                  </div>
+                  {r.author_type === 'agent' && can('ticket.reply') && (
+                    <CorrectButton entry={r} session={session} path={`/tickets/${id}/replies/${r.id}/correct`} onDone={reload} />
+                  )}
                 </div>
-                <div className="small" style={{ whiteSpace: 'pre-wrap' }}>{r.body}</div>
+                <div className="small" style={{ whiteSpace: 'pre-wrap', ...correctedStyle(r) }}>{r.body}</div>
+                <CorrectionList corrections={r.corrections} />
               </div>
             ))}
 
@@ -440,21 +456,25 @@ function TicketDetail({ id, session }) {
           <div className="card-body">
             <div className="field">
               <label>Status</label>
-              <select value={ticket.status} onChange={(e) => act(() => api.patch(`/tickets/${id}`, { status: e.target.value }))} disabled={busy}>
-                {STATUSES.map((s) => <option key={s}>{s}</option>)}
+              <select value={ticket.status} onChange={(e) => act(() => api.patch(`/tickets/${id}`, { status: e.target.value }))} disabled={busy || statusChoices.length < 2}>
+                {statusChoices.map((s) => <option key={s}>{s}</option>)}
               </select>
-              <div className="hint">Moving to “Waiting on Client” pauses the SLA clock.</div>
+              <div className="hint">
+                {finished
+                  ? `This case is ${ticket.status.toLowerCase()}. Its details stay as they are unless it is reopened.`
+                  : 'Moving to “Waiting on Client” pauses the SLA clock.'}
+              </div>
             </div>
             <div className="field">
               <label>Priority</label>
-              <select value={ticket.priority} onChange={(e) => act(() => api.patch(`/tickets/${id}`, { priority: e.target.value }))} disabled={busy}>
+              <select value={ticket.priority} onChange={(e) => act(() => api.patch(`/tickets/${id}`, { priority: e.target.value }))} disabled={busy || finished}>
                 {['Critical', 'High', 'Medium', 'Low'].map((p) => <option key={p}>{p}</option>)}
               </select>
             </div>
             {can('ticket.reassign') && (
               <div className="field">
                 <label>Assignee</label>
-                <select value={ticket.assignee_id || ''} onChange={(e) => act(() => api.patch(`/tickets/${id}`, { assignee_id: Number(e.target.value) }))} disabled={busy}>
+                <select value={ticket.assignee_id || ''} onChange={(e) => act(() => api.patch(`/tickets/${id}`, { assignee_id: Number(e.target.value) }))} disabled={busy || finished}>
                   <option value="">Unassigned</option>
                   {(meta?.users || []).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
                 </select>
@@ -467,6 +487,47 @@ function TicketDetail({ id, session }) {
           </div>
         </section>
       </div>
+      {reopening && (
+        <Reopen ticket={ticket} onClose={() => setReopening(false)} onDone={() => { setReopening(false); reload(); }} />
+      )}
     </>
+  );
+}
+
+/**
+ * Reopen a resolved or closed case (QA-37).
+ *
+ * The client was told it was done, so reopening says why; the reason is put
+ * on the case as an internal note and in the audit trail.
+ */
+function Reopen({ ticket, onClose, onDone }) {
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try { await api.patch(`/tickets/${ticket.id}`, { status: 'Open', reason }); onDone(); }
+    catch (err) { setError(err.message); setBusy(false); }
+  }
+
+  return (
+    <Modal title={`Reopen ${ticket.ref}`} onClose={onClose}>
+      <form onSubmit={submit} className="stack" style={{ gap: 12 }}>
+        <ErrorBanner error={error} />
+        <p className="small">It goes back to Open, and its resolved and closed times are cleared.</p>
+        <div className="field">
+          <label htmlFor="reopen-reason">Why</label>
+          <input id="reopen-reason" value={reason} onChange={(e) => setReason(e.target.value)}
+            placeholder="The client says the refund has not arrived" autoFocus />
+        </div>
+        <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+          <button type="button" className="btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="btn-primary" disabled={busy || reason.trim().length < 5}>{busy ? 'Reopening…' : 'Reopen'}</button>
+        </div>
+      </form>
+    </Modal>
   );
 }

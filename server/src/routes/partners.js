@@ -22,6 +22,7 @@ import {
 } from './partners-support.js';
 import * as ai from '../ai/index.js';
 import { applyFieldSecurity } from '../engine/metadata.js';
+import { withCorrections } from '../engine/corrections.js';
 import { lockRefusal } from '../engine/approvals.js';
 
 const router = Router();
@@ -346,10 +347,10 @@ router.get('/:id', requirePermission('partner.view'), (req, res) => {
        FROM leads l WHERE l.partner_id = ? AND l.deleted_at IS NULL ORDER BY l.created_at DESC`,
       [req.params.id],
     ),
-    activities: applyFieldSecurity('interaction',
+    activities: withCorrections('activity', applyFieldSecurity('interaction',
       all('SELECT a.*, u.name AS user_name FROM activities a LEFT JOIN users u ON u.id = a.user_id WHERE a.partner_id = ? ORDER BY a.created_at DESC LIMIT 50', [req.params.id]),
-      req.user, { caps: req.caps }),
-    notes: all('SELECT n.*, u.name AS user_name, u.role AS user_role FROM notes n LEFT JOIN users u ON u.id = n.user_id WHERE n.partner_id = ? ORDER BY n.pinned DESC, n.created_at DESC', [req.params.id]),
+      req.user, { caps: req.caps })),
+    notes: withCorrections('note', all('SELECT n.*, u.name AS user_name, u.role AS user_role FROM notes n LEFT JOIN users u ON u.id = n.user_id WHERE n.partner_id = ? ORDER BY n.pinned DESC, n.created_at DESC', [req.params.id])),
     tickets: all('SELECT * FROM tickets WHERE partner_id = ? ORDER BY created_at DESC', [req.params.id]),
     commissions: all('SELECT c.*, pt.name AS product_name FROM commissions c LEFT JOIN product_types pt ON pt.id = c.product_type_id WHERE c.partner_id = ? ORDER BY c.period DESC', [req.params.id]),
   });

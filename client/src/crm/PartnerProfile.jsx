@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api, money, rupees, shortDate, dateTime } from '../api.js';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Progress, Tabs } from '../components/ui.jsx';
 import BackLink from '../components/BackLink.jsx';
+import { CorrectionList, CorrectButton, correctedStyle } from '../components/Corrections.jsx';
 
 /**
  * A portal password the partner has not chosen (OPS-15).
@@ -378,8 +379,18 @@ export default function PartnerProfile({ session }) {
                   <tr key={a.id}>
                     <td className="tiny muted" style={{ width: 130 }}>{dateTime(a.created_at)}</td>
                     <td style={{ width: 140 }}><span className="badge">{a.type}</span></td>
-                    <td><div style={{ fontWeight: 545 }}>{a.subject}</div>{a.body && <div className="small muted">{a.body}</div>}</td>
-                    <td className="small muted" style={{ width: 120 }}>{a.user_name || 'system'}</td>
+                    <td>
+                      <div style={{ fontWeight: 545 }}>
+                        {a.subject}
+                        {a.corrections?.length > 0 && <span className="badge badge-amber" style={{ marginLeft: 6 }}>Corrected</span>}
+                      </div>
+                      {a.body && <div className="small muted" style={correctedStyle(a)}>{a.body}</div>}
+                      <CorrectionList corrections={a.corrections} />
+                    </td>
+                    <td className="small muted" style={{ width: 120 }}>
+                      {a.user_name || 'system'}
+                      <CorrectButton entry={a} session={session} path={`/activities/${a.id}/correct`} onDone={reload} />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -388,7 +399,7 @@ export default function PartnerProfile({ session }) {
         </section>
       )}
 
-      {tab === 'notes' && <PartnerNotes partner={partner} reload={reload} />}
+      {tab === 'notes' && <PartnerNotes partner={partner} session={session} reload={reload} />}
 
       {tab === 'tickets' && (
         <section className="card">
@@ -411,7 +422,7 @@ export default function PartnerProfile({ session }) {
   );
 }
 
-function PartnerNotes({ partner, reload }) {
+function PartnerNotes({ partner, session, reload }) {
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -437,8 +448,15 @@ function PartnerNotes({ partner, reload }) {
           <div className="stack">
             {partner.notes.map((n) => (
               <div key={n.id} style={{ borderLeft: '2px solid var(--border)', paddingLeft: 12 }}>
-                <div className="tiny muted">{n.user_name} · {dateTime(n.created_at)}</div>
-                <div className="small" style={{ whiteSpace: 'pre-wrap' }}>{n.body}</div>
+                <div className="row-between">
+                  <span className="tiny muted">
+                    {n.user_name} · {dateTime(n.created_at)}
+                    {n.corrections?.length > 0 && <span className="badge badge-amber" style={{ marginLeft: 6 }}>Corrected</span>}
+                  </span>
+                  <CorrectButton entry={n} session={session} path={`/notes/${n.id}/correct`} onDone={reload} />
+                </div>
+                <div className="small" style={{ whiteSpace: 'pre-wrap', ...correctedStyle(n) }}>{n.body}</div>
+                <CorrectionList corrections={n.corrections} />
               </div>
             ))}
           </div>

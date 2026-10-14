@@ -25,6 +25,8 @@ import { metricsFor } from '../engine/metrics.js';
 import { kycStatusSql, kycStatusFor } from '../engine/kycstatus.js';
 import { nextAction, nextStepForLead, MOVE_NEEDS } from '../engine/nextaction.js';
 import { loadInBook } from '../engine/bookscope.js';
+import { withCorrections, mayCorrect, addCorrection } from '../engine/corrections.js';
+import { cancelReminders } from '../engine/followups.js';
 import {
   listQueues, membersOf, mayTakeFrom, workIn, claimFromQueue, assignToQueue,
   setMembers, ownerOf,
@@ -861,11 +863,11 @@ router.get('/leads/:id', (req, res) => {
     // Field history is first-class, so "who changed the stage, and when?" is a
     // query rather than an archaeology exercise across the audit log.
     field_history: historyFor('lead', Number(id), 40),
-    activities: applyFieldSecurity('interaction',
+    activities: withCorrections('activity', applyFieldSecurity('interaction',
       all('SELECT a.*, u.name AS user_name FROM activities a LEFT JOIN users u ON u.id = a.user_id WHERE a.lead_id = ? ORDER BY a.created_at DESC LIMIT 100', [id]),
-      req.user, { caps: req.caps }),
+      req.user, { caps: req.caps })),
     tasks: all('SELECT t.*, u.name AS assignee_name FROM tasks t LEFT JOIN users u ON u.id = t.assignee_id WHERE t.lead_id = ? ORDER BY t.status, t.due_at', [id]),
-    notes: all('SELECT n.*, u.name AS user_name, u.role AS user_role FROM notes n LEFT JOIN users u ON u.id = n.user_id WHERE n.lead_id = ? ORDER BY n.pinned DESC, n.created_at DESC', [id]),
+    notes: withCorrections('note', all('SELECT n.*, u.name AS user_name, u.role AS user_role FROM notes n LEFT JOIN users u ON u.id = n.user_id WHERE n.lead_id = ? ORDER BY n.pinned DESC, n.created_at DESC', [id])),
     tickets: all('SELECT * FROM tickets WHERE lead_id = ? ORDER BY created_at DESC', [id]),
     // QA-06: each journey carries the applicant's mobile and email.
     journeys: maskRecords(all(`SELECT j.*, pt.name AS product_name FROM kyc_journeys j JOIN product_types pt ON pt.id = j.product_type_id WHERE j.lead_id = ? ORDER BY j.created_at DESC`, [id]), masking),
@@ -1670,13 +1672,13 @@ router.get('/activities', (req, res) => {
   if (lead_id) { where.push('a.lead_id = ?'); params.push(lead_id); }
   if (type) { where.push('a.type = ?'); params.push(type); }
 
-  res.json(applyFieldSecurity('interaction', all(
+  res.json(withCorrections('activity', applyFieldSecurity('interaction', all(
     `SELECT a.*, u.name AS user_name, l.name AS lead_name
      FROM activities a LEFT JOIN users u ON u.id = a.user_id LEFT JOIN leads l ON l.id = a.lead_id
      WHERE ${where.join(' AND ')}
      ORDER BY a.created_at DESC LIMIT ?`,
     [...params, Number(limit)],
-  ), req.user, { caps: req.caps }));
+  ), req.user, { caps: req.caps })));
 });
 
 router.post('/activities', (req, res) => {
@@ -1971,16 +1973,21 @@ router.post('/tasks', (req, res) => {
   res.status(201).json(one('SELECT * FROM tasks WHERE id = ?', [taskId]));
 });
 
-router.patch('/tasks/:id', (req, res) => {
-  /* This route had no check of any kind: it updated by id and returned the
-     whole row, so it was a write primitive over every task in the system and a
-     read primitive besides. A Bonanza dealer could reassign, reschedule or
-     close a Bigul task and read its description back.
-
-     `loadInBook` is not the tool here — a task with no lead has no book, and
-     refusing those would take away standalone reminders from the people they
-     belong to. So it is the rule the Tasks list already applies: the lead's
-     book if there is a lead, and your own tasks unless you hold report.team. */
+/**
+ * The task a request may change, or the refusal.
+ *
+ * This route had no check of any kind: it updated by id and returned the
+ * whole row, so it was a write primitive over every task in the system and a
+ * read primitive besides. A Bonanza dealer could reassign, reschedule or
+ * close a Bigul task and read its description back.
+ *
+ * `loadInBook` is not the tool here — a task with no lead has no book, and
+ * refusing those would take away standalone reminders from the people they
+ * belong to. So it is the rule the Tasks list already applies: the lead's
+ * book if there is a lead, and then the task's assignee, its creator (QA-37:
+ * "assignee, creator, their supervisor"), or somebody holding report.team.
+ */
+function taskFor(req) {
   const scope = reqScope(req, 'l');
   const task = one(
     `SELECT t.* FROM tasks t
@@ -1989,17 +1996,34 @@ router.patch('/tasks/:id', (req, res) => {
           SELECT 1 FROM leads l WHERE l.id = t.lead_id AND l.deleted_at IS NULL AND ${scope.sql}))`,
     [req.params.id, ...scope.params],
   );
-  if (!task) return res.status(404).json({ error: 'Task not found' });
-  if (task.assignee_id !== req.user.id && !can(req.user.role, 'report.team')) {
-    return res.status(403).json({
-      error: 'That task belongs to somebody else',
-      required: 'report.team',
-    });
+  if (!task) return { status: 404, body: { error: 'Task not found' } };
+  if (task.assignee_id !== req.user.id && task.created_by !== req.user.id && !can(req.user.role, 'report.team')) {
+    return { status: 403, body: { error: 'That task belongs to somebody else', required: 'report.team' } };
   }
+  /* QA-37: cancelled is where a task ends. It stays, with its reason, and
+     nothing about it changes. */
+  if (task.status === 'Cancelled') {
+    return { status: 409, body: { error: `"${task.title}" was cancelled, so it stays as it is. Add a new task instead.` } };
+  }
+  return { task };
+}
+
+router.patch('/tasks/:id', (req, res) => {
+  const found = taskFor(req);
+  if (!found.task) return res.status(found.status).json(found.body);
 
   const { status, assignee_id, due_at, priority } = req.body;
+  if (status === 'Cancelled') {
+    return res.status(400).json({ error: 'Cancel a task with a reason, from Cancel', field: 'status' });
+  }
   const sets = [];
   const params = [];
+  /* QA-37: the title is one of the three things a task may change. */
+  if (req.body.title !== undefined) {
+    const title = String(req.body.title).trim();
+    if (!title || title.length > 200) return res.status(400).json({ error: 'A task needs a title of up to 200 characters', field: 'title' });
+    sets.push('title = ?'); params.push(title);
+  }
   if (status) { sets.push('status = ?'); params.push(status); }
   if (assignee_id) { sets.push('assignee_id = ?'); params.push(assignee_id); }
   if (due_at) { sets.push('due_at = ?'); params.push(due_at); }
@@ -2008,6 +2032,24 @@ router.patch('/tasks/:id', (req, res) => {
 
   run(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`, [...params, req.params.id]);
   res.json(one('SELECT * FROM tasks WHERE id = ?', [req.params.id]));
+});
+
+/* QA-37: a task is never deleted. It is cancelled, with a reason, by the
+   same people who may change it, and its reminders stop. */
+router.post('/tasks/:id/cancel', (req, res) => {
+  const found = taskFor(req);
+  if (!found.task) return res.status(found.status).json(found.body);
+  const { task } = found;
+  const reason = String(req.body?.reason ?? '').trim();
+  if (reason.length < 5) return res.status(400).json({ error: 'Say why it is being cancelled, in a few words', field: 'reason' });
+
+  run(
+    "UPDATE tasks SET status = 'Cancelled', cancelled_at = datetime('now'), cancel_reason = ?, updated_at = datetime('now') WHERE id = ?",
+    [reason, task.id],
+  );
+  cancelReminders(task.id, 'task cancelled');
+  audit(req.user.id, 'task_cancelled', 'task', task.id, { reason });
+  return res.json(one('SELECT * FROM tasks WHERE id = ?', [task.id]));
 });
 
 /* --------------------------------------------------------------- notes */
@@ -2054,6 +2096,26 @@ router.post('/notes/:id/pin', (req, res) => {
 
   run('UPDATE notes SET pinned = ? WHERE id = ?', [note.pinned ? 0 : 1, req.params.id]);
   res.json({ pinned: !note.pinned });
+});
+
+/* QA-37: a note is never edited after saving. Its author corrects it with an
+   entry linked to it, and the original is shown as corrected. */
+router.post('/notes/:id/correct', (req, res) => {
+  const note = one('SELECT * FROM notes WHERE id = ?', [req.params.id]);
+  if (!note) return res.status(404).json({ error: 'Note not found' });
+  if (note.lead_id) {
+    const inBook = loadInBook(req, 'lead', note.lead_id);
+    if (inBook.error) return res.status(inBook.status).json({ error: inBook.error });
+  }
+  if (note.partner_id) {
+    const owner = one('SELECT sales_org FROM partners WHERE id = ?', [note.partner_id]);
+    if (!owner || !mayUseOrg(req.user, owner.sales_org)) return res.status(404).json({ error: 'Note not found' });
+  }
+  const refused = mayCorrect('note', note, req.user);
+  if (refused) return res.status(refused.status).json({ error: refused.error });
+  const out = addCorrection('note', note, req.body ?? {}, req.user);
+  if (out.error) return res.status(out.status).json({ error: out.error, field: out.field });
+  return res.status(201).json(out);
 });
 
 /* Lists moved to routes/lists.js (BUG-25), which is mounted at /api/lists

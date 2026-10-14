@@ -10,6 +10,7 @@ import { maskRecord } from '../security.js';
 import { loadInBook } from '../engine/bookscope.js';
 import { assertValid } from '../engine/validation.js';
 import { recordChange } from '../engine/metadata.js';
+import { withCorrections, mayCorrect, addCorrection } from '../engine/corrections.js';
 import { applySla, sweepSla, handleStatusChange, slaRemaining, DEFAULT_SLA } from '../engine/sla.js';
 import { openCase } from '../engine/cases.js';
 import { send } from '../integrations.js';
@@ -19,6 +20,8 @@ const router = Router();
 router.use(requireUser);
 
 const STATUSES = ['Open', 'Pending', 'Waiting on Client', 'Resolved', 'Closed'];
+/** QA-37: the statuses a case is finished in. Reopening is the way back. */
+const DONE = ['Resolved', 'Closed'];
 const PRIORITIES = ['Critical', 'High', 'Medium', 'Low'];
 
 /**
@@ -76,7 +79,10 @@ async function refreshSummary(ticketId) {
        WHERE t.id = ?`, [ticketId],
     );
     if (!ticket) return;
-    const replies = all('SELECT * FROM ticket_replies WHERE ticket_id = ? ORDER BY created_at', [ticketId]);
+    /* A corrected reply is summarised as corrected (QA-37), or the summary
+       would keep repeating what its author has since said was wrong. */
+    const replies = withCorrections('reply', all('SELECT * FROM ticket_replies WHERE ticket_id = ? ORDER BY created_at', [ticketId]))
+      .map(({ corrections, ...r }) => (corrections.length ? { ...r, body: corrections.at(-1).body } : r));
     const summary = await ai.ticketSummary(ticket, replies);
     run('UPDATE tickets SET ai_summary = ? WHERE id = ?', [`${summary.line1}\n${summary.line2}`, ticketId]);
   } catch (err) {
@@ -234,7 +240,7 @@ router.get('/:id', (req, res) => {
 
   res.json({
     ...maskRecord(decorate(ticket), maskFor(req, 'ticket', ticket.id)),   // QA-06: lead_mobile
-    replies: all('SELECT r.*, u.name AS user_name FROM ticket_replies r LEFT JOIN users u ON u.id = r.user_id WHERE r.ticket_id = ? ORDER BY r.created_at', [req.params.id]),
+    replies: withCorrections('reply', all('SELECT r.*, u.name AS user_name FROM ticket_replies r LEFT JOIN users u ON u.id = r.user_id WHERE r.ticket_id = ? ORDER BY r.created_at', [req.params.id])),
     merged: all('SELECT id, ref, subject FROM tickets WHERE merged_into = ?', [req.params.id]),
   });
 });
@@ -328,6 +334,33 @@ router.post('/:id/replies', requirePermission('ticket.reply'), async (req, res) 
   res.status(201).json({ ok: true });
 });
 
+/**
+ * Correct a reply: QA-37.
+ *
+ * A reply is correspondence, so it is never edited after saving. Its author
+ * adds a correction linked to it; the original stays, shown as corrected --
+ * to the partner too, where the partner could see the original.
+ */
+router.post('/:id/replies/:replyId/correct', requirePermission('ticket.reply'), async (req, res) => {
+  const found = loadInBook(req, 'ticket', req.params.id);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const reply = one('SELECT * FROM ticket_replies WHERE id = ? AND ticket_id = ?', [req.params.replyId, found.row.id]);
+  if (!reply) return res.status(404).json({ error: 'Reply not found' });
+  /* Only what an agent wrote. An escalation note carries the escalator's id
+     but is the system's record of the escalation, and a client's or a
+     partner's words are theirs. */
+  if (reply.author_type !== 'agent') {
+    return res.status(409).json({ error: `This is a ${reply.author_type} entry, not a reply an agent wrote, so it cannot be corrected. Add a reply instead.` });
+  }
+  const refused = mayCorrect('reply', reply, req.user);
+  if (refused) return res.status(refused.status).json({ error: refused.error });
+  const out = addCorrection('reply', reply, req.body ?? {}, req.user);
+  if (out.error) return res.status(out.status).json({ error: out.error, field: out.field });
+  run("UPDATE tickets SET updated_at = datetime('now') WHERE id = ?", [found.row.id]);
+  await refreshSummary(found.row.id);
+  return res.status(201).json(out);
+});
+
 router.patch('/:id', async (req, res) => {
   /* Loaded within the reader's book. This route gated reassignment on a
      capability and never checked which case was being changed, so a Bonanza
@@ -344,6 +377,27 @@ router.patch('/:id', async (req, res) => {
     return res.status(403).json({ error: 'Reassignment requires Customer Care, a Supervisor or an Admin', required: 'ticket.reassign' });
   }
   if (status && !STATUSES.includes(status)) return res.status(400).json({ error: `Status must be one of ${STATUSES.join(', ')}` });
+
+  /* QA-37: a case's fields change while it is open. Resolved or closed, the
+     way back is to reopen it, and reopening says why -- the client was told it
+     was done. A closed case is reopened, never set back to Resolved. */
+  const finished = DONE.includes(ticket.status);
+  const reopening = finished && Boolean(status) && !DONE.includes(status);
+  const reason = String(req.body.reason ?? '').trim();
+  if (finished) {
+    if (['priority', 'assignee_id', 'category_id'].some((f) => req.body[f] !== undefined)) {
+      return res.status(409).json({
+        error: `${ticket.ref} is ${ticket.status.toLowerCase()}, so its details cannot change. Reopen it first.`,
+        reopen_first: true,
+      });
+    }
+    if (ticket.status === 'Closed' && status === 'Resolved') {
+      return res.status(409).json({ error: `${ticket.ref} is closed. Reopen it if there is more to do.` });
+    }
+    if (reopening && reason.length < 5) {
+      return res.status(400).json({ error: 'Say why it is being reopened', field: 'reason' });
+    }
+  }
 
   /* Configured validation rules, enforced here rather than in the form —
      automation and the API reach this route without rendering one. Checked
@@ -365,6 +419,7 @@ router.patch('/:id', async (req, res) => {
     sets.push('status = ?'); params.push(status);
     if (status === 'Resolved') sets.push("resolved_at = datetime('now')");
     if (status === 'Closed') sets.push("closed_at = datetime('now')");
+    if (reopening) sets.push('resolved_at = NULL', 'closed_at = NULL');
   }
   if (priority) { sets.push('priority = ?'); params.push(priority); }
   if (assignee_id !== undefined) { sets.push('assignee_id = ?'); params.push(assignee_id); }
@@ -388,6 +443,13 @@ router.patch('/:id', async (req, res) => {
   }
 
   audit(req.user.id, 'ticket_updated', 'ticket', Number(req.params.id), req.body);
+  if (reopening) {
+    /* On the case itself, where the next person to open it will look. */
+    run('INSERT INTO ticket_replies (ticket_id, body, author_type, user_id, internal) VALUES (?,?,?,?,1)', [
+      ticket.id, `Reopened by ${req.user.name} (was ${ticket.status}): ${reason}`, 'system', req.user.id,
+    ]);
+    audit(req.user.id, 'ticket_reopened', 'ticket', ticket.id, { from: ticket.status, to: status, reason });
+  }
 
   // CSAT goes out on close (BRD §7.10).
   if (status === 'Closed' || status === 'Resolved') {
@@ -413,6 +475,10 @@ router.post('/:id/escalate', requirePermission('ticket.escalate'), (req, res) =>
   if (found.error) return res.status(found.status).json({ error: found.error });
   const ticket = found.row;
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+  // QA-37: escalating moves the owner and the priority, which are details.
+  if (DONE.includes(ticket.status)) {
+    return res.status(409).json({ error: `${ticket.ref} is ${ticket.status.toLowerCase()}. Reopen it first.`, reopen_first: true });
+  }
 
   const assignee = ticket.assignee_id ? one('SELECT * FROM users WHERE id = ?', [ticket.assignee_id]) : null;
   const manager = assignee?.manager_id

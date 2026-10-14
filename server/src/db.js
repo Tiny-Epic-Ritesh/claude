@@ -711,6 +711,27 @@ CREATE TABLE IF NOT EXISTS ticket_replies (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+/* QA-37: history is append-only. A wrong note, activity or case reply is
+   never edited; its author adds a correction linked to it, and the original
+   is shown as corrected. Kept here rather than as new notes or activities,
+   because a corrected call written as another activity would count as a
+   second call -- in reports, KRA, the cockpit -- and could fire automation.
+   One parent per row; the parent's delete (a lead purged) takes it along. */
+CREATE TABLE IF NOT EXISTS corrections (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  note_id     INTEGER REFERENCES notes(id) ON DELETE CASCADE,
+  activity_id INTEGER REFERENCES activities(id) ON DELETE CASCADE,
+  reply_id    INTEGER REFERENCES ticket_replies(id) ON DELETE CASCADE,
+  body        TEXT NOT NULL,
+  reason      TEXT NOT NULL,
+  user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  CHECK ((note_id IS NOT NULL) + (activity_id IS NOT NULL) + (reply_id IS NOT NULL) = 1)
+);
+CREATE INDEX IF NOT EXISTS idx_corrections_note ON corrections(note_id);
+CREATE INDEX IF NOT EXISTS idx_corrections_activity ON corrections(activity_id);
+CREATE INDEX IF NOT EXISTS idx_corrections_reply ON corrections(reply_id);
+
 /* ---- Partners ------------------------------------------------------- */
 
 CREATE TABLE IF NOT EXISTS partners (

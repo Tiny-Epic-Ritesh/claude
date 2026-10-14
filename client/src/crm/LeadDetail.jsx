@@ -13,6 +13,8 @@ import ActionModal from './ActionModals.jsx';
 import { LeadMarketContext } from '../components/Market.jsx';
 import { useLeadActions, CallNumber, EmailLink } from './leadActions.jsx';
 import BackLink from '../components/BackLink.jsx';
+import { CorrectionList, CorrectButton, correctedStyle } from '../components/Corrections.jsx';
+import { TaskLifecycle, TaskActions } from './Tasks.jsx';
 
 /**
  * The lead record. Sections and the action bar vary by role (BRD §11) — the
@@ -270,7 +272,7 @@ export default function LeadDetail({ session }) {
       {tab === 'market' && <LeadMarketContext leadId={lead.id} />}
       {tab === 'activity' && <ActivityTab lead={lead} session={session} reload={reload} />}
       {tab === 'notes' && <Notes lead={lead} session={session} reload={reload} />}
-      {tab === 'tasks' && <TasksTab lead={lead} reload={reload} />}
+      {tab === 'tasks' && <TasksTab lead={lead} session={session} reload={reload} />}
       {tab === 'tickets' && <TicketsTab lead={lead} reload={reload} readOnly={readOnly} />}
       {tab === 'kyc' && <KycTab lead={lead} session={session} reload={reload} onError={setActionError} />}
 
@@ -523,7 +525,7 @@ function ActivityTab({ lead, session, reload }) {
       {mayLog && (
         <ActivityComposer lead={lead} cards={lead.cards ?? []} onLogged={refresh} />
       )}
-      <Timeline rows={rows} />
+      <Timeline rows={rows} session={session} onChanged={refresh} />
     </div>
   );
 }
@@ -534,7 +536,7 @@ const OUTCOME_TONE = {
   Other: '',
 };
 
-function Timeline({ rows }) {
+function Timeline({ rows, session, onChanged }) {
   if (!rows.length) return <div className="card"><Empty>No activity logged yet.</Empty></div>;
 
   return (
@@ -561,16 +563,21 @@ function Timeline({ rows }) {
                 )}
                 <span className="tiny muted">· {dateTime(a.created_at)}</span>
                 <span className="tiny muted">· {a.user_name || 'system'}</span>
+                {a.corrections?.length > 0 && <span className="badge badge-amber">Corrected</span>}
+                <span style={{ marginLeft: 'auto' }}>
+                  <CorrectButton entry={a} session={session} path={`/activities/${a.id}/correct`} onDone={onChanged} />
+                </span>
               </div>
 
               {a.body && (
-                <div className="small" style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{a.body}</div>
+                <div className="small" style={{ whiteSpace: 'pre-wrap', marginTop: 4, ...correctedStyle(a) }}>{a.body}</div>
               )}
               {a.reason && (
                 <div className="small tone-bad" style={{ marginTop: 3 }}>
                   <Icon name="info" size={13} /> {a.reason}
                 </div>
               )}
+              <CorrectionList corrections={a.corrections} />
 
               {/* The commitment this activity created — the link that makes the
                   automation visible rather than something that happened offstage. */}
@@ -634,9 +641,14 @@ function Notes({ lead, session, reload }) {
                   <span className="tiny" style={{ fontWeight: 640 }}>
                     {n.user_name} · <span className="muted">{ROLE_LABEL[n.user_role] || n.user_role}</span> · <span className="muted">{dateTime(n.created_at)}</span>
                   </span>
-                  {n.pinned ? <span className="badge badge-accent">Pinned</span> : null}
+                  <span className="row" style={{ gap: 6 }}>
+                    {n.corrections?.length > 0 && <span className="badge badge-amber">Corrected</span>}
+                    {n.pinned ? <span className="badge badge-accent">Pinned</span> : null}
+                    <CorrectButton entry={n} session={session} path={`/notes/${n.id}/correct`} onDone={reload} />
+                  </span>
                 </div>
-                <div className="small" style={{ whiteSpace: 'pre-wrap', marginTop: 2 }}>{n.body}</div>
+                <div className="small" style={{ whiteSpace: 'pre-wrap', marginTop: 2, ...correctedStyle(n) }}>{n.body}</div>
+                <CorrectionList corrections={n.corrections} />
               </div>
             ))}
           </div>
@@ -646,10 +658,11 @@ function Notes({ lead, session, reload }) {
   );
 }
 
-function TasksTab({ lead, reload }) {
+function TasksTab({ lead, session, reload }) {
   const [title, setTitle] = useState('');
   const [due, setDue] = useState('');
   const [busy, setBusy] = useState(false);
+  const [ending, setEnding] = useState(null);
 
   async function add(e) {
     e.preventDefault();
@@ -683,19 +696,28 @@ function TasksTab({ lead, reload }) {
                     <input
                       type="checkbox"
                       checked={t.status === 'Completed'}
+                      disabled={t.status === 'Cancelled'}
                       style={{ width: 16, height: 16 }}
                       onChange={async () => { await api.patch(`/tasks/${t.id}`, { status: t.status === 'Completed' ? 'Open' : 'Completed' }); reload(); }}
                     />
                   </td>
                   <td>
-                    <div style={{ textDecoration: t.status === 'Completed' ? 'line-through' : 'none', opacity: t.status === 'Completed' ? 0.6 : 1 }}>{t.title}</div>
-                    <div className="tiny muted">{t.assignee_name} · {t.priority}</div>
+                    <div style={{ textDecoration: t.status !== 'Open' ? 'line-through' : 'none', opacity: t.status !== 'Open' ? 0.6 : 1 }}>{t.title}</div>
+                    <div className="tiny muted">
+                      {t.assignee_name} · {t.priority}
+                      {t.status === 'Cancelled' && ` · Cancelled${t.cancel_reason ? `: ${t.cancel_reason}` : ''}`}
+                    </div>
                   </td>
                   <td className="num"><span className={`badge ${new Date(t.due_at) < new Date() && t.status === 'Open' ? 'badge-red' : ''}`}>{shortDate(t.due_at)}</span></td>
+                  <td><TaskActions task={t} onPick={(what) => setEnding({ task: t, what })} /></td>
                 </tr>
               ))}
             </tbody>
           </table>
+        )}
+        {ending && (
+          <TaskLifecycle task={ending.task} what={ending.what} session={session}
+            onClose={() => setEnding(null)} onDone={() => { setEnding(null); reload(); }} />
         )}
       </div>
     </section>
