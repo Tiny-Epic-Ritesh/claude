@@ -199,7 +199,7 @@ const ANSWERS = {
   trading_experience: 'None', education: 'Graduate', occupation: 'Business',
   annual_income: '₹1–5 Lakh', politically_exposed: 'No',
   account_number: '12345678902', ifsc: 'HDFC0001234', account_holder: 'Probe Applicant',
-  nominee_opt: 'Opt out',
+  nominee_opt: 'Opt out', optout_declaration: true,
   segments: ['Equity Cash'], depository: 'CDSL', plan: 'Classic Percentage Plan',
   selfie: 'probe-selfie.png', signature: 'probe-signature.png', esign_otp: '123456',
 };

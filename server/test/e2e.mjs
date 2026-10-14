@@ -1807,7 +1807,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
 
   await check('high income plus F&O triggers the conditional income-proof step', async () => {
     await dkycStep('BANK_PROOF', { bank_proof: 'cheque.jpg' });
-    await dkycStep('NOMINEE', { nominee_opt: 'Opt out' });
+    await dkycStep('NOMINEE', { nominee_opt: 'Opt out', optout_declaration: true });
     const { data } = await dkycStep('SEGMENTS', {
       segments: ['Equity Cash', 'Equity Derivatives (F&O)'], depository: 'CDSL', plan: 'Classic Percentage Plan',   // a Bonanza journey: the flat plan is Bigul's (QA-13)
     });

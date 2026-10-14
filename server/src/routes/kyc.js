@@ -53,8 +53,20 @@ internal.get('/journeys/:id', (req, res) => {
      mobile, email, PAN, account number -- under the reader's masking, and
      unmasked on the same audited ask as a lead. */
   const masking = maskFor(req, 'kyc_journey', journey.id);
-  res.json({ ...maskRecord(journey, masking), form: maskRecord(journey.form, masking) });
+  res.json({ ...maskRecord(journey, masking), form: maskForm(journey.form, masking) });
 });
+
+/* The nominees sit one level down in the form, and maskRecord reads only the
+   top level: each nominee's mobile, email and identifier, under the same rule
+   as the applicant's own. */
+function maskForm(form, masking) {
+  const out = maskRecord(form, masking);
+  if (Array.isArray(form?.nominees)) {
+    out.nominees = form.nominees.map((n) => maskRecord(n, masking));
+    if (out.nominees.some((n) => n?._pii_masked)) out._pii_masked = true;
+  }
+  return out;
+}
 
 /** Start a journey from the CRM (RM-initiated), returning the applicant link. */
 internal.post('/journeys', requirePermission('kyc.manage'), (req, res) => {
@@ -335,7 +347,8 @@ dkyc.post('/resume/:token/step', (req, res) => {
      call and before anything is stored, and stored as normalised. */
   const definition = kyc.stepByCode(step_code);
   const asOffered = definition && { ...definition, fields: kyc.fieldsForBusiness(definition.fields, journey.product?.sales_org) };
-  const { problems, values } = kyc.validateStepPayload(asOffered, payload);
+  // The form, so a nominee can be checked against the applicant's own PAN.
+  const { problems, values } = kyc.validateStepPayload(asOffered, payload, journey.form);
   if (problems.length) {
     return res.status(400).json({ error: problems[0].message, field: problems[0].field, problems });
   }

@@ -397,8 +397,12 @@ function Journey() {
   /* ---- active step ---- */
   const setValue = (name, v) => setValues((prev) => ({ ...prev, [name]: v }));
 
-  const missing = (step?.fields || []).filter((f) => {
-    if (!f.required) return false;
+  /* A field shown only for one answer -- the nominees for "Add nominee", the
+     declaration for "Opt out" -- is drawn and required only then. */
+  const isShown = (f) => !f.shown_when || values[f.shown_when.field] === f.shown_when.equals;
+  const shownFields = (step?.fields || []).filter(isShown);
+  const missing = shownFields.filter((f) => {
+    if (!f.required && !f.required_when_shown) return false;
     const v = values[f.name];
     return v === undefined || v === '' || (Array.isArray(v) && !v.length) || v === false;
   });
@@ -421,7 +425,9 @@ function Journey() {
         setNotice('We could not verify your bank account automatically. Please upload a bank proof and we will verify it manually.');
       }
     } catch (err) {
-      setError(err.message);
+      // Every problem at once, so three nominees' mistakes are not found one submit at a time.
+      const problems = err.payload?.problems ?? [];
+      setError(problems.length > 1 ? problems.map((p) => p.message).join(' · ') : err.message);
       if (err.payload?.abandoned) load();
     } finally { setBusy(false); }
   }
@@ -534,7 +540,7 @@ function Journey() {
             )}
 
             <form onSubmit={submit}>
-              {(step?.fields || []).map((f) => (
+              {shownFields.map((f) => (
                 <Field
                   key={f.name}
                   field={f}
@@ -574,10 +580,14 @@ function Field({ field, value, onChange, onSendOtp }) {
           <input type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)} style={{ width: 16, height: 16, marginTop: 2 }} />
           <span style={{ color: 'var(--text)', fontWeight: 500 }}>{field.label}</span>
         </label>
-        <div className="hint">You will be redirected to DigiLocker to authorise the fetch. In this demo the fetch is simulated.</div>
+        {field.name === 'digilocker_consent' && (
+          <div className="hint">You will be redirected to DigiLocker to authorise the fetch. In this demo the fetch is simulated.</div>
+        )}
       </div>
     );
   }
+
+  if (field.type === 'nominees') return <NomineesField field={field} value={value} onChange={onChange} />;
 
   if (field.type === 'otp') {
     return (
@@ -676,6 +686,128 @@ function Field({ field, value, onChange, onSendOtp }) {
         max={field.type === 'date' ? new Date().toISOString().slice(0, 10) : field.max}
       />
       {field.help && <div className="hint">{field.help}</div>}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------- nominees */
+
+const EMPTY_NOMINEE = {
+  name: '', relationship: '', id_type: 'PAN', id_number: '', address: '', mobile: '', email: '',
+  minor: false, dob: '', guardian_name: '', guardian_relation: '', share: '', may_operate: false, operate_limit_pct: '',
+};
+
+/**
+ * Up to ten nominees, as SEBI's January 2025 circular allows.
+ *
+ * Each nominee is a small form of its own: who they are, one identity number
+ * (the number only, never the document), how to reach them, and their share.
+ * A minor nominee also needs a date of birth, and can have a guardian. Shares
+ * are all given and add up to 100, or all left blank and split equally; the
+ * running total says which. The server checks all of it again.
+ */
+function NomineesField({ field, value, onChange }) {
+  const list = Array.isArray(value) && value.length ? value : [EMPTY_NOMINEE];
+  const max = field.max ?? 10;
+
+  /* Choosing "Add nominee" starts with one nominee to fill in. */
+  useEffect(() => {
+    if (!Array.isArray(value) || !value.length) onChange([{ ...EMPTY_NOMINEE }]);
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, []);
+
+  const update = (i, patch) => onChange(list.map((n, j) => (j === i ? { ...n, ...patch } : n)));
+  // One nominee at most may operate the account; choosing one clears the rest.
+  const setOperator = (i, on) => onChange(list.map((n, j) => ({ ...n, may_operate: j === i ? on : (on ? false : n.may_operate) })));
+  const given = list.filter((n) => String(n.share ?? '').trim() !== '');
+  const total = Math.round(given.reduce((s, n) => s + Number(n.share || 0), 0) * 100) / 100;
+
+  return (
+    <div className="field nominees">
+      <label>{field.label}</label>
+      {list.map((n, i) => {
+        const id = (k) => `nominee-${i}-${k}`;
+        /* `{ key, label, ...props }`: an object, so a field called "share" is
+           not read by the icon check as a request for the share icon. */
+        const input = ({ key: k, label, ...props }) => (
+          <div className="field">
+            <label htmlFor={id(k)}>{label}</label>
+            <input id={id(k)} value={n[k] ?? ''} onChange={(e) => update(i, { [k]: e.target.value })} {...props} />
+          </div>
+        );
+        return (
+          <fieldset key={i} className="card" style={{ padding: 14, marginBottom: 12 }}>
+            <legend className="row" style={{ gap: 8 }}>
+              <strong>Nominee {i + 1}</strong>
+              {list.length > 1 && (
+                <button type="button" className="btn-sm" onClick={() => onChange(list.filter((_, j) => j !== i))}>Remove</button>
+              )}
+            </legend>
+            {input({ key: 'name', label: 'Full name' })}
+            <div className="field">
+              <label htmlFor={id('relationship')}>Relationship to you</label>
+              <select id={id('relationship')} value={n.relationship} onChange={(e) => update(i, { relationship: e.target.value })}>
+                <option value="">Select…</option>
+                {(field.relationships ?? []).map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor={id('id_type')}>Identity number</label>
+              <div className="row">
+                <select id={id('id_type')} value={n.id_type} onChange={(e) => update(i, { id_type: e.target.value, id_number: '' })} style={{ maxWidth: 230 }}>
+                  {(field.id_types ?? []).map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <input aria-label={`Nominee ${i + 1} ${n.id_type} number`} value={n.id_number}
+                  onChange={(e) => update(i, { id_number: e.target.value.toUpperCase() })}
+                  inputMode={n.id_type.startsWith('Aadhaar') ? 'numeric' : undefined}
+                  maxLength={n.id_type.startsWith('Aadhaar') ? 4 : 20}
+                  placeholder={n.id_type === 'PAN' ? 'ABCDE1234F' : n.id_type.startsWith('Aadhaar') ? 'Last 4 digits' : 'MH1420110062821'} />
+              </div>
+              <div className="hint">The number only. You do not need to upload the document.</div>
+            </div>
+            <div className="field">
+              <label htmlFor={id('address')}>Postal address</label>
+              <textarea id={id('address')} value={n.address} onChange={(e) => update(i, { address: e.target.value })} style={{ minHeight: 56 }} />
+            </div>
+            <div className="row wrap" style={{ gap: 12 }}>
+              {input({ key: 'mobile', label: 'Mobile number', type: 'tel', inputMode: 'numeric', maxLength: 10 })}
+              {input({ key: 'email', label: 'Email address', type: 'email' })}
+            </div>
+            <label className="row" style={{ gap: 8, margin: '6px 0' }}>
+              <input type="checkbox" checked={!!n.minor} onChange={(e) => update(i, { minor: e.target.checked, may_operate: e.target.checked ? false : n.may_operate })} />
+              <span>This nominee is under 18</span>
+            </label>
+            {n.minor && (
+              <div className="row wrap" style={{ gap: 12 }}>
+                {input({ key: 'dob', label: 'Date of birth', type: 'date', max: new Date().toISOString().slice(0, 10) })}
+                {input({ key: 'guardian_name', label: 'Guardian (optional)' })}
+                {input({ key: 'guardian_relation', label: 'Guardian\'s relationship to the nominee (optional)' })}
+              </div>
+            )}
+            {input({ key: 'share', label: 'Share (%)', type: 'number', min: 0.01, max: 100, step: 0.01, placeholder: 'Leave blank to split equally' })}
+            {!n.minor && (
+              <>
+                <label className="row" style={{ gap: 8, margin: '6px 0' }}>
+                  <input type="checkbox" checked={!!n.may_operate} onChange={(e) => setOperator(i, e.target.checked)} />
+                  <span>May operate my account if I become physically incapacitated (optional)</span>
+                </label>
+                {n.may_operate && input({ key: 'operate_limit_pct', label: 'Up to this share of my holdings (%)', type: 'number', min: 1, max: 100, placeholder: 'Leave blank for no limit' })}
+              </>
+            )}
+          </fieldset>
+        );
+      })}
+      <div className="row" style={{ justifyContent: 'space-between' }}>
+        <span className="hint">
+          {given.length === 0
+            ? `Shares split equally: ${Math.round(10000 / list.length) / 100}% each.`
+            : given.length === list.length ? `Shares add up to ${total}%${total === 100 ? '.' : ' — they must add up to 100%.'}`
+              : 'Give every nominee a share, or leave every share blank to split equally.'}
+        </span>
+        {list.length < max && (
+          <button type="button" onClick={() => onChange([...list, { ...EMPTY_NOMINEE }])}>Add another nominee</button>
+        )}
+      </div>
     </div>
   );
 }

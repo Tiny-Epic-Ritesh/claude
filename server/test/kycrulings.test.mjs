@@ -5,7 +5,9 @@
  *   a parent or guardian, offline, as brokers do
  *
  *   one nominee holds 100%, because the depositories' forms require the
- *   shares to add up to 100% and this journey takes one nominee
+ *   shares to add up to 100% and this journey took one nominee -- since 14
+ *   Oct it takes up to ten (nominees.test.mjs), and a lone nominee's share
+ *   is still the whole of it
  *
  * and the auditor's other point: the journey asked again for the mobile it was
  * started with. It now holds it from the start, and the portal offers it to
@@ -76,7 +78,11 @@ const VALID = {
     annual_income: '₹1–5 Lakh', politically_exposed: 'No',
   },
   BANK: { account_number: '12345678902', ifsc: 'HDFC0001234', account_holder: 'Probe Applicant' },
-  NOMINEE: { nominee_opt: 'Opt out' },
+  NOMINEE: { nominee_opt: 'Opt out', optout_declaration: true },
+};
+const NOMINEE = {
+  name: 'Probe Nominee', relationship: 'Spouse', id_type: 'PAN', id_number: 'PQRSX1234Z',
+  address: '2 Probe Lane, Pune', mobile: '9876500001', email: 'nominee@example.test',
 };
 
 const tokens = [];
@@ -139,22 +145,26 @@ try {
 
   /* ============================================================ nominee */
 
-  await test('one nominee holds 100%: a smaller share is refused, the whole is accepted', async () => {
+  await test('a lone nominee holds 100%: a smaller share is refused, the whole is accepted', async () => {
     const token = await start();
     await walkTo(token, 'NOMINEE');
-    const part = await submit(token, 'NOMINEE', { nominee_opt: 'Add nominee', nominee_name: 'Probe Nominee', nominee_relation: 'Spouse', nominee_share: 60 });
+    const statement = 'The names of my nominees';
+    const part = await submit(token, 'NOMINEE', { nominee_opt: 'Add nominee', nominee_statement: statement, nominees: [{ ...NOMINEE, share: 60 }] });
     assert.equal(part.status, 400, `a 60% share was accepted (${part.status})`);
-    assert.equal(part.body.field, 'nominee_share');
+    assert.equal(part.body.field, 'nominees');
     assert.match(part.body.error, /100%/);
-    const whole = await submit(token, 'NOMINEE', { nominee_opt: 'Add nominee', nominee_name: 'Probe Nominee', nominee_relation: 'Spouse', nominee_share: 100 });
+    const whole = await submit(token, 'NOMINEE', { nominee_opt: 'Add nominee', nominee_statement: statement, nominees: [{ ...NOMINEE, share: 100 }] });
     assert.equal(whole.status, 200, `refused: ${whole.body?.error}`);
-    assert.equal(getJourney(token, { byToken: true }).form.nominee_share, 100);
+    assert.equal(getJourney(token, { byToken: true }).form.nominees[0].share, 100);
   });
 
-  await test('opting out of a nominee still needs no share', async () => {
+  await test('opting out needs no share, and does need the declaration', async () => {
     const token = await start();
     await walkTo(token, 'NOMINEE');
-    const out = await submit(token, 'NOMINEE', { nominee_opt: 'Opt out' });
+    const bare = await submit(token, 'NOMINEE', { nominee_opt: 'Opt out' });
+    assert.equal(bare.status, 400, 'an opt-out without the declaration was accepted');
+    assert.equal(bare.body.field, 'optout_declaration');
+    const out = await submit(token, 'NOMINEE', { nominee_opt: 'Opt out', optout_declaration: true });
     assert.equal(out.status, 200, `refused: ${out.body?.error}`);
   });
 

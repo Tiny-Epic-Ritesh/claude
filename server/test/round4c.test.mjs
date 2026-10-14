@@ -73,10 +73,15 @@ const VALID = {
     annual_income: '₹1–5 Lakh', politically_exposed: 'No',
   },
   BANK: { account_number: '12345678902', ifsc: 'HDFC0001234', account_holder: 'Probe Applicant' },
-  NOMINEE: { nominee_opt: 'Opt out' },
+  NOMINEE: { nominee_opt: 'Opt out', optout_declaration: true },
 };
 
 const future = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
+
+const GOOD_NOMINEE = {
+  name: 'Probe Nominee', relationship: 'Spouse', id_type: 'PAN', id_number: 'PQRSX1234Z',
+  address: '2 Probe Lane, Pune', mobile: '9876500001', email: 'nominee@example.test',
+};
 
 /* What the auditor typed, step by step, and the field each must be refused on. */
 const BAD = {
@@ -92,9 +97,11 @@ const BAD = {
     [{ ...VALID.BANK, account_number: '123' }, 'account_number'],
     [{ ...VALID.BANK, ifsc: 'BAD' }, 'ifsc'],
   ],
+  /* The auditor's 150% nominee, and one with no name, in the nominee list the
+     step has taken since 14 Oct (nominees.test.mjs has the rest). */
   NOMINEE: [
-    [{ nominee_opt: 'Add nominee', nominee_name: 'Probe Nominee', nominee_relation: 'Spouse', nominee_share: 150 }, 'nominee_share'],
-    [{ nominee_opt: 'Add nominee', nominee_relation: 'Spouse', nominee_share: 100 }, 'nominee_name'],
+    [{ nominee_opt: 'Add nominee', nominee_statement: 'The names of my nominees', nominees: [{ ...GOOD_NOMINEE, share: 150 }] }, 'nominees'],
+    [{ nominee_opt: 'Add nominee', nominee_statement: 'The names of my nominees', nominees: [{ ...GOOD_NOMINEE, name: '' }] }, 'nominees'],
   ],
 };
 
