@@ -5,7 +5,7 @@
 
 import express, { Router } from 'express';
 import { all, one, run, audit, ROLES, ROLE_LABELS } from '../db.js';
-import { requireUser, requirePermission, permissionsFor, orgsFor, activeOrg, mayUseOrg, mayUnmask, PERMISSIONS } from '../auth.js';
+import { requireUser, requirePermission, requireAnyPermission, permissionsFor, orgsFor, activeOrg, mayUseOrg, mayUnmask, PERMISSIONS } from '../auth.js';
 import { fill, maskedTokens } from '../engine/mergefields.js';
 import { hashPassword } from '../security.js';
 import { CONDITION_FIELDS, ACTION_TYPES, runRule } from '../engine/rules.js';
@@ -39,6 +39,7 @@ import {
   KEEP as PROMOTIONS_KEPT, candidates as promotionCandidates,
 } from '../engine/promotion.js';
 import { sendCsv } from '../engine/csv.js';
+import { listRoutes, setRoute, CASE_PRIORITIES } from '../engine/compliance.js';
 import {
   accessLogSummary, crossBookReads, activityOf, readersOf, RETENTION_DAYS,
 } from '../engine/accesslog.js';
@@ -362,6 +363,18 @@ router.get('/categories', (_req, res) => res.json(all('SELECT * FROM ticket_cate
 router.post('/categories', requirePermission('admin.sla'), (req, res) => {
   const result = run('INSERT INTO ticket_categories (name, auto_assign_role) VALUES (?,?)', [req.body.name, req.body.auto_assign_role || null]);
   res.status(201).json({ id: Number(result.lastInsertRowid) });
+});
+
+/* QA-28. Which case each AI compliance flag opens, and how urgent it is --
+   Admin and Superadmin, on the SLA & categories screen. */
+router.get('/compliance-flags', requirePermission('admin.sla'), (_req, res) => {
+  res.json({ routes: listRoutes(), priorities: CASE_PRIORITIES });
+});
+
+router.put('/compliance-flags/:flag', requirePermission('admin.sla'), (req, res) => {
+  const done = setRoute(req.params.flag, req.body ?? {}, req.user.id);
+  if (done.error) return res.status(done.status ?? 400).json(done);
+  res.json(done);
 });
 
 /* ----------------------------------------------------------- templates */
@@ -1037,7 +1050,11 @@ function auditFilter(req) {
 const AUDIT_SELECT = `SELECT a.*, u.name AS user_name, u.role AS user_role
    FROM audit_log a LEFT JOIN users u ON u.id = a.user_id`;
 
-router.get('/audit', requirePermission('report.system'), (req, res) => {
+/* `audit.read` is the catalogue's "Read the audit log", and nothing asked for
+   it here. QA-28's Compliance role holds it and not `report.system`; everyone
+   who held this before holds both. Exporting the log stays below, Admin and
+   Superadmin only. */
+router.get('/audit', requireAnyPermission('report.system', 'audit.read'), (req, res) => {
   const { clause, params } = auditFilter(req);
   const limit = Math.min(Math.max(Number(req.query.limit) || 300, 1), 1000);
   const offset = Math.max(Number(req.query.offset) || 0, 0);

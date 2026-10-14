@@ -145,6 +145,11 @@ export const SEED_ROLES = [
   ['product_rm', 'Product RM', 'Specialist for one product across all leads.', 'product', 1],
   ['customer_care', 'Customer Care', 'Case handling and client support.', 'org', 1],
   ['marketing_manager', 'Marketing Manager', 'Campaigns, content and lists.', 'org', 1],
+  /* QA-28 (Ritesh, 14 Oct). The compliance officer's desk: the cases the AI's
+     compliance flags open, the audit trail and monitored conversations, in
+     whichever businesses the person is given. Reads and works cases; edits no
+     lead, client or configuration. */
+  ['compliance', 'Compliance', 'Compliance cases, the audit trail and monitored conversations.', 'org', 1],
 ];
 
 /**

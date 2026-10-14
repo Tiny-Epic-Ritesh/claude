@@ -256,7 +256,8 @@ async function run() {
     await req('/api/leads', { expect: 401 });
   });
 
-  await check('all 11 roles can sign in', async () => {
+  // Twelve since QA-28 added Compliance (14 Oct).
+  await check('all 12 roles can sign in', async () => {
     const roles = {
       superadmin: 'superadmin@bonanza.test',
       admin: 'admin@bonanza.test',
@@ -269,6 +270,7 @@ async function run() {
       product_supervisor: 'productsupervisor@bonanza.test',
       customer_care: 'care@bonanza.test',
       marketing_manager: 'marketing@bonanza.test',
+      compliance: 'compliance@bonanza.test',
     };
     for (const [role, email] of Object.entries(roles)) {
       T[role] = await login(email);
@@ -1983,11 +1985,14 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
     });
     assert(data.compliance_ticket_id, 'no compliance ticket raised');
     REF.complianceTicketId = data.compliance_ticket_id;
+    REF.complianceFlag = proposal.compliance_flag;
   });
 
-  await check('the compliance ticket is High priority and assigned', async () => {
+  /* QA-28 (14 Oct): a regulatory mention -- this transcript names SEBI -- is
+     Critical; every other flag's default is High. */
+  await check("the compliance ticket takes its flag's priority and is assigned", async () => {
     const { data } = await req(`/api/tickets/${REF.complianceTicketId}`, { token: T.customer_care, expect: 200 });
-    eq(data.priority, 'High', 'compliance ticket priority');
+    eq(data.priority, REF.complianceFlag === 'Regulatory mention' ? 'Critical' : 'High', 'compliance ticket priority');
     assert(data.assignee_id, 'compliance ticket unassigned');
   });
 
@@ -2083,7 +2088,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
 
   await check('the permission matrix is exposed for every role', async () => {
     const { data } = await req('/api/admin/roles', { token: T.admin, expect: 200 });
-    eq(data.roles.length, 11, 'role count');
+    eq(data.roles.length, 12, 'role count');
     assert(Object.keys(data.matrix).length > 20, 'permission matrix too small');
   });
 

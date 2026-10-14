@@ -343,7 +343,7 @@ export const SECTIONS = [
     label: 'Audit log',
     group: 'monitoring',
     icon: 'receipt_long',
-    needs: ['report.system'],
+    needs: ['report.system', 'audit.read'],
     blurb: 'Who changed what, and when',
     keywords: ['audit', 'log', 'history', 'change', 'who did', 'trail', 'compliance', 'sebi'],
     Component: Audit,

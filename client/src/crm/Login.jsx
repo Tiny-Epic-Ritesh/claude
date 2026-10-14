@@ -27,6 +27,7 @@ const ROLES = [
   ['partnerrm@bonanza.test', 'partner_rm', 'handshake', 'Partners, onboarding and commissions'],
   ['care@bonanza.test', 'customer_care', 'headset_mic', 'Cases, SLA and the service queue'],
   ['marketing@bonanza.test', 'marketing_manager', 'campaign', 'Campaigns, lists and templates — no client PII'],
+  ['compliance@bonanza.test', 'compliance', 'gavel', 'Compliance cases, the audit trail and monitored conversations'],
 ];
 
 export default function Login({ onSignedIn }) {

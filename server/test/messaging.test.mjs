@@ -876,7 +876,9 @@ await test('the live stream carries nothing from a conversation you are not in',
 
 /* ------------------------------------------------------------ plumbing */
 
-await test('reviewing is on the roles screen, and of the shipped roles only admin and superadmin hold it', () => {
+/* Ruled 11 Sep: admin and superadmin, "until a compliance role exists". It
+   exists since QA-28 (14 Oct), and reviewing conversations is its job. */
+await test('reviewing is on the roles screen, and of the shipped roles only admin, superadmin and compliance hold it', () => {
   assert(CAPABILITY_CATALOGUE.some((c) => c[0] === 'comms.monitor'), 'comms.monitor cannot be granted on the roles screen');
   /* Shipped roles only. A role an administrator builds may be given it, and
      the end-to-end suite builds one by copying admin -- run this file on its
@@ -885,7 +887,7 @@ await test('reviewing is on the roles screen, and of the shipped roles only admi
     `SELECT rc.role_code FROM role_capabilities rc JOIN roles r ON r.code = rc.role_code
       WHERE rc.capability = 'comms.monitor' AND r.is_system = 1 ORDER BY rc.role_code`,
   ).map((r) => r.role_code);
-  assert.deepEqual(holders, ['admin', 'superadmin'], `held by: ${holders.join(', ')}`);
+  assert.deepEqual(holders, ['admin', 'compliance', 'superadmin'], `held by: ${holders.join(', ')}`);
 });
 
 await test('a conversation that holds messages cannot be deleted', () => {

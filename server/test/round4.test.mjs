@@ -367,9 +367,12 @@ try {
     assert.equal(t.assignee_id ?? null, expected, `assigned to user ${t.assignee_id}, where the book rule names ${expected}`);
   });
 
+  /* Every flag the AI raises has a route since 14 Oct (compliancedesk.test.mjs
+     covers them). This keeps the guarantee for a flag that has none: no
+     category is invented, and the case still has its book and its clock. */
   await test('QA-28 a flag with no category of its own still gets a book and a clock', async () => {
     const lead = seedLead('BONANZA', 'regulatory');
-    const res = await confirm(lead, 'Regulatory mention');
+    const res = await confirm(lead, 'A flag nobody has routed');
     assert.equal(res.status, 200, `confirm answered ${res.status}: ${res.body?.error}`);
     const t = caseRow(res.body.compliance_ticket_id);
     assert.equal(t.sales_org, 'BONANZA');

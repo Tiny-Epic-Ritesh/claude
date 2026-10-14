@@ -86,7 +86,11 @@ export function openCase({
   if (!org) throw new Error('openCase: the book the case belongs to is required');
 
   const category = categoryId ? one('SELECT * FROM ticket_categories WHERE id = ?', [categoryId]) : null;
-  const assignee = caseAssignee(category?.auto_assign_role ?? 'customer_care', org);
+  const role = category?.auto_assign_role ?? 'customer_care';
+  /* QA-28. Until somebody holds the Compliance role, a compliance case goes to
+     an Admin of its business -- who handled these before the role existed --
+     rather than to nobody. */
+  const assignee = caseAssignee(role, org) ?? (role === 'compliance' ? caseAssignee('admin', org) : null);
 
   const result = run(
     `INSERT INTO tickets (subject, description, priority, category_id, lead_id, card_id, partner_id, channel, assignee_id, created_by, status, sales_org)

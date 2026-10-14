@@ -17,6 +17,7 @@ import { maskRecords, withoutPortalSecret } from '../security.js';
 import { maskedFieldsFor } from '../engine/masking.js';
 import { kycHealth } from '../engine/kyc.js';
 import { queueFor } from '../engine/approvals.js';
+import { routeFor } from '../engine/compliance.js';
 import { integrationRegistry } from '../integrations.js';
 
 const router = Router();
@@ -583,6 +584,46 @@ const COCKPITS = {
       ],
       worklist: { type: 'tickets', title: 'Ticket queue', rows: queue },
       actions: ['Open ticket', 'Reply', 'Reassign', 'Escalate', 'Mark resolved', 'Waiting on client', 'Merge', 'Send CSAT'],
+    };
+  },
+
+  /* ---- QA-28: Compliance -------------------------------------------- */
+  compliance: (user, active) => {
+    /* The cases in the categories this desk owns, in the businesses the
+       officer is given -- not only their own, so a case still with an Admin
+       because nobody held the role yet is on the desk too. */
+    const book = orgScope(user, 't', active);
+    const queue = all(`
+      SELECT t.*, l.name AS lead_name, p.name AS partner_name, c.name AS category_name,
+             ua.role AS assignee_role
+      FROM tickets t
+      JOIN ticket_categories c ON c.id = t.category_id AND c.auto_assign_role = 'compliance'
+      LEFT JOIN leads l ON l.id = t.lead_id
+      LEFT JOIN partners p ON p.id = t.partner_id
+      LEFT JOIN users ua ON ua.id = t.assignee_id
+      WHERE t.status NOT IN ('Resolved', 'Closed') AND t.merged_into IS NULL AND ${book.sql}
+      ORDER BY t.breached DESC,
+               CASE t.priority WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END,
+               t.resolution_due`,
+    book.params);
+    // By the route, not the name, so renaming the category does not lose the count.
+    const regulatory = routeFor('Regulatory mention').categoryId;
+
+    return {
+      title: 'Compliance cockpit',
+      subtitle: 'The cases compliance flags open — breaches and regulator mentions first.',
+      metrics: [
+        metric('Open compliance cases', queue.length),
+        metric('Regulatory escalations', queue.filter((t) => t.category_id === regulatory).length,
+          'A SCORES complaint is due in 21 days', 'danger'),
+        metric('SLA breached', queue.filter((t) => t.breached).length, null, 'danger'),
+        metric('Assigned to you', queue.filter((t) => t.assignee_id === user.id).length),
+        metric('Not with Compliance yet', queue.filter((t) => t.assignee_role !== 'compliance').length,
+          'Unassigned, or still with an Admin', 'warn'),
+        metric('Approvals waiting on you', approvalsWaiting(user), 'Nobody else can decide these', 'warn', '/approvals'),
+      ],
+      worklist: { type: 'tickets', title: 'Compliance cases', rows: queue },
+      actions: ['Open ticket', 'Reply', 'Reassign', 'Escalate', 'Audit export'],
     };
   },
 

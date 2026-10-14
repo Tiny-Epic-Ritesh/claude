@@ -37,11 +37,13 @@ export const DEFAULT_VISIBILITY = {
 
   // Marketing needs to sanity-check a segment before sending. They get the tab
   // read-only and masked rather than building blind and asking an RM to look.
+  // Compliance (QA-28) reads the lead, client, case, application and partner
+  // behind a compliance case; it edits none of them.
   leads: ['superadmin', 'admin', 'caller', 'dealer', 'sales_rm', 'sales_supervisor',
-    'partner_rm', 'product_rm', 'product_supervisor', 'marketing_manager'],
+    'partner_rm', 'product_rm', 'product_supervisor', 'marketing_manager', 'compliance'],
 
   clients: ['superadmin', 'admin', 'dealer', 'sales_rm', 'sales_supervisor',
-    'product_rm', 'product_supervisor', 'customer_care'],
+    'product_rm', 'product_supervisor', 'customer_care', 'compliance'],
 
   pipeline: ['superadmin', 'admin', 'dealer', 'sales_rm', 'sales_supervisor',
     'product_rm', 'product_supervisor'],
@@ -55,19 +57,20 @@ export const DEFAULT_VISIBILITY = {
     'partner_rm', 'product_rm', 'product_supervisor', 'customer_care'],
 
   tickets: ['superadmin', 'admin', 'dealer', 'sales_rm', 'sales_supervisor',
-    'partner_rm', 'product_rm', 'product_supervisor', 'customer_care'],
+    'partner_rm', 'product_rm', 'product_supervisor', 'customer_care', 'compliance'],
 
   ccm: ['superadmin', 'admin', 'customer_care'],
 
-  kyc: ['superadmin', 'admin', 'sales_rm', 'sales_supervisor', 'product_rm', 'product_supervisor'],
+  kyc: ['superadmin', 'admin', 'sales_rm', 'sales_supervisor', 'product_rm', 'product_supervisor', 'compliance'],
 
   // A supervisor asking why the team's numbers moved needs to see which partner
   // sourced the leads. Read-only; onboarding stays with Partner RM.
-  partners: ['superadmin', 'admin', 'sales_supervisor', 'partner_rm'],
+  partners: ['superadmin', 'admin', 'sales_supervisor', 'partner_rm', 'compliance'],
 
   // Four approvers, not five. Partner RM raises and can watch their own
   // requests, but a supervisor or admin approves — maker-checker separation.
-  approvals: ['superadmin', 'admin', 'sales_supervisor', 'product_supervisor', 'partner_rm'],
+  // Compliance approves one kind: a change to a sharing default (QA-28).
+  approvals: ['superadmin', 'admin', 'sales_supervisor', 'product_supervisor', 'partner_rm', 'compliance'],
 
   // Not Customer Care: an agent who glances at a price move and offers a view
   // has given unsolicited investment advice. Marketing does get it — campaign
@@ -103,7 +106,10 @@ export const DEFAULT_VISIBILITY = {
 
   data: ['superadmin', 'admin', 'sales_supervisor', 'marketing_manager'],
 
-  setup: ['superadmin', 'admin'],
+  // Compliance reaches the audit log and conversation review through Setup,
+  // beside the screens open to anyone there (roles, integrations, residency);
+  // the rest need capabilities it does not hold.
+  setup: ['superadmin', 'admin', 'compliance'],
 
   /* Not a tab -- a feature, carried on the same mechanism (ENH-04).
    *

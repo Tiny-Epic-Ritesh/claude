@@ -142,6 +142,17 @@ CREATE TABLE IF NOT EXISTS ticket_categories (
   active        INTEGER NOT NULL DEFAULT 1
 );
 
+/* QA-28. Which case each AI compliance flag opens, and how urgent it is.
+   Configuration, not code: an Admin changes a row in Setup (SLA & categories).
+   The defaults are in engine/compliance.js. */
+CREATE TABLE IF NOT EXISTS compliance_flag_routes (
+  flag         TEXT PRIMARY KEY,
+  category_id  INTEGER REFERENCES ticket_categories(id) ON DELETE SET NULL,
+  priority     TEXT NOT NULL,
+  updated_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 /* SLA is configured per product type + priority (BRD OD-08). */
 CREATE TABLE IF NOT EXISTS sla_policies (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3213,6 +3224,7 @@ export const DEFAULT_ORG = 'BONANZA';
 export const ROLES = [
   'superadmin', 'admin', 'caller', 'dealer', 'sales_rm', 'sales_supervisor',
   'partner_rm', 'product_rm', 'product_supervisor', 'customer_care', 'marketing_manager',
+  'compliance',   // QA-28, 14 Oct
 ];
 
 export const ROLE_LABELS = {
@@ -3227,6 +3239,7 @@ export const ROLE_LABELS = {
   product_supervisor: 'Product Supervisor',
   customer_care: 'Customer Care Agent',
   marketing_manager: 'Marketing Manager',
+  compliance: 'Compliance',
 };
 
 export const CARD_STATES = [

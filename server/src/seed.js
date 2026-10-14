@@ -19,6 +19,7 @@ import { seedKra, seedIncentives } from './engine/kra.js';
 import { syncDispositionPicklists, seedMetadata, seedPicklists } from './engine/metadata.js';
 import { createFollowUp } from './engine/followups.js';
 import { DEFAULT_SLA } from './engine/sla.js';
+import { ensureComplianceRouting } from './engine/compliance.js';
 import { ticketSummary } from './ai/mock.js';
 import { convertLead } from './engine/clients.js';
 import { hashPasswordSync, encryptField } from './security.js';
@@ -133,7 +134,7 @@ for (const t of [
   // already converted, and never restore the link.
   'client_segments', 'clients',
   'notes', 'tasks', 'activities', 'card_audit', 'product_cards', 'leads', 'partners',
-  'content_items', 'content_library', 'templates', 'sla_policies', 'ticket_categories', 'product_types', 'users',
+  'content_items', 'content_library', 'templates', 'sla_policies', 'compliance_flag_routes', 'ticket_categories', 'product_types', 'users',
   'reminders', 'assignment_rules', 'team_members', 'teams', 'dialler_campaigns',
 ]) {
   db.exec(`DELETE FROM ${t}`);
@@ -432,6 +433,9 @@ addUser('product_rm_pms', 'Sanjay Malhotra', 'productrm3@bonanza.test', 'product
 addUser('care', 'Fatima Ansari', 'care@bonanza.test', 'customer_care', { manager_id: U.sales_sup });
 addUser('care2', 'Nikhil Rao', 'care2@bonanza.test', 'customer_care', { manager_id: U.sales_sup });
 addUser('marketing', 'Tanvi Mehta', 'marketing@bonanza.test', 'marketing_manager');
+/* QA-28: the compliance desk sees both businesses, as a firm's compliance
+   officer does. */
+addUser('compliance', 'Meghna Desai', 'compliance@bonanza.test', 'compliance', { orgs: ['BONANZA', 'BIGUL'] });
 
 /* Cross-org: these two carry books in both businesses, so their KRA scorecard
    mixes Bonanza and Bigul metrics exactly as the reference scorecard does. */
@@ -464,11 +468,17 @@ const CATEGORIES = [
   ['Complaint', 'customer_care'],
   ['Partner Support', 'partner_rm'],
   ['Research / Advisory', 'customer_care'],
+  // QA-28: the three the compliance flags open, owned by the Compliance desk.
+  ['Mis-selling / misrepresentation', 'compliance'],
+  ['Assured-return claim', 'compliance'],
+  ['Regulatory escalation', 'compliance'],
 ];
 const catIds = {};
 for (const [name, role] of CATEGORIES) {
   catIds[name] = Number(run('INSERT INTO ticket_categories (name, auto_assign_role) VALUES (?,?)', [name, role]).lastInsertRowid);
 }
+// Each compliance flag routed to its category, as a fresh database starts.
+ensureComplianceRouting();
 
 // Per-product SLA (OD-08). Broking products get tighter timers than advisory.
 for (const code of ['EQD', 'DP', 'MF', 'PMS']) {
@@ -1683,7 +1693,7 @@ Seeded Bonanza CRM
 CRM logins       superadmin@bonanza.test · admin@bonanza.test · caller@bonanza.test
                  dealer@bonanza.test · salesrm@bonanza.test · salessupervisor@bonanza.test
                  partnerrm@bonanza.test · productrm@bonanza.test · productsupervisor@bonanza.test
-                 care@bonanza.test · marketing@bonanza.test
+                 care@bonanza.test · marketing@bonanza.test · compliance@bonanza.test
 Partner portal   girish@partner.test / partner   (Associate, active)
                  lakshmi@partner.test / partner  (Remisier, active)
 `);

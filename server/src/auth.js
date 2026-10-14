@@ -44,7 +44,9 @@ export const PERMISSIONS = {
    * follows reports to any depth rather than granting the whole org. Granting
    * this capability back restores the old behaviour if the business wants it.
    */
-  'lead.view.all':        ['superadmin', 'admin', 'product_supervisor', 'marketing_manager', 'customer_care'],
+  /* compliance added for QA-28: a compliance case is about a lead, and the
+     officer reads the record behind it. Read only -- no lead.edit. */
+  'lead.view.all':        ['superadmin', 'admin', 'product_supervisor', 'marketing_manager', 'customer_care', 'compliance'],
   /* Sales Supervisor holds this for navigation, not for reach (P3-42).
    *
    * The role was left with lead.create, lead.edit, lead.reassign and
@@ -71,7 +73,7 @@ export const PERMISSIONS = {
    * live account appearing in it is a mis-dial waiting to happen. Marketing is
    * absent because it segments and sends rather than opening account records.
    * Partner RM reads a partner's clients inside the partner record, not here. */
-  'client.view.all':      ['superadmin', 'admin', 'customer_care', 'product_supervisor'],
+  'client.view.all':      ['superadmin', 'admin', 'customer_care', 'product_supervisor', 'compliance'],
   'client.view.own':      ['sales_rm', 'sales_supervisor', 'dealer', 'product_rm'],
   'client.edit':          ['superadmin', 'admin', 'sales_rm', 'dealer', 'customer_care'],
   'client.reassign':      ['superadmin', 'admin', 'sales_supervisor'],
@@ -88,7 +90,7 @@ export const PERMISSIONS = {
   // KYC
   'kyc.manage':           ['product_rm', 'product_supervisor', 'superadmin', 'admin'],
   'kyc.override':         ['product_supervisor', 'superadmin', 'admin'],
-  'kyc.view':             ['superadmin', 'admin', 'caller', 'dealer', 'sales_rm', 'sales_supervisor', 'partner_rm', 'product_rm', 'product_supervisor', 'customer_care'],
+  'kyc.view':             ['superadmin', 'admin', 'caller', 'dealer', 'sales_rm', 'sales_supervisor', 'partner_rm', 'product_rm', 'product_supervisor', 'customer_care', 'compliance'],
 
   /* Cases.
    *
@@ -97,16 +99,20 @@ export const PERMISSIONS = {
    * where Sales Supervisor held lead.view.all while being declared `team` and
    * made data_scope decorative. A supervisor reaches their team's cases through
    * the management chain instead, which is what `team` already means. */
-  'ticket.view.all':      ['superadmin', 'admin', 'customer_care', 'product_supervisor'],
+  /* compliance added for QA-28 to all five below: the officer works the cases
+     the compliance flags open -- reads, replies, hands on and escalates them. */
+  'ticket.view.all':      ['superadmin', 'admin', 'customer_care', 'product_supervisor', 'compliance'],
   'ticket.view.own':      ['caller', 'dealer', 'sales_rm', 'sales_supervisor', 'partner_rm', 'product_rm', 'marketing_manager'],
-  'ticket.create':        ['superadmin', 'admin', 'caller', 'dealer', 'sales_rm', 'sales_supervisor', 'partner_rm', 'product_rm', 'product_supervisor', 'customer_care', 'marketing_manager'],
-  'ticket.reply':         ['superadmin', 'admin', 'customer_care', 'sales_rm', 'sales_supervisor', 'product_rm', 'partner_rm'],
-  'ticket.reassign':      ['superadmin', 'admin', 'customer_care', 'sales_supervisor'],
-  'ticket.escalate':      ['superadmin', 'admin', 'customer_care', 'sales_supervisor'],
+  'ticket.create':        ['superadmin', 'admin', 'caller', 'dealer', 'sales_rm', 'sales_supervisor', 'partner_rm', 'product_rm', 'product_supervisor', 'customer_care', 'marketing_manager', 'compliance'],
+  'ticket.reply':         ['superadmin', 'admin', 'customer_care', 'sales_rm', 'sales_supervisor', 'product_rm', 'partner_rm', 'compliance'],
+  'ticket.reassign':      ['superadmin', 'admin', 'customer_care', 'sales_supervisor', 'compliance'],
+  'ticket.escalate':      ['superadmin', 'admin', 'customer_care', 'sales_supervisor', 'compliance'],
   'ticket.merge':         ['superadmin', 'admin', 'customer_care'],
 
   // Partners
-  'partner.view':         ['superadmin', 'admin', 'partner_rm', 'sales_supervisor'],
+  /* compliance added for QA-28, with partner.view.all: an assured-return claim
+     is often an Authorised Person's, and the officer reads the partner. */
+  'partner.view':         ['superadmin', 'admin', 'partner_rm', 'sales_supervisor', 'compliance'],
   /* Reach across the whole partner book, as opposed to your own.
 
      This is not a new grant. It is the hardcoded `req.user.role === 'partner_rm'`
@@ -115,7 +121,7 @@ export const PERMISSIONS = {
      everybody else with partner.view saw everything by omission. Declaring the
      grant instead means the floor beneath it can be declared too, which is what
      non-negotiable 7 asks for. Same three roles, same reach. */
-  'partner.view.all':     ['superadmin', 'admin', 'sales_supervisor'],
+  'partner.view.all':     ['superadmin', 'admin', 'sales_supervisor', 'compliance'],
   'partner.create':       ['superadmin', 'admin', 'partner_rm'],
   'partner.elevate':      ['superadmin', 'admin'],           // Partner RM initiates, Admin approves
   /* QA-33 (Ritesh, 13 Oct: yes). Activating a partner whose onboarding is not
@@ -158,16 +164,23 @@ export const PERMISSIONS = {
 
   // PII — unmasking a client identifier is a distinct, audited capability
   /* marketing_manager added for QA-06: the owner decision that Marketing may see unmasked PII. */
-  'pii.unmask':           ['superadmin', 'admin', 'sales_rm', 'sales_supervisor', 'product_rm', 'product_supervisor', 'customer_care', 'marketing_manager'],
+  /* compliance added for QA-28: masked by default like any unlisted role, and
+     unmasked one field at a time, each reveal in the audit log. */
+  'pii.unmask':           ['superadmin', 'admin', 'sales_rm', 'sales_supervisor', 'product_rm', 'product_supervisor', 'customer_care', 'marketing_manager', 'compliance'],
 
   // Audit — the compliance trail, including the AI egress log. Read-only by
   // design: nobody may edit it, which is the whole point of keeping it.
-  'audit.read':           ['superadmin', 'admin'],
+  /* compliance added for QA-28. This also makes Compliance a checker for a
+     sharing-default change (engine/approvals.js, owd_change), which is what
+     that approval's own reasoning asks for: "the person accountable for the
+     record of who saw what". */
+  'audit.read':           ['superadmin', 'admin', 'compliance'],
 
   /* P3-21. Read any conversation in their books, freeze one, stop somebody
      sending. Ritesh, 11 September: admin and superadmin, until a compliance
-     role exists. Every read is itself written to the audit log. */
-  'comms.monitor':        ['superadmin', 'admin'],
+     role exists. It exists now (QA-28, 14 Oct). Every read is itself written
+     to the audit log. */
+  'comms.monitor':        ['superadmin', 'admin', 'compliance'],
 
   // Reporting
   /* Seeing your own numbers is not a supervisory act.

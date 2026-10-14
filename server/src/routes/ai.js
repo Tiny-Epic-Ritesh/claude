@@ -7,17 +7,10 @@ import { all, one, run, audit, notify } from '../db.js';
 import { requireUser, requirePermission, can, leadScope, activeOrg } from '../auth.js';
 import { loadInBook } from '../engine/bookscope.js';
 import { applyScore } from '../engine/rules.js';
-import { openCase, categoryNamed } from '../engine/cases.js';
-
-/**
- * The case category each compliance flag opens (QA-28).
- *
- * Only Complaint has a category of its own in Setup. The other four flags --
- * mis-selling risk, a guaranteed-return expectation, a regulatory mention and
- * urgency on funds -- open uncategorised until it is ruled where each belongs.
- * They still get the lead's book, an agent in it and their SLA deadlines.
- */
-const COMPLIANCE_CATEGORY = new Map([['Complaint', 'Complaint']]);
+import { openCase } from '../engine/cases.js';
+/* QA-28. The category and priority each compliance flag opens are now
+   configuration, ruled 14 Oct and changeable in Setup: engine/compliance.js. */
+import { routeFor } from '../engine/compliance.js';
 import * as ai from '../ai/index.js';
 import { sendCsv } from '../engine/csv.js';
 
@@ -252,11 +245,12 @@ router.post('/disposition/confirm', (req, res) => {
        which this door never started, so a High compliance case had no deadline
        at all. It also took the first Customer Care agent in the table, in
        either business, and numbered the case BNZ- regardless. */
+    const route = routeFor(compliance_flag);
     const opened = openCase({
       subject: `Compliance flag: ${compliance_flag}`,
       description: `${compliance_note || ''}\n\nFrom call summary: ${summary}`,
-      priority: 'High',
-      categoryId: categoryNamed(COMPLIANCE_CATEGORY.get(compliance_flag))?.id ?? null,
+      priority: route.priority,
+      categoryId: route.categoryId,
       leadId: lead_id, channel: 'CRM', createdBy: req.user.id, org: lead.sales_org,
     });
     ticketId = opened.id;

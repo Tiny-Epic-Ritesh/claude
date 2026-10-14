@@ -249,4 +249,5 @@ export const ROLE_LABEL = {
   sales_rm: 'Sales RM', sales_supervisor: 'Sales Supervisor', partner_rm: 'Partner RM',
   product_rm: 'Product RM', product_supervisor: 'Product Supervisor',
   customer_care: 'Customer Care', marketing_manager: 'Marketing Manager',
+  compliance: 'Compliance',
 };

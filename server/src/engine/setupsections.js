@@ -39,7 +39,7 @@ export const SETUP_SECTIONS = [
   { key: 'webhooks', label: 'Outbound webhooks', needs: ['admin.system'] },
   { key: 'telephony', label: 'Telephony', needs: ['admin.system'] },
   { key: 'meta', label: 'Facebook & Instagram', needs: ['admin.system'] },
-  { key: 'audit', label: 'Audit log', needs: ['report.system'] },
+  { key: 'audit', label: 'Audit log', needs: ['report.system', 'audit.read'] },
   { key: 'logs', label: 'API & logs', needs: ['report.system'] },
   { key: 'database', label: 'Database', needs: ['report.system'] },
   { key: 'promotion', label: 'Promote configuration', needs: ['admin.system'] },

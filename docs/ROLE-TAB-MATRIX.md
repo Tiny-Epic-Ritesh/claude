@@ -78,6 +78,14 @@ Data Tools. Deliberately no Clients and no Pipeline — this role segments and
 sends, and does not need to open individual client records. That is also why we
 agreed masking stays on for them (Q-16).
 
+**Compliance** (added 14 Oct 2026, QA-28) — Cases are the job: the categories
+the AI's compliance flags open (mis-selling, assured-return claims, regulatory
+escalations). Leads, Clients, KYC and Partners to read the record behind a
+case; Approvals for the one approval it decides, a change to a sharing default;
+Setup for the audit log and conversation review. Both businesses when the user
+is given both. It edits no lead, client or configuration, and identifiers stay
+masked until the officer unmasks one, which is audited.
+
 ---
 
 ## The seven cells I am unsure about
