@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { api, ROLE_LABEL } from '../../api.js';
+import { api, ROLE_LABEL, dateTime } from '../../api.js';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Icon } from '../../components/ui.jsx';
+import { ArchiveOrDelete } from '../../components/Lifecycle.jsx';
 
 /*
  * Lifted out of Admin.jsx, which held eleven Setup screens in one file and so
@@ -16,8 +17,20 @@ export function Rules() {
   const [result, setResult] = useState(null);
   const [editing, setEditing] = useState(null);   // rule | 'new'
   const [busy, setBusy] = useState(false);
+  const [ending, setEnding] = useState(null);
+  const [done, setDone] = useState(null);
+  const [problem, setProblem] = useState(null);
   if (loadError) return <ErrorBanner error={loadError} />;
   if (loading || !data) return <Loading />;
+
+  /* QA-37: archived rules are kept, read-only, out of the way. */
+  const live = data.rules.filter((r) => !r.archived_at);
+  const archived = data.rules.filter((r) => r.archived_at);
+  const restore = async (r) => {
+    setProblem(null);
+    try { await api.post(`/admin/rules/${r.id}/restore`); setDone(`"${r.name}" is restored, switched off.`); reload(); }
+    catch (err) { setProblem(err.message); }
+  };
 
   const dryRun = async (id) => {
     setBusy(true);
@@ -33,14 +46,17 @@ export function Rules() {
       </div>
 
       <div className="row-between" style={{ marginBottom: 'var(--gap)' }}>
-        <span className="tiny muted">{data.rules.length} rules · {data.rules.filter((r) => r.enabled).length} enabled</span>
+        <span className="tiny muted">{live.length} rules · {live.filter((r) => r.enabled).length} enabled{archived.length ? ` · ${archived.length} archived` : ''}</span>
         <button className="btn btn-primary btn-sm" onClick={() => setEditing('new')}>
           <Icon name="add" /> New rule
         </button>
       </div>
 
+      <ErrorBanner error={problem} onDismiss={() => setProblem(null)} />
+      {done && <div className="notice notice-ok" style={{ marginBottom: 'var(--gap)' }}><Icon name="check_circle" size={17} /> <span>{done}</span></div>}
+
       <div className="stack">
-        {data.rules.map((r) => (
+        {live.map((r) => (
           <section className="card" key={r.id}>
             <div className="card-head">
               <div>
@@ -67,6 +83,11 @@ export function Rules() {
                 <button className="btn-sm" onClick={async () => { await api.patch(`/admin/rules/${r.id}`, { enabled: r.enabled ? 0 : 1 }); reload(); }}>
                   {r.enabled ? 'Disable' : 'Enable'}
                 </button>
+                {/* QA-37: switched off, then archived; deleted only as a draft
+                    that was never switched on. */}
+                {!r.enabled && (r.first_enabled_at || r.fire_count > 0
+                  ? <button className="btn-ghost btn-sm" onClick={() => setEnding({ rule: r, what: 'archiving' })}>Archive</button>
+                  : <button className="btn-ghost btn-sm" onClick={() => setEnding({ rule: r, what: 'deleting' })}>Delete</button>)}
               </div>
             </div>
             <div className="card-body">
@@ -92,6 +113,40 @@ export function Rules() {
           </section>
         ))}
       </div>
+
+      {archived.length > 0 && (
+        <details className="card" style={{ marginTop: 'var(--gap)', padding: '10px 14px' }}>
+          <summary className="small">{archived.length} archived rule{archived.length === 1 ? '' : 's'}</summary>
+          <div className="stack" style={{ gap: 8, marginTop: 10 }}>
+            {archived.map((r) => (
+              <div key={r.id} className="row-between">
+                <div>
+                  <strong className="small">{r.name}</strong>
+                  <div className="tiny muted">
+                    Archived {dateTime(r.archived_at)}{r.archive_reason ? ` — ${r.archive_reason}` : ''} · fired {r.fire_count}×
+                  </div>
+                </div>
+                <button className="btn-ghost btn-sm" onClick={() => restore(r)}>Restore</button>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {ending && (
+        <ArchiveOrDelete
+          confirmLabel="Type the rule’s name to confirm"
+          name={ending.rule.name}
+          what={ending.what}
+          archivePath={`/admin/rules/${ending.rule.id}/archive`}
+          deletePath={`/admin/rules/${ending.rule.id}`}
+          archiveNote="It stays switched off and read-only, with its history, and leaves this list. It can be restored."
+          deleteNote="This removes a draft that was never switched on. A rule that has run is kept as the record of what it did, and is archived instead."
+          onSwitch={(what) => setEnding({ ...ending, what })}
+          onClose={() => setEnding(null)}
+          onDone={(message) => { setEnding(null); setDone(message); reload(); }}
+        />
+      )}
 
       {editing && (
         <RuleBuilder

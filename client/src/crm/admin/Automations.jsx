@@ -3,6 +3,7 @@ import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../../api.js';
 import { useApi, Loading, Empty, Icon, Modal, ErrorBanner, Spinner } from '../../components/ui.jsx';
 import FlowBuilder from './FlowBuilder.jsx';
+import { ArchiveOrDelete } from '../../components/Lifecycle.jsx';
 
 /**
  * Automations (P3-16): the list, and the door to the builder.
@@ -46,15 +47,25 @@ function AutomationList() {
   const [spec] = useApi('/admin/automations/spec');
   const [making, setMaking] = useState(false);
   const [problem, setProblem] = useState(null);
+  const [ending, setEnding] = useState(null);
+  const [done, setDone] = useState(null);
   const navigate = useNavigate();
 
   if (loading || !spec) return <Loading />;
 
   const open = (autoId) => navigate(`/setup/automations/${autoId}`);
+  /* QA-37: archived flows are kept, read-only, out of the way. */
+  const archived = (rows ?? []).filter((a) => a.archived_at);
+  const restore = async (a) => {
+    setProblem(null);
+    try { await api.post(`/admin/automations/${a.id}/restore`); setDone(`"${a.name}" is restored, paused.`); reload(); }
+    catch (err) { setProblem(err.message); }
+  };
 
   return (
     <div className="stack" style={{ gap: 14 }}>
       {problem && <ErrorBanner error={problem} onDismiss={() => setProblem(null)} />}
+      {done && <div className="notice notice-ok"><Icon name="check_circle" size={17} /> <span>{done}</span></div>}
 
       <div className="row-between">
         <div>
@@ -68,7 +79,7 @@ function AutomationList() {
         </button>
       </div>
 
-      {!rows?.length ? (
+      {!rows?.filter((a) => !a.archived_at).length ? (
         <Empty>Nothing built yet.</Empty>
       ) : (
         <div className="table-scroll">
@@ -80,12 +91,16 @@ function AutomationList() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((a) => (
+              {rows.filter((a) => !a.archived_at).map((a) => (
                 <tr key={a.id}>
                   <td>
                     <strong>{a.name}</strong>
                     {a.description && <div className="tiny muted">{a.description}</div>}
-                    <div className="tiny muted">{a.sales_org} · priority {a.priority}</div>
+                    <div className="tiny muted">
+                      {a.sales_org} · priority {a.priority}
+                      {/* QA-37: a flow that has run changes by new versions. */}
+                      {a.first_activated_at ? ` · version ${a.version}` : ' · draft, never switched on'}
+                    </div>
                   </td>
                   <td className="small">
                     {spec.triggers.find((t) => t.key === a.trigger_type)?.label ?? a.trigger_type}
@@ -103,12 +118,58 @@ function AutomationList() {
                   {/* The number that matters when something is wrong: people
                       partway through, who have had the first message. */}
                   <td className="num">{a.waiting || '—'}</td>
-                  <td><button className="btn-sm" onClick={() => open(a.id)}>Open</button></td>
+                  <td>
+                    <span className="row" style={{ gap: 4, justifyContent: 'flex-end' }}>
+                      <button className="btn-sm" onClick={() => open(a.id)}>Open</button>
+                      {/* QA-37: switched off, then archived once it has run;
+                          deleted only as a draft never switched on. */}
+                      {a.status !== 'active' && (a.first_activated_at || a.entered > 0
+                        ? <button className="btn-ghost btn-sm" onClick={() => setEnding({ auto: a, what: 'archiving' })}>Archive</button>
+                        : <button className="btn-ghost btn-sm" onClick={() => setEnding({ auto: a, what: 'deleting' })}>Delete</button>)}
+                    </span>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+      )}
+
+      {archived.length > 0 && (
+        <details className="card" style={{ padding: '10px 14px' }}>
+          <summary className="small">{archived.length} archived automation{archived.length === 1 ? '' : 's'}</summary>
+          <div className="stack" style={{ gap: 8, marginTop: 10 }}>
+            {archived.map((a) => (
+              <div key={a.id} className="row-between">
+                <div>
+                  <strong className="small">{a.name}</strong>
+                  <div className="tiny muted">
+                    Archived{a.archive_reason ? ` — ${a.archive_reason}` : ''} · version {a.version} · {a.entered} entered
+                  </div>
+                </div>
+                <span className="row" style={{ gap: 4 }}>
+                  <button className="btn-ghost btn-sm" onClick={() => open(a.id)}>Open</button>
+                  <button className="btn-ghost btn-sm" onClick={() => restore(a)}>Restore</button>
+                </span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {ending && (
+        <ArchiveOrDelete
+          confirmLabel="Type the automation’s name to confirm"
+          name={ending.auto.name}
+          what={ending.what}
+          archivePath={`/admin/automations/${ending.auto.id}/archive`}
+          deletePath={`/admin/automations/${ending.auto.id}`}
+          archiveNote="It stays paused and read-only, with every version and every lead that went through it, and leaves this list. It can be restored."
+          deleteNote="This removes a draft that was never switched on. An automation that has run is kept as the record of what it did, and is archived instead."
+          onSwitch={(what) => setEnding({ ...ending, what })}
+          onClose={() => setEnding(null)}
+          onDone={(message) => { setEnding(null); setDone(message); reload(); }}
+        />
       )}
 
       <RuleMigration onConverted={reload} onError={setProblem} />

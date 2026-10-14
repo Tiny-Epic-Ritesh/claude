@@ -134,3 +134,18 @@ data, with a reason, and never deletes them.
   that have it keep it. A category a compliance flag opens cases in is not
   retired until the flag is routed elsewhere, and the refusal names the flag.
   `test/lifecycle3.test.mjs`.
+- **Automation rules and flows (batch 4, 14 Oct):** when one was first
+  switched on is kept by database triggers, so whichever door switched it on,
+  it never again passes for a draft. *Delete* is for a draft never switched
+  on and needs its name typed; anything else is refused with "archive it
+  instead". *Archive* asks why and needs it switched off (a flow also paused,
+  with nobody inside); archived, it is read-only -- no edit, no switching on,
+  no real run (a dry run still works), and a version rollback is refused --
+  until it is restored, switched off. Rules already kept a version per save.
+  A flow that has run now changes by new versions: each change to its
+  trigger, entry conditions or cards is recorded in `automation_versions`
+  with the definition as it stood, renaming or moving cards is not, and every
+  run records the version it went through. Flow versions are history to read,
+  not to roll back over a live graph. The Rules and Automations screens offer
+  Archive or Delete, list what is archived, and show a flow's version.
+  `test/lifecycle4.test.mjs`.

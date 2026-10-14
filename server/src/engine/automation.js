@@ -155,8 +155,8 @@ export function enter(automationId, leadId, { force = false } = {}) {
   if (conditions && !evaluateTree(conditions, facts)) return null;
 
   const info = run(
-    'INSERT INTO automation_run (automation_id, lead_id, step_id, status) VALUES (?,?,?,?)',
-    [automationId, leadId, auto.first_step_id ?? null, 'running'],
+    'INSERT INTO automation_run (automation_id, lead_id, step_id, status, flow_version) VALUES (?,?,?,?,?)',
+    [automationId, leadId, auto.first_step_id ?? null, 'running', auto.version ?? 1],
   );
   const runId = Number(info.lastInsertRowid);
   record(runId, null, 'entered');

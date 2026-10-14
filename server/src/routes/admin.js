@@ -899,6 +899,10 @@ router.post('/rules', requirePermission('admin.rules'), (req, res) => {
 });
 
 router.patch('/rules/:id', requirePermission('admin.rules'), (req, res) => {
+  const rule = one('SELECT * FROM rules WHERE id = ?', [req.params.id]);
+  if (!rule) return res.status(404).json({ error: 'Rule not found' });
+  // QA-37: archived is read-only, switching it on included, until it is restored.
+  if (rule.archived_at) return res.status(409).json({ error: `"${rule.name}" is archived. Restore it first.`, archived: true });
   const sets = [];
   const params = [];
   for (const f of ['name', 'description', 'enabled', 'priority']) {
@@ -919,7 +923,57 @@ router.patch('/rules/:id', requirePermission('admin.rules'), (req, res) => {
 
 /** Dry-run evaluates and reports without performing a single action. */
 router.post('/rules/:id/run', requirePermission('admin.rules'), (req, res) => {
-  res.json(runRule(Number(req.params.id), { dryRun: req.body.dry_run !== false }));
+  const dryRun = req.body.dry_run !== false;
+  const rule = one('SELECT name, archived_at FROM rules WHERE id = ?', [req.params.id]);
+  if (rule?.archived_at && !dryRun) return res.status(409).json({ error: `"${rule.name}" is archived. Restore it first.` });
+  res.json(runRule(Number(req.params.id), { dryRun }));
+});
+
+/* QA-37: a rule is switched off, and archived once it has run; deleted only
+   as a draft never switched on, with its name typed. Archived, it is
+   read-only and out of the way, and can be restored. */
+router.post('/rules/:id/archive', requirePermission('admin.rules'), (req, res) => {
+  const rule = one('SELECT * FROM rules WHERE id = ?', [req.params.id]);
+  if (!rule) return res.status(404).json({ error: 'Rule not found' });
+  if (rule.archived_at) return res.status(409).json({ error: `"${rule.name}" is already archived` });
+  if (rule.enabled) return res.status(409).json({ error: `"${rule.name}" is switched on. Switch it off first.` });
+  const reason = String(req.body?.reason ?? '').trim();
+  if (reason.length < 5) return res.status(400).json({ error: 'Say why it is being archived, in a few words', field: 'reason' });
+  run("UPDATE rules SET archived_at = datetime('now'), archived_by = ?, archive_reason = ? WHERE id = ?", [req.user.id, reason, rule.id]);
+  audit(req.user.id, 'rule_archived', 'rule', rule.id, { name: rule.name, reason });
+  return res.json(one('SELECT * FROM rules WHERE id = ?', [rule.id]));
+});
+
+router.post('/rules/:id/restore', requirePermission('admin.rules'), (req, res) => {
+  const rule = one('SELECT * FROM rules WHERE id = ?', [req.params.id]);
+  if (!rule) return res.status(404).json({ error: 'Rule not found' });
+  if (!rule.archived_at) return res.status(409).json({ error: `"${rule.name}" is not archived` });
+  run('UPDATE rules SET archived_at = NULL, archived_by = NULL, archive_reason = NULL WHERE id = ?', [rule.id]);
+  audit(req.user.id, 'rule_restored', 'rule', rule.id, { name: rule.name });
+  return res.json(one('SELECT * FROM rules WHERE id = ?', [rule.id]));
+});
+
+router.delete('/rules/:id', requirePermission('admin.rules'), (req, res) => {
+  const rule = one('SELECT * FROM rules WHERE id = ?', [req.params.id]);
+  if (!rule) return res.status(404).json({ error: 'Rule not found' });
+  /* What it did is the record: its firings, its runs and the tasks and
+     messages they made all point at it. A dry run did nothing, so it does not
+     count. */
+  const acted = rule.fire_count
+    || one('SELECT COUNT(*) n FROM rule_firings WHERE rule_id = ?', [rule.id]).n
+    || one('SELECT COUNT(*) n FROM rule_runs WHERE rule_id = ? AND dry_run = 0', [rule.id]).n;
+  if (rule.enabled || rule.first_enabled_at || acted) {
+    return res.status(409).json({
+      error: `"${rule.name}" has been switched on, so it is kept as the record of what it did. Switch it off and archive it instead.`,
+      archive_instead: true,
+    });
+  }
+  if (String(req.body?.confirm_name ?? '').trim() !== rule.name) {
+    return res.status(400).json({ error: `Type the rule's name, "${rule.name}", to delete it`, field: 'confirm_name' });
+  }
+  run('DELETE FROM rules WHERE id = ?', [rule.id]);
+  audit(req.user.id, 'rule_deleted', 'rule', rule.id, { name: rule.name });
+  return res.json({ ok: true, deleted: rule.name });
 });
 
 router.get('/rules/:id/runs', requirePermission('admin.rules'), (req, res) => {
@@ -1029,6 +1083,12 @@ router.get('/versions/diff', requirePermission('admin.rules'), (req, res) => {
  * the question an auditor actually asks.
  */
 router.post('/versions/:id/restore', requirePermission('admin.rules'), (req, res) => {
+  /* QA-37. A rule version carries `enabled`, so rolling an archived rule back
+     would switch it on past its own archive. */
+  const asked = versionById(Number(req.params.id));
+  if (asked?.kind === 'rule' && one('SELECT archived_at FROM rules WHERE id = ?', [asked.logical_id])?.archived_at) {
+    return res.status(409).json({ error: 'That rule is archived. Restore the rule before rolling it back.' });
+  }
   const out = restoreVersion(Number(req.params.id), { userId: req.user.id });
   if (!out.ok) return res.status(404).json(out);
 

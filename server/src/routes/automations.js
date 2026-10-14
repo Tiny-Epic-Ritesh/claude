@@ -42,6 +42,120 @@ function reachable(req, res, id) {
   return auto;
 }
 
+/* ------------------------------------------------------------ lifecycle */
+
+/**
+ * What a flow does, as one value: what starts it, who may enter, and every
+ * card with its links. Not its name, its notes or where the cards sit on the
+ * canvas -- moving a card is not a new version of what leads go through.
+ */
+function flowDefinition(auto) {
+  return JSON.stringify({
+    trigger_type: auto.trigger_type,
+    trigger_config: auto.trigger_config ?? null,
+    entry_conditions: auto.entry_conditions ?? null,
+    first_step_id: auto.first_step_id ?? null,
+    steps: all(
+      'SELECT id, kind, config, next_step_id, else_step_id FROM automation_step WHERE automation_id = ? ORDER BY id',
+      [auto.id],
+    ),
+  });
+}
+
+/**
+ * Record the flow's definition as its next version, if it changed (QA-37: "a
+ * new version once it has run").
+ *
+ * A draft changes freely until it is first switched on. From then on every
+ * change to what leads go through is a new version, numbered on the flow and
+ * on each run that enters it, and the version before it stays readable.
+ */
+function recordFlowVersion(automationId, userId) {
+  const auto = one('SELECT * FROM automation WHERE id = ?', [automationId]);
+  if (!auto?.first_activated_at) return null;
+  const definition = flowDefinition(auto);
+  const last = one(
+    'SELECT version, definition FROM automation_versions WHERE automation_id = ? ORDER BY version DESC LIMIT 1',
+    [auto.id],
+  );
+  if (last?.definition === definition) return null;
+  const version = last ? last.version + 1 : (auto.version ?? 1);
+  run('UPDATE automation SET version = ? WHERE id = ?', [version, auto.id]);
+  run('INSERT INTO automation_versions (automation_id, version, definition, created_by) VALUES (?,?,?,?)',
+    [auto.id, version, definition, userId ?? null]);
+  return version;
+}
+
+/* The writes that can change what leads go through. Layout, sticky notes,
+   pausing and test runs cannot. */
+const DEFINES_FLOW = /^\/(steps(\/\d+(\/duplicate)?)?|activate)?$/;
+const OPEN_WHEN_ARCHIVED = new Set(['/restore', '/test']);
+
+/**
+ * One guard for every write on a flow, rather than a line in each route.
+ *
+ * An archived flow is read-only until it is restored. And around any write
+ * that can change its definition, the version before the change is recorded
+ * first -- so a flow that ran before versions were kept still has the
+ * definition its leads went through -- and the change itself after, before
+ * the answer goes back.
+ */
+router.use('/:id', (req, res, next) => {
+  if (req.method === 'GET' || !/^\d+$/.test(req.params.id)) return next();
+  const auto = one('SELECT * FROM automation WHERE id = ?', [req.params.id]);
+  if (!auto || !mayUseOrg(req.user, auto.sales_org)) return next();
+  if (auto.archived_at && !OPEN_WHEN_ARCHIVED.has(req.path) && !(req.method === 'DELETE' && req.path === '/')) {
+    return res.status(409).json({ error: `"${auto.name}" is archived, so it cannot change. Restore it first.`, archived: true });
+  }
+  if (req.method !== 'DELETE' || req.path !== '/') {
+    if (DEFINES_FLOW.test(req.path)) {
+      recordFlowVersion(auto.id, req.user.id);
+      const send = res.json.bind(res);
+      res.json = (body) => {
+        if (res.statusCode < 400) recordFlowVersion(auto.id, req.user.id);
+        return send(body);
+      };
+    }
+  }
+  return next();
+});
+
+/** Archive a flow that is switched off: QA-37. Read-only, out of the way, restorable. */
+router.post('/:id/archive', requirePermission('admin.rules'), (req, res) => {
+  const auto = reachable(req, res, req.params.id);
+  if (!auto) return undefined;
+  if (auto.status === 'active') return res.status(409).json({ error: `"${auto.name}" is running. Pause it first.` });
+  const live = one("SELECT COUNT(*) n FROM automation_run WHERE automation_id = ? AND status IN ('running','waiting')", [auto.id]).n;
+  if (live) return res.status(409).json({ error: `${live} lead${live === 1 ? ' is' : 's are'} still inside it. Let them finish first.`, live });
+  const reason = String(req.body?.reason ?? '').trim();
+  if (reason.length < 5) return res.status(400).json({ error: 'Say why it is being archived, in a few words', field: 'reason' });
+  run("UPDATE automation SET archived_at = datetime('now'), archived_by = ?, archive_reason = ? WHERE id = ?", [req.user.id, reason, auto.id]);
+  audit(req.user.id, 'automation_archived', 'automation', auto.id, { name: auto.name, reason });
+  return res.json(one('SELECT * FROM automation WHERE id = ?', [auto.id]));
+});
+
+router.post('/:id/restore', requirePermission('admin.rules'), (req, res) => {
+  const auto = reachable(req, res, req.params.id);
+  if (!auto) return undefined;
+  if (!auto.archived_at) return res.status(409).json({ error: `"${auto.name}" is not archived` });
+  run('UPDATE automation SET archived_at = NULL, archived_by = NULL, archive_reason = NULL WHERE id = ?', [auto.id]);
+  audit(req.user.id, 'automation_restored', 'automation', auto.id, { name: auto.name });
+  return res.json(one('SELECT * FROM automation WHERE id = ?', [auto.id]));
+});
+
+/** Every recorded version of a flow, newest first: what its leads went through. */
+router.get('/:id/versions', requirePermission('admin.rules'), (req, res) => {
+  const auto = reachable(req, res, req.params.id);
+  if (!auto) return undefined;
+  return res.json(all(
+    `SELECT v.version, v.created_at, v.definition, u.name AS created_by_name,
+            (SELECT COUNT(*) FROM automation_run r WHERE r.automation_id = v.automation_id AND r.flow_version = v.version) AS runs
+       FROM automation_versions v LEFT JOIN users u ON u.id = v.created_by
+      WHERE v.automation_id = ? ORDER BY v.version DESC`,
+    [auto.id],
+  ).map((v) => ({ ...v, definition: JSON.parse(v.definition) })));
+});
+
 /**
  * What a flow can be built from.
  *
@@ -252,30 +366,34 @@ router.patch('/:id', requirePermission('admin.rules'), (req, res) => {
 });
 
 /**
- * Delete it — but not while leads are standing inside it.
+ * Delete it -- only a draft that was never switched on (QA-37).
  *
- * Removing an automation with live runs strands those leads mid-flow: the rows
- * cascade away and nothing ever finishes what it started. Pause it, let them
- * drain, then delete.
+ * Removing one that has run takes its runs with it (they cascade), and with
+ * them the record of what each lead was sent; one with leads inside strands
+ * them mid-flow. Anything that has run is archived instead.
  */
 router.delete('/:id', requirePermission('admin.rules'), (req, res) => {
   const auto = reachable(req, res, req.params.id);
   if (!auto) return undefined;
 
-  const live = one(
-    "SELECT COUNT(*) n FROM automation_run WHERE automation_id = ? AND status IN ('running','waiting')",
-    [auto.id],
-  ).n;
-  if (live) {
+  const ran = one('SELECT COUNT(*) n FROM automation_run WHERE automation_id = ?', [auto.id]).n;
+  const live = one("SELECT COUNT(*) n FROM automation_run WHERE automation_id = ? AND status IN ('running','waiting')", [auto.id]).n;
+  if (auto.first_activated_at || ran) {
     return res.status(409).json({
-      error: `${live} lead${live === 1 ? ' is' : 's are'} still inside this automation. Pause it and let them finish first.`,
+      error: live
+        ? `${live} lead${live === 1 ? ' is' : 's are'} still inside "${auto.name}". It has run, so it is not deleted: pause it, let them finish, and archive it.`
+        : `"${auto.name}" has been switched on${ran ? ` and ${ran} lead${ran === 1 ? '' : 's'} went through it` : ''}, so it is kept as the record of what it did. Pause it and archive it instead.`,
+      archive_instead: true,
       live,
     });
+  }
+  if (String(req.body?.confirm_name ?? '').trim() !== auto.name) {
+    return res.status(400).json({ error: `Type the automation's name, "${auto.name}", to delete it`, field: 'confirm_name' });
   }
 
   run('DELETE FROM automation WHERE id = ?', [auto.id]);
   audit(req.user.id, 'automation_deleted', 'automation', auto.id, { name: auto.name });
-  return res.json({ ok: true });
+  return res.json({ ok: true, deleted: auto.name });
 });
 
 /* --------------------------------------------------------------- steps */

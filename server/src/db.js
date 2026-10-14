@@ -219,6 +219,21 @@ CREATE TABLE IF NOT EXISTS automation_step (
 
 CREATE INDEX IF NOT EXISTS idx_automation_step_auto ON automation_step(automation_id);
 
+/* QA-37: a flow that has run is changed by making a new version, so what a
+   lead went through stays answerable. The definition as it stood -- trigger,
+   entry conditions and every card -- one row per version. History only: a
+   flow's cards are linked by id and leads may be standing on them, so an old
+   version is read, not rolled back over a live graph. */
+CREATE TABLE IF NOT EXISTS automation_versions (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  automation_id INTEGER NOT NULL REFERENCES automation(id) ON DELETE CASCADE,
+  version       INTEGER NOT NULL,
+  definition    TEXT NOT NULL,
+  created_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (automation_id, version)
+);
+
 CREATE TABLE IF NOT EXISTS automation_run (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   automation_id INTEGER NOT NULL REFERENCES automation(id) ON DELETE CASCADE,
@@ -1785,6 +1800,21 @@ const COLUMNS = [
   ['ticket_categories', 'retired_at', 'TEXT'],
   ['ticket_categories', 'retired_by', 'INTEGER'],
   ['ticket_categories', 'retire_reason', 'TEXT'],
+  /* QA-37, automation rules and flows: switched off, then archived once they
+     have run; deleted only as a draft never switched on. When one was first
+     switched on is kept by triggers below, so every route that switches one
+     on -- the screen, a rollback, a migration -- is covered without each
+     having to remember. */
+  ['rules', 'archived_at', 'TEXT'],
+  ['rules', 'archived_by', 'INTEGER'],
+  ['rules', 'archive_reason', 'TEXT'],
+  ['rules', 'first_enabled_at', 'TEXT'],
+  ['automation', 'archived_at', 'TEXT'],
+  ['automation', 'archived_by', 'INTEGER'],
+  ['automation', 'archive_reason', 'TEXT'],
+  ['automation', 'first_activated_at', 'TEXT'],
+  // Which version of its flow a lead went through (QA-37: a new version once it has run).
+  ['automation_run', 'flow_version', 'INTEGER'],
 ];
 
 /**
@@ -2789,6 +2819,32 @@ for (const table of ['leads', 'clients', 'tickets', 'users']) {
    created, rather than as null -- "never" and "unknown" look the same in an
    export and only one of them is true. */
 db.exec("UPDATE users SET updated_at = created_at WHERE updated_at IS NULL");
+
+/* QA-37. When a rule or a flow was first switched on decides whether it may
+   be deleted, so it is kept by the database rather than by each route. Rows
+   from before the column count as switched on if anything says so -- on now,
+   fired, run -- so nothing that ever ran passes for a draft. */
+db.exec(`
+  CREATE TRIGGER IF NOT EXISTS rules_first_enabled_ins AFTER INSERT ON rules
+  WHEN NEW.enabled = 1 AND NEW.first_enabled_at IS NULL
+  BEGIN UPDATE rules SET first_enabled_at = datetime('now') WHERE id = NEW.id; END;
+  CREATE TRIGGER IF NOT EXISTS rules_first_enabled_upd AFTER UPDATE OF enabled ON rules
+  WHEN NEW.enabled = 1 AND NEW.first_enabled_at IS NULL
+  BEGIN UPDATE rules SET first_enabled_at = datetime('now') WHERE id = NEW.id; END;
+  CREATE TRIGGER IF NOT EXISTS automation_first_active_ins AFTER INSERT ON automation
+  WHEN NEW.status = 'active' AND NEW.first_activated_at IS NULL
+  BEGIN UPDATE automation SET first_activated_at = datetime('now') WHERE id = NEW.id; END;
+  CREATE TRIGGER IF NOT EXISTS automation_first_active_upd AFTER UPDATE OF status ON automation
+  WHEN NEW.status = 'active' AND NEW.first_activated_at IS NULL
+  BEGIN UPDATE automation SET first_activated_at = datetime('now') WHERE id = NEW.id; END;
+`);
+db.exec(`UPDATE rules SET first_enabled_at = COALESCE(last_fired, created_at)
+          WHERE first_enabled_at IS NULL
+            AND (enabled = 1 OR fire_count > 0
+                 OR EXISTS (SELECT 1 FROM rule_runs r WHERE r.rule_id = rules.id AND r.dry_run = 0))`);
+db.exec(`UPDATE automation SET first_activated_at = COALESCE(updated_at, created_at)
+          WHERE first_activated_at IS NULL
+            AND (status <> 'draft' OR EXISTS (SELECT 1 FROM automation_run r WHERE r.automation_id = automation.id))`);
 
 /**
  * Drop the `kyc_status` mirror from databases created before it was derived.
