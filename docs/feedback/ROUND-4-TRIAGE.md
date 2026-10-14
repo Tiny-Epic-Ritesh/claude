@@ -110,7 +110,10 @@ copilot listing both businesses' partners. Four more turned up later —
 QA-06 — all book-boundary and permission gaps. **Fixed:** all ten, and
 `OPS-25` to `OPS-31`, the last five on Ritesh's yes of 13 Oct. Fixing `OPS-31`
 found one more, `OPS-32` -- the rest of the Product Supervisor's cockpit counts
-both businesses -- recorded open on Ritesh's choice. State of each is in the OPS table at the top
+both businesses -- recorded open on Ritesh's choice. The work of 14 Oct found
+three more, recorded open on his yes: `OPS-33` (a business's branding reset at
+every restart), `OPS-34` (attendance on the UTC day) and `OPS-35` (the recycle
+bin listing both businesses). State of each is in the OPS table at the top
 of [OUTSTANDING.md](OUTSTANDING.md). Not counted above: they are not report IDs.
 
 ### Rulings asked for

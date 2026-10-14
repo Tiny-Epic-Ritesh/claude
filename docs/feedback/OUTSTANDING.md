@@ -70,6 +70,9 @@ and this table is the mapping.
 | `OPS-30` | The automation `notify` action, given a role, notified everyone in that role in both businesses, so a Bigul lead's automation reached Bonanza's Product RMs with a link they could not open; `nudge_users` by role did the same. Found 13 Oct while building QA-02. **Fixed 13 Oct:** both reach only people who work in the lead's book. `test/bookgaps.test.mjs`. |
 | `OPS-31` | `GET /kyc/health` read every KYC journey in both businesses with no permission beyond a sign-in, and the Product Supervisor's cockpit read the same unscoped board. Found 13 Oct while fixing QA-06. **Fixed 13 Oct:** the board takes `kyc.view` and the reader's books (narrowed by the switcher), and so does the cockpit; a journey's book is its product's. `test/bookgaps.test.mjs`. |
 | `OPS-32` | **Open.** The rest of the Product Supervisor's cockpit still counts both businesses. Its metrics -- Cards total, Warm unactioned over 4 hours, Cards closed Active -- read `product_cards` with no book, so on the seed a Bonanza supervisor's Cards total is 310, not Bonanza's 220 (Bigul holds 90). Its Product RM scorecard lists every active Product RM in either business. The KYC figures beside them are right since `OPS-31`. Found 13 Oct while fixing `OPS-31`; recorded open on Ritesh's choice the same day, not fixed. |
+| `OPS-33` | **Open.** A Superadmin's change to a business's name, legal name, tagline, colours or KYC link is undone at the next restart. `db.js` seeds the two businesses on every boot with `ON CONFLICT(code) DO UPDATE SET` over all of those columns, so `PATCH /orgs/:code` (admin.system) holds only until the container restarts -- and labs restarts on every deploy. The help-line columns added on 14 Oct fill only when empty and are not affected. Found 14 Oct while adding them; recorded open on Ritesh's yes the same day, not fixed. |
+| `OPS-34` | **Open.** Attendance counts the UTC day where the rest of the CRM counts the IST day (`OPS-24`). `engine/attendance.js` closes sessions with `date(checked_in_at) < date('now')` and auto-closes at `datetime(date(?) || ' ' || ? || ':00')`, both UTC, so a check-in between midnight and 05:30 IST belongs to the day before -- a night-shift session can be swept closed as yesterday's. `attendance.test.mjs` checks the same UTC day, so it agrees with the code and passes. Found 14 Oct while fixing a stale `OPS-24` oracle in `cockpitscope.test.mjs`; recorded open on Ritesh's yes the same day, not fixed. |
+| `OPS-35` | **Open.** `GET /recycle-bin` lists every deleted lead in both businesses to anyone holding `lead.delete`: its query has no book. Restoring is checked against the reader's book, and so is the purge added on 14 Oct, but the list shows a Bonanza Admin the names (masked identifiers) of Bigul's deleted leads. Found 14 Oct while building the lead purge; recorded open on Ritesh's yes the same day, not fixed. |
 
 ---
 
@@ -181,7 +184,7 @@ masked or unmasked. QA-09/24/35: from standard broking practice. QA-34: from
 industry practice. QA-36: yes, the editor shows contact details without a click
 -- closed. QA-37: recommendations first, then a decision. The ten defects found
 beside the fixes are `OPS-15` to `OPS-24`, with `OPS-25` to `OPS-31` found
-along the way, all fixed, and `OPS-32` recorded open; see the OPS table at the
+along the way, all fixed, and `OPS-32` to `OPS-35` recorded open; see the OPS table at the
 top.
 
 Nine more re-evidence work already open under its own ID — QA-04/05 against
