@@ -85,14 +85,19 @@ client goes from the CRM to the platform except whether to show the pop-up.
 4. If a key is lost, **Rotate** it: the old secret stops working at once. When
    the integration ends, **Revoke** it.
 
-## To agree before go-live
+## Where this stands (15 Oct 2026)
 
-- **A nomination made outside the CRM.** If a client adds a nominee in your
-  platform or at the DP back office, the CRM does not know. It keeps answering
-  `show: true` once a day until the nomination is recorded in the CRM, where
-  staff can enter it today. We need to agree how those nominations reach the
-  CRM.
-- **Who owns the nomination page** behind the button, and whether the platform
-  already shows a nomination pop-up of its own. If it does, there should be one
-  pop-up, not two.
-- **Contacts** on both sides for keys and incidents.
+- **Your own pop-up.** We are working on the basis that your platform already
+  shows a nomination pop-up. Until both teams agree otherwise, keep yours and
+  do not call this endpoint as well, so a client sees one pop-up, not two. If
+  you would rather the CRM decide when it shows, replace your own check with
+  this call; the wording then comes from the CRM.
+- **Nominations made outside the CRM.** When a client adds or changes a
+  nominee on your platform or at the DP back office, CRM staff record it by
+  hand on the client's page (Nomination → Record a change) for now. An
+  automatic feed will be agreed with the team concerned and set up later.
+  Until a nomination is recorded in the CRM, the CRM treats the account as
+  having none.
+- **Still to name:** who on the trading platform side owns this integration
+  and the nomination page behind the button, and a contact on each side for
+  keys and incidents.
