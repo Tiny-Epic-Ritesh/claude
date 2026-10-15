@@ -33,6 +33,7 @@
 
 import { one, run } from '../db.js';
 import { newSessionToken } from '../security.js';
+import { isApiOnly } from './access.js';
 
 /** A ghost session is short by design. */
 export const GHOST_MINUTES = 60;
@@ -47,6 +48,9 @@ export function mayGhost(actor, target) {
   if (!actor || !target) return 'No such user';
   if (!target.active) return `${target.name} is deactivated`;
   if (actor.id === target.id) return 'You are already signed in as yourself';
+
+  // OPS-42. It has no screens: it connects with an API key and nothing else.
+  if (isApiOnly(target.role)) return `${target.name} is an integration account and cannot be signed in as`;
 
   if (target.role === 'superadmin') {
     return 'Nobody can sign in as a Super Admin — that would make impersonation a way to gain permissions';

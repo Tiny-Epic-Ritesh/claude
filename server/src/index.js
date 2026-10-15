@@ -33,6 +33,7 @@ import advancedSearch from './routes/search-advanced.js';
 import approvals from './routes/approvals.js';
 import messages from './routes/messages.js';
 import clients from './routes/clients.js';
+import platform from './routes/platform.js';
 import lists from './routes/lists.js';
 import email from './routes/email.js';
 import dashboard from './routes/dashboard.js';
@@ -161,6 +162,9 @@ app.use('/api', accessLog);
 app.post('/api/auth/login', loginLimiter, async (req, res) => {
   const result = await login(req.body?.email, req.body?.password);
   if (!result) return res.status(401).json({ error: 'Email or password is incorrect' });
+  if (result.api_only) {
+    return res.status(403).json({ error: 'This is an integration account. It connects with an API key and cannot sign in.' });
+  }
   res.json(result);
 });
 
@@ -332,6 +336,8 @@ app.use('/api/orgs', orgs);
 app.use('/api/apps', apps);
 app.use('/api/search', search);
 app.use('/api/clients', clients);
+// What other systems ask, by API key (OPS-42). See routes/platform.js.
+app.use('/api/platform', platform);
 app.use('/api/lists', lists);
 app.use('/api/email', email);
 app.use('/api/dashboard', dashboard);

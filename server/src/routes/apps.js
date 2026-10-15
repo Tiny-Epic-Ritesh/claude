@@ -19,7 +19,7 @@
  */
 
 import { Router } from 'express';
-import { requireUser, can, orgsFor, activeOrg } from '../auth.js';
+import { requireUser, can, orgsFor, activeOrg, userCan } from '../auth.js';
 import { visibleTabs, FEATURE_KEYS, resolveTab } from '../engine/tabs.js';
 
 const router = Router();
@@ -148,7 +148,7 @@ export const APPS = [
 /* --------------------------------------------------------------- rules */
 
 /** OR across permissions: holding any one is enough. */
-const permitted = (user, needs) => !needs || needs.some((p) => can(user.role, p));
+const permitted = (user, needs) => !needs || needs.some((p) => userCan(user, p));
 
 /** A tab restricted to some businesses is dropped for the rest. */
 const inOrg = (entry, orgs) => !entry.orgs || entry.orgs.some((o) => orgs.includes(o));

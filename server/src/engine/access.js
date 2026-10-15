@@ -153,7 +153,20 @@ export const SEED_ROLES = [
      whichever businesses the person is given. Reads and works cases; edits no
      lead, client or configuration. */
   ['compliance', 'Compliance', 'Compliance cases, the audit trail and monitored conversations.', 'org', 1],
+  /* OPS-42 (Ritesh, 15 Oct). The account another system calls the CRM as --
+     the trading platform asking about the nomination pop-up. Its user exists
+     only to hold API keys: it cannot sign in or be signed in as, and it holds
+     what its integrations need and nothing else, so a key bound to it is
+     capped by the role before its scopes narrow it further. A key bound to an
+     Admin instead outlives nobody's departure gracefully and is capped by the
+     whole Admin role. Own scope, so a route that answers by data scope alone
+     finds nothing it owns. */
+  ['integration', 'API integration', 'A service account another system uses with an API key. Cannot sign in.', 'own', 1],
 ];
+
+/** Roles that exist only to hold API keys: no sign-in, no impersonation. */
+export const API_ONLY_ROLES = new Set(['integration']);
+export const isApiOnly = (role) => API_ONLY_ROLES.has(role);
 
 /**
  * Load the catalogue and the shipped roles.

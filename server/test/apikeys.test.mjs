@@ -35,7 +35,8 @@ console.log('\nAPI credentials');
 const rm = one("SELECT id, name, sales_org FROM users WHERE role = 'sales_rm' AND active = 1 LIMIT 1");
 const made = [];
 const mint = (opts = {}) => {
-  const c = issue({ label: `test-${Date.now()}-${made.length}`, userId: rm.id, ...opts });
+  // A scope, because a key is refused without one (OPS-42).
+  const c = issue({ label: `test-${Date.now()}-${made.length}`, userId: rm.id, scopes: ['lead.view.own'], ...opts });
   made.push(c.key_id);
   return c;
 };

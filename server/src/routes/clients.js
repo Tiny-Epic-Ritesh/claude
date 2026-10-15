@@ -14,6 +14,7 @@ import { assertValid } from '../engine/validation.js';
 import { all, one, run, audit, notify } from '../db.js';
 import {
   can, requireUser, requirePermission, reqClientScope, unmaskRequested, maskFor, activeOrg, mayUseOrg,
+  userCan,
 } from '../auth.js';
 import { maskRecord, maskRecords, validate, decryptField } from '../security.js';
 import {
@@ -21,7 +22,7 @@ import {
 } from '../engine/clients.js';
 import { request as requestApproval, BULK_THRESHOLD } from '../engine/approvals.js';
 import {
-  recordNomination, nominationStatus, statementLineSql, historyFor as nominationHistory, nominationPrompt,
+  recordNomination, nominationStatus, statementLineSql, historyFor as nominationHistory,
 } from '../engine/nominations.js';
 import { stepByCode, validateNominees } from '../engine/kyc.js';
 
@@ -71,7 +72,7 @@ const EXPORT_CAP = 5000;
 
 /** A role with no client grant at all should not see an empty tab and wonder. */
 const mayViewClients = (user) =>
-  can(user.role, 'client.view.all') || can(user.role, 'client.view.own');
+  userCan(user, 'client.view.all') || userCan(user, 'client.view.own');
 
 router.use((req, res, next) => {
   if (!mayViewClients(req.user)) {
@@ -223,7 +224,7 @@ router.post('/export', requirePermission('export.client'), (req, res) => {
   if (!chosen.length) return res.status(400).json({ error: 'Choose at least one column' });
 
   const wantsClear = Boolean(req.body?.unmask);
-  const mayUnmask = can(req.user.role, 'pii.unmask');
+  const mayUnmask = userCan(req.user, 'pii.unmask');
   if (wantsClear && !mayUnmask) {
     return res.status(403).json({
       error: 'Exporting identifiers in the clear needs the unmask permission',
@@ -457,8 +458,8 @@ router.get('/meta', (req, res) =>
     /* Whether this person may take identifiers out in the clear, so the export
        dialog offers the choice only to somebody who has it rather than showing
        a control that answers 403. */
-    may_export: can(req.user.role, 'export.client'),
-    may_unmask: can(req.user.role, 'pii.unmask'),
+    may_export: userCan(req.user, 'export.client'),
+    may_unmask: userCan(req.user, 'pii.unmask'),
 
     /* Bulk reassignment, and who it may move accounts to.
 
@@ -467,10 +468,10 @@ router.get('/meta', (req, res) =>
        business, so listing them would be offering a choice the route refuses.
        Empty for anybody without the capability, so the interface never shows a
        control that answers 403. */
-    may_reassign: can(req.user.role, 'client.reassign'),
+    may_reassign: userCan(req.user, 'client.reassign'),
     bulk_threshold: BULK_THRESHOLD,
     bulk_cap: BULK_CAP,
-    owners: can(req.user.role, 'client.reassign')
+    owners: userCan(req.user, 'client.reassign')
       ? all(
         `SELECT id, name, role FROM users
           WHERE active = 1 AND sales_org = ? ORDER BY name`,
@@ -481,32 +482,8 @@ router.get('/meta', (req, res) =>
 
 /* ------------------------------------------------------------- detail */
 
-/**
- * The first-log-in-of-the-day pop-up (SEBI, May 2026, 10.2(b)).
- *
- * The client logs into the trading platform, not the CRM, so the platform
- * asks here on each log-in -- with an API key scoped to
- * client.nomination.prompt -- by UCC and business. The answer is "show" once
- * a day for an account without a nomination, an opt-out included, and the
- * wording to show; never for one with a nomination.
- */
-router.get('/nomination-prompt', (req, res) => {
-  /* The scoped capabilities, not the role: an API key's scopes narrow what
-     its user may do, and requirePermission reads only the role. */
-  if (!req.caps?.has('client.nomination.prompt')) {
-    return res.status(403).json({ error: 'This needs client.nomination.prompt', required: 'client.nomination.prompt' });
-  }
-  const code = String(req.query.client_code ?? '').trim();
-  const business = String(req.query.business ?? '').trim().toUpperCase();
-  if (!code || !business) return res.status(400).json({ error: 'Give the client_code (UCC) and the business' });
-  if (!mayUseOrg(req.user, business)) return res.status(404).json({ error: 'No such account' });
-  const client = one(
-    "SELECT * FROM clients WHERE client_code = ? AND sales_org = ? AND deleted_at IS NULL AND status <> 'Closed'",
-    [code, business],
-  );
-  if (!client) return res.status(404).json({ error: 'No such account' });
-  return res.json({ client_code: client.client_code, ...nominationPrompt(client) });
-});
+/* The trading platform's nomination pop-up is asked at /api/platform
+   (routes/platform.js, OPS-42), not here. */
 
 const load = (req) => {
   const scope = reqClientScope(req, 'c');

@@ -2,7 +2,7 @@
  * Authentication + the role permission matrix.
  *
  * Two separate session kinds share one table:
- *   kind='crm'     → an internal user (one of the 11 roles)
+ *   kind='crm'     → an internal user (one of the shipped roles, or one made in Setup)
  *   kind='partner' → a partner on the Partner Portal (BRD OD-10: partners are
  *                    NOT CRM users; the portal is a distinct surface)
  *
@@ -18,7 +18,7 @@ import { maskedFieldsFor } from './engine/masking.js';
 import { managerScopeSql, deskScopeSql, explainVisibility } from './engine/sharing.js';
 import { owdGrant } from './engine/owd.js';
 import {
-  seedAccessModel, roleCapabilities, effectiveCapabilities, dataScope,
+  seedAccessModel, roleCapabilities, effectiveCapabilities, dataScope, isApiOnly,
 } from './engine/access.js';
 import {
   hashPassword, verifyPassword, newSessionToken,
@@ -78,7 +78,9 @@ export const PERMISSIONS = {
   'client.edit':          ['superadmin', 'admin', 'sales_rm', 'dealer', 'customer_care'],
   'client.reassign':      ['superadmin', 'admin', 'sales_supervisor'],
   // SEBI, May 2026, 10.2(b): what an API key for the trading platform is scoped to.
-  'client.nomination.prompt': ['superadmin', 'admin'],
+  /* OPS-42: the integration alone. Whether to show a client the pop-up is a
+     question the trading platform asks, never a person. */
+  'client.nomination.prompt': ['integration'],
 
 
   // Product cards
@@ -228,6 +230,47 @@ seedAccessModel(PERMISSIONS);
 /** Does this role hold this capability? Signature unchanged; source is now data. */
 export const can = (role, permission) => roleCapabilities(role).has(permission);
 
+/*
+ * What this request may do, carried on its user (OPS-42).
+ *
+ * `can(role, ...)` answers for a role, and the route guards and scope rules
+ * asked it about the signed-in person -- so a permission set granted to
+ * someone never opened a guarded route (the session listed it; the route
+ * refused), and an API key acted with its user's whole role whatever it was
+ * scoped to. The request's own capabilities -- role plus granted sets, and for
+ * a key narrowed to its scopes -- are worked out once in attachSession and
+ * travel with req.user under this symbol, which no JSON response carries and
+ * which a spread copies along.
+ */
+const CAPS = Symbol('capabilities');
+/* Set on req.user when an API key, not a person, is calling. */
+const VIA_KEY = Symbol('api key');
+
+/**
+ * May this person -- or this key -- do it? Reads the request's capabilities
+ * when `user` is the signed-in one, and otherwise that person's role plus
+ * their grants. Use this, not the role-only can(), for anything about a
+ * person.
+ */
+export function userCan(user, permission) {
+  if (!user) return false;
+  return (user[CAPS] ?? effectiveCapabilities(user)).has(permission);
+}
+
+/**
+ * A key that holds none of an object's view capabilities sees none of it.
+ *
+ * OPS-42 again, by another door: the record scopes fall back to the role's
+ * declared data scope, so an Admin's key scoped to rules still listed the
+ * whole business's leads -- a list route asks for no capability, it scopes.
+ * Not the role's floor, then, nor a sharing default, a queue or a team: a key
+ * reads an object's records only when it is scoped to read them. A person's
+ * session is unchanged; their role's floor is what the role was given.
+ */
+const keyBlind = (user, ...views) => Boolean(user?.[VIA_KEY]) && !views.some((v) => userCan(user, v));
+// Fresh each time: callers push onto a scope's params.
+const nothing = () => ({ sql: '1=0', params: [] });
+
 /**
  * Everything a specific person can do — their role plus any permission sets
  * granted to them individually. Sent to the client so the UI hides what the API
@@ -260,6 +303,14 @@ export async function login(email, password) {
   if (!ok) {
     audit(null, 'login_failed', 'user', user.id, { email });
     return null;
+  }
+
+  /* OPS-42. An integration's account holds API keys and nothing else. Said
+     plainly, after the password, so it tells nobody without it that the
+     account exists. */
+  if (isApiOnly(user.role)) {
+    audit(null, 'login_refused_api_only', 'user', user.id, { email });
+    return { api_only: true };
   }
 
   /* Upgrade a hash made under weaker parameters, now that the plaintext has
@@ -369,10 +420,10 @@ export function attachSession(req, _res, next) {
     if (keyId && secret) {
       const auth = authenticateKey(keyId, secret);
       if (auth) {
-        req.user = auth.user;
         req.api_credential = auth.credential;
         // Scopes narrow; they never widen. See engine/apikeys.js.
         req.caps = scopedCapabilities(effectiveCapabilities(auth.user), auth.scopes);
+        req.user = { ...auth.user, [CAPS]: req.caps, [VIA_KEY]: true };
       }
     }
     return next();
@@ -394,7 +445,9 @@ export function attachSession(req, _res, next) {
 
   if (session.kind === 'crm') {
     const user = one('SELECT * FROM users WHERE id = ? AND active = 1', [session.user_id]);
-    if (user) {
+    /* OPS-42. Never a session for an API-only account, however it was made --
+       a role changed under a signed-in person included. */
+    if (user && !isApiOnly(user.role)) {
       req.user = user;
       /* A ghost session carries the administrator behind it. req.user stays the
          impersonated person — every scope, mask and permission check must see
@@ -407,6 +460,7 @@ export function attachSession(req, _res, next) {
       // granted to this person. Field-level security and route guards both
       // read it, and recomputing per call site would be three lookups a row.
       req.caps = effectiveCapabilities(user);
+      user[CAPS] = req.caps;
     }
   } else {
     const partner = one('SELECT * FROM partners WHERE id = ?', [session.partner_id]);
@@ -439,25 +493,28 @@ export const requirePartner = (req, res, next) => {
  */
 export const requireAnyPermission = (...permissions) => (req, res, next) => {
   if (!req.user) return res.status(401).json({ error: 'Sign in required' });
-  if (!permissions.some((p) => can(req.user.role, p))) {
-    return res.status(403).json({
-      error: `Your role (${req.user.role}) cannot do this`,
-      required: permissions.join(' or '),
-    });
-  }
+  if (!permissions.some((p) => userCan(req.user, p))) return refuse(req, res, permissions.join(' or '));
   next();
 };
 
+/* OPS-42: the request's capabilities, not the role. A granted permission set
+   now opens the routes it names, and an API key only the routes its scopes
+   name. */
 export const requirePermission = (permission) => (req, res, next) => {
   if (!req.user) return res.status(401).json({ error: 'Sign in required' });
-  if (!can(req.user.role, permission)) {
-    return res.status(403).json({
-      error: `Your role (${req.user.role}) cannot do this`,
-      required: permission,
-    });
-  }
+  if (!userCan(req.user, permission)) return refuse(req, res, permission);
   next();
 };
+
+/** The refusal, saying whether it was the key's scope or the person's access. */
+function refuse(req, res, required) {
+  return res.status(403).json({
+    error: req.api_credential
+      ? `This API key is not scoped for this. It needs ${required}.`
+      : `Your role (${req.user.role}) cannot do this`,
+    required,
+  });
+}
 
 /**
  * The lead-visibility rule, in one place.
@@ -466,6 +523,7 @@ export const requirePermission = (permission) => (req, res, next) => {
  * everything, only their own, or (Product RM) only leads carrying their product.
  */
 export function leadScope(user, alias = 'l', active = null) {
+  if (keyBlind(user, 'lead.view.all', 'lead.view.own', 'lead.view.product')) return nothing();
   const org = orgScope(user, alias, active);
 
   /**
@@ -488,7 +546,7 @@ export function leadScope(user, alias = 'l', active = null) {
      * the declared scope can no longer disagree. Sales Supervisor used to hold
      * it while being declared `team`, which made `data_scope` decorative.
      */
-    if (can(user.role, 'lead.view.all')) return { sql: '1=1', params: [] };
+    if (userCan(user, 'lead.view.all')) return { sql: '1=1', params: [] };
 
     switch (dataScope(user.role)) {
       case 'org':
@@ -580,16 +638,17 @@ export function leadScope(user, alias = 'l', active = null) {
  * same as the lead rule is a rule an administrator can reason about.
  */
 export function clientScope(user, alias = 'c', active = null) {
+  if (keyBlind(user, 'client.view.all', 'client.view.own')) return nothing();
   const org = orgScope(user, alias, active);
 
   const role = (() => {
-    if (can(user.role, 'client.view.all')) return { sql: '1=1', params: [] };
+    if (userCan(user, 'client.view.all')) return { sql: '1=1', params: [] };
 
     switch (dataScope(user.role)) {
       case 'org':
         // An org-scoped role without client.view.all has not been granted sight
         // of accounts. Marketing sits here, and fails closed rather than open.
-        return can(user.role, 'client.view.own')
+        return userCan(user, 'client.view.own')
           ? { sql: `${alias}.owner_id = ?`, params: [user.id] }
           : { sql: '1=0', params: [] };
 
@@ -607,7 +666,7 @@ export function clientScope(user, alias = 'c', active = null) {
       case 'team':
       case 'own':
       default:
-        return can(user.role, 'client.view.own')
+        return userCan(user, 'client.view.own')
           ? { sql: `${alias}.owner_id = ?`, params: [user.id] }
           : { sql: '1=0', params: [] };
     }
@@ -656,6 +715,7 @@ export function clientScope(user, alias = 'c', active = null) {
  * which is how a security fix turns into people losing their own work.
  */
 export function ticketScope(user, alias = 't', active = null) {
+  if (keyBlind(user, 'ticket.view.all', 'ticket.view.own')) return nothing();
   const org = orgScope(user, alias, active);
   const mine = {
     sql: `(${alias}.assignee_id = ? OR ${alias}.created_by = ?)`,
@@ -663,12 +723,12 @@ export function ticketScope(user, alias = 't', active = null) {
   };
 
   const role = (() => {
-    if (can(user.role, 'ticket.view.all')) return { sql: '1=1', params: [] };
+    if (userCan(user, 'ticket.view.all')) return { sql: '1=1', params: [] };
 
     switch (dataScope(user.role)) {
       case 'org':
         // Marketing sits here: org scope, but no grant of sight over cases.
-        return can(user.role, 'ticket.view.own') ? mine : { sql: '1=0', params: [] };
+        return userCan(user, 'ticket.view.own') ? mine : { sql: '1=0', params: [] };
 
       case 'product':
         // The case hangs off a product card, which is the same test the lead
@@ -682,7 +742,7 @@ export function ticketScope(user, alias = 't', active = null) {
       case 'team':
       case 'own':
       default:
-        return can(user.role, 'ticket.view.own') ? mine : { sql: '1=0', params: [] };
+        return userCan(user, 'ticket.view.own') ? mine : { sql: '1=0', params: [] };
     }
   })();
 
@@ -698,7 +758,7 @@ export function ticketScope(user, alias = 't', active = null) {
   /* A case raised against a lead you can already see is a case about your own
      client, and you will be asked about it whoever is handling it. This grants
      nothing new — if the lead is invisible to you, so is the case. */
-  if (can(user.role, 'ticket.view.own')) {
+  if (userCan(user, 'ticket.view.own')) {
     const lead = leadScope(user, 'sl');
     grants.push({
       sql: `EXISTS (SELECT 1 FROM leads sl WHERE sl.id = ${alias}.lead_id AND ${lead.sql})`,
@@ -773,13 +833,14 @@ export function orgsFor(user) {
  * sees a partner, and the organisation-wide default has somewhere to sit.
  */
 export function partnerScope(user, alias = 'p', active = null) {
+  if (keyBlind(user, 'partner.view', 'partner.view.all')) return nothing();
   const org = orgScope(user, alias, active);
 
   /* The floor: the partners you are the RM for. */
   const grants = [{ sql: `${alias}.owner_id = ?`, params: [user.id] }];
 
   // The reach that used to be an omission.
-  if (can(user.role, 'partner.view.all')) grants.push({ sql: '1=1', params: [] });
+  if (userCan(user, 'partner.view.all')) grants.push({ sql: '1=1', params: [] });
 
   const owd = owdGrant('partner', user);
   if (owd) grants.push(owd);
@@ -900,7 +961,7 @@ export const reqPartnerScope = (req, alias = 'p') => partnerScope(req.user, alia
 export const isReadOnlyOnLeads = (role) => ['product_rm', 'marketing_manager'].includes(role);
 
 /** May this request see unmasked client identifiers? */
-export const mayUnmask = (req) => Boolean(req.user && can(req.user.role, 'pii.unmask'));
+export const mayUnmask = (req) => Boolean(req.user && userCan(req.user, 'pii.unmask'));
 
 /**
  * Masking options for a request (ENH-16).

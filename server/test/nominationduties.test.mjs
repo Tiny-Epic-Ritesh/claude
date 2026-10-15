@@ -45,6 +45,17 @@ const MARK = `ND probe ${RUN}`;
 const ADMIN = await probeAdmin('nd-admin', { role: 'admin', sales_org: 'BONANZA' });
 const RM = await probeAdmin('nd-rm', { role: 'sales_rm', sales_org: 'BONANZA' });
 const BIGUL = await probeAdmin('nd-bigul', { role: 'admin', sales_org: 'BIGUL' });
+/* OPS-42: the API integration account the platform's key is bound to. Made
+   directly, not signed in: it cannot sign in, which is the point. */
+const PLATFORM_EMAIL = 'probe-nd-platform@bonanza.test';
+run('DELETE FROM users WHERE email = ?', [PLATFORM_EMAIL]);
+const PLATFORM = {
+  id: Number(run(
+    "INSERT INTO users (name, email, password, role, sales_org, active) VALUES (?, ?, 'x', 'integration', 'BONANZA', 1)",
+    ['Probe nd-platform', PLATFORM_EMAIL],
+  ).lastInsertRowid),
+  cleanup: () => run('DELETE FROM users WHERE email = ?', [PLATFORM_EMAIL]),
+};
 const as = (who) => async (method, url, body) => {
   const res = await fetch(`${BASE}/api${url}`, { method, headers: who.headers, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: res.status, body: await res.json().catch(() => null) };
@@ -217,9 +228,10 @@ try {
     const none = makeClient();
     const nominated = makeClient({ nominee_name: 'Migrated Nominee' });
     const code = (id) => one('SELECT client_code FROM clients WHERE id = ?', [id]).client_code;
-    const key = issue({ label: `${MARK} platform`, userId: ADMIN.id, scopes: ['client.nomination.prompt'] });
+    // OPS-42: an API integration account, the only role holding the capability.
+    const key = issue({ label: `${MARK} platform`, userId: PLATFORM.id, scopes: ['client.nomination.prompt'] });
     made.keys.push(key.key_id);
-    const ask = (id, business = 'BONANZA', k = key) => fetch(`${BASE}/api/clients/nomination-prompt?client_code=${code(id)}&business=${business}`, {
+    const ask = (id, business = 'BONANZA', k = key) => fetch(`${BASE}/api/platform/nomination-prompt?client_code=${code(id)}&business=${business}`, {
       headers: { 'x-api-key': k.key_id, 'x-api-secret': k.secret },
     }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
 
@@ -231,6 +243,8 @@ try {
     assert.equal((await ask(nominated)).body.show, false, 'an account with a nomination was shown the pop-up');
     assert.equal((await ask(none, 'BIGUL')).status, 404, 'the other business answered');
 
+    /* An Admin's key, scoped to what an Admin can do: refused, because the
+       question is the integration's to ask and an Admin does not hold it. */
     const wrong = issue({ label: `${MARK} wrong`, userId: ADMIN.id, scopes: ['client.view.all'] });
     made.keys.push(wrong.key_id);
     assert.equal((await ask(none, 'BONANZA', wrong)).status, 403, 'a key without the scope was answered');
@@ -250,7 +264,7 @@ try {
   for (const id of made.clients) run('DELETE FROM clients WHERE id = ?', [id]);
   run('DELETE FROM clients WHERE name LIKE ?', [`${MARK}%`]);
   for (const id of made.leads) { run('DELETE FROM activities WHERE lead_id = ?', [id]); run('DELETE FROM leads WHERE id = ?', [id]); }
-  for (const p of [ADMIN, RM, BIGUL]) p.cleanup();
+  for (const p of [ADMIN, RM, BIGUL, PLATFORM]) p.cleanup();
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

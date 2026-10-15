@@ -18,6 +18,7 @@ import { all, one, run, audit } from '../db.js';
 import {
   requireUser, requirePermission, reqScope, reqClientScope, reqTicketScope, orgsFor, maskFor, can,
   activeOrg,
+  userCan,
 } from '../auth.js';
 import { maskRecords } from '../security.js';
 import {
@@ -102,7 +103,7 @@ function scopeFor(entity, req) {
     /* The Tasks list shows your own unless you hold report.team and ask for
        everyone's. Search has no "ask for everyone's", so it grants the wider
        view to exactly the people the list would. */
-    if (!can(req.user.role, 'report.team')) {
+    if (!userCan(req.user, 'report.team')) {
       where.push('l.assignee_id = ?');
       params.push(req.user.id);
     }

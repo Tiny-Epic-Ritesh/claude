@@ -24,7 +24,7 @@
  */
 
 import { all, one, run } from '../db.js';
-import { can, orgsFor } from '../auth.js';
+import { can, orgsFor, userCan } from '../auth.js';
 
 /**
  * The states an item moves through.
@@ -59,7 +59,7 @@ export function mayRead(library, user) {
   if (!library) return false;
   if (library.sales_org && !orgsFor(user).includes(library.sales_org)) return false;
   if (library.owner_role === user.role) return true;
-  if (can(user.role, 'admin.content')) return true;
+  if (userCan(user, 'admin.content')) return true;
   const shared = parse(library.shared_with);
   // NULL means every role; an empty array means nobody but the owner.
   return shared === null ? true : shared.includes(user.role);
@@ -67,7 +67,7 @@ export function mayRead(library, user) {
 
 /** Only the owning role, or an administrator, changes a library. */
 export const mayManage = (library, user) =>
-  Boolean(library) && (library.owner_role === user.role || can(user.role, 'admin.content'));
+  Boolean(library) && (library.owner_role === user.role || userCan(user, 'admin.content'));
 
 export const libraries = (user) => all(
   'SELECT * FROM content_library WHERE active = 1 ORDER BY name',
@@ -91,7 +91,7 @@ export const libraries = (user) => all(
 export function mayTransition(item, library, user, to) {
   if (!STATUSES[to]) return `"${to}" is not a status`;
 
-  const owns = library ? mayManage(library, user) : can(user.role, 'admin.content');
+  const owns = library ? mayManage(library, user) : userCan(user, 'admin.content');
 
   if (to === 'pending') {
     // A withdrawn item comes back only through approval again.
@@ -108,13 +108,13 @@ export function mayTransition(item, library, user, to) {
     if (item.created_by && item.created_by === user.id) {
       return 'Somebody other than the person who added it has to approve it';
     }
-    if (!can(user.role, 'admin.content')) return 'Approving collateral needs content permission';
+    if (!userCan(user, 'admin.content')) return 'Approving collateral needs content permission';
     if (item.status !== 'pending') return 'Only an item waiting for approval can be approved';
     return null;
   }
 
   if (to === 'rejected') {
-    if (!can(user.role, 'admin.content')) return 'Sending an item back needs content permission';
+    if (!userCan(user, 'admin.content')) return 'Sending an item back needs content permission';
     if (item.status !== 'pending') return 'Only an item waiting for approval can be sent back';
     return null;
   }

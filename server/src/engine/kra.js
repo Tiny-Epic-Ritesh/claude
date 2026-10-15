@@ -11,7 +11,7 @@
  */
 
 import { all, one, run, SALES_ORGS } from '../db.js';
-import { leadScope, clientScope, can } from '../auth.js';
+import { leadScope, clientScope, can, userCan } from '../auth.js';
 import { resolveRange, inRange } from './daterange.js';
 
 /* ------------------------------------------------------------ shipped KRA */
@@ -202,7 +202,7 @@ export function seedIncentives() {
  */
 export function actualFor(source, user, range) {
   const lScope = leadScope(user, 'l');
-  const maySeeClients = can(user.role, 'client.view.all') || can(user.role, 'client.view.own');
+  const maySeeClients = userCan(user, 'client.view.all') || userCan(user, 'client.view.own');
   const cScope = maySeeClients ? clientScope(user, 'c') : null;
   const created = inRange('l.created_at', range);
 

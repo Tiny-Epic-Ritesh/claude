@@ -13,7 +13,7 @@
 
 import { Router } from 'express';
 import { all, one } from '../db.js';
-import { requireUser, leadScope, clientScope, activeOrg, can } from '../auth.js';
+import { requireUser, leadScope, clientScope, activeOrg, can, userCan } from '../auth.js';
 import { resolveRange, inRange, inPrevRange, delta, RANGES, DEFAULT_RANGE } from '../engine/daterange.js';
 
 const router = Router();
@@ -25,7 +25,7 @@ router.get('/', (req, res) => {
   });
 
   const lScope = leadScope(req.user, 'l', activeOrg(req));
-  const maySeeClients = can(req.user.role, 'client.view.all') || can(req.user.role, 'client.view.own');
+  const maySeeClients = userCan(req.user, 'client.view.all') || userCan(req.user, 'client.view.own');
   const cScope = maySeeClients ? clientScope(req.user, 'c', activeOrg(req)) : { sql: '1=0', params: [] };
 
   /* ---- earned, by product ---- */

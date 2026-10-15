@@ -20,7 +20,7 @@
 
 import { Router } from 'express';
 import { all, one, CARD_STATES } from '../db.js';
-import { requireUser, requirePermission, reqScope, can, orgsFor } from '../auth.js';
+import { requireUser, requirePermission, reqScope, can, orgsFor, userCan } from '../auth.js';
 
 const router = Router();
 router.use(requireUser);
@@ -35,8 +35,8 @@ router.use(requireUser);
  */
 const canReport = (req, res, next) => {
   if (!req.user) return res.status(401).json({ error: 'Sign in required' });
-  if (can(req.user.role, 'report.team') || can(req.user.role, 'report.system')
-      || can(req.user.role, 'report.self')) return next();
+  if (userCan(req.user, 'report.team') || userCan(req.user, 'report.system')
+      || userCan(req.user, 'report.self')) return next();
   return res.status(403).json({
     error: `Your role (${req.user.role}) cannot open reports`,
     required: 'report.self',

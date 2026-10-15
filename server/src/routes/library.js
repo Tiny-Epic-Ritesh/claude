@@ -12,7 +12,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit, SALES_ORGS } from '../db.js';
-import { requireUser, requirePermission, can, mayUseOrg } from '../auth.js';
+import { requireUser, requirePermission, can, mayUseOrg, userCan } from '../auth.js';
 import { validate } from '../security.js';
 import {
   libraries, itemsIn, mayRead, mayManage, mayTransition, setStatus, expiryFor, STATUSES, newVersion,
@@ -31,10 +31,10 @@ router.get('/', (req, res) => {
     /* Anything not filed anywhere. Shown rather than hidden, because content
        that belongs to no library is exactly what nobody reviews — and it is
        where everything created before libraries existed now sits. */
-    unfiled: can(req.user.role, 'admin.content') ? itemsIn(null) : [],
+    unfiled: userCan(req.user, 'admin.content') ? itemsIn(null) : [],
     statuses: Object.entries(STATUSES).map(([code, s]) => ({ code, ...s })),
     roles: all('SELECT code, name FROM roles WHERE active = 1 ORDER BY sort_order, name'),
-    may_manage: can(req.user.role, 'admin.content'),
+    may_manage: userCan(req.user, 'admin.content'),
   });
 });
 
@@ -156,7 +156,7 @@ router.patch('/items/:itemId', (req, res) => {
   if (!item) return res.status(404).json({ error: 'No such item' });
   const lib = item.library_id ? loadLibrary(item.library_id) : null;
   if (lib && !mayManage(lib, req.user)) return res.status(403).json({ error: 'Only the owning role can change this' });
-  if (!lib && !can(req.user.role, 'admin.content')) return res.status(403).json({ error: 'Managing unfiled content needs content permission' });
+  if (!lib && !userCan(req.user, 'admin.content')) return res.status(403).json({ error: 'Managing unfiled content needs content permission' });
 
   const { name, url, expiry_date: expiry, product_type_id: productId, library_id: moveTo } = req.body;
   if (name !== undefined && !String(name).trim()) {
@@ -230,7 +230,7 @@ router.post('/items/:itemId/versions', (req, res) => {
   const lib = item.library_id ? loadLibrary(item.library_id) : null;
   if (lib && !mayRead(lib, req.user)) return res.status(404).json({ error: 'No such item' });
   if (lib && !mayManage(lib, req.user)) return res.status(403).json({ error: 'Only the owning role can add a version' });
-  if (!lib && !can(req.user.role, 'admin.content')) return res.status(403).json({ error: 'Managing unfiled content needs content permission' });
+  if (!lib && !userCan(req.user, 'admin.content')) return res.status(403).json({ error: 'Managing unfiled content needs content permission' });
 
   const out = newVersion(item, lib, req.body ?? {}, req.user);
   if (out.error) return res.status(out.status).json({ error: out.error, field: out.field });

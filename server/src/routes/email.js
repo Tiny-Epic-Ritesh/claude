@@ -24,7 +24,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit } from '../db.js';
-import { requireUser, requirePermission, reqScope, mayUnmask, can, orgsFor } from '../auth.js';
+import { requireUser, requirePermission, reqScope, mayUnmask, can, orgsFor, userCan } from '../auth.js';
 import { decryptField, maskEmail } from '../security.js';
 import { maskedFieldsFor } from '../engine/masking.js';
 import { checkConsent } from '../engine/consent.js';
@@ -160,7 +160,7 @@ router.post('/templates', requirePermission('lead.contact'), (req, res) => {
   if (!['personal', 'org'].includes(scope)) {
     return res.status(400).json({ error: 'A template is either personal or org' });
   }
-  if (scope === 'org' && !can(req.user.role, 'admin.templates')) {
+  if (scope === 'org' && !userCan(req.user, 'admin.templates')) {
     return res.status(403).json({
       error: 'Only an administrator can add a template to the firm-wide list',
       fix: 'Save it as a personal template and ask an administrator to promote it.',

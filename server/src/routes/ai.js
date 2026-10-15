@@ -4,7 +4,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
-import { requireUser, requirePermission, can, leadScope, activeOrg } from '../auth.js';
+import { requireUser, requirePermission, can, leadScope, activeOrg, userCan } from '../auth.js';
 import { loadInBook } from '../engine/bookscope.js';
 import { applyScore } from '../engine/rules.js';
 import { openCase } from '../engine/cases.js';
@@ -130,7 +130,7 @@ router.get('/residency/export', requirePermission('report.system'), (req, res) =
  * and counts, so the log itself is not a second copy of the PII.
  */
 router.get('/residency/log', (req, res) => {
-  if (!can(req.user.role, 'audit.read')) return res.status(403).json({ error: 'Not permitted' });
+  if (!userCan(req.user, 'audit.read')) return res.status(403).json({ error: 'Not permitted' });
 
   res.json(all(
     `SELECT id, action, detail, created_at FROM audit_log
@@ -206,7 +206,7 @@ router.post('/disposition/confirm', (req, res) => {
     if (!card) continue;
 
     const permission = change.to_state === 'WARM' ? 'card.mark.warm' : 'card.mark.exploring';
-    if (!can(req.user.role, permission)) {
+    if (!userCan(req.user, permission)) {
       refused.push({ ...change, reason: `Your role cannot set ${change.to_state}` });
       continue;
     }

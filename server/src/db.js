@@ -3408,6 +3408,7 @@ export const ROLES = [
   'superadmin', 'admin', 'caller', 'dealer', 'sales_rm', 'sales_supervisor',
   'partner_rm', 'product_rm', 'product_supervisor', 'customer_care', 'marketing_manager',
   'compliance',   // QA-28, 14 Oct
+  'integration',  // OPS-42, 15 Oct: API keys only, never signs in
 ];
 
 export const ROLE_LABELS = {
@@ -3423,6 +3424,7 @@ export const ROLE_LABELS = {
   customer_care: 'Customer Care Agent',
   marketing_manager: 'Marketing Manager',
   compliance: 'Compliance',
+  integration: 'API integration',
 };
 
 export const CARD_STATES = [

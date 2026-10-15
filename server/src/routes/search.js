@@ -19,7 +19,7 @@
 
 import { Router } from 'express';
 import { all } from '../db.js';
-import { requireUser, reqScope, orgScope, can } from '../auth.js';
+import { requireUser, reqScope, orgScope, can, userCan } from '../auth.js';
 import { maskRecords } from '../security.js';
 import { maskedFieldsFor } from '../engine/masking.js';
 
@@ -59,7 +59,7 @@ router.get('/', (req, res) => {
 
   /* ---------------------------------------------------------- partners */
 
-  if (can(req.user.role, 'partner.view')) {
+  if (userCan(req.user, 'partner.view')) {
     const pScope = orgScope(req.user, 'p', req.query.org || null);
     const partners = all(
       `SELECT p.id, p.name, p.business_name, p.partner_code, p.state_code, p.city
@@ -82,7 +82,7 @@ router.get('/', (req, res) => {
 
   /* ------------------------------------------------------------ cases */
 
-  if (can(req.user.role, 'ticket.create')) {
+  if (userCan(req.user, 'ticket.create')) {
     // Cases are reachable through the lead the caller can already see, which
     // keeps ticket visibility consistent with lead visibility rather than
     // inventing a second, divergent rule.
@@ -131,7 +131,7 @@ router.get('/', (req, res) => {
 
   /* ------------------------------------------------------------ people */
 
-  if (can(req.user.role, 'report.team') || can(req.user.role, 'admin.users')) {
+  if (userCan(req.user, 'report.team') || userCan(req.user, 'admin.users')) {
     const uScope = orgScope(req.user, 'u', req.query.org || null);
     const users = all(
       `SELECT u.id, u.name, u.role, u.employee_code, u.branch

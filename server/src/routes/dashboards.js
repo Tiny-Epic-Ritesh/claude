@@ -20,7 +20,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit, transact, SALES_ORGS } from '../db.js';
-import { requireUser, requirePermission, can, orgsFor, mayUseOrg } from '../auth.js';
+import { requireUser, requirePermission, can, orgsFor, mayUseOrg, userCan } from '../auth.js';
 import { runPanel, validatePanel, catalogue, kindsFor } from '../engine/panels.js';
 import { resolveRange, RANGES, DEFAULT_RANGE } from '../engine/daterange.js';
 
@@ -68,12 +68,12 @@ router.get('/', (req, res) => {
       mine: isOwner(d, req.user),
       panel_count: one('SELECT COUNT(*) n FROM dashboard_panel WHERE dashboard_id = ?', [d.id]).n,
     })),
-    may_share: can(req.user.role, 'report.team'),
+    may_share: userCan(req.user, 'report.team'),
     /* The roles a dashboard can be published to, served here rather than from
        /setup/roles — publishing needs report.team, which a supervisor has and
        admin.roles, which they do not. Making the share control depend on a
        Setup endpoint would have 403'd for exactly the people it is for. */
-    roles: can(req.user.role, 'report.team')
+    roles: userCan(req.user, 'report.team')
       ? all('SELECT code, name FROM roles WHERE active = 1 ORDER BY sort_order, name')
       : [],
   });
@@ -131,7 +131,7 @@ router.post('/', (req, res) => {
     return res.status(400).json({ error: 'Give the dashboard a name', field: 'name' });
   }
 
-  if (shared && !can(req.user.role, 'report.team')) {
+  if (shared && !userCan(req.user, 'report.team')) {
     return res.status(403).json({
       error: 'Publishing a dashboard to other people needs reporting permission. You can still build one for yourself.',
       required: 'report.team',
@@ -162,7 +162,7 @@ router.patch('/:id', (req, res) => {
   if (name !== undefined && !String(name).trim()) {
     return res.status(400).json({ error: 'Give the dashboard a name', field: 'name' });
   }
-  if (shared !== undefined && shared && !can(req.user.role, 'report.team')) {
+  if (shared !== undefined && shared && !userCan(req.user, 'report.team')) {
     return res.status(403).json({ error: 'Publishing a dashboard needs reporting permission', required: 'report.team' });
   }
 

@@ -12,7 +12,7 @@
 
 import { Router } from 'express';
 import { all, one, run } from '../db.js';
-import { requireUser, requirePermission, clientScope, leadScope, can, activeOrg } from '../auth.js';
+import { requireUser, requirePermission, clientScope, leadScope, can, activeOrg, userCan } from '../auth.js';
 import { resolveRange, inRange, RANGES, DEFAULT_RANGE } from '../engine/daterange.js';
 import { actualFor, scoreOf, applySlabs } from '../engine/kra.js';
 import { auditConfig } from '../engine/metadata.js';
@@ -108,7 +108,7 @@ router.get('/incentives', (req, res) => {
 
   const slabs = all('SELECT * FROM incentive_slabs WHERE plan_id = ? ORDER BY basis, from_value', [plan.id]);
 
-  const maySeeClients = can(req.user.role, 'client.view.all') || can(req.user.role, 'client.view.own');
+  const maySeeClients = userCan(req.user, 'client.view.all') || userCan(req.user, 'client.view.own');
   const cScope = maySeeClients ? clientScope(req.user, 'c', activeOrg(req)) : null;
 
   /* Production, per basis. */

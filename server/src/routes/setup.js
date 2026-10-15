@@ -28,11 +28,12 @@ import { all, one, run, audit, transact, SALES_ORGS, CARD_STATES, ROLES } from '
 import { MANUAL_TYPES as MANUAL_ACTIVITY_TYPES } from './activities.js';
 import {
   requireUser, requirePermission, orgsFor, mayUseOrg, can, permissionsFor, activeOrg,
+  userCan,
 } from '../auth.js';
 import { hashPassword, validate, newSessionToken, STRATEGY_LABEL } from '../security.js';
 import { assertValid, requiredFields, setRequired } from '../engine/validation.js';
 import {
-  invalidate, explainAccess, dataScope, CAPABILITY_CATALOGUE,
+  invalidate, explainAccess, dataScope, CAPABILITY_CATALOGUE, effectiveCapabilities,
 } from '../engine/access.js';
 import { vendorStatus } from '../vendors/config.js';
 import {
@@ -65,7 +66,7 @@ import {
 import { start as ghostStart, stop as ghostStop } from '../engine/ghost.js';
 import {
   issue as issueCredential, rotate as rotateCredential,
-  revoke as revokeCredential, list as listCredentials,
+  revoke as revokeCredential, list as listCredentials, setScopes as setCredentialScopes,
 } from '../engine/apikeys.js';
 import { explainVisibility } from '../engine/sharing.js';
 import {
@@ -1115,7 +1116,7 @@ router.get('/users/:id/access', requirePermission('admin.roles'), (req, res) => 
   // just a word. Built as a small lookup rather than nested ternaries, because
   // the person reading this next needs to check it against leadScope().
   const scopeSql = () => {
-    if (can(user.role, 'lead.view.all') || dataScope(user.role) === 'org') {
+    if (userCan(user, 'lead.view.all') || dataScope(user.role) === 'org') {
       return { sql: '1=1', params: [] };
     }
     if (dataScope(user.role) === 'team') {
@@ -1209,7 +1210,7 @@ router.get('/preferences', (req, res) => {
        for keeping somebody out, and the API enforces the capability regardless
        of what the menu shows. */
     sections: SETUP_SECTIONS
-      .filter((sec) => !sec.needs || sec.needs.some((c) => can(req.user.role, c)))
+      .filter((sec) => !sec.needs || sec.needs.some((c) => userCan(req.user, c)))
       .filter((sec) => visible.has(setupTabId(sec.key)))
       .map((sec) => sec.key),
   });
@@ -1317,7 +1318,7 @@ router.put('/preferences/:key', (req, res) => {
 router.get('/health', (req, res) => {
   res.json({
     findings: checkSetup({ orgs: orgsFor(req.user) }),
-    recent: can(req.user.role, 'report.system') ? recentChanges(8) : [],
+    recent: userCan(req.user, 'report.system') ? recentChanges(8) : [],
     counts: setupCounts(orgsFor(req.user)),
   });
 });
@@ -1806,10 +1807,30 @@ router.get('/api-credentials', requirePermission('admin.system'), (req, res) => 
        WHERE active = 1 AND sales_org IN (${orgsFor(req.user).map(() => '?').join(',') || "''"})
        ORDER BY name`,
       orgsFor(req.user),
-    ),
-    capabilities: CAPABILITY_CATALOGUE.map((c) => ({ code: c.code, label: c.label, category: c.category })),
+    // OPS-42: what each could be scoped to -- a scope beyond its user is refused.
+    ).map((u) => ({ ...u, capabilities: [...effectiveCapabilities(u)] })),
+    // The catalogue is rows of [code, label, category, ...]; read as objects it sent every one undefined.
+    capabilities: CAPABILITY_CATALOGUE.map(([code, label, category]) => ({ code, label, category })),
   });
 });
+
+/* OPS-42. A key names what it is for, and only things its user can do.
+   Unscoped, a key acted with everything its user could -- an integration that
+   needed one answer held an administrator's whole role. A scope its user
+   lacks is refused here rather than silently dropped at the call, so what the
+   screen shows is what the key can do. */
+function scopeRefusal(scopes, user) {
+  if (!Array.isArray(scopes) || !scopes.length) {
+    return 'Choose at least one capability the key is for. A key with no scope acted with everything its user can do';
+  }
+  const known = new Set(CAPABILITY_CATALOGUE.map(([code]) => code));
+  const unknown = scopes.filter((s) => !known.has(s));
+  if (unknown.length) return `Not a capability: ${unknown.join(', ')}`;
+  const has = effectiveCapabilities(user);
+  const beyond = scopes.filter((s) => !has.has(s));
+  if (beyond.length) return `${user.name} cannot do ${beyond.join(', ')}, so a key acting as them cannot either`;
+  return null;
+}
 
 router.post('/api-credentials', requirePermission('admin.system'), (req, res) => {
   const { label, user_id: userId, scopes = null } = req.body;
@@ -1817,27 +1838,51 @@ router.post('/api-credentials', requirePermission('admin.system'), (req, res) =>
     return res.status(400).json({ error: 'A credential needs a label — it is how you know what to revoke', field: 'label' });
   }
 
-  const user = one('SELECT id, name, sales_org, active FROM users WHERE id = ?', [userId]);
+  const user = one('SELECT id, name, role, sales_org, active FROM users WHERE id = ?', [userId]);
   if (!user || !user.active) return res.status(400).json({ error: 'Choose an active user for the key to act as', field: 'user_id' });
   if (!mayUseOrg(req.user, user.sales_org)) {
     return res.status(403).json({ error: 'That user is outside your access', field: 'user_id' });
   }
 
-  if (scopes && !Array.isArray(scopes)) {
-    return res.status(400).json({ error: 'Scopes are a list of capabilities', field: 'scopes' });
-  }
+  const refused = scopeRefusal(scopes, user);
+  if (refused) return res.status(400).json({ error: refused, field: 'scopes' });
 
   const issued = issueCredential({
     label, userId: user.id, scopes, createdBy: req.user.id,
   });
 
   audit(req.user.id, 'api_credential_issued', 'api_credential', null, {
-    key_id: issued.key_id, acts_as: user.id, scopes: scopes ?? 'all the user has',
+    key_id: issued.key_id, acts_as: user.id, scopes,
   });
 
   /* The secret, exactly once. It is not stored in a form anything can read
      back, so this response is the only place it will ever exist. */
   return res.status(201).json({ ...issued, shown_once: true });
+});
+
+/* OPS-42. Narrowing a key already in use, so one issued before scopes were
+   required can be cut down to what it is for without a new secret to hand
+   over. Rotating or revoking stay the other ways out. */
+router.patch('/api-credentials/:id', requirePermission('admin.system'), (req, res) => {
+  const cred = one(
+    `SELECT c.id, c.key_id, c.active, c.scopes, u.id AS user_id, u.name, u.role, u.sales_org
+     FROM api_credential c JOIN users u ON u.id = c.user_id WHERE c.id = ?`, [req.params.id],
+  );
+  if (!cred) return res.status(404).json({ error: 'No such credential' });
+  if (!mayUseOrg(req.user, cred.sales_org)) return res.status(403).json({ error: 'That credential is outside your access' });
+  if (!cred.active) return res.status(409).json({ error: 'This credential is revoked' });
+
+  const { scopes = null } = req.body ?? {};
+  const refused = scopeRefusal(scopes, { id: cred.user_id, name: cred.name, role: cred.role });
+  if (refused) return res.status(400).json({ error: refused, field: 'scopes' });
+
+  setCredentialScopes(cred.id, scopes);
+  audit(req.user.id, 'api_credential_scoped', 'api_credential', cred.id, {
+    key_id: cred.key_id,
+    from: cred.scopes ? JSON.parse(cred.scopes) : 'everything the user can do',
+    to: scopes,
+  });
+  return res.json({ ok: true, scopes });
 });
 
 router.post('/api-credentials/:id/rotate', requirePermission('admin.system'), (req, res) => {

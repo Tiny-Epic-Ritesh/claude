@@ -242,7 +242,8 @@ test('hiding a screen is tidying, never security', () => {
      still refused by the API if somebody types the URL. */
   const routes = readFileSync(new URL('../src/routes/setup.js', import.meta.url), 'utf8').replace(CRLF, '\n');
   const handler = routes.slice(routes.indexOf("router.get('/preferences'"), routes.indexOf("router.put('/preferences"));
-  assert(/sec\.needs\.some\(\(c\) => can\(req\.user\.role, c\)\)/.test(handler),
+  // The person's capabilities, grants included (OPS-42), not the role alone.
+  assert(/sec\.needs\.some\(\(c\) => userCan\(req\.user, c\)\)/.test(handler),
     'the preferences endpoint no longer checks capability');
   assert(/visible\.has\(setupTabId\(sec\.key\)\)/.test(handler),
     'the preferences endpoint no longer applies role visibility');

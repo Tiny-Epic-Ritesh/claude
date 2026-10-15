@@ -87,6 +87,12 @@ change to a KYC journey while the Business policy holds those for Compliance
 is given both. It edits no lead, client or configuration, and identifiers stay
 masked until the officer unmasks one, which is audited.
 
+**API integration** (added 15 Oct 2026, OPS-42) — No tabs, because it never
+signs in: sign-in and "sign in as" both refuse it. Its user exists to hold API
+keys for another system -- today the trading platform asking whether to show
+the nomination pop-up (client.nomination.prompt, which only this role holds).
+Own scope, so a route answering by data scope alone finds nothing.
+
 ---
 
 ## The seven cells I am unsure about

@@ -5,7 +5,7 @@
 import { exportHeldMasked } from '../engine/policies.js';
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
-import { can, requireUser, requirePermission, requireAnyPermission, mayUseOrg, activeOrg, reqTicketScope, maskFor, orgScope } from '../auth.js';
+import { can, requireUser, requirePermission, requireAnyPermission, mayUseOrg, activeOrg, reqTicketScope, maskFor, orgScope, userCan } from '../auth.js';
 import { maskRecord } from '../security.js';
 import { loadInBook } from '../engine/bookscope.js';
 import { assertValid } from '../engine/validation.js';
@@ -205,8 +205,8 @@ router.get('/meta', (req, res) => res.json({
      fragment and no business of the browser's. */
   columns: TICKET_COLUMNS.map(({ key, label, pii }) => ({ key, label, pii: Boolean(pii) })),
   export_cap: EXPORT_CAP,
-  may_export: can(req.user.role, 'export.case'),
-  may_unmask: can(req.user.role, 'pii.unmask'),
+  may_export: userCan(req.user, 'export.case'),
+  may_unmask: userCan(req.user, 'pii.unmask'),
 }));
 
 router.get('/:id', (req, res) => {
@@ -375,7 +375,7 @@ router.patch('/:id', async (req, res) => {
 
   const { status, priority, assignee_id, category_id } = req.body;
 
-  if (assignee_id !== undefined && !can(req.user.role, 'ticket.reassign')) {
+  if (assignee_id !== undefined && !userCan(req.user, 'ticket.reassign')) {
     return res.status(403).json({ error: 'Reassignment requires Customer Care, a Supervisor or an Admin', required: 'ticket.reassign' });
   }
   if (status && !STATUSES.includes(status)) return res.status(400).json({ error: `Status must be one of ${STATUSES.join(', ')}` });
@@ -575,7 +575,7 @@ router.post('/export', requirePermission('export.case'), (req, res) => {
   if (!chosen.length) return res.status(400).json({ error: 'Choose at least one column' });
 
   const wantsClear = Boolean(req.body?.unmask);
-  const mayUnmask = can(req.user.role, 'pii.unmask');
+  const mayUnmask = userCan(req.user, 'pii.unmask');
   if (wantsClear && !mayUnmask) {
     return res.status(403).json({
       error: 'Exporting identifiers in the clear needs the unmask permission',

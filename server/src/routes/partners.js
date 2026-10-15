@@ -12,6 +12,7 @@ import { all, one, run, audit, notify, daysSince, PARTNER_STATES } from '../db.j
 import {
   requireUser, requirePermission, can, unmaskRequested, maskFor, orgsFor, mayUseOrg,
   reqPartnerScope, activeOrg,
+  userCan,
 } from '../auth.js';
 import { encryptField, decryptField, maskRecord, maskRecords, validate } from '../security.js';
 import { lmsSync } from '../integrations.js';
@@ -267,8 +268,8 @@ router.get('/meta', requirePermission('partner.view'), (req, res) => res.json({
   groups: PARTNER_GROUPS,
   columns: PARTNER_COLUMNS.map(({ key, label, pii }) => ({ key, label, pii: Boolean(pii) })),
   export_cap: PARTNER_EXPORT_CAP,
-  may_export: can(req.user.role, 'export.partner'),
-  may_unmask: can(req.user.role, 'pii.unmask'),
+  may_export: userCan(req.user, 'export.partner'),
+  may_unmask: userCan(req.user, 'pii.unmask'),
 }));
 
 /**
@@ -285,7 +286,7 @@ router.post('/export', requirePermission('partner.view'), requirePermission('exp
   if (!chosen.length) return res.status(400).json({ error: 'Choose at least one column' });
 
   const wantsClear = Boolean(req.body?.unmask);
-  const mayUnmask = can(req.user.role, 'pii.unmask');
+  const mayUnmask = userCan(req.user, 'pii.unmask');
   if (wantsClear && !mayUnmask) {
     return res.status(403).json({
       error: 'Exporting identifiers in the clear needs the unmask permission',

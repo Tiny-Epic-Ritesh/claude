@@ -13,7 +13,7 @@
 import { Router } from 'express';
 import { all, one, run, audit } from '../db.js';
 import { auditConfig } from '../engine/metadata.js';
-import { requireUser, requirePermission, can, orgsFor, mayUseOrg } from '../auth.js';
+import { requireUser, requirePermission, can, orgsFor, mayUseOrg, userCan } from '../auth.js';
 import { sendCsv } from '../engine/csv.js';
 import {
   policyFor, promptsFor, openSession, checkIn, checkOut, closeAbandoned,
@@ -80,7 +80,7 @@ router.post('/check-out', (req, res) => {
  * means on every other screen.
  */
 function reachFor(user) {
-  if (can(user.role, 'report.system') || can(user.role, 'admin.users')) {
+  if (userCan(user, 'report.system') || userCan(user, 'admin.users')) {
     const orgs = orgsFor(user);
     return {
       sql: `u.sales_org IN (${orgs.map(() => '?').join(',') || "''"})`,
@@ -89,7 +89,7 @@ function reachFor(user) {
     };
   }
 
-  if (can(user.role, 'report.team')) {
+  if (userCan(user, 'report.team')) {
     return {
       sql: `(u.id = ? OR u.id IN (
               WITH RECURSIVE reports(id) AS (

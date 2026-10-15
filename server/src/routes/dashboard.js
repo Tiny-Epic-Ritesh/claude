@@ -19,7 +19,7 @@
 
 import { Router } from 'express';
 import { all, one } from '../db.js';
-import { requireUser, leadScope, clientScope, activeOrg, can, orgsFor, reqTicketScope } from '../auth.js';
+import { requireUser, leadScope, clientScope, activeOrg, can, orgsFor, reqTicketScope, userCan } from '../auth.js';
 import {
   RANGES, DEFAULT_RANGE, resolveRange, inRange, inPrevRange, delta,
 } from '../engine/daterange.js';
@@ -100,7 +100,7 @@ function leadTiles(req, range) {
    *
    * Answered the same way the list answers it: your own tasks, unless you can
    * see the team's, in which case both count and link say so. */
-  const teamWide = can(req.user.role, 'report.team');
+  const teamWide = userCan(req.user, 'report.team');
   const overdue = one(
     `SELECT COUNT(*) n FROM tasks t
       JOIN leads l ON l.id = t.lead_id
@@ -138,7 +138,7 @@ function leadTiles(req, range) {
 }
 
 function clientTiles(req, range) {
-  if (!can(req.user.role, 'client.view.all') && !can(req.user.role, 'client.view.own')) return [];
+  if (!userCan(req.user, 'client.view.all') && !userCan(req.user, 'client.view.own')) return [];
 
   const scope = clientScope(req.user, 'c', activeOrg(req));
   const base = `FROM clients c WHERE c.deleted_at IS NULL AND ${scope.sql}`;
@@ -256,7 +256,7 @@ function caseTiles(req, range) {
 }
 
 function partnerTiles(req, range) {
-  if (!can(req.user.role, 'partner.view')) return [];
+  if (!userCan(req.user, 'partner.view')) return [];
   /* Scoped to the books this person may see, narrowed by the switcher.
    *
    * This used to filter only when the switcher was set, so with no active org

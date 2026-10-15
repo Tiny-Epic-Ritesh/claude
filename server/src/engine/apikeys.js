@@ -55,6 +55,9 @@ function secretMatches(presented, storedHex) {
  * that makes the stored half worthless to anyone who reads the database.
  */
 export function issue({ label, userId, scopes = null, createdBy = null }) {
+  /* OPS-42: a key names what it is for. Unscoped, it acted with everything
+     its user may do -- an integration holding an administrator's whole role. */
+  if (!Array.isArray(scopes) || !scopes.length) throw new Error('An API key needs at least one scope');
   const keyId = newKeyId();
   const secret = newSecret();
 
@@ -66,7 +69,7 @@ export function issue({ label, userId, scopes = null, createdBy = null }) {
       digest(secret).toString('hex'),
       String(label).trim(),
       userId,
-      scopes && scopes.length ? JSON.stringify(scopes) : null,
+      JSON.stringify(scopes),
       createdBy,
     ],
   );
@@ -84,6 +87,12 @@ export function rotate(id) {
   return { key_id: cred.key_id, secret, label: cred.label };
 }
 
+/** Re-scope: same key, same secret, a new list of what it is for (OPS-42). */
+export function setScopes(id, scopes) {
+  if (!Array.isArray(scopes) || !scopes.length) throw new Error('An API key needs at least one scope');
+  return run('UPDATE api_credential SET scopes = ? WHERE id = ?', [JSON.stringify(scopes), id]).changes;
+}
+
 export function revoke(id) {
   return run("UPDATE api_credential SET active = 0, revoked_at = datetime('now') WHERE id = ?", [id]).changes;
 }
@@ -99,7 +108,7 @@ export function revoke(id) {
  */
 export const list = (orgs = []) => all(
   `SELECT c.id, c.key_id, c.label, c.active, c.created_at, c.last_used_at, c.rotated_at, c.revoked_at,
-          c.scopes, u.name AS user_name, u.role AS user_role, u.sales_org,
+          c.scopes, c.user_id, u.name AS user_name, u.role AS user_role, u.sales_org,
           (SELECT COUNT(*) FROM request_log r WHERE r.api_credential_id = c.id) AS calls
    FROM api_credential c
    JOIN users u ON u.id = c.user_id

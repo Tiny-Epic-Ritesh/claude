@@ -26,6 +26,7 @@ import { useApi, Icon, Loading, ErrorBanner, Modal, Spinner, Empty } from '../co
 export default function ApiAccess() {
   const [data, { loading, error, reload }] = useApi('/setup/api-credentials');
   const [issuing, setIssuing] = useState(false);
+  const [scoping, setScoping] = useState(null);
   const [revealed, setRevealed] = useState(null);
   const [problem, setProblem] = useState(null);
 
@@ -45,9 +46,26 @@ export default function ApiAccess() {
     catch (err) { setProblem(err.message); }
   };
 
+  /* OPS-42. Keys issued before a scope was required still act with everything
+     their user can do. Said at the top, because each one is an integration
+     holding a whole role, and narrowing it costs no new secret. */
+  const unscoped = data.credentials.filter((c) => c.active && !c.scopes);
+
   return (
     <section className="stack" style={{ gap: 14 }}>
       <ErrorBanner error={problem} onDismiss={() => setProblem(null)} />
+
+      {Boolean(unscoped.length) && (
+        <div className="glass notice notice-danger">
+          <Icon name="warning" size={16} />
+          <div className="small">
+            <strong>{unscoped.length === 1 ? '1 credential has' : `${unscoped.length} credentials have`} no scope.</strong>{' '}
+            {unscoped.length === 1 ? 'It acts' : 'Each acts'} with everything its user can do — for an
+            administrator, the whole administrator role. Set scopes to what the integration
+            needs, or revoke it if nothing uses it. Setting scopes keeps the same key and secret.
+          </div>
+        </div>
+      )}
 
       <div className="card">
         <div className="card-head">
@@ -66,10 +84,11 @@ export default function ApiAccess() {
           <div><dt>Secret header</dt><dd className="api-name">X-Api-Secret</dd></div>
         </dl>
         <p className="tiny muted" style={{ margin: '10px 0 0' }}>
-          A credential acts as the user it is bound to, so it sees exactly what that
-          person sees — the same book, the same masking, the same permissions. There is
-          no separate permission model for integrations, which is deliberate: a second
-          one is the one that gets it wrong.
+          A credential acts as the user it is bound to, so it sees what that person
+          sees — the same book, the same masking — and can do only the capabilities it
+          is scoped to, out of what that person can. There is no separate permission
+          model for integrations, which is deliberate: a second one is the one that
+          gets it wrong.
         </p>
       </div>
 
@@ -107,8 +126,13 @@ export default function ApiAccess() {
                   </td>
                   <td className="small">
                     {c.scopes
-                      ? <span title={c.scopes.join(', ')}>{c.scopes.length} capabilities</span>
-                      : <span className="muted">everything that user can do</span>}
+                      ? <span title={c.scopes.join(', ')}>
+                          {c.scopes.length === 1 ? <span className="api-name">{c.scopes[0]}</span> : `${c.scopes.length} capabilities`}
+                        </span>
+                      : <>
+                          <span className="badge badge-red">Unscoped</span>
+                          <div className="tiny muted">everything that user can do</div>
+                        </>}
                   </td>
                   <td className="num small">{c.calls}</td>
                   <td className="small">
@@ -121,6 +145,7 @@ export default function ApiAccess() {
                   <td className="num">
                     {c.active && (
                       <span className="row" style={{ gap: 6, justifyContent: 'flex-end' }}>
+                        <button className="btn-sm" onClick={() => setScoping(c)}>{c.scopes ? 'Scopes' : 'Set scopes'}</button>
                         <button className="btn-sm" onClick={() => rotate(c)}>Rotate</button>
                         <button className="btn-ghost btn-sm is-danger" onClick={() => revoke(c)}>Revoke</button>
                       </span>
@@ -138,6 +163,16 @@ export default function ApiAccess() {
           data={data}
           onClose={() => setIssuing(false)}
           onIssued={(r) => { setIssuing(false); setRevealed(r); reload(); }}
+          onError={setProblem}
+        />
+      )}
+
+      {scoping && (
+        <ScopeDialog
+          credential={scoping}
+          data={data}
+          onClose={() => setScoping(null)}
+          onSaved={() => { setScoping(null); reload(); }}
           onError={setProblem}
         />
       )}
@@ -197,7 +232,7 @@ function SecretOnce({ credential, onClose }) {
 /* ------------------------------------------------------------ issuing */
 
 function IssueDialog({ data, onClose, onIssued, onError }) {
-  const [form, setForm] = useState({ label: '', user_id: '', narrow: false });
+  const [form, setForm] = useState({ label: '', user_id: '' });
   const [scopes, setScopes] = useState(new Set());
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -210,14 +245,11 @@ function IssueDialog({ data, onClose, onIssued, onError }) {
       const r = await api.post('/setup/api-credentials', {
         label: form.label,
         user_id: Number(form.user_id),
-        scopes: form.narrow && scopes.size ? [...scopes] : null,
+        scopes: [...scopes],
       });
       onIssued(r);
     } catch (err) { onError(err.message); setBusy(false); }
   };
-
-  const byCategory = {};
-  for (const c of data.capabilities) (byCategory[c.category] ??= []).push(c);
 
   return (
     <Modal title="Issue an API credential" onClose={onClose} wide>
@@ -234,7 +266,7 @@ function IssueDialog({ data, onClose, onIssued, onError }) {
 
         <label>
           <span>Acts as</span>
-          <select value={form.user_id} onChange={(e) => set('user_id', e.target.value)}>
+          <select value={form.user_id} onChange={(e) => { set('user_id', e.target.value); setScopes(new Set()); }}>
             <option value="">Choose a user…</option>
             {data.users.map((u) => (
               <option key={u.id} value={u.id}>{u.name} — {u.role} — {u.sales_org}</option>
@@ -257,56 +289,110 @@ function IssueDialog({ data, onClose, onIssued, onError }) {
           </div>
         )}
 
-        <label className="check-one">
-          <input type="checkbox" checked={form.narrow} onChange={(e) => set('narrow', e.target.checked)} />
-          <span>
-            Narrow it further
-            <em className="tiny muted"> — otherwise it can do everything that user can</em>
-          </span>
-        </label>
-
-        {form.narrow && (
-          <div className="field">
-            <span className="field-label">Allow only these ({scopes.size} chosen)</span>
-            {/* Narrowing only. Ticking something the user cannot do has no
-                effect — the server drops it rather than granting it. */}
-            <span className="tiny muted">
-              Anything ticked here that the chosen user cannot do is ignored, not granted.
-            </span>
-            <div className="cap-groups">
-              {Object.entries(byCategory).map(([cat, caps]) => (
-                <div key={cat} className="cap-group">
-                  <div className="cap-group-head"><span>{cat}</span></div>
-                  {caps.map((c) => (
-                    <label key={c.code} className="cap-row">
-                      <input
-                        type="checkbox"
-                        checked={scopes.has(c.code)}
-                        onChange={() => setScopes((s) => {
-                          const next = new Set(s);
-                          if (next.has(c.code)) next.delete(c.code); else next.add(c.code);
-                          return next;
-                        })}
-                      />
-                      <span>
-                        <strong>{c.label}</strong>
-                        <em className="api-name">{c.code}</em>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              ))}
-            </div>
-          </div>
+        {chosen && (
+          <ScopePicker
+            capabilities={data.capabilities}
+            allowed={new Set(chosen.capabilities)}
+            scopes={scopes}
+            onChange={setScopes}
+          />
         )}
 
         <div className="modal-actions">
           <span style={{ flex: 1 }} />
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
           <button className="btn btn-primary"
-            disabled={busy || !form.label.trim() || !form.user_id}
+            disabled={busy || !form.label.trim() || !form.user_id || !scopes.size}
             onClick={create}>
             {busy ? <Spinner /> : 'Issue credential'}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/* ------------------------------------------------------------- scopes */
+
+/* OPS-42. What a key is for, out of what its user can do. A capability the
+   user lacks is not offered: the server refuses it, and a key cannot do more
+   than the person it acts as anyway. */
+function ScopePicker({ capabilities, allowed, scopes, onChange }) {
+  const byCategory = {};
+  for (const c of capabilities) if (allowed.has(c.code)) (byCategory[c.category] ??= []).push(c);
+  const toggle = (code) => {
+    const next = new Set(scopes);
+    if (next.has(code)) next.delete(code); else next.add(code);
+    onChange(next);
+  };
+
+  return (
+    <div className="field">
+      <span className="field-label">What it is for ({scopes.size} chosen)</span>
+      <span className="tiny muted">
+        Choose the least the integration needs. A key that can do one thing can only be
+        misused for one thing. Only what this user can do is listed.
+      </span>
+      <div className="cap-groups">
+        {Object.entries(byCategory).map(([cat, caps]) => (
+          <div key={cat} className="cap-group">
+            <div className="cap-group-head"><span>{cat}</span></div>
+            {caps.map((c) => (
+              <label key={c.code} className="cap-row">
+                <input type="checkbox" checked={scopes.has(c.code)} onChange={() => toggle(c.code)} />
+                <span>
+                  <strong>{c.label}</strong>
+                  <em className="api-name">{c.code}</em>
+                </span>
+              </label>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ScopeDialog({ credential, data, onClose, onSaved, onError }) {
+  const user = data.users.find((u) => u.id === credential.user_id);
+  /* An unscoped key starts with nothing ticked, not everything: what it needs
+     is the question being asked, and "all of it" is the answer being replaced. */
+  const [scopes, setScopes] = useState(new Set(credential.scopes ?? []));
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api.patch(`/setup/api-credentials/${credential.id}`, { scopes: [...scopes] });
+      onSaved();
+    } catch (err) { onError(err.message); setBusy(false); }
+  };
+
+  return (
+    <Modal title="What this key is for" subtitle={credential.label} onClose={onClose} wide>
+      <div className="stack" style={{ gap: 13 }}>
+        <div className="glass notice">
+          <Icon name="info" size={16} />
+          <div className="small">
+            Acts as <strong>{credential.user_name}</strong> ({credential.user_role}, {credential.sales_org}).
+            The key and secret stay the same, so whatever uses it keeps working for what you
+            tick here and is refused everything else from the next call.
+          </div>
+        </div>
+
+        {user
+          ? <ScopePicker capabilities={data.capabilities} allowed={new Set(user.capabilities)}
+              scopes={scopes} onChange={setScopes} />
+          : <p className="small muted">
+              {credential.user_name} is no longer an active user, so this key already works for
+              nothing. Revoke it.
+            </p>}
+
+        <div className="modal-actions">
+          <span style={{ flex: 1 }} />
+          <button className="btn btn-ghost" onClick={onClose}>Close</button>
+          <button className="btn btn-primary" disabled={busy || !user || !scopes.size} onClick={save}>
+            {busy ? <Spinner /> : 'Save scopes'}
           </button>
         </div>
       </div>

@@ -2088,7 +2088,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
 
   await check('the permission matrix is exposed for every role', async () => {
     const { data } = await req('/api/admin/roles', { token: T.admin, expect: 200 });
-    eq(data.roles.length, 12, 'role count');
+    eq(data.roles.length, 13, 'role count');   // 13th: integration, OPS-42
     assert(Object.keys(data.matrix).length > 20, 'permission matrix too small');
   });
 

@@ -6,7 +6,7 @@ import { exportHeldMasked, wonRefusal, policy } from '../engine/policies.js';
 import { purgeableLeads, purgeLeads } from '../engine/retention.js';
 import { Router } from 'express';
 import { all, one, run, audit, notify, daysSince, ageBand, AGE_BANDS, CARD_COLOUR, CARD_STATES } from '../db.js';
-import { can, requireUser, requirePermission, reqScope, isReadOnlyOnLeads, unmaskRequested, maskFor, orgsFor, activeOrg, mayUseOrg } from '../auth.js';
+import { can, requireUser, requirePermission, reqScope, isReadOnlyOnLeads, unmaskRequested, maskFor, orgsFor, activeOrg, mayUseOrg, userCan } from '../auth.js';
 import { owdGrant } from '../engine/owd.js';
 import { encryptField, decryptField, maskRecord, maskRecords, validate, blindIndex } from '../security.js';
 import { sendCsv } from '../engine/csv.js';
@@ -561,8 +561,8 @@ router.get('/leads/bulk/options', requirePermission('lead.edit'), (req, res) => 
      someone who may change a stage (OPS-12). The write refuses each without its
      capability, and offering it anyway is the dialog-versus-write disagreement
      this route exists to prevent. */
-  const offered = BULK_FIELDS.filter((f) => (f.key !== 'owner_id' || can(req.user.role, 'lead.reassign'))
-    && (f.key !== 'stage' || can(req.user.role, 'lead.stage.change')));
+  const offered = BULK_FIELDS.filter((f) => (f.key !== 'owner_id' || userCan(req.user, 'lead.reassign'))
+    && (f.key !== 'stage' || userCan(req.user, 'lead.stage.change')));
 
   const fields = offered.map((f) => {
     if (f.values) return f;
@@ -637,7 +637,7 @@ router.post('/leads/bulk/field', requirePermission('lead.edit'), (req, res) => {
      both require lead.stage.change, which Sales RMs and dealers do not hold;
      taken here on lead.edit, an RM could set leads to Won in bulk that PATCH
      would not let them move one at a time. */
-  if (field === 'stage' && !can(req.user.role, 'lead.stage.change')) {
+  if (field === 'stage' && !userCan(req.user, 'lead.stage.change')) {
     return res.status(403).json({ error: 'Stage changes require a Sales Supervisor or Admin', required: 'lead.stage.change' });
   }
   /* A blank or a value no business holds is refused before the set is even
@@ -654,7 +654,7 @@ router.post('/leads/bulk/field', requirePermission('lead.edit'), (req, res) => {
   const reassigning = field === 'owner_id';
   let owner = null;
   if (reassigning) {
-    if (!can(req.user.role, 'lead.reassign')) {
+    if (!userCan(req.user, 'lead.reassign')) {
       return res.status(403).json({ error: 'Reassignment requires a Sales Supervisor or Admin', required: 'lead.reassign' });
     }
     owner = /^\d+$/.test(String(value))
@@ -888,7 +888,7 @@ router.post('/leads', requirePermission('lead.create'), (req, res) => {
     /* OPS-19. Naming somebody else as the owner is a reassignment, which the
        edit refuses without lead.reassign; the create let any holder of
        lead.create make it. Naming yourself is not one. */
-    if (owner.id !== req.user.id && !can(req.user.role, 'lead.reassign')) {
+    if (owner.id !== req.user.id && !userCan(req.user, 'lead.reassign')) {
       return res.status(403).json({ error: 'Reassignment requires a Sales Supervisor or Admin', required: 'lead.reassign' });
     }
   }
@@ -1076,7 +1076,7 @@ router.patch('/leads/:id', (req, res) => {
   const body = { ...req.body };
 
   // Stage and owner are supervisor-gated (BRD §3.2).
-  if (body.stage !== undefined && body.stage !== lead.stage && !can(req.user.role, 'lead.stage.change')) {
+  if (body.stage !== undefined && body.stage !== lead.stage && !userCan(req.user, 'lead.stage.change')) {
     return res.status(403).json({ error: 'Stage changes require a Sales Supervisor or Admin', required: 'lead.stage.change' });
   }
   /* Who may change a stage was checked; what to was not, and any text was
@@ -1093,7 +1093,7 @@ router.patch('/leads/:id', (req, res) => {
   }
   const notWon = wonRefusal(body.stage, [lead.id]);   // QA-24, while the policy is on
   if (notWon) return res.status(400).json({ error: notWon, field: 'stage', policy: 'lead_won_requires_account' });
-  if (body.owner_id !== undefined && Number(body.owner_id) !== lead.owner_id && !can(req.user.role, 'lead.reassign')) {
+  if (body.owner_id !== undefined && Number(body.owner_id) !== lead.owner_id && !userCan(req.user, 'lead.reassign')) {
     return res.status(403).json({ error: 'Reassignment requires a Sales Supervisor or Admin', required: 'lead.reassign' });
   }
 
@@ -1444,7 +1444,7 @@ router.post('/cards/:id/state', (req, res) => {
   // QA-42: the map the panel reads too, so what it offers is what this accepts.
   const permissionFor = MOVE_NEEDS[state];
 
-  if (!can(req.user.role, permissionFor)) {
+  if (!userCan(req.user, permissionFor)) {
     return res.status(403).json({ error: `Your role cannot set a card to ${state}`, required: permissionFor });
   }
 
@@ -1837,7 +1837,7 @@ function taskBase(req) {
     SELECT 1 FROM leads l WHERE l.id = t.lead_id AND l.deleted_at IS NULL AND ${scope.sql}))`);
   params.push(...scope.params);
 
-  if (!(req.query.all === 'true' && can(req.user.role, 'report.team'))) {
+  if (!(req.query.all === 'true' && userCan(req.user, 'report.team'))) {
     /* The floor: your own tasks. The organisation-wide default joins it as a
        grant rather than replacing it, the same shape as leads and clients --
        so Private adds nothing and leaves this exactly as it was, and Public
@@ -1997,7 +1997,7 @@ function taskFor(req) {
     [req.params.id, ...scope.params],
   );
   if (!task) return { status: 404, body: { error: 'Task not found' } };
-  if (task.assignee_id !== req.user.id && task.created_by !== req.user.id && !can(req.user.role, 'report.team')) {
+  if (task.assignee_id !== req.user.id && task.created_by !== req.user.id && !userCan(req.user, 'report.team')) {
     return { status: 403, body: { error: 'That task belongs to somebody else', required: 'report.team' } };
   }
   /* QA-37: cancelled is where a task ends. It stays, with its reason, and

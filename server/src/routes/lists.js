@@ -21,6 +21,7 @@ import {
 } from '../engine/metadata.js';
 import {
   requireUser, requirePermission, reqScope, activeOrg, orgsFor, can, maskFor,
+  userCan,
 } from '../auth.js';
 import { validate, activeMaskers, maskRecords } from '../security.js';
 import { validateTree, describe, conditionSchema, FIELDS } from '../engine/conditions.js';
@@ -149,7 +150,7 @@ router.get('/meta', (req, res) => res.json({
      interface, so a dialog cannot offer a field the route will refuse. Labels
      and values come from the schema above, which is where they already live.
      Stage only for someone who may change a stage (OPS-12). */
-  bulk_editable: [...BULK_EDITABLE].filter((f) => f !== 'stage' || can(req.user.role, 'lead.stage.change')),
+  bulk_editable: [...BULK_EDITABLE].filter((f) => f !== 'stage' || userCan(req.user, 'lead.stage.change')),
 }));
 
 /* --------------------------------------------------------------- list */
@@ -617,7 +618,7 @@ router.post('/:id/export', requirePermission('export.lead'), (req, res) => {
   if (!chosen.length) return res.status(400).json({ error: 'Choose at least one column' });
 
   const wantsClear = Boolean(req.body?.unmask);
-  const mayUnmask = can(req.user.role, 'pii.unmask');
+  const mayUnmask = userCan(req.user, 'pii.unmask');
   if (wantsClear && !mayUnmask) {
     return res.status(403).json({
       error: 'Exporting identifiers in the clear needs the unmask permission',
@@ -866,7 +867,7 @@ router.post('/:id/bulk/field', requirePermission('lead.edit'), (req, res) => {
   }
   /* A stage is set by POST /:id/bulk/stage, which requires lead.stage.change;
      through this route it took lead.edit alone (OPS-12). */
-  if (field === 'stage' && !can(req.user.role, 'lead.stage.change')) {
+  if (field === 'stage' && !userCan(req.user, 'lead.stage.change')) {
     return res.status(403).json({ error: 'Stage changes require a Sales Supervisor or Admin', required: 'lead.stage.change' });
   }
 
