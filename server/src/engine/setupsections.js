@@ -40,6 +40,7 @@ export const SETUP_SECTIONS = [
   { key: 'telephony', label: 'Telephony', needs: ['admin.system'] },
   { key: 'meta', label: 'Facebook & Instagram', needs: ['admin.system'] },
   { key: 'audit', label: 'Audit log', needs: ['report.system', 'audit.read'] },
+  { key: 'testrecords', label: 'Test records', needs: ['admin.test_records'] },
   { key: 'logs', label: 'API & logs', needs: ['report.system'] },
   { key: 'database', label: 'Database', needs: ['report.system'] },
   { key: 'promotion', label: 'Promote configuration', needs: ['admin.system'] },

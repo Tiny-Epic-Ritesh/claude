@@ -173,4 +173,72 @@ export function withdrawPortalAccess(partner, userId, reason) {
   return { withdrawn: true, sessions_ended: ended };
 }
 
+/**
+ * Suspend, terminate or reinstate: QA-37, through the closure approval
+ * (Ritesh, 14 Oct). Where each may be reached from. Terminated is final; a
+ * suspended partner is reinstated, or terminated; one never activated can be
+ * closed too.
+ */
+export const CLOSURE_MOVES = {
+  SUSPENDED: ['ACTIVE'],
+  TERMINATED: ['PROSPECT', 'QUALIFYING', 'ONBOARDING', 'ACTIVE', 'SUSPENDED'],
+  ACTIVE: ['SUSPENDED'],
+};
+const CLOSURE_WORD = { SUSPENDED: 'Suspended', TERMINATED: 'Terminated', ACTIVE: 'Reinstated' };
+
+/** Why a partner cannot move to this state by a closure request, or null. */
+export function closureRefusal(partner, to) {
+  if (partner.archived_at) return `${partner.name} is archived. Restore the record first.`;
+  const from = CLOSURE_MOVES[to];
+  if (!from) return 'A closure request suspends, terminates or reinstates a partner';
+  if (from.includes(partner.state_code)) return null;
+  if (partner.state_code === 'TERMINATED') return `${partner.name} is terminated, which is final`;
+  return `${partner.name} is ${String(partner.state_code).toLowerCase()}, so it cannot be ${CLOSURE_WORD[to].toLowerCase()}`;
+}
+
+/**
+ * Apply a granted closure request.
+ *
+ * The reason the request gave is kept on the partner and on its timeline. A
+ * suspension or termination withdraws portal access and ends every session at
+ * once -- the scope has always said it does, and it did not; reinstating does
+ * not hand it back, because a password is issued from the partner's page,
+ * once, to whoever is there to pass it on.
+ */
+export function applyClosure(partner, to, reason, userId) {
+  const refusal = closureRefusal(partner, to);
+  if (refusal) throw new Error(refusal);
+  run(
+    "UPDATE partners SET state_code = ?, state_reason = ?, state_changed_at = datetime('now'), state_changed_by = ? WHERE id = ?",
+    [to, reason, userId, partner.id],
+  );
+  run(
+    'INSERT INTO activities (partner_id, type, direction, subject, body, user_id) VALUES (?,?,?,?,?,?)',
+    [partner.id, 'Partner Activity', 'system', CLOSURE_WORD[to], reason, userId],
+  );
+  const portal = to !== 'ACTIVE' && partner.portal_password
+    ? withdrawPortalAccess(partner, userId, `${CLOSURE_WORD[to]}: ${reason}`)
+    : null;
+  audit(userId, 'partner_state_changed', 'partner', partner.id, { from: partner.state_code, to, reason });
+  return {
+    state_code: to,
+    portal_withdrawn: Boolean(portal),
+    next_step: to === 'ACTIVE' ? "Issue a portal password from the partner's page" : null,
+  };
+}
+
+/** Why a partner cannot be archived yet, or null: terminated, and every commission paid. */
+export function archiveRefusal(partner) {
+  if (partner.archived_at) return `${partner.name} is already archived`;
+  if (partner.state_code !== 'TERMINATED') return `${partner.name} is not terminated. A partner is archived once terminated and settled.`;
+  const unpaid = one(
+    "SELECT COUNT(*) n, COALESCE(SUM(payout), 0) amount FROM commissions WHERE partner_id = ? AND status <> 'Paid'",
+    [partner.id],
+  );
+  if (unpaid.n) {
+    return `${partner.name} has ${unpaid.n} commission${unpaid.n === 1 ? '' : 's'} not yet paid (₹${Math.round(unpaid.amount).toLocaleString('en-IN')}). Archive once settled.`;
+  }
+  return null;
+}
+
 export { one };

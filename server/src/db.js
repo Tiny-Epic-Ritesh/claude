@@ -747,6 +747,27 @@ CREATE INDEX IF NOT EXISTS idx_corrections_note ON corrections(note_id);
 CREATE INDEX IF NOT EXISTS idx_corrections_activity ON corrections(activity_id);
 CREATE INDEX IF NOT EXISTS idx_corrections_reply ON corrections(reply_id);
 
+/* QA-37, "Retire test records" (Ritesh, 14 Oct: an explicit test-record mark
+   an Admin sets). A record is marked here, by kind and id, and later retired
+   through its own lifecycle -- a lead to the recycle bin, a case closed, a
+   list or a flow archived -- with a reason. Never deleted: the auditor's
+   evidence is in these records. One row per record, kept after retiring as
+   the account of what was done to it. */
+CREATE TABLE IF NOT EXISTS test_records (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity        TEXT NOT NULL,
+  record_id     INTEGER NOT NULL,
+  label         TEXT,
+  note          TEXT,
+  marked_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  marked_at     TEXT NOT NULL DEFAULT (datetime('now')),
+  retired_at    TEXT,
+  retired_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  retire_reason TEXT,
+  outcome       TEXT,
+  UNIQUE (entity, record_id)
+);
+
 /* ---- Partners ------------------------------------------------------- */
 
 CREATE TABLE IF NOT EXISTS partners (
@@ -1815,6 +1836,16 @@ const COLUMNS = [
   ['automation', 'first_activated_at', 'TEXT'],
   // Which version of its flow a lead went through (QA-37: a new version once it has run).
   ['automation_run', 'flow_version', 'INTEGER'],
+  /* QA-37, partners (Ritesh, 14 Oct): suspended, terminated or reinstated
+     through the closure approval, with its reason kept on the partner; and
+     archived once terminated and every commission is paid. Never deleted --
+     referrals and commission are attached. */
+  ['partners', 'state_reason', 'TEXT'],
+  ['partners', 'state_changed_at', 'TEXT'],
+  ['partners', 'state_changed_by', 'INTEGER'],
+  ['partners', 'archived_at', 'TEXT'],
+  ['partners', 'archived_by', 'INTEGER'],
+  ['partners', 'archive_reason', 'TEXT'],
 ];
 
 /**

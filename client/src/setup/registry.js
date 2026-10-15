@@ -56,6 +56,7 @@ const Campaigns = lazy(() => import('../crm/admin/Campaigns.jsx').then((m) => ({
 const Integrations = lazy(() => import('../crm/admin/Integrations.jsx').then((m) => ({ default: m.Integrations })));
 const MetaConnector = lazy(() => import('../crm/admin/MetaConnector.jsx').then((m) => ({ default: m.MetaConnector })));
 const Audit = lazy(() => import('../crm/admin/Audit.jsx').then((m) => ({ default: m.Audit })));
+const TestRecords = lazy(() => import('../crm/admin/TestRecords.jsx').then((m) => ({ default: m.TestRecords })));
 const Residency = lazy(() => import('../crm/admin/Residency.jsx').then((m) => ({ default: m.Residency })));
 const Promotion = lazy(() => import('../crm/admin/Promotion.jsx').then((m) => ({ default: m.Promotion })));
 const MessagingSetup = lazy(() => import('../crm/admin/MessagingSetup.jsx').then((m) => ({ default: m.MessagingSetup })));
@@ -347,6 +348,16 @@ export const SECTIONS = [
     blurb: 'Who changed what, and when',
     keywords: ['audit', 'log', 'history', 'change', 'who did', 'trail', 'compliance', 'sebi'],
     Component: Audit,
+  },
+  {
+    key: 'testrecords',
+    label: 'Test records',
+    group: 'monitoring',
+    icon: 'inventory_2',
+    needs: ['admin.test_records'],
+    blurb: 'Mark test data and retire it, without deleting the evidence',
+    keywords: ['test', 'synthetic', 'qa', 'cleanup', 'clean up', 'retire', 'audit data', 'dummy'],
+    Component: TestRecords,
   },
   {
     key: 'logs',

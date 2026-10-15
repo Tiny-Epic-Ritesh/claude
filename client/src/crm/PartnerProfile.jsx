@@ -107,6 +107,88 @@ function EmergencyActivation({ partner, openSteps, onClose, onDone }) {
   );
 }
 
+/**
+ * Ask for a partner to be suspended, terminated or reinstated (QA-37).
+ *
+ * Not done here: raised as a closure request with a reason, decided in
+ * Approvals by somebody else who holds partner.suspend. Suspending or
+ * terminating withdraws portal access when it is granted; terminating is
+ * final.
+ */
+function ClosureRequest({ partner, to, onClose, onDone }) {
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const verb = { SUSPENDED: 'Suspend', TERMINATED: 'Terminate', ACTIVE: 'Reinstate' }[to];
+
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.post('/approvals', { scope: 'partner_closure', entity_id: partner.id, payload: { state_code: to }, reason });
+      onDone(`Asked to ${verb.toLowerCase()} ${partner.name}. It waits in Approvals for somebody else to decide.`);
+    } catch (err) { setError(err.message); setBusy(false); }
+  }
+
+  return (
+    <Modal title={`${verb} ${partner.name}`} onClose={onClose}>
+      <form onSubmit={submit} className="stack" style={{ gap: 12 }}>
+        <ErrorBanner error={error} />
+        <p className="small">
+          {to === 'ACTIVE'
+            ? 'Once approved, the partner is active again. Portal access is not given back by itself: issue a new password from this page.'
+            : `Once approved, ${to === 'TERMINATED' ? 'the partner is terminated, which is final, and' : 'the partner is suspended, and'} portal access is withdrawn with every session ended.`}
+          {' '}It is decided by somebody else, in Approvals.
+        </p>
+        <div className="field">
+          <label htmlFor="closure-reason">Why</label>
+          <input id="closure-reason" value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
+        </div>
+        <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+          <button type="button" className="btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className={to === 'TERMINATED' ? 'btn-danger' : 'btn-primary'} disabled={busy || reason.trim().length < 5}>
+            {busy ? 'Sending…' : 'Send for approval'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/** Archive a terminated partner once every commission is paid (QA-37). */
+function ArchivePartner({ partner, onClose, onDone }) {
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try { await api.post(`/partners/${partner.id}/archive`, { reason }); onDone(); }
+    catch (err) { setError(err.message); setBusy(false); }
+  }
+
+  return (
+    <Modal title={`Archive ${partner.name}`} onClose={onClose}>
+      <form onSubmit={submit} className="stack" style={{ gap: 12 }}>
+        <ErrorBanner error={error} />
+        <p className="small">
+          The record leaves the partner list and becomes read-only. It is kept with its referrals and commission, and can
+          be restored. Only a terminated partner whose commission is all paid is archived.
+        </p>
+        <div className="field">
+          <label htmlFor="partner-archive-reason">Why</label>
+          <input id="partner-archive-reason" value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
+        </div>
+        <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+          <button type="button" className="btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="btn-primary" disabled={busy || reason.trim().length < 5}>{busy ? 'Archiving…' : 'Archive'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 /** Partner Profile View (BRD §12) — replaces the lead detail view for partners. */
 export default function PartnerProfile({ session }) {
   const { id } = useParams();
@@ -119,6 +201,9 @@ export default function PartnerProfile({ session }) {
   const [credential, setCredential] = useState(null);
   const [withdrawing, setWithdrawing] = useState(false);
   const [emergency, setEmergency] = useState(false);
+  const [closing, setClosing] = useState(null);
+  const [archiving, setArchiving] = useState(false);
+  const [notice, setNotice] = useState(null);
 
   if (loading) return <Loading />;
   if (error) return <ErrorBanner error={error} />;
@@ -189,10 +274,48 @@ export default function PartnerProfile({ session }) {
           {can('partner.elevate.emergency') && !isActive && openSteps.length > 0 && (
             <button className="btn-danger" onClick={() => setEmergency(true)} disabled={busy}>Activate in an emergency</button>
           )}
+          {/* QA-37 (Ritesh, 14 Oct): suspend, terminate or reinstate through the
+              closure approval, with a reason; archive once terminated and settled. */}
+          {can('partner.view') && !partner.archived_at && isActive && (
+            <button onClick={() => setClosing('SUSPENDED')} disabled={busy}>Suspend</button>
+          )}
+          {can('partner.view') && !partner.archived_at && partner.state_code === 'SUSPENDED' && (
+            <button onClick={() => setClosing('ACTIVE')} disabled={busy}>Reinstate</button>
+          )}
+          {can('partner.view') && !partner.archived_at && partner.state_code !== 'TERMINATED' && (
+            <button className="btn-danger" onClick={() => setClosing('TERMINATED')} disabled={busy}>Terminate</button>
+          )}
+          {can('partner.suspend') && !partner.archived_at && partner.state_code === 'TERMINATED' && (
+            <button onClick={() => setArchiving(true)} disabled={busy}>Archive</button>
+          )}
+          {can('partner.suspend') && partner.archived_at && (
+            <button onClick={() => act(() => api.post(`/partners/${id}/restore`))} disabled={busy}>Restore record</button>
+          )}
         </div>
       </div>
 
       <ErrorBanner error={actionError} onDismiss={() => setActionError(null)} />
+      {notice && <div className="notice notice-ok" style={{ marginBottom: 12 }}><span>{notice}</span></div>}
+      {partner.archived_at && (
+        <div className="notice notice-warn" style={{ marginBottom: 12 }}>
+          <strong>Archived</strong> {dateTime(partner.archived_at)}{partner.archive_reason ? `: ${partner.archive_reason}` : ''}.
+          The record is kept, read-only, with its referrals and commission.
+        </div>
+      )}
+      {partner.state_reason && ['SUSPENDED', 'TERMINATED', 'ACTIVE'].includes(partner.state_code) && partner.state_changed_at && (
+        <div className="tiny muted" style={{ marginBottom: 12 }}>
+          {partner.state_code === 'ACTIVE' ? 'Reinstated' : partner.state_code === 'SUSPENDED' ? 'Suspended' : 'Terminated'}{' '}
+          {dateTime(partner.state_changed_at)}: {partner.state_reason}
+        </div>
+      )}
+      {closing && (
+        <ClosureRequest partner={partner} to={closing} onClose={() => setClosing(null)}
+          onDone={(message) => { setClosing(null); setNotice(message); reload(); }} />
+      )}
+      {archiving && (
+        <ArchivePartner partner={partner} onClose={() => setArchiving(false)}
+          onDone={() => { setArchiving(false); setNotice(`${partner.name} is archived.`); reload(); }} />
+      )}
 
       {partner.emergency_activated_at && (
         <div className="notice notice-warn" style={{ marginBottom: 12 }}>

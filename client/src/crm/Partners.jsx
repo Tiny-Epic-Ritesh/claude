@@ -63,7 +63,10 @@ export default function Partners({ session }) {
   // A different tab is a different question; page 4 of the old one means nothing.
   useEffect(() => { setOffset(0); }, [tab]);
 
-  const params = new URLSearchParams({ group: tab, limit: String(PAGE), offset: String(offset) });
+  /* QA-37: archived partners are their own view, out of the working tabs. */
+  const params = new URLSearchParams(tab === 'archived'
+    ? { archived: 'only', limit: String(PAGE), offset: String(offset) }
+    : { group: tab, limit: String(PAGE), offset: String(offset) });
   if (sort) { params.set('sort', sort); params.set('dir', dir); }
   if (q) params.set('q', q);
   const query = `?${params}`;
@@ -109,7 +112,7 @@ export default function Partners({ session }) {
       </div>
 
       <Tabs
-        tabs={[{ key: 'pipeline', label: 'Onboarding pipeline' }, { key: 'active', label: 'Partner entities' }]}
+        tabs={[{ key: 'pipeline', label: 'Onboarding pipeline' }, { key: 'active', label: 'Partner entities' }, { key: 'archived', label: 'Archived' }]}
         active={tab}
         onChange={setTab}
       />

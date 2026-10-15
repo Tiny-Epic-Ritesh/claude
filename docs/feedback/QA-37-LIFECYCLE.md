@@ -149,3 +149,37 @@ data, with a reason, and never deletes them.
   not to roll back over a live graph. The Rules and Automations screens offer
   Archive or Delete, list what is archived, and show a flow's version.
   `test/lifecycle4.test.mjs`.
+- **Partners (batch 5, 15 Oct; Ritesh, 14 Oct):** editing no longer changes a
+  partner's state at all -- it used to set any state, ACTIVE included, past
+  onboarding. *Suspend*, *Terminate* and *Reinstate* are closure requests
+  with a reason, decided in Approvals by somebody else holding
+  `partner.suspend`; the move is checked when asked and again when granted.
+  Granted, the reason is kept on the partner and its timeline, and suspending
+  or terminating withdraws portal access and ends every session (the scope
+  always said it did). Terminated is final. *Archive* only a terminated
+  partner whose commission is all paid; archived, it leaves the list for its
+  own tab and is read-only until restored. No delete.
+- **KYC journeys (batch 5, 15 Oct):** a journey was already versioned and
+  every journey keeps the version it began with. The KYC journeys screen now
+  offers *Retire* on a step and *Add back* on one not in the journey, each
+  with a reason, as a new version that reaches only journeys started
+  afterwards. "With Compliance" (Ritesh, 14 Oct: not now, but configurable):
+  the Business policy "A change to a KYC journey waits for Compliance to
+  approve it", off by default, holds a change in Approvals until a user with
+  `kyc.journey.approve` (Compliance, Superadmin) other than the asker grants
+  it; one change waits at a time.
+- **Retire test records (batch 5, 15 Oct):** Setup → Test records, for
+  `admin.test_records` (Admin, Superadmin). An Admin marks a record as test
+  data by kind and number -- lead, case, list, campaign, library item,
+  partner, rule, flow, task or template, in their own business -- and the list
+  previews what retiring will do to each, or what stops it. *Retire*, with a
+  reason, takes each out of use through its own lifecycle: a lead to the
+  recycle bin, a case closed, a list, rule, flow, campaign or library item
+  archived, a task cancelled, a template retired, a partner's portal access
+  withdrawn and its record archived (its state is left to the closure
+  approval). One that cannot go yet -- a flow with a lead inside, a partner
+  owed commission -- is left and says why. Nothing is deleted; the mark keeps
+  the outcome. `test/lifecycle5.test.mjs`.
+
+Every entity in the table above is now built; QA-37 is closed in the Round 4
+ledger.

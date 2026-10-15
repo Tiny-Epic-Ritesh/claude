@@ -94,6 +94,8 @@ export const CAPABILITY_CATALOGUE = [
   ['admin.rules', 'Manage automation rules', 'Setup', null, 1],
   ['admin.sla', 'Manage SLA policies', 'Setup', null, 0],
   ['admin.kyc.journeys', 'Manage KYC journeys', 'Setup', null, 0],
+  ['kyc.journey.approve', 'Approve a KYC journey change', 'Setup', 'Decides a change to a KYC journey while the Business policy holds them for Compliance', 1],
+  ['admin.test_records', 'Retire test records', 'Setup', 'Mark records as test data and retire them -- archived, closed or cancelled through their own lifecycles, never deleted', 1],
   ['admin.templates', 'Manage templates', 'Setup', null, 0],
   ['admin.content', 'Manage content library', 'Setup', null, 0],
   ['admin.objects', 'Configure objects & fields', 'Setup', 'Add fields, rename labels, edit picklists', 1],

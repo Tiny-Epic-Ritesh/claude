@@ -139,6 +139,10 @@ export const PERMISSIONS = {
   'admin.rules':          ['superadmin', 'admin'],
   'admin.sla':            ['superadmin', 'admin'],
   'admin.kyc.journeys':   ['superadmin', 'admin'],
+  // QA-37: decides a KYC journey change, when the Business policy asks for one.
+  'kyc.journey.approve':  ['superadmin', 'compliance'],
+  // QA-37: mark records as test data and retire them through their own lifecycles.
+  'admin.test_records':   ['superadmin', 'admin'],
   'admin.templates':      ['superadmin', 'admin', 'marketing_manager'],
   'admin.content':        ['superadmin', 'admin', 'marketing_manager', 'product_supervisor'],
   // Schema configuration is a distinct power from managing users or rules:

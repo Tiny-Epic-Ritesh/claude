@@ -52,8 +52,8 @@ export const APPROVAL_SCOPES = {
     label: 'Partner suspension or closure',
     entity: 'partner',
     approver: 'partner.suspend',
-    describe: (r) => `Set ${r.subject_name} to ${r.payload?.state_code ?? 'closed'}`,
-    why: 'Stops commission and revokes portal access.',
+    describe: (r) => `${{ SUSPENDED: 'Suspend', TERMINATED: 'Terminate', ACTIVE: 'Reinstate' }[r.payload?.state_code] ?? 'Close'} ${r.subject_name}`,
+    why: 'Suspending or terminating stops commission and revokes portal access; terminating is final.',
   },
   commission_change: {
     label: 'Commission or fee change',
@@ -117,6 +117,21 @@ export const APPROVAL_SCOPES = {
     describe: (r) => `Move ${r.payload?.client_ids?.length ?? 0} accounts to ${r.subject_name}`,
     why: 'Moves live accounts between people — the relationship, the brokerage they book, '
       + 'and who the client rings all follow the owner.',
+  },
+
+  /* QA-37 (Ritesh, 14 Oct, on "Admin, with Compliance"): not now, but
+     configurable. With the Business policy "A change to a KYC journey waits
+     for Compliance" on, a journey change waits here for a Compliance user;
+     off, it applies at once. Either way it reaches only journeys started
+     afterwards -- each journey keeps the version it began with. */
+  kyc_journey_change: {
+    label: 'KYC journey change',
+    entity: 'product_type',
+    approver: 'kyc.journey.approve',
+    describe: (r) => `Set the KYC journey for ${r.subject_name} to ${r.payload?.steps?.length ?? 0} steps`,
+    why: 'Changes what every applicant for this product is asked, from the next journey on.',
+    // Raised by saving the journey in Setup, which checks the steps first.
+    raisedFrom: 'Setup, KYC journeys',
   },
 
   /* P3-21. Asked for in a conversation, of one named person.
@@ -372,6 +387,8 @@ export const orgOf = (entity, entityId) => {
        undecidable: `inReach` fails closed on a null org, so the request could
        be raised and then refused to everybody who tried to decide it. */
     client: 'SELECT sales_org FROM clients WHERE id = ?',
+    // A KYC journey belongs to its product, and a product to one business.
+    product_type: 'SELECT sales_org FROM product_types WHERE id = ?',
   }[entity];
   if (!sql) return null;
   return one(sql, [entityId])?.sales_org ?? null;

@@ -145,6 +145,19 @@ export const POLICIES = [
     type: 'number', min: 8, max: 20, unit: 'years',
     default: 8,
   },
+
+  /* QA-37, "KYC journey: Admin, with Compliance". Ritesh, 14 Oct: not now,
+     but configurable by an Admin or Superadmin so it can be turned on if the
+     rule changes. Off: an Admin's change applies at once. */
+  {
+    key: 'kyc_journey.compliance_approval',
+    area: 'KYC',
+    label: 'A change to a KYC journey waits for Compliance to approve it',
+    help: 'Off: an Admin\'s change to a product\'s KYC journey applies at once. On: it waits in Approvals until a Compliance user '
+      + 'approves it. Either way it applies only to journeys started afterwards; a journey already started keeps the steps it began with.',
+    type: 'bool',
+    default: false,
+  },
 ];
 
 export const policyDef = (key) => POLICIES.find((p) => p.key === key) ?? null;

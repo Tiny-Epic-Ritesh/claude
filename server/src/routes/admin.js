@@ -41,6 +41,12 @@ import {
 import { sendCsv } from '../engine/csv.js';
 import { listRoutes, setRoute, CASE_PRIORITIES } from '../engine/compliance.js';
 import { newVersion as newLibraryVersion, mayRead as mayReadLibrary } from '../engine/library.js';
+import { applyJourneySteps, journeyRefusal, productFor as journeyProduct } from '../engine/journeyconfig.js';
+import { policy } from '../engine/policies.js';
+import { request as requestApproval, lockRefusal, lockedBy } from '../engine/approvals.js';
+import {
+  TEST_KINDS, listTestRecords, markTestRecord, retireTestRecords, unmarkTestRecord,
+} from '../engine/testrecords.js';
 import {
   accessLogSummary, crossBookReads, activityOf, readersOf, RETENTION_DAYS,
 } from '../engine/accesslog.js';
@@ -839,26 +845,55 @@ router.get('/kyc/journeys', (_req, res) => {
   const products = all('SELECT * FROM product_types WHERE active = 1 AND requires_kyc = 1 ORDER BY sort_order');
   res.json({
     master_steps: MASTER_STEPS.map(({ fields, ...s }) => ({ ...s, field_count: fields?.length ?? 0 })),
-    journeys: products.map((p) => ({
-      product: p,
-      steps: all('SELECT * FROM kyc_journey_steps WHERE product_type_id = ? ORDER BY sort_order', [p.id]),
-    })),
+    // QA-37: whether a change waits for Compliance, and what is waiting.
+    compliance_approval: policy('kyc_journey.compliance_approval'),
+    journeys: products.map((p) => {
+      const waiting = lockedBy('product_type', p.id);
+      return {
+        product: p,
+        steps: all('SELECT * FROM kyc_journey_steps WHERE product_type_id = ? ORDER BY sort_order', [p.id]),
+        pending: waiting ? { id: waiting.id, reason: waiting.reason, requested_by_name: waiting.requested_by_name, created_at: waiting.created_at } : null,
+      };
+    }),
   });
 });
 
+/**
+ * Change a product's KYC journey -- retiring a step is saving it without
+ * that step (QA-37). It reaches only journeys started afterwards.
+ *
+ * Every change says why: it changes what applicants are asked, and the
+ * reason is the version's note. While the Business policy "A change to a KYC
+ * journey waits for Compliance" is on, it is not applied here but raised for
+ * a Compliance user to approve (Ritesh, 14 Oct: off for now, configurable).
+ */
 router.post('/kyc/journeys/:productId', requirePermission('admin.kyc.journeys'), (req, res) => {
-  const { steps = [] } = req.body;   // [{step_code, timer_override_s, conditional_on}]
-  run('DELETE FROM kyc_journey_steps WHERE product_type_id = ?', [req.params.productId]);
+  const product = journeyProduct(req.params.productId);
+  if (!product) return res.status(404).json({ error: 'No such product' });
+  const steps = req.body?.steps ?? [];   // [{step_code, timer_override_s, conditional_on}]
+  const refusal = journeyRefusal(steps);
+  if (refusal) return res.status(400).json({ error: refusal, field: 'steps' });
+  const reason = String(req.body?.reason ?? req.body?.note ?? '').trim();
+  if (reason.length < 5) return res.status(400).json({ error: 'Say why the journey is changing, in a few words', field: 'reason' });
+  const locked = lockRefusal('product_type', product.id);
+  if (locked) return res.status(409).json(locked);
 
-  steps.forEach((s, i) => {
-    run('INSERT INTO kyc_journey_steps (product_type_id, step_code, sort_order, timer_override_s, conditional_on) VALUES (?,?,?,?,?)', [
-      req.params.productId, s.step_code, i, s.timer_override_s || null, s.conditional_on || null,
-    ]);
-  });
-  audit(req.user.id, 'kyc_journey_configured', 'product_type', Number(req.params.productId), { steps: steps.length });
-  const journeyVersion = snapshot('kyc_journey', Number(req.params.productId),
-    { note: req.body.note ?? null, userId: req.user.id });
-  res.json({ ok: true, steps: steps.length, version: journeyVersion?.version ?? null });
+  const clean = steps.map((s) => ({
+    step_code: s.step_code, timer_override_s: s.timer_override_s || null, conditional_on: s.conditional_on || null,
+  }));
+  if (policy('kyc_journey.compliance_approval')) {
+    const out = requestApproval({
+      scope: 'kyc_journey_change', entityId: product.id, subjectName: product.name,
+      payload: { steps: clean }, reason, requestedBy: req.user.id,
+    });
+    if (!out.ok) return res.status(409).json(out);
+    return res.status(202).json({
+      pending: true, approval_id: out.request.id,
+      message: `Waiting for Compliance to approve. ${product.name}'s journey stays as it is until then.`,
+    });
+  }
+  const journeyVersion = applyJourneySteps(product.id, clean, { note: reason, userId: req.user.id });
+  res.json({ ok: true, steps: clean.length, version: journeyVersion?.version ?? null });
 });
 
 /* ---------------------------------------------------------- rule builder */
@@ -1245,6 +1280,38 @@ function auditFilter(req) {
 
   return { clause: where.length ? `WHERE ${where.join(' AND ')}` : '', params };
 }
+
+/* ----------------------------------------------------------- test records */
+
+/* QA-37, "Retire test records" (the auditor's section 9; Ritesh, 14 Oct: an
+   explicit mark an Admin sets). Mark, preview what retiring does to each
+   record, retire. Within the books the Admin works in; nothing is deleted. */
+const readsBook = (req) => (book) => mayUseOrg(req.user, book);
+
+router.get('/test-records', requirePermission('admin.test_records'), (req, res) => {
+  res.json({
+    records: listTestRecords(readsBook(req)),
+    kinds: Object.entries(TEST_KINDS).map(([key, k]) => ({ key, label: k.label })),
+  });
+});
+
+router.post('/test-records', requirePermission('admin.test_records'), (req, res) => {
+  const out = markTestRecord(req.body?.entity, req.body?.record_id, req.body?.note, req.user, readsBook(req));
+  if (out.error) return res.status(out.status).json({ error: out.error });
+  return res.status(201).json(out);
+});
+
+router.delete('/test-records/:id', requirePermission('admin.test_records'), (req, res) => {
+  const out = unmarkTestRecord(req.params.id, req.user);
+  if (out.error) return res.status(out.status).json({ error: out.error });
+  return res.json(out);
+});
+
+router.post('/test-records/retire', requirePermission('admin.test_records'), (req, res) => {
+  const out = retireTestRecords({ ids: req.body?.ids ?? null, reason: req.body?.reason, user: req.user, mayReadBook: readsBook(req) });
+  if (out.error) return res.status(out.status).json({ error: out.error, field: out.field });
+  return res.json(out);
+});
 
 const AUDIT_SELECT = `SELECT a.*, u.name AS user_name, u.role AS user_role
    FROM audit_log a LEFT JOIN users u ON u.id = a.user_id`;

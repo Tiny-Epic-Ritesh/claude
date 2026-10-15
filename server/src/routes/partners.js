@@ -18,7 +18,7 @@ import { lmsSync } from '../integrations.js';
 import { withoutPortalSecret } from '../security.js';
 import {
   stepsOutstanding, activatePartner, issuePortalCredential, withdrawPortalAccess,
-  emergencyActivate, EMERGENCY_FOLLOW_UP_DAYS,
+  emergencyActivate, EMERGENCY_FOLLOW_UP_DAYS, archiveRefusal,
 } from './partners-support.js';
 import * as ai from '../ai/index.js';
 import { applyFieldSecurity } from '../engine/metadata.js';
@@ -160,6 +160,11 @@ function partnerFilter(req) {
   const params = [...scope.params];
 
   if (req.query.state) { where.push('state_code = ?'); params.push(req.query.state); }
+
+  /* QA-37: an archived partner is out of the way -- its own view, not the
+     working list. */
+  if (req.query.archived === 'only') where.push('archived_at IS NOT NULL');
+  else if (req.query.archived !== 'include') where.push('archived_at IS NULL');
 
   /* The Partners tab shows two groups, and it used to make them by pulling
      every partner and splitting the array in the browser. That was fine while
@@ -412,6 +417,10 @@ router.patch('/:id', requirePermission('partner.create'), (req, res) => {
 
   const locked = lockRefusal('partner', found.partner.id);
   if (locked) return res.status(409).json(locked);
+  // QA-37: archived is read-only until it is restored.
+  if (found.partner.archived_at) {
+    return res.status(409).json({ error: `${found.partner.name} is archived. Restore the record first.`, archived: true });
+  }
 
   const invalid = validate(req.body, { mobile: ['mobile'], email: ['email'], pan: ['pan'], bank_ifsc: ['ifsc'] });
   if (invalid) return res.status(400).json(invalid);
@@ -426,12 +435,16 @@ router.patch('/:id', requirePermission('partner.create'), (req, res) => {
     params.push(ENCRYPTED.has(f) ? encryptField(req.body[f]) : req.body[f]);
   }
 
-  if (req.body.state_code) {
-    if (['SUSPENDED', 'TERMINATED'].includes(req.body.state_code) && !can(req.user.role, 'partner.suspend')) {
-      return res.status(403).json({ error: 'Only an Admin can suspend or terminate a partner', required: 'partner.suspend' });
-    }
-    if (!PARTNER_STATES.includes(req.body.state_code)) return res.status(400).json({ error: 'Unknown partner state' });
-    sets.push('state_code = ?'); params.push(req.body.state_code);
+  /* QA-37 (Ritesh, 14 Oct): a partner's state does not change by editing.
+     Elevation activates; a suspension, termination or reinstatement is a
+     closure request with a reason, decided by somebody holding
+     partner.suspend. This set any state at all -- ACTIVE included, past the
+     onboarding steps QA-33 makes every activation ask about. */
+  if (req.body.state_code !== undefined && req.body.state_code !== found.partner.state_code) {
+    return res.status(409).json({
+      error: 'A partner\'s state changes by elevation, or by a suspension or closure request with a reason, not by editing.',
+      field: 'state_code',
+    });
   }
   if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
 
@@ -581,6 +594,37 @@ router.post('/:id/portal-access/withdraw', requirePermission('partner.elevate'),
   if (!reason) return res.status(400).json({ error: 'Say why portal access is being withdrawn', field: 'reason' });
   if (!partner.portal_password) return res.status(409).json({ error: `${partner.name} has no portal access to withdraw` });
   res.json(withdrawPortalAccess(partner, req.user.id, reason));
+});
+
+/* ------------------------------------------------------------ lifecycle */
+
+/**
+ * Archive a partner once settled: QA-37 (Ritesh, 14 Oct). Terminated, and
+ * every commission paid -- the record stays, read-only and out of the
+ * working list, because referrals and commission are attached to it. Never
+ * deleted. Restorable.
+ */
+router.post('/:id/archive', requirePermission('partner.suspend'), (req, res) => {
+  const found = loadPartner(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const { partner } = found;
+  const refusal = archiveRefusal(partner);
+  if (refusal) return res.status(409).json({ error: refusal });
+  const reason = String(req.body?.reason ?? '').trim();
+  if (reason.length < 5) return res.status(400).json({ error: 'Say why it is being archived, in a few words', field: 'reason' });
+  run("UPDATE partners SET archived_at = datetime('now'), archived_by = ?, archive_reason = ? WHERE id = ?", [req.user.id, reason, partner.id]);
+  audit(req.user.id, 'partner_archived', 'partner', partner.id, { reason });
+  return res.json(decorate(one('SELECT * FROM partners WHERE id = ?', [partner.id])));
+});
+
+router.post('/:id/restore', requirePermission('partner.suspend'), (req, res) => {
+  const found = loadPartner(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const { partner } = found;
+  if (!partner.archived_at) return res.status(409).json({ error: `${partner.name} is not archived` });
+  run('UPDATE partners SET archived_at = NULL, archived_by = NULL, archive_reason = NULL WHERE id = ?', [partner.id]);
+  audit(req.user.id, 'partner_restored', 'partner', partner.id, {});
+  return res.json(decorate(one('SELECT * FROM partners WHERE id = ?', [partner.id])));
 });
 
 /* ------------------------------------------------------------ activity */

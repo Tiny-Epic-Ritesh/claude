@@ -11,7 +11,8 @@ import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
 import { recordChange } from '../engine/metadata.js';
 import { requireUser, requirePermission, mayUseOrg } from '../auth.js';
-import { stepsOutstanding, activatePartner } from './partners-support.js';
+import { stepsOutstanding, activatePartner, applyClosure, closureRefusal } from './partners-support.js';
+import { applyJourneySteps, journeyRefusal } from '../engine/journeyconfig.js';
 import { setDefaults as setOwd, isLevel } from '../engine/owd.js';
 import {
   APPROVAL_SCOPES, BULK_THRESHOLD, request, decide, withdraw, byId,
@@ -60,10 +61,26 @@ const APPLY = {
     return { partner_code: code, portal_login: null, next_step: "Issue a portal password from the partner's page" };
   },
 
-  partner_closure: (req) => {
-    const state = req.payload?.state_code ?? 'SUSPENDED';
-    run('UPDATE partners SET state_code = ? WHERE id = ?', [state, req.entity_id]);
-    return { state_code: state };
+  /* QA-37 (Ritesh, 14 Oct): suspend, terminate or reinstate, with the
+     request's reason kept on the partner. Checked again at the moment of
+     granting -- the partner may have moved while the request waited -- and a
+     suspension or termination withdraws portal access, as the scope says. */
+  partner_closure: (req, decidedBy) => {
+    const partner = one('SELECT * FROM partners WHERE id = ?', [req.entity_id]);
+    if (!partner) throw new Error('Partner no longer exists');
+    return applyClosure(partner, req.payload?.state_code, req.reason, decidedBy?.id ?? null);
+  },
+
+  /* QA-37: a KYC journey change that waited for Compliance, applied as the
+     Setup route would have, with the request's reason as the version note. */
+  kyc_journey_change: (req, decidedBy) => {
+    const steps = req.payload?.steps;
+    const refusal = journeyRefusal(steps);
+    if (refusal) throw new Error(refusal);
+    const version = applyJourneySteps(req.entity_id, steps, {
+      note: `${req.reason} (approved by ${decidedBy?.name ?? 'Compliance'})`, userId: req.requested_by,
+    });
+    return { steps: steps.length, version: version?.version ?? null };
   },
 
   commission_change: (req) => {
@@ -235,6 +252,9 @@ router.post('/', (req, res) => {
   if (spec.targeted) {
     return res.status(400).json({ error: `A ${spec.label.toLowerCase()} is asked for in a conversation with the person who can grant it` });
   }
+  if (spec.raisedFrom) {
+    return res.status(400).json({ error: `A ${spec.label.toLowerCase()} is raised from ${spec.raisedFrom}` });
+  }
 
   // The requester needs the capability to *ask*, which is the ordinary
   // permission for the action — approval is a second gate, not the only one.
@@ -256,10 +276,15 @@ router.post('/', (req, res) => {
      partner, and an elevation could be asked for a prospect with no step done.
      The decision checks the book again, and the grant the steps again. */
   if (spec.entity === 'partner') {
-    const partner = one('SELECT id, name, sales_org, state_code FROM partners WHERE id = ?', [Number(entityId) || -1]);
+    const partner = one('SELECT id, name, sales_org, state_code, archived_at FROM partners WHERE id = ?', [Number(entityId) || -1]);
     if (!partner) return res.status(404).json({ error: 'Partner not found' });
     if (!mayUseOrg(req.user, partner.sales_org)) {
       return res.status(403).json({ error: 'This partner belongs to another book' });
+    }
+    // QA-37: say now, not at the decision, if the move cannot be made.
+    if (scope === 'partner_closure') {
+      const refusal = closureRefusal(partner, payload?.state_code);
+      if (refusal) return res.status(409).json({ error: refusal });
     }
     if (scope === 'partner_elevation') {
       if (partner.state_code === 'ACTIVE') return res.status(409).json({ error: `${partner.name} is already active` });
