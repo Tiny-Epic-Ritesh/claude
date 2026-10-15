@@ -118,7 +118,8 @@ on his yes: `OPS-36` (templates sent from a lead or a rule unchecked for
 approval or business), `OPS-37` (campaign routes by id unchecked for business),
 `OPS-38` (a case reply's author taken from the request), `OPS-39` (a card
 showing call notes field security hides) and `OPS-40` (the content list across
-businesses). State of each is in the OPS table at the top
+businesses); and batch 5 one more, `OPS-41` (KYC journeys listed and changed
+across businesses). State of each is in the OPS table at the top
 of [OUTSTANDING.md](OUTSTANDING.md). Not counted above: they are not report IDs.
 
 ### Rulings asked for

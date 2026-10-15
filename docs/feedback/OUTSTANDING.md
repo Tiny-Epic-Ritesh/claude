@@ -78,6 +78,7 @@ and this table is the mapping.
 | `OPS-38` | **Open.** `POST /tickets/:id/replies` takes `author_type` from the request body, so an agent can record a reply as written by the client or by the system. Reproduced 14 Oct on a copy: an Admin's reply was stored with `author_type = 'client'`. The record of who said what on a case is then whatever the caller says. Found 14 Oct while building QA-37 batch 2; recorded open on Ritesh's yes the same day, not fixed. |
 | `OPS-39` | **Open.** `GET /cards/:id/detail` returns the card's recent activities with their notes, without interaction field security. Reproduced 14 Oct on a copy: an Admin outside the author's manager chain saw call notes on the card that the lead's timeline hides from them. Found 14 Oct while building QA-37 batch 2 (corrections follow field security, so they were not added there); recorded open on Ritesh's yes the same day, not fixed. |
 | `OPS-40` | **Open.** `GET /admin/content` lists every business's content items to any signed-in user, and `POST /admin/content` writes no business. Reproduced 14 Oct on a copy: a Bigul Sales RM was listed eight Bonanza items. The library screens (`/libraries`) do check the business. Found 14 Oct while building QA-37 batch 3; recorded open on Ritesh's yes the same day, not fixed. |
+| `OPS-41` | **Open.** The KYC journey routes do not check the product's business. `GET /admin/kyc/journeys` lists every business's products and their journeys to any signed-in user, and `POST /admin/kyc/journeys/:productId` (`admin.kyc.journeys`) changes any business's journey. Reproduced 15 Oct on a copy: a Bigul Admin was listed the nine Bonanza KYC products and removed a step from a Bonanza product's journey (200). QA-37 batch 5 kept the routes' reach as it was; its approvals do check the product's business. Found 15 Oct while building batch 5; recorded open on Ritesh's yes the same day, not fixed. |
 
 ---
 
@@ -189,7 +190,7 @@ masked or unmasked. QA-09/24/35: from standard broking practice. QA-34: from
 industry practice. QA-36: yes, the editor shows contact details without a click
 -- closed. QA-37: recommendations first, then a decision. The ten defects found
 beside the fixes are `OPS-15` to `OPS-24`, with `OPS-25` to `OPS-31` found
-along the way, all fixed, and `OPS-32` to `OPS-40` recorded open; see the OPS table at the
+along the way, all fixed, and `OPS-32` to `OPS-41` recorded open; see the OPS table at the
 top.
 
 Nine more re-evidence work already open under its own ID — QA-04/05 against
