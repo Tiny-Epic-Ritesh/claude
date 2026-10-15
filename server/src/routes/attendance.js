@@ -17,7 +17,7 @@ import { requireUser, requirePermission, can, orgsFor, mayUseOrg, userCan } from
 import { sendCsv } from '../engine/csv.js';
 import {
   policyFor, promptsFor, openSession, checkIn, checkOut, closeAbandoned,
-  dayFor, report, REPORT_COLUMNS, UNCLOSED_POLICIES,
+  dayFor, report, REPORT_COLUMNS, UNCLOSED_POLICIES, istToday,
 } from '../engine/attendance.js';
 
 const router = Router();
@@ -118,8 +118,9 @@ router.get('/report', (req, res) => {
   for (const org of orgsFor(req.user)) closeAbandoned(org);
 
   const reach = reachFor(req.user);
-  const from = req.query.from || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
-  const to = req.query.to || new Date().toISOString().slice(0, 10);
+  // OPS-34: India days.
+  const from = req.query.from || istToday(new Date(Date.now() - 29 * 86400000));
+  const to = req.query.to || istToday();
 
   const rows = report({ reach: reach.sql, params: reach.params, from, to });
 
@@ -147,8 +148,9 @@ router.get('/report/export', requirePermission('report.self'), (req, res) => {
   for (const org of orgsFor(req.user)) closeAbandoned(org);
 
   const reach = reachFor(req.user);
-  const from = req.query.from || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
-  const to = req.query.to || new Date().toISOString().slice(0, 10);
+  // OPS-34: India days.
+  const from = req.query.from || istToday(new Date(Date.now() - 29 * 86400000));
+  const to = req.query.to || istToday();
 
   const asked = String(req.query.columns ?? '').split(',').map((c) => c.trim()).filter(Boolean);
   const chosen = asked.length

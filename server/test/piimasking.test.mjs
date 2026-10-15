@@ -122,6 +122,8 @@ const CALLER = await probeAdmin('piimask-caller', { role: 'caller', sales_org: '
 const DEALER = await probeAdmin('piimask-dealer', { role: 'dealer', sales_org: 'BONANZA' });
 const MARKETING = await probeAdmin('piimask-marketing', { role: 'marketing_manager', sales_org: 'BONANZA' });
 const ADMIN = await probeAdmin('piimask-admin', { role: 'admin', sales_org: 'BONANZA' });
+// OPS-43: the export policy applies to both businesses, so a Superadmin sets it.
+const SUPER = await probeAdmin('piimask-super', { role: 'superadmin' });
 
 /* The roles under test must actually be masked for both fields, or the crawl
    proves nothing. Checked rather than assumed: Setup can change it. */
@@ -187,7 +189,7 @@ try {
   });
 
   const setPolicy = (value) => fetch(`${BASE}/api/setup/policies/${encodeURIComponent(POLICY)}`, {
-    method: 'PUT', headers: ADMIN.headers, body: JSON.stringify({ value }),
+    method: 'PUT', headers: SUPER.headers, body: JSON.stringify({ value }),
   });
 
   await test('Marketing may export a list with identifiers in the clear while the policy says unmasked', async () => {
@@ -219,11 +221,16 @@ try {
     assert.equal(res.status, 200, `answered ${res.status}: ${res.text.slice(0, 160)}`);
   });
 
-  await test('the policy is an Admin\'s to change, and is on the Business policies screen', async () => {
+  await test('the policy is a Superadmin\'s to change (OPS-43), and is on the Business policies screen', async () => {
     const list = await fetch(`${BASE}/api/setup/policies`, { headers: ADMIN.headers }).then((r) => r.json());
     const p = list.policies.find((x) => x.key === POLICY);
     assert(p, 'the export policy is not listed');
     assert.deepEqual(p.options.map((o) => o.value), ['unmasked', 'masked']);
+    assert.equal(p.may_change, false, 'an Admin is offered a policy that covers both businesses');
+    const admin = await fetch(`${BASE}/api/setup/policies/${encodeURIComponent(POLICY)}`, {
+      method: 'PUT', headers: ADMIN.headers, body: JSON.stringify({ value: 'unmasked' }),
+    });
+    assert.equal(admin.status, 403, 'an Admin changed a policy that covers both businesses');
     const marketing = await fetch(`${BASE}/api/setup/policies/${encodeURIComponent(POLICY)}`, {
       method: 'PUT', headers: MARKETING.headers, body: JSON.stringify({ value: 'unmasked' }),
     });
@@ -239,7 +246,7 @@ try {
     run('DELETE FROM activities WHERE lead_id = ?', [r.lead]);
     run('DELETE FROM leads WHERE id = ?', [r.lead]);
   }
-  for (const p of [CALLER, DEALER, MARKETING, ADMIN]) p.cleanup();
+  for (const p of [CALLER, DEALER, MARKETING, ADMIN, SUPER]) p.cleanup();
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

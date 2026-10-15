@@ -53,6 +53,12 @@ const sweep = () => {
 sweep();
 
 const ADMIN = await probeAdmin('statusdefs-admin', { role: 'admin', sales_org: 'BONANZA' });
+// OPS-43: the Won policy applies to both businesses, so a Superadmin switches it.
+const SUPER = await probeAdmin('statusdefs-super', { role: 'superadmin' });
+const superCall = async (method, url, body) => {
+  const res = await fetch(`${BASE}/api${url}`, { method, headers: SUPER.headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  return { status: res.status, body: await res.json().catch(() => null) };
+};
 const adminCall = async (method, url, body) => {
   const res = await fetch(`${BASE}/api${url}`, { method, headers: ADMIN.headers, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: res.status, body: await res.json().catch(() => null) };
@@ -93,7 +99,7 @@ try {
   });
 
   await test('QA-24 with the policy on, Won needs an opened account', async () => {
-    const set = await adminCall('PUT', `/setup/policies/${POLICY}`, { value: true });
+    const set = await superCall('PUT', `/setup/policies/${POLICY}`, { value: true });
     assert.equal(set.status, 200, `the policy could not be set: ${set.body?.error}`);
     const none = seedLead();
     const refused = await adminCall('PATCH', `/leads/${none}`, { stage: 'Won' });
@@ -107,7 +113,7 @@ try {
 
     const bulk = await adminCall('POST', '/leads/bulk/field', { field: 'stage', value: 'Won', mode: 'ids', ids: [none, opened] });
     assert.equal(bulk.status, 400, `a bulk Won carrying a lead with no account went through (${bulk.status})`);
-    await adminCall('PUT', `/setup/policies/${POLICY}`, { value: false });
+    await superCall('PUT', `/setup/policies/${POLICY}`, { value: false });
   });
 
   /* ============================================================ QA-09 */
@@ -184,6 +190,7 @@ try {
   }
   sweep();
   ADMIN.cleanup();
+  SUPER.cleanup();
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

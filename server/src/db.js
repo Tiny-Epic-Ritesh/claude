@@ -2299,9 +2299,17 @@ for (const o of SEED_ORGS) {
      VALUES (@code, @name, @legal_name, @tagline, @accent, @accent_dark, @model, @kyc_url,
              @support_phone, @support_email, @support_hours, @sort_order)
      ON CONFLICT(code) DO UPDATE SET
-       name = excluded.name, legal_name = excluded.legal_name, tagline = excluded.tagline,
-       accent = excluded.accent, accent_dark = excluded.accent_dark, model = excluded.model,
-       kyc_url = excluded.kyc_url, sort_order = excluded.sort_order,
+       -- OPS-33. What a Superadmin edits (PATCH /orgs/:code) is filled when
+       -- empty and never overwritten: every boot used to put the seed's name,
+       -- legal name, tagline, colours and KYC link back, and labs boots on
+       -- every deploy. Model and order are the product's, not editable there.
+       name = COALESCE(sales_orgs.name, excluded.name),
+       legal_name = COALESCE(sales_orgs.legal_name, excluded.legal_name),
+       tagline = COALESCE(sales_orgs.tagline, excluded.tagline),
+       accent = COALESCE(sales_orgs.accent, excluded.accent),
+       accent_dark = COALESCE(sales_orgs.accent_dark, excluded.accent_dark),
+       kyc_url = COALESCE(sales_orgs.kyc_url, excluded.kyc_url),
+       model = excluded.model, sort_order = excluded.sort_order,
        -- Filled when empty, never overwritten: a number a Superadmin changes stays changed.
        support_phone = COALESCE(sales_orgs.support_phone, excluded.support_phone),
        support_email = COALESCE(sales_orgs.support_email, excluded.support_email),

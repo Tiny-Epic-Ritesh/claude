@@ -10,7 +10,7 @@ against this document and earlier feedback IDs." This is that document.
 ## The ledger — every point in the report, and where it stands
 
 Kept current: a commit that closes a point changes its row here and says so.
-Last updated **15 October 2026**: `84c2c2f`, `eaf4743`, `d34bb6b`, the rulings of 13 October, `72fa94d` (OPS-15, 16, 17, 25, 26), `e02fb6d` (OPS-18 to 24), `1c3b18c` (QA-02), `ca7d4ee` (QA-13), `9aa78bf` (QA-06), `a3be2c1` (QA-09, 24, 34, 35), `93607f5` (OPS-27 to 31), `b9b3807` (QA-29, QA-42), `b663fb4` (OPS-32 recorded open; a Dealer may mark Warm), the rulings of 14 October, `0efa39b` (the QA-02 cleanup workflow; help lines), `826ae09` (QA-33's emergency activation), `f54c4f6` (QA-28's categories and the Compliance role), `88c2c67` (multiple nominees, QA-34), `32278d2` (referral commission and retention policies; QA-37's lead purge), `8840d1c` (OPS-33 to 35 recorded open), `69f8d16` (QA-37 batch 1: lists and templates), `de28b1c` (QA-37 batch 2: tasks, cases and corrections), `9224a07` (QA-37 batch 3: library content, holidays and case categories), `2f628d6` (QA-37 batch 4: automation rules and flows), `82d7989` (OPS-36 to 40 recorded open), `b0c97b8` (nominees to SEBI's May 2026 circular), `6fc4f64` (QA-37 batch 5: partners, KYC journeys and retiring test records; QA-37 closed), `a21a6a7` (OPS-41 recorded open), `ce5b6d0` (the firm's nomination obligations under SEBI's May 2026 circular), `cd3ab93` (OPS-42 recorded open), `bd13b87` (OPS-42 fixed: capabilities, not roles, and the API integration role), `670fc3e` (the 15 Oct answers on the nomination pop-up), `3034d0f` (a switch per business for the nomination reminders, off), and the commit after it (OPS-43 recorded open).
+Last updated **15 October 2026**: `84c2c2f`, `eaf4743`, `d34bb6b`, the rulings of 13 October, `72fa94d` (OPS-15, 16, 17, 25, 26), `e02fb6d` (OPS-18 to 24), `1c3b18c` (QA-02), `ca7d4ee` (QA-13), `9aa78bf` (QA-06), `a3be2c1` (QA-09, 24, 34, 35), `93607f5` (OPS-27 to 31), `b9b3807` (QA-29, QA-42), `b663fb4` (OPS-32 recorded open; a Dealer may mark Warm), the rulings of 14 October, `0efa39b` (the QA-02 cleanup workflow; help lines), `826ae09` (QA-33's emergency activation), `f54c4f6` (QA-28's categories and the Compliance role), `88c2c67` (multiple nominees, QA-34), `32278d2` (referral commission and retention policies; QA-37's lead purge), `8840d1c` (OPS-33 to 35 recorded open), `69f8d16` (QA-37 batch 1: lists and templates), `de28b1c` (QA-37 batch 2: tasks, cases and corrections), `9224a07` (QA-37 batch 3: library content, holidays and case categories), `2f628d6` (QA-37 batch 4: automation rules and flows), `82d7989` (OPS-36 to 40 recorded open), `b0c97b8` (nominees to SEBI's May 2026 circular), `6fc4f64` (QA-37 batch 5: partners, KYC journeys and retiring test records; QA-37 closed), `a21a6a7` (OPS-41 recorded open), `ce5b6d0` (the firm's nomination obligations under SEBI's May 2026 circular), `cd3ab93` (OPS-42 recorded open), `bd13b87` (OPS-42 fixed: capabilities, not roles, and the API integration role), `670fc3e` (the 15 Oct answers on the nomination pop-up), `3034d0f` (a switch per business for the nomination reminders, off), `bf9067f` (OPS-43 recorded open), and the commit after it (OPS-32 to 41 and 43 fixed; QA-13 marked fixed, its leftovers having been built on 14 Oct).
 
 **States.** *fixed* — in code, tested, pushed. *not started* — open, no
 blocker. *needs decision* — waiting on Ritesh, and nothing is built until it is
@@ -18,7 +18,7 @@ answered. *unverified* — the auditor's evidence stands but I have not traced i
 to a line yet. *environment* — a change to labs.tinyepic.in itself, not the code. *closed by
 ruling* — Ritesh ruled that the behaviour reported is the behaviour wanted.
 
-**Today, of the 43 IDs: 29 fixed · 1 closed by ruling · 5 partly fixed · 8
+**Today, of the 43 IDs: 30 fixed · 1 closed by ruling · 4 partly fixed · 8
 open · none waiting on a decision.** Every ruling a finding needed was given on
 13 October, and the two narrower questions left inside fixed IDs on 14
 October; both are built. Plus the points below the table, which are not IDs
@@ -40,7 +40,7 @@ but are as much part of the report.
 | QA-10 | P1 | not started | A UI build: an opaque, scrollable call panel with a visible End call and state-aware actions. Confirmed by the report; needs a design pass in both themes. |
 | QA-11 | P1 | **fixed** `eaf4743` | One resolver, `fill()` in the merge engine, for the composer, test-send and campaign send. A field masked for the sender is refused by name. **`{{name}}` in campaigns is now the first name**, as the picker always said. The picker's static examples are untouched. |
 | QA-12 | P1 | **partly fixed** `eaf4743` | The screen shows `CRM_PUBLIC_URL` or the origin it is itself using — https. Refusing a key sent over plain http needs the proxy to say the scheme (`X-Forwarded-Proto`), which is nginx, which I do not touch. |
-| QA-13 | P1 | **partly fixed** · QA-13 commit | Ruled 13 Oct and built. **Setup → Business policies** (new, `admin.policies`, Admins and Superadmins, draft until Save, every change in the configuration audit) holds one switch per business — *Bonanza partners may refer Bigul products* and the reverse — both **off**. Off, the portal offers the partner's own business's products only and refuses a referral for the other's; on, the other's are offered labelled with their business, a referral for one becomes a lead in that business attributed to the partner, and the partner can follow it in the portal. The public account-opening page is **a page per business**, as ruled: `/dkyc` is Bonanza's, `/dkyc?business=bigul` Bigul's, each with its own products, name, logo and regulatory line, and a resumed application wears its own business's name. Bonanza Equity no longer pitches "the Bigul flat plan". **Plans, ruled 13 Oct and built:** Bigul's flat plan is offered on Bigul applications only. **Still open:** the help-line number shown on the Bigul page is Bonanza's, and commission on a cross-business referral is not defined. |
+| QA-13 | P1 | **fixed** · QA-13 commit, `0efa39b`, `32278d2` | Ruled 13 Oct and built. **Setup → Business policies** (new, `admin.policies`, Admins and Superadmins, draft until Save, every change in the configuration audit) holds one switch per business — *Bonanza partners may refer Bigul products* and the reverse — both **off**. Off, the portal offers the partner's own business's products only and refuses a referral for the other's; on, the other's are offered labelled with their business, a referral for one becomes a lead in that business attributed to the partner, and the partner can follow it in the portal. The public account-opening page is **a page per business**, as ruled: `/dkyc` is Bonanza's, `/dkyc?business=bigul` Bigul's, each with its own products, name, logo and regulatory line, and a resumed application wears its own business's name. Bonanza Equity no longer pitches "the Bigul flat plan". **Plans, ruled 13 Oct and built:** Bigul's flat plan is offered on Bigul applications only. **Both leftovers built 14 Oct:** each business's page shows its own help line (`0efa39b`), and how a cross-business referral is paid is a Business policy (`32278d2`). |
 | QA-14 | P2 | not started | Pipeline multi-select products and per-stage filters. |
 | QA-15 | P2 | not started | Pagination and column sorting, `P3-36`/`37`/`39`. |
 | QA-16 | P2 | not started | Report builder and dashboard creation, `P3-06`/`P2-17` — gated on `N-4a`. |
@@ -72,11 +72,10 @@ but are as much part of the report.
 | QA-42 | P1 | **fixed** 13 Oct | Watched as the Dealer in the Service Console, as in the auditor's screenshot. Start engaging opens the panel and Mark as Exploring works. The reported result came from the panel's other moves: it offered every legal move whether or not the role may make it, and sent a refusal to the page behind it. Lost, which a Dealer cannot set, answered 403 and nothing showed -- no change, Activity 0, no product mutation in the audit, as reported. A move the role cannot make is now disabled with the reason, a refusal shows in the panel, and a move that worked says so. The auditor also asked for a Dealer's Warm to be refused; **ruled 13 Oct: a Dealer may mark Warm** -- the role matrix is right, so there is no refusal to test. `round4d.test.mjs`. |
 | QA-43 | P1 | **partly fixed** `eaf4743` | The detail shows the refusal instead of spinning. List and detail still disagree on scope — one of `N-12`'s cases. |
 
-Counted: **fixed 28** — QA-01, 02, 03, 04, 06, 08, 09, 11, 19, 20, 21, 23, 24,
-26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 38, 39, 40, 41, 42. **Closed by ruling
-1** — QA-36. **Partly fixed 5** — QA-05, 12, 13, 25, 43. **Open 9** — QA-37
-(ruled 13 Oct, to build); QA-07 and QA-10 (UI builds); QA-14 to QA-18 and QA-22
-(feature requests under earlier IDs). Every open ID is traced or classified;
+Counted: **fixed 30** — QA-01, 02, 03, 04, 06, 08, 09, 11, 13, 19, 20, 21, 23, 24,
+26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 37, 38, 39, 40, 41, 42. **Closed by ruling
+1** — QA-36. **Partly fixed 4** — QA-05, 12, 25, 43. **Open 8** — QA-07 and
+QA-10 (UI builds); QA-14 to QA-18 and QA-22 (feature requests under earlier IDs). Every open ID is traced or classified;
 none is "unverified".
 
 ### Everything else the report asks for
@@ -91,7 +90,7 @@ none is "unverified".
 | BRD gate P0 — API allow/deny tests for every role and business | §1 | not started — the largest open item. `N-12` is part of it |
 | BRD gate P1 — dialler/AI disposition, 90s/120s timing | §1 | partly: QA-28 fixed; real dialler blocked on `N-6` (CUBE credential) |
 | BRD gate P2 — Warm handoff, partner elevation, 60-second notification timing | §1 | partly: QA-33 fixed; timing untested |
-| BRD gate P3 — DKYC validation, timers, abandonment, audited override | §1 | QA-34 not started; the rest untested |
+| BRD gate P3 — DKYC validation, timers, abandonment, audited override | §1 | QA-34 fixed; timers, abandonment and the override write untested |
 | BRD gate P4 — SLA sweep and reopen, live delivery, CSAT | §1 | QA-30 fixed; the rest untested |
 | Pilot gates: credential hashing, session expiry and revocation, server-side authorisation, partner isolation, KYC document encryption and retention, consent and DND, India residency, the pilot database, latency and availability | §1 | not started as an **evidence** exercise. Some exist in code (passwords are hashed; PAN is encrypted); none has been written up as the auditor asks |
 | Implementation sequence, steps 1–9 | §6 | Steps 1 (records), 5 (validation, partly), 6 (partner activation) advanced by `84c2c2f`. Step 2, QA-02, built 13 Oct. Steps 3, 4, 7, 8, 9 not started |
@@ -122,7 +121,8 @@ businesses); and batch 5 one more, `OPS-41` (KYC journeys listed and changed
 across businesses); and the nomination obligations one more, `OPS-42` (an API
 key's scopes not enforced by the route guard; fixed 15 Oct on Ritesh's go-ahead); and its
 reminder switches one more, `OPS-43` (business policies changed across
-businesses), recorded open on his yes. State of each is in the OPS table at the top
+businesses), recorded open on his yes. **All eleven open ones fixed 15 Oct** on
+his word ("Fix all 11 now"), `OPS-43` to his ruling of the same day. State of each is in the OPS table at the top
 of [OUTSTANDING.md](OUTSTANDING.md). Not counted above: they are not report IDs.
 
 ### Rulings asked for

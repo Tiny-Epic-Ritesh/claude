@@ -215,8 +215,13 @@ try {
   await test('the reminders are off until an Admin switches them on, one business at a time', async () => {
     for (const key of SWITCHES) run('DELETE FROM business_policy WHERE key = ?', [key]);
     try {
-      const listed = (await as(ADMIN)('GET', '/setup/policies')).body.policies.filter((p) => SWITCHES.includes(p.key));
-      assert.equal(listed.length, 2, 'Setup does not offer a switch for each business');
+      // Each business's Admin is offered its own switch (OPS-43), not the other's.
+      const offered = async (who) => (await as(who)('GET', '/setup/policies')).body.policies.filter((p) => SWITCHES.includes(p.key));
+      const bonanzaSees = await offered(ADMIN);
+      const bigulSees = await offered(BIGUL);
+      assert.deepEqual(bonanzaSees.map((p) => p.key), ['nomination_reminders.BONANZA'], 'Setup does not offer Bonanza its own switch alone');
+      assert.deepEqual(bigulSees.map((p) => p.key), ['nomination_reminders.BIGUL'], 'Setup does not offer Bigul its own switch alone');
+      const listed = [...bonanzaSees, ...bigulSees];
       assert(listed.every((p) => p.value === false && p.is_default), 'a business is reminded by default');
 
       const bonanza = makeClient();

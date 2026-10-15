@@ -115,7 +115,8 @@ try {
 
   await test('cross-book referral is off unless somebody turns it on', async () => {
     run(`DELETE FROM business_policy WHERE key IN (${KEYS.map(() => '?').join(',')})`, KEYS);
-    const { body } = await adminCall('GET', '/setup/policies');
+    // A Superadmin, who sees both businesses' switches (OPS-43: an Admin sees their own).
+    const { body } = await superCall('GET', '/setup/policies');
     for (const key of KEYS) {
       const p = body.policies.find((x) => x.key === key);
       assert(p, `${key} is not listed`);

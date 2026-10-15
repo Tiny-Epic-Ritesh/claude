@@ -315,11 +315,14 @@ router.post('/:id/replies', requirePermission('ticket.reply'), async (req, res) 
   const ticket = found.row;
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
 
-  const { body, internal = false, author_type = 'agent' } = req.body;
+  /* OPS-38. author_type came from the request, so an agent could record a
+     reply as the client's or the system's. Someone signed in to the CRM writes
+     as an agent; a client or partner writes through the portal. */
+  const { body, internal = false } = req.body;
   if (!body?.trim()) return res.status(400).json({ error: 'Reply body is required' });
 
   run('INSERT INTO ticket_replies (ticket_id, body, author_type, user_id, internal) VALUES (?,?,?,?,?)', [
-    req.params.id, body, author_type, req.user.id, internal ? 1 : 0,
+    req.params.id, body, 'agent', req.user.id, internal ? 1 : 0,
   ]);
 
   if (!ticket.first_response_at && !internal) {

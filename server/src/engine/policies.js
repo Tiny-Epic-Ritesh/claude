@@ -12,7 +12,7 @@
  * reads as its default, and the screen says which ones are defaults.
  */
 
-import { all, one, run } from '../db.js';
+import { all, one, run, SALES_ORGS } from '../db.js';
 
 const BOOK_NAME = { BONANZA: 'Bonanza', BIGUL: 'Bigul' };
 const OTHER = { BONANZA: 'BIGUL', BIGUL: 'BONANZA' };
@@ -188,6 +188,19 @@ export const POLICIES = [
 
 export const policyDef = (key) => POLICIES.find((p) => p.key === key) ?? null;
 
+/**
+ * The business a policy belongs to, or null when it applies to both (OPS-43).
+ *
+ * A per-business switch carries its business in its key. Ritesh, 15 Oct: an
+ * Admin changes only their own business's switches; a policy that applies to
+ * both businesses is changed by a Superadmin, so a change made in one
+ * business cannot silently apply to the other.
+ */
+export function policyBook(key) {
+  const suffix = String(key).split('.').pop();
+  return SALES_ORGS.includes(suffix) ? suffix : null;
+}
+
 /** The value in force: what an administrator set, or the default. */
 export function policy(key) {
   const def = policyDef(key);
@@ -238,6 +251,7 @@ export function listPolicies() {
   ).map((r) => [r.key, r]));
   return POLICIES.map((def) => ({
     ...def,
+    book: policyBook(def.key),
     value: policy(def.key),
     is_default: !set.has(def.key),
     updated_at: set.get(def.key)?.updated_at ?? null,

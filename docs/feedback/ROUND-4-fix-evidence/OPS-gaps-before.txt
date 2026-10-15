@@ -1,0 +1,53 @@
+
+Gaps found beside Round 4 (OPS-32 to OPS-41, OPS-43)
+  FAIL OPS-35: the recycle bin lists only the reader's business
+       the Bonanza Admin was listed a deleted Bigul lead
+  FAIL OPS-36: a lead is sent only an approved template of its own business and channel
+       an unapproved template was sent
+
+201 !== 409
+
+  FAIL OPS-36: an automation card skips an unapproved or other-business template, and says why
+       a rule sent an unapproved template
+  FAIL OPS-37: every campaign route by id asks the campaign's business
+       a Bigul Admin's GET /admin/campaigns/27/audience answered 200
+
+200 !== 403
+
+  FAIL OPS-38: a reply from the CRM is the agent's, whatever the request says
+       the reply was recorded as the client's
+
+'client' !== 'agent'
+
+  FAIL OPS-39: a card hides the notes its lead's timeline hides
+       the card and the timeline disagree on what is hidden
++ actual - expected
+
++ []
+- [
+-   'body'
+- ]
+
+  FAIL OPS-40: content is listed and written within the reader's business
+       a Bigul RM was listed Bonanza content
+  FAIL OPS-41: KYC journeys are listed and changed within the product's business
+       a Bigul Admin was listed Bonanza's KYC products
+  FAIL OPS-43: an Admin changes their own business's switches; a Superadmin the shared ones
+       a Bigul Admin was listed Bonanza's switches
+  FAIL OPS-32: the Product Supervisor's cockpit counts its own business
+       Cards total counted the other business
+
+573 !== 465
+
+  FAIL OPS-33: a Superadmin's change to a business survives a restart
+       the restart put the seed's tagline back
++ actual - expected
+
++ 'Self-serve digital broking'
+- 'OG probe mv9di3vn tagline'
+
+  FAIL OPS-34: attendance counts the India day
+       a 01:00 IST check-in is not on its India day
+
+0 passed, 12 failed
+ 

@@ -269,7 +269,8 @@ try {
     assert(/retired/i.test(message.body?.error ?? ''), message.body?.error);
 
     const rule = runAction({ type: 'whatsapp', params: { template_id: t, intent: 'service' } }, leadFacts(lead), { dryRun: false });
-    assert.equal(rule.skipped, 'that template is retired', `a rule card sent it: ${JSON.stringify(rule)}`);
+    // The reason names the template since OPS-36 (one answer for every door that sends one).
+    assert.match(String(rule.skipped), /is retired/, `a rule card sent it: ${JSON.stringify(rule)}`);
   });
 
   await test('a retired template is read-only until restored, and restore brings it back', async () => {

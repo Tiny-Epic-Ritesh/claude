@@ -47,11 +47,14 @@ run(`DELETE FROM business_policy WHERE key IN (${KEYS.map(() => '?').join(',')})
 
 const ADMIN = await probeAdmin('rr-admin', { role: 'admin', sales_org: 'BONANZA' });
 const RM = await probeAdmin('rr-rm', { role: 'sales_rm', sales_org: 'BONANZA' });
+// OPS-43: commission and retention apply to both businesses, so a Superadmin sets them.
+const SUPER = await probeAdmin('rr-super', { role: 'superadmin' });
 const as = (who) => async (method, url, body) => {
   const res = await fetch(`${BASE}/api${url}`, { method, headers: who.headers, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: res.status, body: await res.json().catch(() => null) };
 };
-const setPolicy = (key, value, who = ADMIN) => as(who)('PUT', `/setup/policies/${encodeURIComponent(key)}`, { value });
+const ownBusiness = (key) => /\.(BONANZA|BIGUL)$/.test(key);
+const setPolicy = (key, value, who = ownBusiness(key) ? ADMIN : SUPER) => as(who)('PUT', `/setup/policies/${encodeURIComponent(key)}`, { value });
 
 const PASSWORD = `rr-own-${RUN}`;
 const partner = Number(run(
@@ -197,7 +200,7 @@ try {
   run('DELETE FROM sessions WHERE partner_id = ?', [partner]);
   run('DELETE FROM activities WHERE partner_id = ?', [partner]);
   run('DELETE FROM partners WHERE id = ?', [partner]);
-  for (const p of [ADMIN, RM]) p.cleanup();
+  for (const p of [ADMIN, RM, SUPER]) p.cleanup();
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

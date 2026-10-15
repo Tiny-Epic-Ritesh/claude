@@ -525,8 +525,18 @@ const COCKPITS = {
 
   /* ---- P3: Product Supervisor ---------------------------------------- */
   product_supervisor: (user, active) => {
-    const journeys = kycHealth(null, active ? [active] : orgsFor(user));   // OPS-31: the same board, a second door
-    const team = all("SELECT * FROM users WHERE role = 'product_rm' AND active = 1");
+    const books = active ? [active] : orgsFor(user);
+    const journeys = kycHealth(null, books);   // OPS-31: the same board, a second door
+    /* OPS-32. The rest of the cockpit counted both businesses: the card
+       metrics read every product card, and the scorecard listed every Product
+       RM. A card's business is its product's, as a journey's is. */
+    const inBooks = `IN (${books.map(() => '?').join(',') || "''"})`;
+    const cards = (where = '1=1') => one(
+      `SELECT COUNT(*) n FROM product_cards pc JOIN product_types pt ON pt.id = pc.product_type_id
+        WHERE pt.sales_org ${inBooks} AND ${where}`,
+      books,
+    ).n;
+    const team = all(`SELECT * FROM users WHERE role = 'product_rm' AND active = 1 AND sales_org ${inBooks}`, books);
 
     const scorecard = team.map((rm) => ({
       id: rm.id, name: rm.name,
@@ -544,12 +554,12 @@ const COCKPITS = {
       title: 'Product Supervisor cockpit',
       subtitle: 'KYC health and product team performance across the book.',
       metrics: [
-        metric('Cards total', one('SELECT COUNT(*) n FROM product_cards').n),
-        metric('Warm unactioned >4h', one("SELECT COUNT(*) n FROM product_cards WHERE state = 'WARM' AND last_state_at <= datetime('now','-4 hours')").n, null, 'warn'),
+        metric('Cards total', cards()),
+        metric('Warm unactioned >4h', cards("pc.state = 'WARM' AND pc.last_state_at <= datetime('now','-4 hours')"), null, 'warn'),
         metric('KYC stalled', journeys.filter((j) => j.status === 'Stalled').length, null, 'danger'),
         metric('KYC abandoned', journeys.filter((j) => j.status === 'Abandoned').length, 'assisted completion required', 'danger'),
         metric('Avg KYC completion', avgMins ? `${avgMins} min` : '—', `${completed.length} completed`),
-        metric('Cards closed Active', one("SELECT COUNT(*) n FROM product_cards WHERE state = 'ACTIVE'").n, null, 'good'),
+        metric('Cards closed Active', cards("pc.state = 'ACTIVE'"), null, 'good'),
       ],
       worklist: { type: 'kyc', title: 'KYC health', rows: journeys, secondary: { type: 'scorecard', title: 'Product RM scorecard', rows: scorecard } },
       actions: ['Reassign product card', 'Override KYC step', 'Escalate stalled KYC', 'Export pipeline report'],

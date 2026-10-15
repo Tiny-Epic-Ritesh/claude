@@ -4,8 +4,12 @@
  * Answers the business gave that it may want to change later: whether a
  * partner may refer the other business's products and how such a referral is
  * paid, how a role's exports carry personal data (QA-06), and how long leads
- * and clients are kept. Admins and Superadmins change them here,
- * held as a draft until Save, and every change is in the configuration audit.
+ * and clients are kept. Held as a draft until Save, and every change is in the
+ * configuration audit.
+ *
+ * OPS-43: an Admin sees and changes their own business's switches; a policy
+ * that applies to both businesses is shown to them read-only, because a
+ * Superadmin changes it.
  */
 
 import { useDraft } from '../components/useDraft.js';
@@ -46,6 +50,7 @@ export default function BusinessPolicies() {
           <div className="card-body stack" style={{ gap: 12 }}>
             {data.policies.filter((p) => p.area === area).map((p) => {
               const value = draft.valueOf({ key: p.key }, p.value);
+              const locked = p.may_change === false;
               return (
                 <div key={p.key} className="row-between" style={{ alignItems: 'flex-start', gap: 16 }}>
                   <div style={{ minWidth: 0 }}>
@@ -53,6 +58,7 @@ export default function BusinessPolicies() {
                     <div className="small muted" style={{ maxWidth: '62ch' }}>{p.help}</div>
                     <div className="tiny muted" style={{ marginTop: 4 }}>
                       {p.is_default ? 'Default — nobody has changed this.' : `Last changed by ${p.updated_by_name ?? 'someone'} on ${dateTime(p.updated_at)}.`}
+                      {locked && <> {p.locked_reason}.</>}
                     </div>
                   </div>
                   {p.type === 'bool' ? (
@@ -61,6 +67,7 @@ export default function BusinessPolicies() {
                         type="checkbox"
                         id={`policy-${p.key}`}
                         checked={Boolean(value)}
+                        disabled={locked}
                         onChange={(e) => draft.set({ key: p.key }, e.target.checked)}
                       />
                       <span className="small">{value ? 'On' : 'Off'}</span>
@@ -76,6 +83,7 @@ export default function BusinessPolicies() {
                         value={value}
                         min={p.min}
                         max={p.max}
+                        disabled={locked}
                         onChange={(e) => draft.set({ key: p.key }, e.target.value === '' ? '' : Number(e.target.value))}
                         style={{ width: 110 }}
                       />
@@ -85,6 +93,7 @@ export default function BusinessPolicies() {
                     <select
                       id={`policy-${p.key}`}
                       value={value}
+                      disabled={locked}
                       onChange={(e) => draft.set({ key: p.key }, e.target.value)}
                       style={{ flexShrink: 0 }}
                     >

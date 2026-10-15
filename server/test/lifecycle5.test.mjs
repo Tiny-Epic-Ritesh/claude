@@ -48,6 +48,8 @@ const ADMIN = await probeAdmin('lc5-admin', { role: 'admin', sales_org: 'BONANZA
 const ADMIN2 = await probeAdmin('lc5-admin2', { role: 'admin', sales_org: 'BONANZA' });
 const COMPLIANCE = await probeAdmin('lc5-compliance', { role: 'compliance', sales_org: 'BONANZA' });
 const BIGUL = await probeAdmin('lc5-bigul', { role: 'admin', sales_org: 'BIGUL' });
+// OPS-43: the policy applies to both businesses, so a Superadmin switches it.
+const SUPER = await probeAdmin('lc5-super', { role: 'superadmin' });
 const as = (who) => async (method, url, body) => {
   const res = await fetch(`${BASE}/api${url}`, { method, headers: who.headers, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: res.status, body: await res.json().catch(() => null) };
@@ -180,7 +182,7 @@ try {
   });
 
   await test('with the Business policy on, a journey change waits for Compliance; the asker cannot grant it', async () => {
-    assert.equal((await as(ADMIN)('PUT', `/setup/policies/${POLICY}`, { value: true })).status, 200);
+    assert.equal((await as(SUPER)('PUT', `/setup/policies/${POLICY}`, { value: true })).status, 200);
     const retiring = stepsBefore.filter((s) => s.step_code !== 'SEGMENTS');
     const res = await as(ADMIN)('POST', `/admin/kyc/journeys/${product.id}`, { steps: retiring, reason: 'Segments asked at activation instead' });
     assert.equal(res.status, 202, `the change applied at once: HTTP ${res.status}`);
@@ -297,7 +299,7 @@ try {
   run(`DELETE FROM sessions WHERE partner_id IN (${partners})`);
   run(`DELETE FROM activities WHERE partner_id IN (${partners})`);
   run(`DELETE FROM partners WHERE name LIKE ?`, [`${MARK}%`]);
-  for (const p of [PRM, ADMIN, ADMIN2, COMPLIANCE, BIGUL]) p.cleanup();
+  for (const p of [PRM, ADMIN, ADMIN2, COMPLIANCE, BIGUL, SUPER]) p.cleanup();
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -13,6 +13,7 @@ import { rebuild } from './metrics.js';
 import { send } from '../integrations.js';
 import { kycStatusSql, kycStatusFor } from './kycstatus.js';
 import { checkConsent } from './consent.js';
+import { templateRefusal } from './templates.js';
 import { isSnapshot } from './leadlists.js';
 /* The one place an owner is chosen. An action hands the lead over; it does not
    pick, for the reason set out on the distribute_lead case below. */
@@ -234,8 +235,11 @@ export function runAction(action, facts, { dryRun, firingId = null }) {
       if (!template && !action.params.message) {
         return { ...describe, skipped: action.params.template_id ? 'that template no longer exists' : 'no template or message on the card' };
       }
-      // QA-37: retired is out of every new send. Said, not sent quietly.
-      if (template?.retired_at) return { ...describe, skipped: 'that template is retired' };
+      // QA-37, OPS-36: retired, unapproved, another channel's or business's -- said, not sent.
+      if (action.params.template_id) {
+        const refused = templateRefusal(template, { channel: action.type, org: lead.sales_org });
+        if (refused) return { ...describe, skipped: refused };
+      }
 
       const body = (template?.body || action.params.message).replace(/\{\{name\}\}/g, lead.name);
       send(action.type, { to: lead.mobile || lead.email, body, subject: template?.subject, leadId: lead.id });
@@ -253,7 +257,10 @@ export function runAction(action, facts, { dryRun, firingId = null }) {
 
       const template = action.params.template_id ? one('SELECT * FROM templates WHERE id = ?', [action.params.template_id]) : null;
       if (!template && !action.params.message) return { ...describe, skipped: 'no template or message on the card' };
-      if (template?.retired_at) return { ...describe, skipped: 'that template is retired' };
+      if (action.params.template_id) {
+        const refused = templateRefusal(template, { channel: 'email', org: lead.sales_org });
+        if (refused) return { ...describe, skipped: refused };
+      }
       const body = (template?.body || action.params.message).replace(/\{\{name\}\}/g, lead.name);
       send('email', {
         to: lead.email,

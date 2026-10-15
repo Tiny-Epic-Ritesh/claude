@@ -252,6 +252,26 @@ export function toDltTemplate({ body, components = {} }) {
  * message is sent would then depend on which code path asked. The category is
  * the registered fact, so the intent is read from it.
  */
+/**
+ * Why this template may not go to this lead now, or null (OPS-36).
+ *
+ * Campaigns asked all of this; a single message from a lead and an
+ * automation rule's card asked only whether the template was retired, so an
+ * unapproved template, or the other business's -- its branding and its DLT
+ * header -- went to a client. One answer for every door that sends a stored
+ * template.
+ */
+export function templateRefusal(template, { channel, org }) {
+  if (!template) return 'that template no longer exists';
+  if (template.retired_at) return `"${template.name}" is retired, so nothing new can send it`;
+  if (!template.approved) return `"${template.name}" is not approved for sending`;
+  if (channel && template.channel !== channel) {
+    return `"${template.name}" is a ${template.channel} template, not ${channel}`;
+  }
+  if (org && template.sales_org !== org) return `"${template.name}" belongs to the other business`;
+  return null;
+}
+
 export const intentForCategory = (category) => (category === 'promotional' ? 'marketing' : 'service');
 
 /**

@@ -19,7 +19,7 @@
  * exactly this — attribution that cannot be traced to a human.
  */
 
-import { listPolicies, setPolicy } from '../engine/policies.js';
+import { listPolicies, setPolicy, policyDef, policyBook } from '../engine/policies.js';
 import { Router } from 'express';
 import { all, one, run, audit, transact, SALES_ORGS, CARD_STATES, ROLES } from '../db.js';
 /* The activity types a person can log by hand. Imported rather than restated:
@@ -3488,12 +3488,37 @@ router.delete('/webhook-endpoints/:id', requirePermission('admin.system'), (req,
 
 /* ------------------------------------------------- business policies */
 
+/**
+ * Who may change a policy (OPS-43), or null when this person may.
+ *
+ * Any admin.policies holder listed and changed every policy, so a Bigul Admin
+ * switched Bonanza's referrals and reminders on. A business's own switch is
+ * its Admins'; a policy covering both businesses is a Superadmin's
+ * (admin.system), as Ritesh ruled on 15 Oct.
+ */
+function policyChangeRefusal(user, key) {
+  const book = policyBook(key);
+  if (book) return mayUseOrg(user, book) ? null : 'That policy belongs to the other business';
+  return userCan(user, 'admin.system') ? null : 'This applies to both businesses, so a Superadmin changes it';
+}
+
 /** QA-13, QA-06. What the business has decided, and may change. */
-router.get('/policies', requirePermission('admin.policies'), (_req, res) => {
-  res.json({ policies: listPolicies() });
+router.get('/policies', requirePermission('admin.policies'), (req, res) => {
+  // The other business's own switches are not shown; the shared ones are, read-only where they are not this person's to change.
+  res.json({
+    policies: listPolicies()
+      .filter((p) => !p.book || mayUseOrg(req.user, p.book))
+      .map((p) => {
+        const locked = policyChangeRefusal(req.user, p.key);
+        return { ...p, may_change: !locked, locked_reason: locked };
+      }),
+  });
 });
 
 router.put('/policies/:key', requirePermission('admin.policies'), (req, res) => {
+  if (!policyDef(req.params.key)) return res.status(400).json({ error: `There is no policy called ${req.params.key}`, field: 'value' });
+  const locked = policyChangeRefusal(req.user, req.params.key);
+  if (locked) return res.status(403).json({ error: locked });
   const out = setPolicy(req.params.key, req.body?.value, req.user.id);
   if (out.error) return res.status(400).json({ error: out.error, field: 'value' });
   audit(req.user.id, 'policy_changed', 'policy', null, { key: out.key, value: out.value });

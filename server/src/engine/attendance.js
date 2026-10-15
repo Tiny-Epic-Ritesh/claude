@@ -26,6 +26,7 @@
  */
 
 import { all, one, run } from '../db.js';
+import { istNow } from './daterange.js';
 
 /** Roles asked to check in when nothing is configured. */
 const DEFAULT_PROMPT_ROLES = ['sales_rm', 'caller', 'dealer', 'partner_rm', 'product_rm', 'sales_supervisor'];
@@ -145,12 +146,19 @@ function lastSeen(userId, since, until) {
  *
  * Returns what it did rather than logging quietly, so the caller can say so.
  */
+/* OPS-34. The day an interval belongs to is the India day it began on, as
+   everywhere else in the CRM (OPS-24). Counted in UTC, a check-in between
+   midnight and 05:30 IST was yesterday's, and a night shift could be swept
+   closed as abandoned while it was still running. */
+const IST_DAY = (column) => `date(${column}, '+330 minutes')`;
+export const istToday = (now = new Date()) => istNow(now).toISOString().slice(0, 10);
+
 export function closeAbandoned(org) {
   const policy = policyFor(org);
   const stale = all(
     `SELECT * FROM attendance_session
       WHERE checked_out_at IS NULL AND sales_org = ?
-        AND date(checked_in_at) < date('now')`,
+        AND ${IST_DAY('checked_in_at')} < date('now', '+330 minutes')`,
     [org],
   );
 
@@ -174,7 +182,11 @@ export function closeAbandoned(org) {
          with a default — an unknown is not an hour. */
       at = seen ?? s.checked_in_at;
     } else {
-      at = one("SELECT datetime(date(?) || ' ' || ? || ':00') AS at", [s.checked_in_at, policy.auto_close_at])?.at;
+      // The auto-close time is a clock time in India, on the India day the interval began.
+      at = one(
+        "SELECT datetime(date(?, '+330 minutes') || ' ' || ? || ':00', '-330 minutes') AS at",
+        [s.checked_in_at, policy.auto_close_at],
+      )?.at;
     }
 
     const capped = one('SELECT MIN(?, ?) AS at', [at, ceiling])?.at ?? at;
@@ -196,12 +208,12 @@ const MINUTES = "CAST((julianday(COALESCE(s.checked_out_at, datetime('now'))) - 
 
 /** One person's day: the intervals, and what they add up to. */
 export function dayFor(userId, day = null) {
-  const on = day ?? new Date().toISOString().slice(0, 10);
+  const on = day ?? istToday();
   const intervals = all(
     `SELECT s.id, s.checked_in_at, s.checked_out_at, s.closed_by, s.source, s.note,
             ${MINUTES} AS minutes
        FROM attendance_session s
-      WHERE s.user_id = ? AND date(s.checked_in_at) = date(?)
+      WHERE s.user_id = ? AND ${IST_DAY('s.checked_in_at')} = date(?)
       ORDER BY s.checked_in_at`,
     [userId, on],
   );
@@ -245,7 +257,7 @@ export function report({ reach, params = [], from, to }) {
   return all(
     `SELECT u.id AS user_id, u.name AS user_name, u.sales_org,
             r.name AS role_name, m.name AS manager_name,
-            date(s.checked_in_at) AS day,
+            ${IST_DAY('s.checked_in_at')} AS day,
             MIN(s.checked_in_at) AS first_in,
             MAX(s.checked_out_at) AS last_out,
             COUNT(*) AS intervals,
@@ -257,9 +269,9 @@ export function report({ reach, params = [], from, to }) {
        LEFT JOIN roles r ON r.code = u.role
        LEFT JOIN users m ON m.id = u.manager_id
       WHERE ${reach}
-        AND date(s.checked_in_at) BETWEEN date(?) AND date(?)
-      GROUP BY u.id, date(s.checked_in_at)
-      ORDER BY date(s.checked_in_at) DESC, u.name`,
+        AND ${IST_DAY('s.checked_in_at')} BETWEEN date(?) AND date(?)
+      GROUP BY u.id, ${IST_DAY('s.checked_in_at')}
+      ORDER BY ${IST_DAY('s.checked_in_at')} DESC, u.name`,
     [...params, from, to],
   );
 }

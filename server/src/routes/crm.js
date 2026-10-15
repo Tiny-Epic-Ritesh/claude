@@ -17,6 +17,7 @@ import {
 import { applyScore } from '../engine/rules.js';
 import { click2call, pushToAutodialler, send, logCall } from '../integrations.js';
 import { checkConsent, contactability } from '../engine/consent.js';
+import { templateRefusal } from '../engine/templates.js';
 import { assertValid } from '../engine/validation.js';
 import { derivedValues, describeFormula, describeRollup } from '../engine/formulas.js';
 import { assignLead } from '../engine/assignment.js';
@@ -1202,15 +1203,24 @@ router.delete('/leads/:id', requirePermission('lead.delete'), (req, res) => {
   res.status(204).end();
 });
 
+/* The recycle bin's books: the reader's, narrowed by the switcher. */
+const purgeBooks = (req) => (activeOrg(req) ? [activeOrg(req)] : orgsFor(req.user));
+
 router.get('/recycle-bin', requirePermission('lead.delete'), (req, res) => {
   // Deleted records are still client records. This endpoint previously returned
   // SELECT * unmasked, which quietly made the recycle bin the one place in the
   // system where any lead.delete holder could read every mobile and PAN in the
   // book without the audited unmask step. Same masking rules as everywhere else.
+  /* OPS-35. And the reader's books, narrowed by the switcher, as restoring and
+     purging already were: it listed both businesses' deleted leads. */
+  const books = purgeBooks(req);
   const rows = all(
     `SELECT l.id, l.name, l.mobile, l.email, l.city, l.source, l.stage, l.score, l.owner_id,
             ${kycStatusSql('l')} AS kyc_status, l.created_at, l.deleted_at
-     FROM leads l WHERE l.deleted_at IS NOT NULL ORDER BY l.deleted_at DESC`,
+     FROM leads l
+     WHERE l.deleted_at IS NOT NULL AND l.sales_org IN (${books.map(() => '?').join(',') || "''"})
+     ORDER BY l.deleted_at DESC`,
+    books,
   );
   res.json(maskRecords(rows, maskFor(req, 'recycle_bin')));
 });
@@ -1233,7 +1243,6 @@ router.post('/leads/:id/restore', requirePermission('lead.delete'), (req, res) =
 /* QA-37 (accepted 13 Oct), with the retention ruled 14 Oct. What in the
    recycle bin may be erased for good -- in the reader's books, narrowed by the
    switcher -- and the erasing, which an Admin does with a reason. */
-const purgeBooks = (req) => (activeOrg(req) ? [activeOrg(req)] : orgsFor(req.user));
 
 router.get('/recycle-bin/purgeable', requirePermission('lead.delete'), (req, res) => {
   const leads = purgeableLeads(purgeBooks(req));
@@ -1581,14 +1590,17 @@ router.get('/cards/:id/detail', (req, res) => {
 
   /* What has actually been tried on this product, rather than on this lead.
      A rep about to pitch needs to know they pitched it a fortnight ago. */
-  const activities = all(
+  /* OPS-39. Under interaction field security, as the lead's timeline is: the
+     card showed call notes the timeline hides from someone outside the
+     author's manager chain. user_id is what that rule reads. */
+  const activities = withCorrections('activity', applyFieldSecurity('interaction', all(
     `SELECT a.id, a.type, a.subject, a.body, a.outcome, a.sub_disposition,
-            a.created_at, u.name AS user_name
+            a.created_at, a.user_id, u.name AS user_name
        FROM activities a LEFT JOIN users u ON u.id = a.user_id
       WHERE a.card_id = ?
       ORDER BY a.created_at DESC LIMIT 20`,
     [card.id],
-  );
+  ), req.user, { caps: req.caps }));
 
   const history = all(
     `SELECT ca.from_state, ca.to_state, ca.note, ca.created_at, u.name AS user_name
@@ -1758,10 +1770,10 @@ router.post('/leads/:id/message', requirePermission('lead.contact'), (req, res) 
   }
 
   const template = template_id ? one('SELECT * FROM templates WHERE id = ?', [template_id]) : null;
-  // QA-37: a retired template is out of every new send, this door included.
-  if (template?.retired_at) {
-    return res.status(409).json({ error: `"${template.name}" is retired, so nothing new can send it` });
-  }
+  /* QA-37: a retired template is out of every new send. OPS-36: and an
+     unapproved one, another channel's, or the other business's. */
+  const refused = template_id ? templateRefusal(template, { channel, org: lead.sales_org }) : null;
+  if (refused) return res.status(template ? 409 : 400).json({ error: refused.replace(/^that/, 'That') });
   const text = (body || template?.body || '').replace(/\{\{name\}\}/g, lead.name);
   if (!text.trim()) return res.status(400).json({ error: 'Message body is required' });
 
@@ -2178,7 +2190,7 @@ router.get('/meta', (req, res) => {
     // for -- and under a DLT header the send would refuse anyway.
     templates: all(
       `SELECT id, name, channel, subject, body, product_type_id
-       FROM templates WHERE approved = 1 AND sales_org IN (${placeholders})`,
+       FROM templates WHERE approved = 1 AND retired_at IS NULL AND sales_org IN (${placeholders})`,
       orgs,
     ),
     orgs,

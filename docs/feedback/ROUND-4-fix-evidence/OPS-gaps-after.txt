@@ -1,0 +1,17 @@
+
+Gaps found beside Round 4 (OPS-32 to OPS-41, OPS-43)
+  ok   OPS-35: the recycle bin lists only the reader's business
+  ok   OPS-36: a lead is sent only an approved template of its own business and channel
+  ok   OPS-36: an automation card skips an unapproved or other-business template, and says why
+  ok   OPS-37: every campaign route by id asks the campaign's business
+  ok   OPS-38: a reply from the CRM is the agent's, whatever the request says
+  ok   OPS-39: a card hides the notes its lead's timeline hides
+  ok   OPS-40: content is listed and written within the reader's business
+  ok   OPS-41: KYC journeys are listed and changed within the product's business
+  ok   OPS-43: an Admin changes their own business's switches; a Superadmin the shared ones
+  ok   OPS-32: the Product Supervisor's cockpit counts its own business
+  ok   OPS-33: a Superadmin's change to a business survives a restart
+  ok   OPS-34: attendance counts the India day
+
+12 passed, 0 failed
+ 

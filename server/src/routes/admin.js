@@ -790,9 +790,16 @@ router.delete('/templates/:id', requirePermission('admin.templates'), (req, res)
 
 /* ------------------------------------------------------ content library */
 
+/* OPS-40. These listed every business's items to anyone signed in and wrote
+   new ones into no business (the column default, Bonanza). The library
+   screens check the business; these do now: the reader's books, narrowed by
+   the switcher, and a library the reader may read. */
+const contentBooks = (req) => (activeOrg(req) ? [activeOrg(req)] : orgsFor(req.user));
+
 router.get('/content', (req, res) => {
-  const where = [];
-  const params = [];
+  const books = contentBooks(req);
+  const where = [`c.sales_org IN (${books.map(() => '?').join(',') || "''"})`];
+  const params = [...books];
   if (req.query.product_id) { where.push('c.product_type_id = ?'); params.push(req.query.product_id); }
   if (req.query.status) { where.push('c.status = ?'); params.push(req.query.status); }
 
@@ -803,16 +810,29 @@ router.get('/content', (req, res) => {
      FROM content_items c LEFT JOIN product_types pt ON pt.id = c.product_type_id
      ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY c.name`,
     params,
-  ));
+  ).filter((c) => {
+    if (!c.library_id) return true;
+    return mayReadLibrary(one('SELECT * FROM content_library WHERE id = ?', [c.library_id]), req.user);
+  }));
 });
 
 router.post('/content', requirePermission('admin.content'), (req, res) => {
   const { name, type, url, product_type_id, kyc_step_code, expiry_date, owner_role } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'Name is required' });
 
+  /* OPS-40: the business it is for -- asked, or the one being worked in --
+     and a product, if given, of the same business. */
+  const org = req.body.sales_org || activeOrg(req) || req.user.sales_org;
+  if (!mayUseOrg(req.user, org)) return res.status(403).json({ error: 'You cannot add content to another book', field: 'sales_org' });
+  if (product_type_id) {
+    const product = one('SELECT sales_org FROM product_types WHERE id = ?', [product_type_id]);
+    if (!product) return res.status(400).json({ error: 'That product does not exist', field: 'product_type_id' });
+    if (product.sales_org !== org) return res.status(400).json({ error: 'That product belongs to the other business', field: 'product_type_id' });
+  }
+
   const result = run(
-    'INSERT INTO content_items (name, type, url, product_type_id, kyc_step_code, expiry_date, owner_role) VALUES (?,?,?,?,?,?,?)',
-    [name, type || 'PDF', url || null, product_type_id || null, kyc_step_code || null, expiry_date || null, owner_role || req.user.role],
+    'INSERT INTO content_items (name, type, url, product_type_id, kyc_step_code, expiry_date, owner_role, sales_org) VALUES (?,?,?,?,?,?,?,?)',
+    [name, type || 'PDF', url || null, product_type_id || null, kyc_step_code || null, expiry_date || null, owner_role || req.user.role, org],
   );
   audit(req.user.id, 'content_created', 'content_item', Number(result.lastInsertRowid), { name });
   res.status(201).json({ id: Number(result.lastInsertRowid) });
@@ -830,6 +850,8 @@ router.post('/content', requirePermission('admin.content'), (req, res) => {
 router.post('/content/:id/version', requirePermission('admin.content'), (req, res) => {
   const item = one('SELECT * FROM content_items WHERE id = ?', [req.params.id]);
   if (!item) return res.status(404).json({ error: 'Content item not found' });
+  // OPS-40: an item outside the reader's books is not there to version.
+  if (!mayUseOrg(req.user, item.sales_org)) return res.status(404).json({ error: 'Content item not found' });
   const lib = item.library_id ? one('SELECT * FROM content_library WHERE id = ?', [item.library_id]) : null;
   if (lib && !mayReadLibrary(lib, req.user)) return res.status(404).json({ error: 'Content item not found' });
 
@@ -841,8 +863,18 @@ router.post('/content/:id/version', requirePermission('admin.content'), (req, re
 
 /* --------------------------------------------------- KYC journey composer */
 
-router.get('/kyc/journeys', (_req, res) => {
-  const products = all('SELECT * FROM product_types WHERE active = 1 AND requires_kyc = 1 ORDER BY sort_order');
+/* OPS-41. The reader's books, narrowed by the switcher: this listed every
+   business's KYC products and journeys to anyone signed in, and the change
+   below rewrote either business's journey. */
+const journeyBooks = (req) => (activeOrg(req) ? [activeOrg(req)] : orgsFor(req.user));
+
+router.get('/kyc/journeys', (req, res) => {
+  const books = journeyBooks(req);
+  const products = all(
+    `SELECT * FROM product_types WHERE active = 1 AND requires_kyc = 1
+        AND sales_org IN (${books.map(() => '?').join(',') || "''"}) ORDER BY sort_order`,
+    books,
+  );
   res.json({
     master_steps: MASTER_STEPS.map(({ fields, ...s }) => ({ ...s, field_count: fields?.length ?? 0 })),
     // QA-37: whether a change waits for Compliance, and what is waiting.
@@ -870,6 +902,7 @@ router.get('/kyc/journeys', (_req, res) => {
 router.post('/kyc/journeys/:productId', requirePermission('admin.kyc.journeys'), (req, res) => {
   const product = journeyProduct(req.params.productId);
   if (!product) return res.status(404).json({ error: 'No such product' });
+  if (!mayUseOrg(req.user, product.sales_org)) return res.status(403).json({ error: 'That product belongs to another book' });
   const steps = req.body?.steps ?? [];   // [{step_code, timer_override_s, conditional_on}]
   const refusal = journeyRefusal(steps);
   if (refusal) return res.status(400).json({ error: refusal, field: 'steps' });
@@ -1438,6 +1471,20 @@ export const CAMPAIGN_COLUMNS = [
 
 const campaignColumn = (key) => CAMPAIGN_COLUMNS.find((col) => col.key === key);
 
+/**
+ * A campaign by id, in the reader's book (OPS-37).
+ *
+ * Only Duplicate asked: a Bigul Admin read the audience of, renamed, paused,
+ * test-sent, sent and deleted Bonanza's campaigns by id. Every route that
+ * takes a campaign id now loads it here.
+ */
+function campaignInBook(req) {
+  const campaign = one('SELECT * FROM campaigns WHERE id = ?', [req.params.id]);
+  if (!campaign) return { error: 'Campaign not found', status: 404 };
+  if (!mayUseOrg(req.user, campaign.sales_org)) return { error: 'This campaign belongs to another book', status: 403 };
+  return { campaign };
+}
+
 const CAMPAIGN_FROM = `FROM campaigns c
     LEFT JOIN templates t ON t.id = c.template_id
     LEFT JOIN lead_lists ll ON ll.id = c.list_id
@@ -1487,14 +1534,17 @@ router.get('/campaigns/meta', requirePermission('campaign.manage'), (_req, res) 
   columns: CAMPAIGN_COLUMNS.map(({ key, label }) => ({ key, label })),
 }));
 
-router.get('/campaigns/archived', requirePermission('campaign.manage'), (_req, res) => {
+router.get('/campaigns/archived', requirePermission('campaign.manage'), (req, res) => {
+  // OPS-37: the reader's books, as the working list is.
+  const orgs = orgsFor(req.user);
   res.json(all(`
     SELECT c.*, t.name AS template_name, ll.name AS list_name
     FROM campaigns c
     LEFT JOIN templates t ON t.id = c.template_id
     LEFT JOIN lead_lists ll ON ll.id = c.list_id
-    WHERE c.status = 'Archived' ORDER BY c.created_at DESC
-  `));
+    WHERE c.status = 'Archived' AND c.sales_org IN (${orgs.map(() => '?').join(',') || "''"})
+    ORDER BY c.created_at DESC
+  `, orgs));
 });
 
 /**
@@ -1582,8 +1632,9 @@ router.post('/campaigns', requirePermission('campaign.manage'), (req, res) => {
  * it wrong. Duplicate it instead — which is why Duplicate exists.
  */
 router.patch('/campaigns/:id', requirePermission('campaign.manage'), (req, res) => {
-  const campaign = one('SELECT * FROM campaigns WHERE id = ?', [req.params.id]);
-  if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+  const found = campaignInBook(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const { campaign } = found;
   if (isSent(campaign)) {
     return res.status(409).json({
       error: `"${campaign.name}" has already gone out and cannot be changed`,
@@ -1602,8 +1653,13 @@ router.patch('/campaigns/:id', requirePermission('campaign.manage'), (req, res) 
     if (content.error) return res.status(content.status).json({ error: content.error });
   }
   if (req.body?.list_id) {
-    const audience = one('SELECT name, archived_at FROM lead_lists WHERE id = ?', [req.body.list_id]);
-    if (audience?.archived_at) return res.status(409).json({ error: archivedListError(audience) });
+    const audience = one('SELECT name, sales_org, archived_at FROM lead_lists WHERE id = ?', [req.body.list_id]);
+    if (!audience) return res.status(400).json({ error: 'That list does not exist' });
+    // OPS-37: a campaign sends for its own business, so to its own business's list.
+    if (audience.sales_org && audience.sales_org !== campaign.sales_org) {
+      return res.status(403).json({ error: 'That list belongs to another book' });
+    }
+    if (audience.archived_at) return res.status(409).json({ error: archivedListError(audience) });
   }
 
   const fields = ['name', 'channel', 'template_id', 'list_id', 'scheduled_at'];
@@ -1630,8 +1686,9 @@ router.patch('/campaigns/:id', requirePermission('campaign.manage'), (req, res) 
 
 /** Copy a campaign back to draft. The commonest way a marketer starts one. */
 router.post('/campaigns/:id/duplicate', requirePermission('campaign.manage'), (req, res) => {
-  const c = one('SELECT * FROM campaigns WHERE id = ?', [req.params.id]);
-  if (!c) return res.status(404).json({ error: 'Campaign not found' });
+  const found = campaignInBook(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const c = found.campaign;
 
   /* QA-30. A duplicate is a new campaign, so it is made on the same terms.
      The auditor's #4 was a copy of #3, which had no content at all; copying
@@ -1641,10 +1698,6 @@ router.post('/campaigns/:id/duplicate', requirePermission('campaign.manage'), (r
      campaign's copy was filed in Bonanza's book by the column default -- the
      defect the create route's comment describes fixing. It is the original's
      business, and only someone who works in that business may make it. */
-  if (!mayUseOrg(req.user, c.sales_org)) {
-    return res.status(403).json({ error: 'This campaign belongs to another book' });
-  }
-
   const content = approvedTemplate(c.template_id, c.channel, c.sales_org);
   if (content.error) return res.status(content.status).json({ error: content.error });
 
@@ -1658,8 +1711,9 @@ router.post('/campaigns/:id/duplicate', requirePermission('campaign.manage'), (r
 });
 
 router.post('/campaigns/:id/pause', requirePermission('campaign.manage'), (req, res) => {
-  const c = one('SELECT * FROM campaigns WHERE id = ?', [req.params.id]);
-  if (!c) return res.status(404).json({ error: 'Campaign not found' });
+  const found = campaignInBook(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const c = found.campaign;
   if (c.status !== 'Scheduled') {
     return res.status(409).json({ error: `Only a scheduled campaign can be paused — this one is ${c.status}` });
   }
@@ -1669,8 +1723,9 @@ router.post('/campaigns/:id/pause', requirePermission('campaign.manage'), (req, 
 });
 
 router.post('/campaigns/:id/resume', requirePermission('campaign.manage'), (req, res) => {
-  const c = one('SELECT * FROM campaigns WHERE id = ?', [req.params.id]);
-  if (!c) return res.status(404).json({ error: 'Campaign not found' });
+  const found = campaignInBook(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const c = found.campaign;
   if (c.status !== 'Paused') {
     return res.status(409).json({ error: `Only a paused campaign can be resumed — this one is ${c.status}` });
   }
@@ -1687,8 +1742,9 @@ router.post('/campaigns/:id/resume', requirePermission('campaign.manage'), (req,
  * off the working list and keeps the record.
  */
 router.delete('/campaigns/:id', requirePermission('campaign.manage'), (req, res) => {
-  const c = one('SELECT * FROM campaigns WHERE id = ?', [req.params.id]);
-  if (!c) return res.status(404).json({ error: 'Campaign not found' });
+  const found = campaignInBook(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const c = found.campaign;
 
   if (isSent(c) || c.sent > 0) {
     run("UPDATE campaigns SET status = 'Archived' WHERE id = ?", [req.params.id]);
@@ -1712,8 +1768,9 @@ router.delete('/campaigns/:id', requirePermission('campaign.manage'), (req, res)
  * before sending learns what their list actually is.
  */
 router.get('/campaigns/:id/audience', requirePermission('campaign.manage'), (req, res) => {
-  const campaign = one('SELECT * FROM campaigns WHERE id = ?', [req.params.id]);
-  if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+  const found = campaignInBook(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const { campaign } = found;
 
   const { members, reachable, excluded } = campaignAudience(campaign);
 
@@ -1739,8 +1796,9 @@ router.get('/campaigns/:id/audience', requirePermission('campaign.manage'), (req
  * sender's own contact details, never to a lead.
  */
 router.post('/campaigns/:id/test', requirePermission('campaign.manage'), async (req, res) => {
-  const campaign = one('SELECT * FROM campaigns WHERE id = ?', [req.params.id]);
-  if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+  const found = campaignInBook(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const { campaign } = found;
 
   const content = approvedTemplate(campaign.template_id, campaign.channel, campaign.sales_org);
   if (content.error) return res.status(content.status).json({ error: content.error });
@@ -1775,8 +1833,9 @@ router.post('/campaigns/:id/test', requirePermission('campaign.manage'), async (
 
 /** Send a campaign to every member of its list who may lawfully receive it. */
 router.post('/campaigns/:id/send', requirePermission('campaign.manage'), async (req, res) => {
-  const campaign = one('SELECT * FROM campaigns WHERE id = ?', [req.params.id]);
-  if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+  const found = campaignInBook(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const { campaign } = found;
   if (isSent(campaign)) {
     return res.status(409).json({ error: `"${campaign.name}" has already been sent` });
   }
