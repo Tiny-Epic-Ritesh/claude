@@ -119,7 +119,8 @@ approval or business), `OPS-37` (campaign routes by id unchecked for business),
 `OPS-38` (a case reply's author taken from the request), `OPS-39` (a card
 showing call notes field security hides) and `OPS-40` (the content list across
 businesses); and batch 5 one more, `OPS-41` (KYC journeys listed and changed
-across businesses). State of each is in the OPS table at the top
+across businesses); and the nomination obligations one more, `OPS-42` (an API
+key's scopes not enforced by the route guard). State of each is in the OPS table at the top
 of [OUTSTANDING.md](OUTSTANDING.md). Not counted above: they are not report IDs.
 
 ### Rulings asked for
