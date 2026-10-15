@@ -77,6 +77,8 @@ export const PERMISSIONS = {
   'client.view.own':      ['sales_rm', 'sales_supervisor', 'dealer', 'product_rm'],
   'client.edit':          ['superadmin', 'admin', 'sales_rm', 'dealer', 'customer_care'],
   'client.reassign':      ['superadmin', 'admin', 'sales_supervisor'],
+  // SEBI, May 2026, 10.2(b): what an API key for the trading platform is scoped to.
+  'client.nomination.prompt': ['superadmin', 'admin'],
 
 
   // Product cards

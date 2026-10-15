@@ -13,13 +13,17 @@ import { Router } from 'express';
 import { assertValid } from '../engine/validation.js';
 import { all, one, run, audit, notify } from '../db.js';
 import {
-  can, requireUser, requirePermission, reqClientScope, unmaskRequested, maskFor, activeOrg,
+  can, requireUser, requirePermission, reqClientScope, unmaskRequested, maskFor, activeOrg, mayUseOrg,
 } from '../auth.js';
-import { maskRecord, maskRecords, validate } from '../security.js';
+import { maskRecord, maskRecords, validate, decryptField } from '../security.js';
 import {
   SEGMENTS, CLIENT_STATUSES, dormantSql, segmentsFor, setSegments, timelineFor, timelineCount,
 } from '../engine/clients.js';
 import { request as requestApproval, BULK_THRESHOLD } from '../engine/approvals.js';
+import {
+  recordNomination, nominationStatus, statementLineSql, historyFor as nominationHistory, nominationPrompt,
+} from '../engine/nominations.js';
+import { stepByCode, validateNominees } from '../engine/kyc.js';
 
 const router = Router();
 router.use(requireUser);
@@ -53,6 +57,10 @@ export const CLIENT_COLUMNS = [
   { key: 'owner_name', label: 'Owner', sql: 'u.name' },
   { key: 'partner_name', label: 'Partner', sql: 'p.name' },
   { key: 'sales_org', label: 'Business', sql: 'c.sales_org' },
+  /* SEBI, May 2026, 10.1: what the holding statement prints -- the nominees'
+     names, or only whether there is a nomination, as the investor chose. The
+     CRM does not print statements; the back office that does reads this. */
+  { key: 'nomination_statement', label: 'Nomination (statement)', sql: statementLineSql('c') },
 ];
 
 const columnBy = (key) => CLIENT_COLUMNS.find((col) => col.key === key);
@@ -147,6 +155,7 @@ router.get('/', (req, res) => {
             c.status, c.risk_profile, c.activated_at, c.first_traded_at,
             c.last_traded_at, c.trades_last_year, c.brokerage_ytd,
             c.ledger_balance, c.holding_value, c.margin_available,
+            ${statementLineSql('c')} AS nomination_statement,
             ${dormantSql('c')} AS activity_status,
             CAST(julianday('now') - julianday(COALESCE(c.last_traded_at, c.activated_at)) AS INTEGER) AS days_since_trade,
             u.name AS owner_name, p.name AS partner_name
@@ -231,7 +240,7 @@ router.post('/export', requirePermission('export.client'), (req, res) => {
 
   const { clause, params } = clientFilter(req);
   const rows = all(
-    `SELECT c.*, ${dormantSql('c')} AS activity_status,
+    `SELECT c.*, ${dormantSql('c')} AS activity_status, ${statementLineSql('c')} AS nomination_statement,
             CAST(julianday('now') - julianday(COALESCE(c.last_traded_at, c.activated_at)) AS INTEGER) AS days_since_trade,
             u.name AS owner_name, p.name AS partner_name
        FROM clients c
@@ -472,10 +481,37 @@ router.get('/meta', (req, res) =>
 
 /* ------------------------------------------------------------- detail */
 
+/**
+ * The first-log-in-of-the-day pop-up (SEBI, May 2026, 10.2(b)).
+ *
+ * The client logs into the trading platform, not the CRM, so the platform
+ * asks here on each log-in -- with an API key scoped to
+ * client.nomination.prompt -- by UCC and business. The answer is "show" once
+ * a day for an account without a nomination, an opt-out included, and the
+ * wording to show; never for one with a nomination.
+ */
+router.get('/nomination-prompt', (req, res) => {
+  /* The scoped capabilities, not the role: an API key's scopes narrow what
+     its user may do, and requirePermission reads only the role. */
+  if (!req.caps?.has('client.nomination.prompt')) {
+    return res.status(403).json({ error: 'This needs client.nomination.prompt', required: 'client.nomination.prompt' });
+  }
+  const code = String(req.query.client_code ?? '').trim();
+  const business = String(req.query.business ?? '').trim().toUpperCase();
+  if (!code || !business) return res.status(400).json({ error: 'Give the client_code (UCC) and the business' });
+  if (!mayUseOrg(req.user, business)) return res.status(404).json({ error: 'No such account' });
+  const client = one(
+    "SELECT * FROM clients WHERE client_code = ? AND sales_org = ? AND deleted_at IS NULL AND status <> 'Closed'",
+    [code, business],
+  );
+  if (!client) return res.status(404).json({ error: 'No such account' });
+  return res.json({ client_code: client.client_code, ...nominationPrompt(client) });
+});
+
 const load = (req) => {
   const scope = reqClientScope(req, 'c');
   return one(
-    `SELECT c.*, ${dormantSql('c')} AS activity_status,
+    `SELECT c.*, ${dormantSql('c')} AS activity_status, ${statementLineSql('c')} AS nomination_statement,
             u.name AS owner_name, p.name AS partner_name
        FROM clients c
        LEFT JOIN users u ON u.id = c.owner_id
@@ -494,8 +530,26 @@ router.get('/:id', (req, res) => {
     ? one('SELECT id, name, source, stage, created_at FROM leads WHERE id = ?', [client.converted_from_lead_id])
     : null;
 
+  /* SEBI, May 2026: the nomination in force, what the statement prints,
+     every change with its acknowledgement, and the reminders sent. A
+     nominee's contact details and identifier are masked like the client's. */
+  const status = nominationStatus(client);
+  const nomination = {
+    state: status.state,
+    statement_line: status.statement_line,
+    statement_shows: status.current?.statement_shows ?? null,
+    nominees: status.nominees.map((n) => maskRecord(n, masking)),
+    history: nominationHistory(client.id),
+    reminders: all('SELECT period, channels, sent_at FROM nomination_nudges WHERE client_id = ? ORDER BY id DESC', [client.id]),
+    // The application's own rules, so the CRM form offers what the server takes.
+    form: (({ max, relationships, id_types: idTypes }) => ({ max, relationships, id_types: idTypes }))(
+      stepByCode('NOMINEE').fields.find((f) => f.name === 'nominees'),
+    ),
+  };
+
   res.json({
     ...maskRecord(client, masking),
+    nomination,
     segments: segmentsFor(client.id),
     // Attribution: the enquiry that became this account, and the campaign or
     // partner it arrived through. Long after the lead stops being worked, this
@@ -518,7 +572,9 @@ router.get('/:id', (req, res) => {
 /* -------------------------------------------------------------- write */
 
 const EDITABLE = [
-  'name', 'mobile', 'email', 'demat_id', 'risk_profile', 'nominee_name', 'status',
+  /* Not nominee_name: a nomination is recorded, acknowledged and kept in
+     its history (POST /:id/nominations), never typed over. */
+  'name', 'mobile', 'email', 'demat_id', 'risk_profile', 'status',
 ];
 
 router.patch('/:id', requirePermission('client.edit'), (req, res) => {
@@ -573,6 +629,55 @@ router.patch('/:id', requirePermission('client.edit'), (req, res) => {
   });
 
   res.json({ ok: true, client: load(req) });
+});
+
+/**
+ * Record a nomination, a change to one, or an opt-out (SEBI, May 2026).
+ *
+ * Investors may provide, change or cancel a nomination any number of times
+ * (9.1), on the circular's forms, Annexure-A or -B (9.2): online through a
+ * validated channel, or on paper with a wet signature (6.2). Staff record
+ * what was received here, saying what it was; the rules are the application's
+ * own (up to three; name and relationship required; the rest optional and
+ * checked), and the investor is sent an acknowledgement with a reference
+ * (9.3). Never an edit: the one before it stays in the history, superseded.
+ */
+router.post('/:id/nominations', requirePermission('client.edit'), (req, res) => {
+  const client = load(req);
+  if (!client) return res.status(404).json({ error: 'Client not found' });
+  const { kind, statement_shows: shows, mode } = req.body ?? {};
+  if (!['nominated', 'opted_out'].includes(kind)) {
+    return res.status(400).json({ error: 'Say whether the investor nominated or opted out', field: 'kind' });
+  }
+  if (!['online', 'physical'].includes(mode)) {
+    return res.status(400).json({ error: 'Say how it was received: online or on a signed form', field: 'mode' });
+  }
+  const evidence = String(req.body?.evidence ?? '').trim();
+  if (evidence.length < 5) {
+    return res.status(400).json({ error: 'Say what was received -- the form and where, or the online request', field: 'evidence' });
+  }
+
+  let nominees = [];
+  if (kind === 'nominated') {
+    if (!['names', 'yes_no'].includes(shows)) {
+      return res.status(400).json({ error: 'Say what the holding statement should show', field: 'statement_shows' });
+    }
+    const field = stepByCode('NOMINEE').fields.find((f) => f.name === 'nominees');
+    const out = validateNominees(req.body?.nominees, field, { applicantPan: decryptField(client.pan) });
+    if (out.problems.length) return res.status(400).json({ error: out.problems[0].message, field: 'nominees', problems: out.problems });
+    nominees = out.nominees;
+  } else if (req.body?.declaration !== true) {
+    /* Annexure-B: the investor's declaration that they understand what opting
+       out means. Online it is shown and agreed; on paper it is signed. */
+    return res.status(400).json({ error: 'An opt-out needs the investor\'s signed or agreed Annexure-B declaration', field: 'declaration' });
+  }
+
+  const recorded = recordNomination({
+    clientId: client.id, org: client.sales_org, kind, nominees, statementShows: shows ?? null,
+    mode, source: 'crm', evidence, userId: req.user.id,
+    contact: { mobile: client.mobile, email: client.email, name: client.name },
+  });
+  return res.status(201).json({ ack_ref: recorded.ack_ref, ack_channels: recorded.ack_channels, nomination: nominationStatus(load(req)).statement_line });
 });
 
 router.post('/:id/reassign', requirePermission('client.reassign'), (req, res) => {

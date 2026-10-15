@@ -54,6 +54,7 @@ export const CAPABILITY_CATALOGUE = [
   ['client.view.own', 'View own clients', 'Clients', 'See only clients they own', 0],
   ['client.edit', 'Edit clients', 'Clients', 'Change servicing detail on an account', 0],
   ['client.reassign', 'Reassign clients', 'Clients', 'Move an account to a different owner', 0],
+  ['client.nomination.prompt', 'Ask whether to show the nomination pop-up', 'Clients', 'For the trading platform\'s API key: whether an account without a nominee sees the pop-up on its first log-in today', 0],
 
 
   // Product cards

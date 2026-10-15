@@ -14,6 +14,7 @@
 import { recordChange } from './metadata.js';
 import { all, one, run } from '../db.js';
 import { encryptField, decryptField, blindIndex } from '../security.js';
+import { carryToClient } from './nominations.js';
 
 /**
  * The segments an account can be enabled for.
@@ -95,6 +96,8 @@ export function convertLead(leadId, {
 
   const clientId = Number(info.lastInsertRowid);
   setSegments(clientId, segments);
+  // The nomination the application made becomes the account's (SEBI, May 2026).
+  carryToClient(leadId, clientId);
 
   // The lead carries the UCC too, so existing screens and the KYC feed keep
   // working unchanged. It is a pointer now, not the definition of a client.

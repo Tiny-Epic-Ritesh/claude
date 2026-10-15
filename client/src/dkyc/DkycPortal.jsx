@@ -424,6 +424,10 @@ function Journey() {
       if (res.penny_drop_failed) {
         setNotice('We could not verify your bank account automatically. Please upload a bank proof and we will verify it manually.');
       }
+      // SEBI, May 2026, 9.3: every nomination or change is acknowledged.
+      if (res.nomination_ack) {
+        setNotice(`Your nomination choice is recorded. Reference ${res.nomination_ack} — we have sent it to your mobile and email too.`);
+      }
     } catch (err) {
       // Every problem at once, so three nominees' mistakes are not found one submit at a time.
       const problems = err.payload?.problems ?? [];

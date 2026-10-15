@@ -883,6 +883,57 @@ CREATE TABLE IF NOT EXISTS kyc_journey_progress (
   UNIQUE (journey_id, step_code)
 );
 
+/* SEBI's nomination circular of 29 May 2026 (Ritesh, 15 Oct: build the
+   firm's obligations in the CRM). Every nomination, change or opt-out is a
+   row, never an edit, so each has its own acknowledgement (9.3) and the
+   record shows what was in force when. Made in an application it belongs to
+   the journey; when the account opens it is carried onto the client. The
+   current one is the latest not superseded. Nominee details are encrypted,
+   and go with the journey or the client they belong to. */
+CREATE TABLE IF NOT EXISTS nominations (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id       INTEGER REFERENCES clients(id) ON DELETE CASCADE,
+  journey_id      INTEGER REFERENCES kyc_journeys(id) ON DELETE CASCADE,
+  sales_org       TEXT NOT NULL,
+  kind            TEXT NOT NULL CHECK (kind IN ('nominated', 'opted_out')),
+  nominees        TEXT,                 -- encrypted JSON; null for an opt-out
+  nominee_count   INTEGER NOT NULL DEFAULT 0,
+  statement_shows TEXT,                 -- names / yes_no (10.1)
+  mode            TEXT NOT NULL,        -- online / physical (6.2)
+  source          TEXT NOT NULL,        -- kyc_journey / crm
+  evidence        TEXT,                 -- the form received, for one recorded in the CRM
+  recorded_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  recorded_at     TEXT NOT NULL DEFAULT (datetime('now')),
+  ack_ref         TEXT,
+  ack_sent_at     TEXT,
+  ack_channels    TEXT,
+  superseded_at   TEXT,
+  CHECK (client_id IS NOT NULL OR journey_id IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS idx_nominations_client ON nominations(client_id);
+CREATE INDEX IF NOT EXISTS idx_nominations_journey ON nominations(journey_id);
+
+/* 10.2(a): twice a year, an SMS and an email to every account without a
+   nomination, opt-outs included. One row per account per half-year. */
+CREATE TABLE IF NOT EXISTS nomination_nudges (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id  INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  period     TEXT NOT NULL,             -- 2026-H2
+  channels   TEXT,
+  sent_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (client_id, period)
+);
+
+/* 10.2(b): the pop-up on the first log-in of the day. The trading platform
+   asks; this remembers it was shown that day. */
+CREATE TABLE IF NOT EXISTS nomination_prompts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id  INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  day        TEXT NOT NULL,             -- the day in India
+  shown_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (client_id, day)
+);
+
 /* ---- Automation, lists, audit --------------------------------------- */
 
 CREATE TABLE IF NOT EXISTS rules (

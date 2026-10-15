@@ -56,6 +56,7 @@ import { tick as automationTick } from './engine/automation.js';
 import { sweepWebhooks } from './engine/webhookdelivery.js';
 import { sweepReminders } from './engine/followups.js';
 import { sweepMetrics } from './engine/metrics.js';
+import { sweepNominationNudges } from './engine/nominations.js';
 import { seedMetadata, seedPicklists } from './engine/metadata.js';
 import { seedRetention, purge } from './engine/logs.js';
 import { sample as sampleDbSize } from './engine/dbsize.js';
@@ -546,6 +547,12 @@ setInterval(() => {
    score overnight. Rebuilding on a schedule is what keeps a derived value
    honest without anyone remembering to refresh it. */
 setInterval(() => { try { sweepMetrics(); } catch (e) { console.error('[metrics]', e.message); } }, 15 * MINUTE);
+
+/* SEBI, May 2026, 10.2(a): accounts without a nomination are reminded twice a
+   year. Hourly, and idempotent per account per half-year, so a restart or a
+   missed hour sends nothing twice; not at start-up, so a restart is not a
+   send. */
+setInterval(() => { try { sweepNominationNudges(); } catch (e) { console.error('[nominations]', e.message); } }, 60 * MINUTE);
 
 /* The access log is a control, not an archive. Rows past the retention window
    go hourly, so the table cannot quietly become a permanent record of every

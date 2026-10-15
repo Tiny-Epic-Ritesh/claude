@@ -16,6 +16,7 @@ import { generateCards } from './crm.js';
 import { leastLoadedRm } from '../engine/assignment.js';
 import * as ai from '../ai/index.js';
 import { kycStatusSql, kycStatusFor } from '../engine/kycstatus.js';
+import { recordNomination } from '../engine/nominations.js';
 
 /* ============================== internal =============================== */
 
@@ -387,6 +388,28 @@ dkyc.post('/resume/:token/step', (req, res) => {
   const outcome = kyc.submitStep(journey.id, step_code, enriched);
   if (outcome.error) return res.status(409).json(outcome);
 
+  /* SEBI, May 2026, 9.3: every nomination, change or opt-out is
+     acknowledged. Re-submitting this step is a change, and is acknowledged
+     again. Online, so validated by the journey's own OTP and eSign (6.2). */
+  let nomination = null;
+  if (step_code === 'NOMINEE') {
+    const f = { ...journey.form, ...values };
+    nomination = recordNomination({
+      journeyId: journey.id,
+      org: journey.product?.sales_org ?? 'BONANZA',
+      kind: values.nominee_opt === 'Opt out' ? 'opted_out' : 'nominated',
+      nominees: values.nominees ?? [],
+      statementShows: values.nominee_statement === 'The names of my nominees' ? 'names' : 'yes_no',
+      mode: 'online',
+      source: 'kyc_journey',
+      contact: {
+        mobile: f.mobile ?? journey.applicant_mobile ?? null,
+        email: f.email ?? journey.applicant_email ?? null,
+        name: [f.first_name, f.last_name].filter(Boolean).join(' ') || null,
+      },
+    });
+  }
+
   // On completion, make sure a CRM lead exists for this applicant.
   if (outcome.done) ensureLead(outcome.journey);
 
@@ -395,6 +418,8 @@ dkyc.post('/resume/:token/step', (req, res) => {
     next_step: outcome.next_step ?? null,
     journey: publicView(outcome.journey),
     penny_drop_failed: enriched.penny_drop_failed === true,
+    // The reference the acknowledgement carries, to show the applicant now.
+    nomination_ack: nomination ? nomination.ack_ref : undefined,
   });
 });
 

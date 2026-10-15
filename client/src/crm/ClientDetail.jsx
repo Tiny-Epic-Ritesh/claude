@@ -16,6 +16,7 @@ import { useParams, Link } from 'react-router-dom';
 import { rupees, rupeesCompact, shortDate, dateTime } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty } from '../components/ui.jsx';
 import BackLink from '../components/BackLink.jsx';
+import { NominationCard } from './Nomination.jsx';
 
 const SEGMENT_BADGE = {
   Equity: 'badge-blue',
@@ -33,9 +34,9 @@ const STATUS_BADGE = {
   Closed: 'badge-red',
 };
 
-export default function ClientDetail() {
+export default function ClientDetail({ session }) {
   const { id } = useParams();
-  const [client, { loading, error }] = useApi(`/clients/${id}`, [id]);
+  const [client, { loading, error, reload }] = useApi(`/clients/${id}`, [id]);
 
   if (loading) return <Loading label="Loading account…" />;
   if (error) return <ErrorBanner error={error} />;
@@ -113,10 +114,11 @@ export default function ClientDetail() {
               <div className="detail-item"><span className="tiny muted">Mobile</span><div>{client.mobile || '—'}</div></div>
               <div className="detail-item"><span className="tiny muted">Email</span><div>{client.email || '—'}</div></div>
               <div className="detail-item"><span className="tiny muted">Risk profile</span><div>{client.risk_profile || '—'}</div></div>
-              <div className="detail-item"><span className="tiny muted">Nominee</span><div>{client.nominee_name || '—'}</div></div>
               <div className="detail-item"><span className="tiny muted">Owner</span><div>{client.owner_name || 'Unassigned'}</div></div>
             </div>
           </div>
+
+          <NominationCard client={client} session={session} onChanged={reload} />
 
           <div className="card">
             <div className="card-head">
