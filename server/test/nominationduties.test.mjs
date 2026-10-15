@@ -22,6 +22,7 @@ import 'dotenv/config';
 import { all, one, run } from '../src/db.js';
 import { convertLead } from '../src/engine/clients.js';
 import { sweepNominationNudges, halfYear } from '../src/engine/nominations.js';
+import { setPolicy } from '../src/engine/policies.js';
 import { issue, revoke } from '../src/engine/apikeys.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
 
@@ -67,9 +68,9 @@ const makeClient = (extra = {}) => {
   seq += 1;
   const id = Number(run(
     `INSERT INTO clients (client_code, name, mobile, email, sales_org, owner_id, nominee_name, status)
-     VALUES (?, ?, ?, ?, 'BONANZA', ?, ?, 'Active')`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'Active')`,
     [`ND${DIGITS}${seq}`, `${MARK} client ${seq}`, `98${DIGITS}${String(seq).padStart(2, '0')}`, `nd${seq}-${RUN}@example.test`,
-      RM.id, extra.nominee_name ?? null],
+      extra.sales_org ?? 'BONANZA', RM.id, extra.nominee_name ?? null],
   ).lastInsertRowid);
   made.clients.push(id);
   return id;
@@ -82,6 +83,18 @@ const dkyc = async (url, body) => {
   const res = await fetch(`${BASE}/dkyc-api${url}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   return { status: res.status, body: await res.json().catch(() => null) };
 };
+
+/* Ritesh, 15 Oct: a switch per business, off by default. Restored to what
+   it was afterwards, so the test leaves the switches as it found them. */
+const SWITCHES = ['nomination_reminders.BONANZA', 'nomination_reminders.BIGUL'];
+const switchesBefore = all(`SELECT key, value, updated_by, updated_at FROM business_policy WHERE key IN (${SWITCHES.map(() => '?').join(',')})`, SWITCHES);
+const restoreSwitches = () => {
+  for (const key of SWITCHES) run('DELETE FROM business_policy WHERE key = ?', [key]);
+  for (const r of switchesBefore) {
+    run('INSERT INTO business_policy (key, value, updated_by, updated_at) VALUES (?,?,?,?)', [r.key, r.value, r.updated_by, r.updated_at]);
+  }
+};
+
 
 try {
   /* --------------------------------------------------------------- 9.3 */
@@ -198,7 +211,33 @@ try {
 
   /* -------------------------------------------------------------- 10.2 */
 
+
+  await test('the reminders are off until an Admin switches them on, one business at a time', async () => {
+    for (const key of SWITCHES) run('DELETE FROM business_policy WHERE key = ?', [key]);
+    try {
+      const listed = (await as(ADMIN)('GET', '/setup/policies')).body.policies.filter((p) => SWITCHES.includes(p.key));
+      assert.equal(listed.length, 2, 'Setup does not offer a switch for each business');
+      assert(listed.every((p) => p.value === false && p.is_default), 'a business is reminded by default');
+
+      const bonanza = makeClient();
+      const bigul = makeClient({ sales_org: 'BIGUL' });
+      const sent = (id) => one('SELECT COUNT(*) n FROM nomination_nudges WHERE client_id = ?', [id]).n;
+      const august = new Date('2026-08-10T06:00:00Z');
+
+      assert.equal(sweepNominationNudges({ now: august, limit: 100000 }).sent, 0, 'reminders went out with both switches off');
+      assert.equal(sent(bonanza) + sent(bigul), 0);
+
+      setPolicy('nomination_reminders.BONANZA', true, ADMIN.id);
+      sweepNominationNudges({ now: august, limit: 100000 });
+      assert.equal(sent(bonanza), 1, 'switched on, Bonanza was not reminded');
+      assert.equal(sent(bigul), 0, 'Bigul was reminded with its own switch off');
+    } finally {
+      restoreSwitches();
+    }
+  });
+
   await test('twice a year, every account without a nomination is reminded -- opt-outs included -- and no other', async () => {
+    setPolicy('nomination_reminders.BONANZA', true, ADMIN.id);
     const none = makeClient();
     const optedOut = makeClient();
     await as(ADMIN)('POST', `/clients/${optedOut}/nominations`, { kind: 'opted_out', mode: 'online', evidence: 'App request, OTP-verified', declaration: true });
@@ -222,6 +261,7 @@ try {
     assert.deepEqual(sent(none).map((s) => s.period).sort(), ['2026-H2', '2027-H1']);
     assert.equal(halfYear(new Date('2026-06-30T20:00:00Z')), '2026-H2', 'the half-year is not counted in India');
     assert.equal(one('SELECT COUNT(*) n FROM activities').n, activitiesBefore, 'a reminder was counted as contact on a timeline');
+    restoreSwitches();
   });
 
   await test('the trading platform asks on each log-in; the pop-up is shown once a day, only without a nomination', async () => {
@@ -257,6 +297,7 @@ try {
     assert(/nomination_ack/.test(source('dkyc/DkycPortal.jsx')));
   });
 } finally {
+  restoreSwitches();
   for (const id of made.keys) { try { revoke(id); } catch { /* gone */ } }
   run('DELETE FROM api_credential WHERE label LIKE ?', [`${MARK}%`]);
   run('DELETE FROM kyc_journeys WHERE lead_id IN (SELECT id FROM leads WHERE name LIKE ?)', [`${MARK}%`]);

@@ -22,9 +22,10 @@
  * has a nomination: the circular keeps existing nominations valid.
  */
 
-import { all, one, run, audit } from '../db.js';
+import { all, one, run, audit, SALES_ORGS } from '../db.js';
 import { encryptField, decryptField } from '../security.js';
 import { send } from '../integrations.js';
+import { policy } from './policies.js';
 
 const BUSINESS = (org) => one('SELECT name, support_phone, support_email FROM sales_orgs WHERE code = ?', [org])
   ?? { name: org === 'BIGUL' ? 'Bigul' : 'Bonanza', support_phone: null, support_email: null };
@@ -201,13 +202,19 @@ export const historyFor = (clientId) => all(
  */
 export function sweepNominationNudges({ now = new Date(), limit = 500 } = {}) {
   const period = halfYear(now);
+  /* Only the businesses whose switch is on (Setup -> Business policies, off
+     by default, Ritesh 15 Oct). An account of a business switched off is not
+     marked as reminded either, so turning it on reminds it that half-year. */
+  const books = SALES_ORGS.filter((org) => policy(`nomination_reminders.${org}`));
+  if (!books.length) return { period, sent: 0, books };
   const due = all(
     `SELECT c.id, c.name, c.mobile, c.email, c.sales_org FROM clients c
       WHERE c.deleted_at IS NULL AND c.status <> 'Closed'
+        AND c.sales_org IN (${books.map(() => '?').join(',')})
         AND NOT ${hasNominationSql('c')}
         AND NOT EXISTS (SELECT 1 FROM nomination_nudges x WHERE x.client_id = c.id AND x.period = ?)
       ORDER BY c.id LIMIT ?`,
-    [period, limit],
+    [...books, period, limit],
   );
   for (const c of due) {
     const brand = BUSINESS(c.sales_org);
@@ -225,7 +232,7 @@ export function sweepNominationNudges({ now = new Date(), limit = 500 } = {}) {
     }
     run('INSERT INTO nomination_nudges (client_id, period, channels) VALUES (?,?,?)', [c.id, period, channels.join(',') || null]);
   }
-  return { period, sent: due.length };
+  return { period, sent: due.length, books };
 }
 
 /**

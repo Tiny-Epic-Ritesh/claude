@@ -158,6 +158,32 @@ export const POLICIES = [
     type: 'bool',
     default: false,
   },
+
+  /* SEBI, May 2026, 10.2(a). Ritesh, 15 Oct: a switch per business, off until
+     an Admin or Superadmin turns it on. A nomination made at the DP or on the
+     trading platform is in the CRM only once staff record it, and the platform
+     is taken to remind clients itself -- on by default, the CRM would tell
+     clients who have a nominee that they have none, or tell them twice. */
+  {
+    key: 'nomination_reminders.BONANZA',
+    area: 'Nominations',
+    label: 'Bonanza: remind accounts without a nominee, twice a year',
+    help: 'On: once each half-year, every open Bonanza account with no nomination recorded in the CRM, opt-outs included, '
+      + 'is sent an SMS and an email asking for one. Off: none is sent. Turn it on once the CRM holds the nominations made '
+      + 'at the DP and on the trading platform, and nobody else is sending the same reminder.',
+    type: 'bool',
+    default: false,
+  },
+  {
+    key: 'nomination_reminders.BIGUL',
+    area: 'Nominations',
+    label: 'Bigul: remind accounts without a nominee, twice a year',
+    help: 'On: once each half-year, every open Bigul account with no nomination recorded in the CRM, opt-outs included, '
+      + 'is sent an SMS and an email asking for one. Off: none is sent. Turn it on once the CRM holds the nominations made '
+      + 'at the DP and on the trading platform, and nobody else is sending the same reminder.',
+    type: 'bool',
+    default: false,
+  },
 ];
 
 export const policyDef = (key) => POLICIES.find((p) => p.key === key) ?? null;

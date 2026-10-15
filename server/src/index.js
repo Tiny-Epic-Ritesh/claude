@@ -557,7 +557,8 @@ setInterval(() => { try { sweepMetrics(); } catch (e) { console.error('[metrics]
 /* SEBI, May 2026, 10.2(a): accounts without a nomination are reminded twice a
    year. Hourly, and idempotent per account per half-year, so a restart or a
    missed hour sends nothing twice; not at start-up, so a restart is not a
-   send. */
+   send. Only for a business whose switch is on in Setup -> Business
+   policies, which it is not until an Admin turns it on (15 Oct). */
 setInterval(() => { try { sweepNominationNudges(); } catch (e) { console.error('[nominations]', e.message); } }, 60 * MINUTE);
 
 /* The access log is a control, not an archive. Rows past the retention window
