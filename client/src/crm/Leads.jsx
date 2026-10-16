@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams, useLocation, Link } from 'react-router-dom';
-import { api, money, shortDate, STATE_LABEL } from '../api.js';
+import { api, money, shortDate, STATE_LABEL, dmy } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty, Modal, Spinner, CardStrip, AgeBadge, kycBadge } from '../components/ui.jsx';
 import ColumnChooser from '../components/ColumnChooser.jsx';
 import ActionMenu, { BulkBar } from '../components/ActionMenu.jsx';
@@ -584,7 +584,6 @@ export default function Leads({ session }) {
 }
 
 /** DD-MM-YYYY, from the YYYY-MM-DD a link carries. */
-const dmy = (d) => (d ? String(d).slice(0, 10).split('-').reverse().join('-') : '');
 
 function NewLead({ meta, mayReassign, onClose, onCreated }) {
   const [form, setForm] = useState({ name: '', mobile: '', email: '', city: '', source: 'Website', risk_profile: 'Moderate', language: 'English', owner_id: '' });

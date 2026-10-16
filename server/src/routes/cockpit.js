@@ -11,8 +11,10 @@
  */
 
 import { Router } from 'express';
+import { breachedSql } from '../engine/sla.js';
+import { istNow } from '../engine/daterange.js';
 import { all, one, daysSince, ageBand, CARD_COLOUR } from '../db.js';
-import { requireUser, leadScope, unmaskRequested, maskFor, activeOrg, orgScope, orgsFor } from '../auth.js';
+import { requireUser, leadScope, unmaskRequested, maskFor, activeOrg, orgScope, orgsFor, journeyScope } from '../auth.js';
 import { maskRecords, withoutPortalSecret } from '../security.js';
 import { maskedFieldsFor } from '../engine/masking.js';
 import { kycHealth } from '../engine/kyc.js';
@@ -373,7 +375,7 @@ const COCKPITS = {
   /* ---- P2: Sales RM -------------------------------------------------- */
   sales_rm: (user, active) => {
     const leads = myLeads(user, active);
-    const journeys = kycHealth().filter((j) => leads.some((l) => l.id === j.lead_id));
+    const journeys = kycHealth(null, null, journeyScope(user, active));   // QA-43: the one rule
     return {
       title: 'Sales RM cockpit',
       subtitle: 'Your book — product states, ageing and what needs moving.',
@@ -501,7 +503,7 @@ const COCKPITS = {
       age_band: ageBand(daysSince(c.lead_created) ?? 0),
     }));
 
-    const journeys = kycHealth(productId);
+    const journeys = kycHealth(productId, null, journeyScope(user, active));   // QA-43
     const count = (state) => cards.filter((c) => c.state === state).length;
 
     return {
@@ -526,7 +528,7 @@ const COCKPITS = {
   /* ---- P3: Product Supervisor ---------------------------------------- */
   product_supervisor: (user, active) => {
     const books = active ? [active] : orgsFor(user);
-    const journeys = kycHealth(null, books);   // OPS-31: the same board, a second door
+    const journeys = kycHealth(null, books, journeyScope(user, active));   // OPS-31, QA-43: the same board, a second door
     /* OPS-32. The rest of the cockpit counted both businesses: the card
        metrics read every product card, and the scorecard listed every Product
        RM. A card's business is its product's, as a journey's is. */
@@ -581,16 +583,26 @@ const COCKPITS = {
       [user.id],
     );
 
+    /* QA-05. Each figure is the person's own -- said on it -- and opens the
+       Cases page on exactly the cases it counts, using the list's own
+       filters, so the two cannot disagree. Days are India days. */
+    const today = istNow().toISOString().slice(0, 10);
+    const mine = (where, params = []) => one(`SELECT COUNT(*) n FROM tickets t WHERE t.assignee_id = ? AND t.merged_into IS NULL AND ${where}`, [user.id, ...params]).n;
+    const OPEN = "t.status NOT IN ('Resolved','Closed')";
     return {
       title: 'Customer Care cockpit',
       subtitle: 'Your ticket queue, breaches first.',
       metrics: [
-        metric('Open assigned', queue.filter((t) => t.status !== 'Resolved').length),
-        metric('Due today', queue.filter((t) => t.resolution_due && String(t.resolution_due).slice(0, 10) === new Date().toISOString().slice(0, 10)).length, null, 'warn'),
-        metric('SLA breached', queue.filter((t) => t.breached).length, 'escalate now', 'danger'),
-        metric('Resolved today', one("SELECT COUNT(*) n FROM tickets WHERE assignee_id = ? AND date(resolved_at, '+330 minutes') = date('now', '+330 minutes')", [user.id]).n, null, 'good'),
-        metric('Waiting on client', queue.filter((t) => t.status === 'Waiting on Client').length),
-        metric('CSAT (rolling)', one("SELECT ROUND(AVG(csat),2) v FROM tickets WHERE assignee_id = ? AND csat IS NOT NULL", [user.id]).v ?? '—'),
+        metric('Open assigned', mine(OPEN), 'Assigned to you', null, '/tickets?view=mine'),
+        metric('Due today', mine(`${OPEN} AND date(t.resolution_due, '+330 minutes') = date(?)`, [today]),
+          'Yours, due by end of today', 'warn', '/tickets?view=mine&due_today=true'),
+        metric('SLA breached', mine(breachedSql('t')), 'Yours · escalate now', 'danger', '/tickets?view=mine&breached=true'),
+        metric('Resolved today', mine("date(t.resolved_at, '+330 minutes') = date(?)", [today]), 'Resolved by you today', 'good',
+          `/tickets?view=all&mine=true&resolved_from=${today}&resolved_to=${today}`),
+        metric('Waiting on client', mine("t.status = 'Waiting on Client'"), 'Yours, paused', null,
+          `/tickets?view=mine&status=${encodeURIComponent('Waiting on Client')}`),
+        metric('CSAT (rolling)', one('SELECT ROUND(AVG(csat),2) v FROM tickets WHERE assignee_id = ? AND csat IS NOT NULL', [user.id]).v ?? '—',
+          'Your rated cases', null, '/tickets?view=all&mine=true&rated=true'),
       ],
       worklist: { type: 'tickets', title: 'Ticket queue', rows: queue },
       actions: ['Open ticket', 'Reply', 'Reassign', 'Escalate', 'Mark resolved', 'Waiting on client', 'Merge', 'Send CSAT'],

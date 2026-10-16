@@ -1043,10 +1043,11 @@ export function assist(journeyId, userId) {
 }
 
 /** KYC health across all live journeys — feeds the Product Supervisor cockpit. */
-export function kycHealth(productTypeId = null, books = null) {
+export function kycHealth(productTypeId = null, books = null, scope = null) {
   /* OPS-31. Given the reader's books, only journeys in them: a journey's book
      is its product's. Without, every journey, for callers that filter by a
-     scope of their own. */
+     scope of their own. QA-43: `scope` is the reader's journey scope
+     (auth.js journeyScope), the same rule the detail applies. */
   const where = [];
   const params = [];
   if (productTypeId) { where.push('j.product_type_id = ?'); params.push(productTypeId); }
@@ -1054,6 +1055,7 @@ export function kycHealth(productTypeId = null, books = null) {
     where.push(books.length ? `p.sales_org IN (${books.map(() => '?').join(',')})` : '1 = 0');
     params.push(...books);
   }
+  if (scope) { where.push(scope.sql); params.push(...scope.params); }
   const rows = all(`
     SELECT j.*, p.name AS product_name, l.name AS lead_name, u.name AS product_rm_name
     FROM kyc_journeys j

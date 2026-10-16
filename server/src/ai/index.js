@@ -7,7 +7,7 @@
  */
 
 import { all, one, daysSince, ageBand } from '../db.js';
-import { leadScope, orgsFor } from '../auth.js';
+import { leadScope, orgsFor, journeyScope } from '../auth.js';
 import { withoutPortalSecret } from '../security.js';
 import * as mock from './mock.js';
 import { withResidency, routeFor, residencyReport, MODE } from './residency.js';
@@ -137,9 +137,11 @@ export function copilotSnapshot(user) {
     ? all("SELECT * FROM tickets WHERE assignee_id = ? AND status NOT IN ('Resolved','Closed') ORDER BY breached DESC, resolution_due", [user.id])
     : all(`SELECT * FROM tickets WHERE lead_id IN ${inClause} AND status NOT IN ('Resolved','Closed')`, leadIds);
 
-  const journeys = kycHealth(user.role === 'product_rm' ? user.product_type_id : null)
-    .filter((j) => j.status !== 'Complete')
-    .filter((j) => user.role === 'product_rm' || !leadIds.length || j.lead_id === null || leadIds.includes(j.lead_id));
+  /* QA-43: the reader's journeys by the one rule. This kept every journey in
+     both businesses for anyone with no leads of their own, and every journey
+     without a lead for everyone. */
+  const journeys = kycHealth(user.role === 'product_rm' ? user.product_type_id : null, null, journeyScope(user))
+    .filter((j) => j.status !== 'Complete');
 
   const tasks = all(
     "SELECT t.*, l.name AS lead_name FROM tasks t LEFT JOIN leads l ON l.id = t.lead_id WHERE t.assignee_id = ? AND t.status = 'Open' ORDER BY t.due_at LIMIT 20",

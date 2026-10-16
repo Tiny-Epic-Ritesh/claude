@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api, money, rupees, shortDate, dateTime } from '../api.js';
+import { api, money, rupees, shortDate, dateTime, monthYear } from '../api.js';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Progress, Tabs } from '../components/ui.jsx';
 import BackLink from '../components/BackLink.jsx';
 import { CorrectionList, CorrectButton, correctedStyle } from '../components/Corrections.jsx';
@@ -480,7 +480,7 @@ export default function PartnerProfile({ session }) {
               <tbody>
                 {partner.commissions.map((c) => (
                   <tr key={c.id}>
-                    <td>{c.period}</td>
+                    <td>{monthYear(c.period)}</td>
                     <td className="small">{c.product_name || '—'}</td>
                     <td className="num">{rupees(c.gross)}</td>
                     <td className="num" style={{ fontWeight: 600 }}>{rupees(c.payout)}</td>

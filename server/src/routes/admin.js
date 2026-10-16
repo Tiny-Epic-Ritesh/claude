@@ -4,6 +4,7 @@
  */
 
 import express, { Router } from 'express';
+import { dmy } from '../engine/daterange.js';
 import { all, one, run, audit, ROLES, ROLE_LABELS } from '../db.js';
 import { requireUser, requirePermission, requireAnyPermission, permissionsFor, orgsFor, activeOrg, mayUseOrg, mayUnmask, PERMISSIONS } from '../auth.js';
 import { fill, maskedTokens } from '../engine/mergefields.js';
@@ -2299,7 +2300,7 @@ router.patch('/calendars/:kind', requirePermission('admin.sla'), (req, res) => {
 
 router.post('/calendars/:kind/days', requirePermission('admin.sla'), (req, res) => {
   if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.on_date)) && !isFutureDate(req.body.on_date)) {
-    return res.status(409).json({ error: `${req.body.on_date} has begun or passed. Only future days can be added.`, field: 'on_date' });
+    return res.status(409).json({ error: `${dmy(req.body.on_date)} has begun or passed. Only future days can be added.`, field: 'on_date' });
   }
   const out = addDay(req.params.kind, req.body ?? {});
   if (!out.ok) return res.status(400).json(out);
@@ -2314,7 +2315,7 @@ router.delete('/calendars/days/:id', requirePermission('admin.sla'), (req, res) 
   const day = one('SELECT * FROM calendar_days WHERE id = ?', [Number(req.params.id)]);
   if (!day) return res.status(404).json({ error: 'No such day' });
   if (!isFutureDate(day.on_date)) {
-    return res.status(409).json({ error: `${day.on_date} has begun or passed, so it stays on the calendar. Only future days can be removed.` });
+    return res.status(409).json({ error: `${dmy(day.on_date)} has begun or passed, so it stays on the calendar. Only future days can be removed.` });
   }
   removeDay(day.id);
   audit(req.user.id, 'calendar_day_removed', 'calendar', day.id, { on_date: day.on_date, name: day.name });

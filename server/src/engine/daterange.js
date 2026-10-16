@@ -139,6 +139,31 @@ export function financialFYQuarterStart(d) {
  * `date(x, '+330 minutes')`, the IST date of a UTC timestamp, which leaves a
  * date-only value as it is.
  */
+/**
+ * The display format (QA-17, ruled 15 Oct): 15-10-2026, and 15-10-2026 14:30
+ * IST with a time -- for the messages the server writes for people to read.
+ * A bare day ("2026-10-15") is printed as that day.
+ */
+const two = (n) => String(n).padStart(2, '0');
+export function dmy(value) {
+  if (!value) return '';
+  const raw = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw.split('-').reverse().join('-');
+  const d = new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw) ? raw.replace(' ', 'T') : `${raw.replace(' ', 'T')}Z`);
+  if (Number.isNaN(d.getTime())) return raw;
+  const t = istNow(d);
+  return `${two(t.getUTCDate())}-${two(t.getUTCMonth() + 1)}-${t.getUTCFullYear()}`;
+}
+export function dmyTime(value) {
+  if (!value) return '';
+  const raw = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return dmy(raw);
+  const d = new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw) ? raw.replace(' ', 'T') : `${raw.replace(' ', 'T')}Z`);
+  if (Number.isNaN(d.getTime())) return raw;
+  const t = istNow(d);
+  return `${dmy(raw)} ${two(t.getUTCHours())}:${two(t.getUTCMinutes())} IST`;
+}
+
 export const istDayStartUtc = (day) => new Date(new Date(`${day}T00:00:00Z`).getTime() - IST_OFFSET_MIN * 60_000)
   .toISOString().slice(0, 19).replace('T', ' ');
 

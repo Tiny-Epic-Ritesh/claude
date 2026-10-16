@@ -217,15 +217,56 @@ export const parseTs = (s) => {
   return Number.isNaN(d.getTime()) ? null : d;
 };
 
-export const shortDate = (s) => {
-  const d = parseTs(s);
-  return d ? d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : (s || '—');
+/**
+ * Dates as the business reads them (QA-17, ruled 15 Oct 2026): 15-10-2026, and
+ * with a time 15-10-2026 14:30 IST -- 24-hour, in India, whatever the
+ * browser's own zone. One formatter, so a list, a toast and a timeline cannot
+ * each say the same moment differently. Storage and the API stay ISO.
+ *
+ * A bare calendar date (a holiday, a due date, an IPO's close) is a day, not a
+ * moment: it is printed as the day it names. parseTs read one as a broken
+ * timestamp and handed back the raw string, which is why the calendar and the
+ * holiday list showed ISO.
+ */
+const IST_MS = 330 * 60_000;
+const two = (n) => String(n).padStart(2, '0');
+const DAY_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+const istParts = (d) => {
+  const t = new Date(d.getTime() + IST_MS);
+  return { dd: two(t.getUTCDate()), mm: two(t.getUTCMonth() + 1), yyyy: t.getUTCFullYear(), hh: two(t.getUTCHours()), mi: two(t.getUTCMinutes()) };
 };
 
-export const dateTime = (s) => {
-  const d = parseTs(s);
-  return d ? d.toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : (s || '—');
+/** 15-10-2026 */
+export const dmy = (s) => {
+  if (!s) return '—';
+  const raw = String(s).trim();
+  if (DAY_ONLY.test(raw)) return raw.split('-').reverse().join('-');
+  const d = parseTs(raw);
+  if (!d) return raw;
+  const p = istParts(d);
+  return `${p.dd}-${p.mm}-${p.yyyy}`;
 };
+
+/** 15-10-2026 14:30 IST */
+export const dmyTime = (s) => {
+  if (!s) return '—';
+  const raw = String(s).trim();
+  if (DAY_ONLY.test(raw)) return dmy(raw);
+  const d = parseTs(raw);
+  if (!d) return raw;
+  const p = istParts(d);
+  return `${p.dd}-${p.mm}-${p.yyyy} ${p.hh}:${p.mi} IST`;
+};
+
+/** 10-2026, for a month such as a commission period ("2026-10"). */
+export const monthYear = (s) => (/^\d{4}-\d{2}$/.test(String(s ?? '')) ? String(s).split('-').reverse().join('-') : (s || '—'));
+
+/** Today in India, as an ISO day -- for a default date range or a link. */
+export const istToday = (offsetDays = 0) => new Date(Date.now() + IST_MS + offsetDays * 86_400_000).toISOString().slice(0, 10);
+
+// The two names every screen already uses, now saying the one format.
+export const shortDate = dmy;
+export const dateTime = dmyTime;
 
 export const mins = (seconds) => {
   const s = Number(seconds || 0);

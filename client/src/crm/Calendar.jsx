@@ -14,7 +14,7 @@
 
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { api, dateTime } from '../api.js';
+import { api, dateTime, dmy } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty } from '../components/ui.jsx';
 
 const KIND = {
@@ -29,7 +29,7 @@ const dayLabel = (iso) => {
   const d = new Date(`${iso}T00:00:00`);
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const diff = Math.round((d - today) / 864e5);
-  const name = d.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short' });
+  const name = `${d.toLocaleDateString('en-IN', { weekday: 'long' })}, ${dmy(iso)}`;   // QA-17
   if (diff === 0) return `Today · ${name}`;
   if (diff === 1) return `Tomorrow · ${name}`;
   return name;

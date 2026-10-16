@@ -7292,3 +7292,11 @@ a.msg-chip:hover { color: var(--ink); border-color: var(--accent); }
 .msg-search-box:focus-within { border-color: var(--accent); }
 .msg-search-results { max-height: 320px; }
 .msg-search-snippet { color: var(--ink-2); white-space: normal; overflow-wrap: anywhere; }
+
+/* QA-25. The Copilot docks over the right of the page, and on Customer Care's
+   Home it covered the last figures in each row. Where there is room the page
+   makes room: the content narrows by the drawer's width and the grids reflow.
+   Below that width the drawer overlays, as any overlay does, and closes. */
+@media (min-width: 1100px) {
+  .main-content.with-copilot { padding-right: min(420px, 100vw); }
+}

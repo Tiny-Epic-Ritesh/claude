@@ -24,7 +24,7 @@
  */
 
 import { useState } from 'react';
-import { api } from '../api.js';
+import { api, dmy } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Modal, Spinner, Empty } from '../components/ui.jsx';
 
 export default function Telephony() {
@@ -161,7 +161,7 @@ function Credentials({ rows, onSaved, onError }) {
                   {' '}
                   {r.from_environment
                     ? '· Currently coming from the server environment; anything you save here replaces it.'
-                    : `· Stored${r.updated_by_name ? ` by ${r.updated_by_name}` : ''}${r.updated_at ? ` on ${r.updated_at.slice(0, 10)}` : ''}.`}
+                    : `· Stored${r.updated_by_name ? ` by ${r.updated_by_name}` : ''}${r.updated_at ? ` on ${dmy(r.updated_at)}` : ''}.`}
                 </>
               )}
             </span>

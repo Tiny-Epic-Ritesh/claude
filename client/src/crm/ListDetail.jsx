@@ -138,7 +138,7 @@ export default function ListDetail({ session }) {
     setProblem(null);
     try {
       const r = await api.post(`/lists/${list.id}/restore`);
-      setDone(r.expiry_renewed ? `Restored. Its expiry had passed, so it now lapses on ${r.expires_at}.` : 'Restored.');
+      setDone(r.expiry_renewed ? `Restored. Its expiry had passed, so it now lapses on ${dateTime(r.expires_at)}.` : 'Restored.');
       reload();
     } catch (err) { setProblem(err.message); }
   }

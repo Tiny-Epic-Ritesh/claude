@@ -23,6 +23,7 @@
  */
 
 import { all, one, run, audit, SALES_ORGS } from '../db.js';
+import { dmy } from './daterange.js';
 import { encryptField, decryptField } from '../security.js';
 import { send } from '../integrations.js';
 import { policy } from './policies.js';
@@ -52,7 +53,7 @@ const readNominees = (row) => {
 function acknowledge(row, { mobile, email, name }) {
   const brand = BUSINESS(row.sales_org);
   const ref = `NOM-${row.sales_org === 'BIGUL' ? 'G' : 'B'}-${String(row.id).padStart(6, '0')}`;
-  const when = new Date(`${row.recorded_at.replace(' ', 'T')}Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
+  const when = dmy(row.recorded_at);   // QA-17
   const what = row.kind === 'opted_out'
     ? 'your choice not to nominate anyone'
     : `your nomination of ${row.nominee_count} nominee${row.nominee_count === 1 ? '' : 's'}`;

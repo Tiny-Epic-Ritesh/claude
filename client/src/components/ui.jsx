@@ -62,15 +62,24 @@ export function useDismiss(open, close) {
 
     /* mousedown rather than click: a click fires after the trigger that opened
        the popover has been released, so on a toggling trigger the same gesture
-       would close it and immediately reopen it. */
+       would close it and immediately reopen it.
+
+       QA-18: pointerdown, in the capture phase. A press on something that
+       stops its own event from bubbling -- an editor toolbar, the flow canvas
+       -- never reached a bubbling listener, so the popover stayed open; and
+       pointerdown is the same press from a finger or a pen. Leaving the window
+       closes it as well. */
     const onDown = (e) => { if (!ref.current?.contains(e.target)) close(); };
     const onKey = (e) => { if (e.key === 'Escape') close(); };
+    const onBlur = () => close();
 
-    document.addEventListener('mousedown', onDown);
+    document.addEventListener('pointerdown', onDown, true);
     document.addEventListener('keydown', onKey);
+    window.addEventListener('blur', onBlur);
     return () => {
-      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('pointerdown', onDown, true);
       document.removeEventListener('keydown', onKey);
+      window.removeEventListener('blur', onBlur);
     };
   }, [open, close]);
 

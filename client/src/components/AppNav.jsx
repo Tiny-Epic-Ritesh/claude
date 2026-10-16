@@ -13,7 +13,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { api, ROLE_LABEL } from '../api.js';
 import { Icon, Avatar, useDismiss } from './ui.jsx';
 
@@ -23,6 +23,9 @@ export function AppLauncher({ apps = [], activeApp, onPick }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const wrap = useDismiss(open, () => setOpen(false));
+  // QA-18: going somewhere else -- a link, Back, a figure clicked -- closes it too.
+  const { pathname } = useLocation();
+  useEffect(() => { setOpen(false); }, [pathname]);
 
   const term = q.trim().toLowerCase();
   const matches = (t) => !term || t.label.toLowerCase().includes(term);

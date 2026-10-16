@@ -3179,7 +3179,9 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
     eq(data.follow_up.auto_created, 1, 'task should be marked auto-created');
     eq(data.follow_up.status, 'Open', 'task should be open');
     assert(data.follow_up.assignee_id, 'the task has no owner');
-    assert(data.confirmation.includes(data.follow_up.due_at), 'the rep is not told what was committed');
+    // QA-17: said as the rep reads dates -- 15-10-2026 14:30 IST -- not as stored.
+    const { dmyTime } = await import('../src/engine/daterange.js');
+    assert(data.confirmation.includes(dmyTime(data.follow_up.due_at)), `the rep is not told what was committed: ${data.confirmation}`);
 
     REF.followUpTaskId = data.follow_up.id;
     REF.callActivityId = data.activity.id;

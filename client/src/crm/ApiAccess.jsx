@@ -20,7 +20,7 @@
  */
 
 import { useState } from 'react';
-import { api } from '../api.js';
+import { api, dmyTime } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Modal, Spinner, Empty } from '../components/ui.jsx';
 
 export default function ApiAccess() {
@@ -137,7 +137,7 @@ export default function ApiAccess() {
                   <td className="num small">{c.calls}</td>
                   <td className="small">
                     {c.last_used_at
-                      ? String(c.last_used_at).slice(0, 16)
+                      ? dmyTime(c.last_used_at)
                       /* Worth calling out. A credential nobody has used is one
                          nobody will miss, and revoking it costs nothing. */
                       : <span className="warn-text">never</span>}

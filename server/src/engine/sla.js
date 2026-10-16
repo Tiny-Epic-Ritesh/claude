@@ -103,6 +103,17 @@ export function applySla(ticketId) {
 }
 
 /**
+ * What "SLA breached" means, everywhere it is counted or listed (QA-05).
+ *
+ * An open case the sweep has flagged as past its resolution deadline. The
+ * Home tile added cases merely past due -- paused ones waiting on the client
+ * included, which the sweep rightly leaves alone -- while the Breached tab
+ * and the team summary counted every case ever flagged, resolved ones too.
+ * The sweep runs every minute, so this is current to the minute.
+ */
+export const breachedSql = (a = 't') => `(${a}.breached = 1 AND ${a}.status NOT IN ('Resolved','Closed') AND ${a}.merged_into IS NULL)`;
+
+/**
  * Sweep open tickets, flag breaches and escalate up the hierarchy.
  * Called on a timer by the server and on demand from the ticket routes.
  */

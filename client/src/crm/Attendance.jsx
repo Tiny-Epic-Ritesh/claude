@@ -19,7 +19,7 @@
  */
 
 import { useState } from 'react';
-import { api, dateTime } from '../api.js';
+import { api, dateTime, istToday } from '../api.js';
 import { useApi, Icon, Modal, Spinner, ErrorBanner } from '../components/ui.jsx';
 
 /** "7h 20m" — hours people can read, not a decimal they have to convert. */
@@ -162,8 +162,9 @@ export default function Attendance() {
  * nobody wonders whether they are looking at everybody.
  */
 export function AttendanceReport() {
-  const today = new Date().toISOString().slice(0, 10);
-  const monthAgo = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
+  // India days, as the report counts them (OPS-34).
+  const today = istToday();
+  const monthAgo = istToday(-29);
 
   const [from, setFrom] = useState(monthAgo);
   const [to, setTo] = useState(today);

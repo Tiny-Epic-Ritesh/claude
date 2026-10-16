@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, money, rupees, shortDate, dateTime, mins, STATE_LABEL, ROLE_LABEL, appUrl } from '../api.js';
+import { api, money, rupees, shortDate, dateTime, mins, STATE_LABEL, ROLE_LABEL, appUrl, dmy } from '../api.js';
 import { checkField, checkAll, fieldErrorsFrom } from '../fieldRules.js';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, AgeBadge, PriorityBadge, Progress, CardDot, Icon, kycBadge } from '../components/ui.jsx';
 import ActivityComposer from './ActivityComposer.jsx';
@@ -977,7 +977,7 @@ function JourneyCard({ journey, canManage, onError, reload, setCoach, busy, setB
               </p>
               <p className="tiny muted">
                 {full.objection_source === 'portal' ? 'Raised by the eKYC portal' : 'Raised at Bonanza'}
-                {full.objection_at ? ` on ${full.objection_at.slice(0, 10)}` : ''}
+                {full.objection_at ? ` on ${dmy(full.objection_at)}` : ''}
                 {full.objection_rounds > 1 ? ` · round ${full.objection_rounds}` : ''}
                 {'. '}
                 This is not a rejection — the application comes back for checking once it is corrected.
@@ -999,7 +999,7 @@ function JourneyCard({ journey, canManage, onError, reload, setCoach, busy, setB
               <p>
                 The applicant has finished everything they own. This application is
                 {here?.waiting_on ? ` with ${here.waiting_on}` : ' being verified'}
-                {full.verification_at ? ` since ${full.verification_at.slice(0, 10)}` : ''}.
+                {full.verification_at ? ` since ${dmy(full.verification_at)}` : ''}.
               </p>
               {canManage && (
                 <div className="row" style={{ gap: 8, marginTop: 8 }}>

@@ -15,6 +15,7 @@
  */
 
 import { all, one, run, audit, notify } from '../db.js';
+import { dmyTime } from './daterange.js';
 import { send } from '../integrations.js';
 import { nextWorkingTime } from './calendar.js';
 
@@ -192,12 +193,12 @@ export function sweepReminders() {
         send('email', {
           to: r.user_email,
           subject: `Follow-up due: ${r.lead_name ?? ''}`.trim(),
-          body: `${r.title ?? r.detail}\n\nDue ${r.task_due}.\n\nOpen the CRM to log the outcome.`,
+          body: `${r.title ?? r.detail}\n\nDue ${dmyTime(r.task_due)}.\n\nOpen the CRM to log the outcome.`,
         });
       } else if (r.channel === 'whatsapp' && r.whatsapp) {
         send('whatsapp', {
           to: r.whatsapp,
-          body: `Reminder: ${r.title ?? r.detail} (due ${r.task_due})`,
+          body: `Reminder: ${r.title ?? r.detail} (due ${dmyTime(r.task_due)})`,
         });
       } else if (r.channel === 'manager') {
         // Escalation only matters if it is genuinely still open and overdue.

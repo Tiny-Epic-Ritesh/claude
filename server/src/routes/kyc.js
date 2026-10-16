@@ -8,7 +8,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit } from '../db.js';
-import { requireUser, requirePermission, reqScope, maskFor, orgsFor, activeOrg } from '../auth.js';
+import { requireUser, requirePermission, reqScope, maskFor, orgsFor, activeOrg, reqJourneyScope } from '../auth.js';
 import { maskRecord, maskRecords } from '../security.js';
 import * as kyc from '../engine/kyc.js';
 import { digilockerFetch, pennyDrop, esign, sendOtp, verifyOtp, DEMO_OTP } from '../integrations.js';
@@ -32,23 +32,27 @@ internal.get('/health', requirePermission('kyc.view'), (req, res) => {
   const productId = req.query.product_id || (req.user.role === 'product_rm' ? req.user.product_type_id : null);
   const books = activeOrg(req) ? [activeOrg(req)] : orgsFor(req.user);
   // QA-06: applicant_mobile and applicant_email were in the clear for every reader.
-  res.json(maskRecords(kyc.kycHealth(productId ? Number(productId) : null, books), maskFor(req, 'kyc_health')));
+  res.json(maskRecords(kyc.kycHealth(productId ? Number(productId) : null, books, reqJourneyScope(req)), maskFor(req, 'kyc_health')));
 });
+
+/* QA-43. A journey by id, under the one rule the board lists by -- so what
+   the board lists opens, and what it does not list does not. */
+const journeyVisible = (req, id) => {
+  const scope = reqJourneyScope(req);
+  return Boolean(one(
+    `SELECT 1 v FROM kyc_journeys j LEFT JOIN product_types p ON p.id = j.product_type_id WHERE j.id = ? AND ${scope.sql}`,
+    [Number(id) || -1, ...scope.params],
+  ));
+};
 
 internal.get('/journeys/:id', (req, res) => {
   const journey = kyc.getJourney(Number(req.params.id));
   if (!journey) return res.status(404).json({ error: 'Journey not found' });
 
-  /* A journey inherits its book from the lead it belongs to.
-   *
-   * This one matters more than the rest: the record carries resume_token, the
+  /* This one matters more than the rest: the record carries resume_token, the
    * bearer token an applicant uses to re-enter their own KYC on the public
    * portal. Handing that across the book boundary hands over the journey. */
-  const scope = reqScope(req, 'l');
-  const visible = journey.lead_id
-    ? one(`SELECT 1 v FROM leads l WHERE l.id = ? AND ${scope.sql}`, [journey.lead_id, ...scope.params])
-    : null;
-  if (!visible) return res.status(403).json({ error: 'This journey is outside your visibility scope' });
+  if (!journeyVisible(req, journey.id)) return res.status(403).json({ error: 'This journey is outside your visibility scope' });
 
   /* QA-06. The applicant's contact details, and the form they filled in --
      mobile, email, PAN, account number -- under the reader's masking, and
@@ -120,6 +124,9 @@ internal.post('/journeys', requirePermission('kyc.manage'), (req, res) => {
 });
 
 internal.post('/journeys/:id/assist', requirePermission('kyc.manage'), (req, res) => {
+  // N-12's named case: taking over the other business's application.
+  if (!kyc.getJourney(Number(req.params.id))) return res.status(404).json({ error: 'Journey not found' });
+  if (!journeyVisible(req, req.params.id)) return res.status(403).json({ error: 'This journey is outside your visibility scope' });
   res.json(kyc.assist(Number(req.params.id), req.user.id));
 });
 
@@ -195,6 +202,9 @@ internal.post('/journeys/:id/verification', requirePermission('kyc.manage'), (re
 
 /** Product Supervisor override — force a step complete or reset the journey. */
 internal.post('/journeys/:id/override', requirePermission('kyc.override'), (req, res) => {
+  // N-12's named case: forcing a step on the other business's application.
+  if (!kyc.getJourney(Number(req.params.id))) return res.status(404).json({ error: 'Journey not found' });
+  if (!journeyVisible(req, req.params.id)) return res.status(403).json({ error: 'This journey is outside your visibility scope' });
   const { step_code, action = 'complete' } = req.body;
   if (action === 'complete') {
     run("UPDATE kyc_journey_progress SET status = 'done', completed_at = datetime('now') WHERE journey_id = ? AND step_code = ?", [req.params.id, step_code]);
@@ -215,11 +225,7 @@ internal.get('/journeys/:id/coach', async (req, res, next) => {
      * fixed. The coaching text quotes the applicant's stalled step and what to
      * say to them, so it describes the journey even though it does not return
      * the record. */
-    const scope = reqScope(req, 'l');
-    const visible = journey.lead_id
-      ? one(`SELECT 1 v FROM leads l WHERE l.id = ? AND ${scope.sql}`, [journey.lead_id, ...scope.params])
-      : null;
-    if (!visible) return res.status(403).json({ error: 'This journey is outside your visibility scope' });
+    if (!journeyVisible(req, journey.id)) return res.status(403).json({ error: 'This journey is outside your visibility scope' });
 
     res.json(await ai.kycCoach({
       product_name: journey.product?.name,

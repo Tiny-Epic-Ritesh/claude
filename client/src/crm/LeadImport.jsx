@@ -18,7 +18,7 @@
  */
 
 import { useMemo, useState } from 'react';
-import { api } from '../api.js';
+import { api, dmy, dmyTime, istToday } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty, Spinner } from '../components/ui.jsx';
 
 /* ------------------------------------------------------------ CSV parsing */
@@ -340,7 +340,7 @@ export default function LeadImport({ session }) {
                   <input
                     value={listName}
                     onChange={(e) => setListName(e.target.value)}
-                    placeholder={`Imported ${new Date().toLocaleDateString('en-IN')}`}
+                    placeholder={`Imported ${dmy(istToday())}`}
                   />
                   <p className="hint">Leave blank and the leads go into your book without a list.</p>
                 </div>
@@ -582,7 +582,7 @@ function PastRuns({ runs }) {
                   <tr key={r.id}>
                     <td>
                       {r.filename || <em className="muted">unnamed</em>}
-                      <div className="tiny muted">{r.created_at} · {r.user_name}</div>
+                      <div className="tiny muted">{dmyTime(r.created_at)} · {r.user_name}</div>
                     </td>
                     <td className="num">{r.created}</td>
                     <td className="num">{r.updated}</td>

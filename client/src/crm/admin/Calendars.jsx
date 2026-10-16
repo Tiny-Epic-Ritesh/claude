@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api } from '../../api.js';
+import { api, dmy } from '../../api.js';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Icon } from '../../components/ui.jsx';
 
 /*
@@ -79,7 +79,7 @@ export function Calendars() {
                     <div>
                       <strong>{d.name}</strong>
                       <div className="tiny muted">
-                        {d.on_date}
+                        {dmy(d.on_date)}
                         {d.source === 'seed' && ' · shipped'}
                       </div>
                     </div>

@@ -17,6 +17,7 @@
  */
 
 import { Router } from 'express';
+import { dmyTime } from '../engine/daterange.js';
 import { all, one, run, audit } from '../db.js';
 import { requireUser, requirePermission, reqScope, mayUseOrg } from '../auth.js';
 import { validate } from '../security.js';
@@ -342,7 +343,7 @@ router.post('/', requirePermission('lead.contact'), (req, res) => {
     score_delta: scoreDelta,
     // The rep should see exactly what the system committed them to.
     confirmation: followUp
-      ? `${followUp.title} — ${followUp.due_at}`
+      ? `${followUp.title} — ${dmyTime(followUp.due_at)}`   // QA-17
       : 'Logged. No follow-up was required for this outcome.',
   });
 });

@@ -417,6 +417,18 @@ export function attachSession(req, _res, next) {
   if (!token) {
     const keyId = req.get('x-api-key');
     const secret = req.get('x-api-secret');
+    /* QA-12 (ruled 15 Oct). A key sent over plain http crossed the network in
+       the clear. Only the proxy knows the scheme, and says so in
+       X-Forwarded-Proto; when it says http the key is refused, and its owner
+       told to rotate it. Without the header nothing changes -- the CRM cannot
+       tell, and refusing on a guess would refuse every key. */
+    const scheme = String(req.get('x-forwarded-proto') ?? '').split(',')[0].trim().toLowerCase();
+    if (keyId && scheme === 'http') {
+      return _res.status(403).json({
+        error: 'API keys are accepted over HTTPS only. This key was sent over plain HTTP, so treat its secret as exposed and rotate it in Setup -> API & logs.',
+        code: 'insecure_transport',
+      });
+    }
     if (keyId && secret) {
       const auth = authenticateKey(keyId, secret);
       if (auth) {
@@ -637,6 +649,28 @@ export function leadScope(user, alias = 'l', active = null) {
  * grant-only layers, then org entitlement ANDed on top. A rule that reads the
  * same as the lead rule is a rule an administrator can reason about.
  */
+/**
+ * Which KYC journeys this person may see (QA-43).
+ *
+ * The board listed every journey in the reader's businesses while the detail
+ * opened one only if the reader could see its lead, so a Sales RM, a Caller or
+ * a Partner RM was listed journeys it was then refused. One rule now, for the
+ * board, every cockpit, the detail, the coach and the writes: the product in
+ * the reader's books (OPS-31), and the journey's lead one the reader may see.
+ * A journey with no lead yet -- started on the public page -- is seen by those
+ * who see every lead in the business, and by nobody else.
+ */
+export function journeyScope(user, active = null, j = 'j', p = 'p') {
+  const books = active ? [active] : orgsFor(user);
+  const lead = leadScope(user, 'jl', active);
+  return {
+    sql: `(${p}.sales_org IN (${books.map(() => '?').join(',') || "''"})
+      AND ((${j}.lead_id IS NOT NULL AND EXISTS (SELECT 1 FROM leads jl WHERE jl.id = ${j}.lead_id AND jl.deleted_at IS NULL AND ${lead.sql}))
+        OR (${j}.lead_id IS NULL AND ${userCan(user, 'lead.view.all') ? '1=1' : '1=0'})))`,
+    params: [...books, ...lead.params],
+  };
+}
+
 export function clientScope(user, alias = 'c', active = null) {
   if (keyBlind(user, 'client.view.all', 'client.view.own')) return nothing();
   const org = orgScope(user, alias, active);
@@ -944,6 +978,7 @@ export const reqScope = (req, alias = 'l') => leadScope(req.user, alias, activeO
 
 /** The same, for clients. Bigul users never see Bonanza accounts, and back. */
 export const reqClientScope = (req, alias = 'c') => clientScope(req.user, alias, activeOrg(req));
+export const reqJourneyScope = (req, j = 'j', p = 'p') => journeyScope(req.user, activeOrg(req), j, p);
 
 /**
  * The same, for cases.

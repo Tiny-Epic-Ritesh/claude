@@ -1,0 +1,116 @@
+
+Round 4, batch one: QA-05, 12, 17, 18, 22, 25, 43
+  FAIL QA-05: every Customer Care figure links to the cases it counts, and the counts agree
+       "Open assigned" does not link to its cases
+  FAIL QA-05: Home's case tiles name their view, and "breached" means one thing
+       Home's SLA breached tile does not name its view
+  FAIL QA-05: the Cases page reads the linked filters and shows them as chips (source check)
+       the Cases page ignores due_today
+  FAIL QA-12: a key sent over plain http is refused when the proxy says so, and only then
+       Expected values to be strictly equal:
+
+401 !== 403
+
+  FAIL QA-17: one format -- 15-10-2026, and 15-10-2026 14:30 IST
+       a bare day is not printed as the day it names
++ actual - expected
+
++ 'no formatter'
+- '15-10-2026'
+
+  FAIL QA-18: Marketing is not offered the Service Console; Customer Care is
+       Marketing is offered the Service Console
+  FAIL QA-18: the launcher closes on any press outside it, and on navigating (source check)
+       outside presses are not caught before the page can swallow them
+  FAIL QA-22: a headline says its source and its date, and that it is a sample (source check)
+       a headline does not carry its source and date
+  FAIL QA-25: the page makes room for the Copilot where there is room (source check)
+       the page is not told the Copilot is open
+  FAIL QA-43: for every role that reads KYC, what the board lists opens, and nothing else does
+       the board and the detail disagree:
+       caller #4: listed, refused
+       caller #5: listed, refused
+       caller #56: listed, refused
+       caller #1: listed, refused
+       caller #2: listed, refused
+       caller #3: listed, refused
+       dealer #4: listed, refused
+       dealer #5: listed, refused
+       dealer #56: listed, refused
+       dealer #1: listed, refused
+       dealer #2: listed, refused
+       dealer #3: listed, refused
+       sales_rm #4: listed, refused
+       sales_rm #5: listed, refused
+       sales_rm #56: listed, refused
+       sales_rm #1: listed, refused
+       sales_rm #2: listed, refused
+       sales_rm #3: listed, refused
+       partner_rm #4: listed, refused
+       partner_rm #5: listed, refused
+       partner_rm #56: listed, refused
+       partner_rm #1: listed, refused
+       partner_rm #2: listed, refused
+       partner_rm #3: listed, refused
+       product_rm #4: listed, refused
+       product_rm #5: listed, refused
+       product_rm #56: listed, refused
+       product_rm #1: listed, refused
+       product_rm #2: listed, refused
+       product_rm #3: listed, refused
+       sales_supervisor #4: listed, refused
+       sales_supervisor #5: listed, refused
+       sales_supervisor #56: listed, refused
+       sales_supervisor #1: listed, refused
+       sales_supervisor #2: listed, refused
+       sales_supervisor #3: listed, refused
++ actual - expected
+
++ [
++   'caller #4: listed, refused',
++   'caller #5: listed, refused',
++   'caller #56: listed, refused',
++   'caller #1: listed, refused',
++   'caller #2: listed, refused',
++   'caller #3: listed, refused',
++   'dealer #4: listed, refused',
++   'dealer #5: listed, refused',
++   'dealer #56: listed, refused',
++   'dealer #1: listed, refused',
++   'dealer #2: listed, refused',
++   'dealer #3: listed, refused',
++   'sales_rm #4: listed, refused',
++   'sales_rm #5: listed, refused',
++   'sales_rm #56: listed, refused',
++   'sales_rm #1: listed, refused',
++   'sales_rm #2: listed, refused',
++   'sales_rm #3: listed, refused',
++   'partner_rm #4: listed, refused',
++   'partner_rm #5: listed, refused',
++   'partner_rm #56: listed, refused',
++   'partner_rm #1: listed, refused',
++   'partner_rm #2: listed, refused',
++   'partner_rm #3: listed, refused',
++   'product_rm #4: listed, refused',
++   'product_rm #5: listed, refused',
++   'product_rm #56: listed, refused',
++   'product_rm #1: listed, refused',
++   'product_rm #2: listed, refused',
++   'product_rm #3: listed, refused',
++   'sales_supervisor #4: listed, refused',
++   'sales_supervisor #5: listed, refused',
++   'sales_supervisor #56: listed, refused',
++   'sales_supervisor #1: listed, refused',
++   'sales_supervisor #2: listed, refused',
++   'sales_supervisor #3: listed, refused'
++ ]
+- []
+
+  FAIL QA-43 / N-12: the other business cannot take over or force a step on an application
+       a Bigul Admin took over a Bonanza application
+
+200 !== 403
+
+
+0 passed, 11 failed
+ 

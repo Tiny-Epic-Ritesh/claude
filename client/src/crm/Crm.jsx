@@ -344,7 +344,8 @@ export default function Crm() {
           onLeave={(restored, returnTo) => window.location.assign(appUrl(restored ? (returnTo || '/setup/users') : '/'))}
         />
       )}
-      <div className="main-content">
+      {/* QA-25: the page makes room for the Copilot rather than sitting under it. */}
+      <div className={`main-content${copilotOpen ? ' with-copilot' : ''}`}>
         <header className="topbar">
           <span className="topbar-brand">
             <BrandLogo org={activeOrg || session.sales_org} height={26} />

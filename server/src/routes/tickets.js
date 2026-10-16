@@ -3,6 +3,7 @@
  */
 
 import { exportHeldMasked } from '../engine/policies.js';
+import { istNow } from '../engine/daterange.js';
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
 import { can, requireUser, requirePermission, requireAnyPermission, mayUseOrg, activeOrg, reqTicketScope, maskFor, orgScope, userCan } from '../auth.js';
@@ -11,7 +12,7 @@ import { loadInBook } from '../engine/bookscope.js';
 import { assertValid } from '../engine/validation.js';
 import { recordChange } from '../engine/metadata.js';
 import { withCorrections, mayCorrect, addCorrection } from '../engine/corrections.js';
-import { applySla, sweepSla, handleStatusChange, slaRemaining, DEFAULT_SLA } from '../engine/sla.js';
+import { applySla, sweepSla, handleStatusChange, slaRemaining, DEFAULT_SLA, breachedSql } from '../engine/sla.js';
 import { openCase } from '../engine/cases.js';
 import { send } from '../integrations.js';
 import * as ai from '../ai/index.js';
@@ -99,8 +100,17 @@ async function refreshSummary(ticketId) {
  * alternative — rebuilding these conditions in the export — is how the two come
  * to disagree about which cases somebody actually took.
  */
+/* QA-05. The Cases page's tabs, as the API reads them too, so a link such as
+   /tickets?view=breached means the same set to the screen and to the server. */
+const VIEW_FILTERS = { mine: { mine: 'true', open: 'true' }, open: { open: 'true' }, breached: { breached: 'true' }, all: {} };
+
 function ticketFilter(req) {
-  const { status, priority, mine, breached, lead_id, category_id } = req.query;
+  /* A view supplies its filters; anything the request names as well still
+     applies. A resolved window asks about closed cases, which a view's own
+     'open' would hide. Read into a copy: Express 5's req.query is read-only. */
+  const qs = { ...(VIEW_FILTERS[req.query.view] ?? {}), ...req.query };
+  if (req.query.view && (qs.resolved_from || qs.resolved_to) && req.query.open === undefined) delete qs.open;
+  const { status, priority, mine, lead_id, category_id } = qs;
   const where = ['t.merged_into IS NULL'];
   const params = [];
 
@@ -122,24 +132,28 @@ function ticketFilter(req) {
 
   if (mine === 'true') { where.push('t.assignee_id = ?'); params.push(req.user.id); }
   if (status) { where.push('t.status = ?'); params.push(status); }
-  else if (req.query.open === 'true') where.push("t.status NOT IN ('Resolved','Closed')");
+  else if (qs.open === 'true') where.push("t.status NOT IN ('Resolved','Closed')");
 
   /* P2-13. The predicates the dashboard tiles count on, so the tile and the
      list are the same set rather than two implementations that agree today. */
-  if (req.query.breached === 'true') where.push('t.breached = 1');
-  if (req.query.resolved_from) { where.push("date(t.resolved_at, '+330 minutes') >= date(?)"); params.push(req.query.resolved_from); }
-  if (req.query.resolved_to) { where.push("date(t.resolved_at, '+330 minutes') <= date(?)"); params.push(req.query.resolved_to); }
-  if (req.query.created_from) { where.push("date(t.created_at, '+330 minutes') >= date(?)"); params.push(req.query.created_from); }
-  if (req.query.created_to) { where.push("date(t.created_at, '+330 minutes') <= date(?)"); params.push(req.query.created_to); }
+  if (qs.breached === 'true') where.push(breachedSql('t'));
+  // QA-05: what the Customer Care figures count, so each links to its own set.
+  if (qs.due_today === 'true') {
+    where.push("t.status NOT IN ('Resolved','Closed') AND date(t.resolution_due, '+330 minutes') = date('now', '+330 minutes')");
+  }
+  if (qs.rated === 'true') where.push('t.csat IS NOT NULL');
+  if (qs.resolved_from) { where.push("date(t.resolved_at, '+330 minutes') >= date(?)"); params.push(qs.resolved_from); }
+  if (qs.resolved_to) { where.push("date(t.resolved_at, '+330 minutes') <= date(?)"); params.push(qs.resolved_to); }
+  if (qs.created_from) { where.push("date(t.created_at, '+330 minutes') >= date(?)"); params.push(qs.created_from); }
+  if (qs.created_to) { where.push("date(t.created_at, '+330 minutes') <= date(?)"); params.push(qs.created_to); }
   if (priority) { where.push('t.priority = ?'); params.push(priority); }
-  if (breached === 'true') where.push('t.breached = 1');
   if (lead_id) { where.push('t.lead_id = ?'); params.push(lead_id); }
   if (category_id) { where.push('t.category_id = ?'); params.push(category_id); }
 
   /* Find one case among hundreds without paging to it. Bound to what somebody
      would actually search a case by — its reference, its subject, or the person
      it was raised for. */
-  const q = String(req.query.q ?? '').trim();
+  const q = String(qs.q ?? '').trim();
   if (q) {
     where.push('(t.ref LIKE ? OR t.subject LIKE ? OR l.name LIKE ? OR l.mobile LIKE ?)');
     params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
@@ -151,7 +165,7 @@ function ticketFilter(req) {
 /** Which filters are in play, for an audit row. */
 const appliedTicketFilters = (req) => Object.fromEntries(
   ['q', 'status', 'priority', 'mine', 'breached', 'open', 'lead_id', 'category_id',
-    'created_from', 'created_to', 'resolved_from', 'resolved_to']
+    'created_from', 'created_to', 'resolved_from', 'resolved_to', 'due_today', 'rated']
     .filter((k) => req.query[k])
     .map((k) => [k, req.query[k]]),
 );
@@ -640,7 +654,7 @@ router.get('/reports/summary', requirePermission('report.team'), (req, res) => {
   const book = orgScope(req.user, 't', activeOrg(req));
   const byCategory = all(`
     SELECT COALESCE(c.name, 'Uncategorised') AS category, COUNT(*) n,
-           SUM(CASE WHEN t.breached = 1 THEN 1 ELSE 0 END) breached,
+           SUM(CASE WHEN ${breachedSql('t')} THEN 1 ELSE 0 END) breached,
            AVG(CASE WHEN t.resolved_at IS NOT NULL THEN (julianday(t.resolved_at) - julianday(t.created_at)) * 24 END) avg_hours
     FROM tickets t LEFT JOIN ticket_categories c ON c.id = t.category_id
     WHERE ${book.sql}
@@ -649,16 +663,18 @@ router.get('/reports/summary', requirePermission('report.team'), (req, res) => {
   const byAgent = all(`
     SELECT u.name AS agent, COUNT(*) n,
            SUM(CASE WHEN t.status NOT IN ('Resolved','Closed') THEN 1 ELSE 0 END) open,
-           SUM(CASE WHEN t.breached = 1 THEN 1 ELSE 0 END) breached,
+           SUM(CASE WHEN ${breachedSql('t')} THEN 1 ELSE 0 END) breached,
            AVG(t.csat) avg_csat
     FROM tickets t JOIN users u ON u.id = t.assignee_id
     WHERE ${book.sql}
     GROUP BY u.id ORDER BY n DESC`, book.params);
 
   res.json({
+    // QA-05: the India day the "Resolved today" figure counts, for its link.
+    today: istNow().toISOString().slice(0, 10),
     totals: {
       open: one(`SELECT COUNT(*) n FROM tickets t WHERE status NOT IN ('Resolved','Closed') AND ${book.sql}`, book.params).n,
-      breached: one(`SELECT COUNT(*) n FROM tickets t WHERE breached = 1 AND ${book.sql}`, book.params).n,
+      breached: one(`SELECT COUNT(*) n FROM tickets t WHERE ${breachedSql('t')} AND ${book.sql}`, book.params).n,
       resolved_today: one(`SELECT COUNT(*) n FROM tickets t WHERE date(resolved_at, '+330 minutes') = date('now', '+330 minutes') AND ${book.sql}`, book.params).n,
       avg_csat: one(`SELECT ROUND(AVG(csat), 2) v FROM tickets t WHERE csat IS NOT NULL AND ${book.sql}`, book.params).v,
     },

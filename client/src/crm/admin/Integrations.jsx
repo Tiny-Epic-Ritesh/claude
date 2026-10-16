@@ -1,4 +1,5 @@
 import { useApi, Loading, Empty, ErrorBanner } from '../../components/ui.jsx';
+import { dmyTime } from '../../api.js';
 
 /*
  * Lifted out of Admin.jsx, which held eleven Setup screens in one file and so
@@ -84,7 +85,7 @@ export function Integrations() {
                       <div className="small">{o.to}</div>
                       <div className="tiny muted">{String(o.body || '').slice(0, 110)}</div>
                     </td>
-                    <td className="tiny muted num" style={{ width: 90 }}>{new Date(o.at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</td>
+                    <td className="tiny muted num" style={{ width: 90 }}>{dmyTime(o.at)}</td>
                   </tr>
                 ))}
               </tbody>

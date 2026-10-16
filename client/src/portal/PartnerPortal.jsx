@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, token, money, rupees, shortDate, dateTime } from '../api.js';
+import { api, token, money, rupees, shortDate, dateTime, monthYear } from '../api.js';
 import { ErrorBanner, Loading, Spinner, Empty, Modal, Tabs } from '../components/ui.jsx';
 import {
   BarChart, Donut, Funnel, ProgressRing, StatTile, compactMoney,
@@ -551,7 +551,7 @@ function Earnings({ data }) {
                 <tbody>
                   {rows.map((c) => (
                     <tr key={c.id}>
-                      <td>{c.period}</td>
+                      <td>{monthYear(c.period)}</td>
                       <td>{c.product_name || <span className="muted">—</span>}</td>
                       <td className="num">{c.base_amount != null ? rupees(c.base_amount) : '—'}</td>
                       <td className="num"><strong>{rupees(c.payout)}</strong></td>
@@ -943,7 +943,7 @@ function ClientDetailModal({ leadId, onClose }) {
                     <div key={`${c.period}-${i}`} className="module-row">
                       <span className="material-symbols-rounded">payments</span>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <strong>{c.period}</strong>
+                        <strong>{monthYear(c.period)}</strong>
                         <div className="tiny muted">{c.product_name ?? 'All products'} · {c.status}</div>
                       </div>
                       <span className="score-pill">{rupees(c.payout)}</span>

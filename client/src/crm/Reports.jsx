@@ -14,7 +14,7 @@
 import { useState } from 'react';
 import { useApi, Loading, ErrorBanner, Empty, Tabs } from '../components/ui.jsx';
 import { AttendanceReport } from './Attendance.jsx';
-import { rupees, rupeesCompact, ROLE_LABEL } from '../api.js';
+import { rupees, rupeesCompact, ROLE_LABEL, dmy } from '../api.js';
 
 const STATE_LABEL = {
   INACTIVE: 'Inactive',
@@ -417,7 +417,7 @@ function Activity({ days }) {
         <tbody>
           {rows.map((r) => (
             <tr key={r.day}>
-              <td className="small">{new Date(`${r.day}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</td>
+              <td className="small">{dmy(r.day)}</td>
               <td>
                 <div style={{ width: `${(r.total / peak) * 100}%`, minWidth: 2 }}>
                   <Bar total={r.total} segments={types.map((t) => ({ key: t, label: t, value: r.types[t] || 0, colour: colour[t] || '#999' }))} />

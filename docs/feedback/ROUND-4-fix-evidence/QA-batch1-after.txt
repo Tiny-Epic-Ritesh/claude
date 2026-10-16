@@ -1,0 +1,16 @@
+
+Round 4, batch one: QA-05, 12, 17, 18, 22, 25, 43
+  ok   QA-05: every Customer Care figure links to the cases it counts, and the counts agree
+  ok   QA-05: Home's case tiles name their view, and "breached" means one thing
+  ok   QA-05: the Cases page reads the linked filters and shows them as chips (source check)
+  ok   QA-12: a key sent over plain http is refused when the proxy says so, and only then
+  ok   QA-17: one format -- 15-10-2026, and 15-10-2026 14:30 IST
+  ok   QA-18: Marketing is not offered the Service Console; Customer Care is
+  ok   QA-18: the launcher closes on any press outside it, and on navigating (source check)
+  ok   QA-22: a headline says its source and its date, and that it is a sample (source check)
+  ok   QA-25: the page makes room for the Copilot where there is room (source check)
+  ok   QA-43: for every role that reads KYC, what the board lists opens, and nothing else does
+  ok   QA-43 / N-12: the other business cannot take over or force a step on an application
+
+11 passed, 0 failed
+ 

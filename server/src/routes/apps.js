@@ -97,6 +97,10 @@ export const APPS = [
        read-only service role is not shown a console it cannot open — and a
        role that may raise a case but not read one is not either. */
     needs: ['ticket.view.all', 'ticket.view.own'],
+    /* QA-18 (Ritesh, 15 Oct): not for Marketing. It may follow the cases it
+       raises from the record they are on; a console for working cases leads
+       it to a narrowed view of somebody else's job. */
+    hiddenFor: ['marketing_manager'],
   },
   {
     id: 'partner',
@@ -170,6 +174,8 @@ export function appsFor(user, orgs) {
 
   return APPS
     .filter((app) => permitted(user, app.needs))
+    // QA-18: an app ruled out for a role is not offered to it, whatever it may open.
+    .filter((app) => !app.hiddenFor?.includes(user.role))
     .map((app) => {
       const tabs = app.tabs
         .map((id) => TABS[id])

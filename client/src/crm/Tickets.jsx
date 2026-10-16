@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, dateTime, shortDate } from '../api.js';
+import { api, dateTime, shortDate, dmy } from '../api.js';
 import {
-  useApi, Icon, Loading, ErrorBanner, Empty, Spinner, PriorityBadge, Tabs, Modal,
+  useApi, Icon, Loading, ErrorBanner, Empty, Spinner, PriorityBadge, Tabs, Modal, Stat,
 } from '../components/ui.jsx';
 import BackLink from '../components/BackLink.jsx';
 import { CorrectionList, CorrectButton, correctedStyle } from '../components/Corrections.jsx';
@@ -53,16 +53,49 @@ function Th({ label, col, className, sort, dir, onSort }) {
 
 /* ---------------------------------------------------------------- queue */
 
+/* QA-05. The filters a figure links here with, beyond its tab, and how each
+   reads as a chip. Every one is a filter the list API applies, so the count
+   on the figure and the count here are the same query. */
+const LINKED = ['mine', 'breached', 'status', 'due_today', 'rated', 'resolved_from', 'resolved_to', 'created_from', 'created_to'];
+const VIEWS = ['mine', 'open', 'breached', 'all'];
+const dmyOf = (iso) => (iso ? dmy(iso) : '…');
+function chipsFor(linked) {
+  const out = [];
+  if (linked.get('mine') === 'true') out.push({ keys: ['mine'], label: 'Assigned to me' });
+  if (linked.get('breached') === 'true') out.push({ keys: ['breached'], label: 'SLA breached' });
+  if (linked.get('status')) out.push({ keys: ['status'], label: `Status: ${linked.get('status')}` });
+  if (linked.get('due_today') === 'true') out.push({ keys: ['due_today'], label: 'Due today' });
+  if (linked.get('rated') === 'true') out.push({ keys: ['rated'], label: 'Rated by the client' });
+  if (linked.get('resolved_from') || linked.get('resolved_to')) {
+    out.push({ keys: ['resolved_from', 'resolved_to'], label: `Resolved ${dmyOf(linked.get('resolved_from'))} – ${dmyOf(linked.get('resolved_to'))}` });
+  }
+  if (linked.get('created_from') || linked.get('created_to')) {
+    out.push({ keys: ['created_from', 'created_to'], label: `Created ${dmyOf(linked.get('created_from'))} – ${dmyOf(linked.get('created_to'))}` });
+  }
+  return out;
+}
+
 function TicketQueue({ session }) {
   /* QA-05. Home's "Open cases 4" links here as ?open=true and landed on
      "Assigned to me · 2", because the view came from the role alone. A link
      names its view now; ?view= takes any tab, and ?open=true is kept for
-     links already sent. */
-  const [linked] = useSearchParams();
-  const askedView = linked.get('view') ?? (linked.get('open') === 'true' ? 'open' : null);
-  const [filter, setFilter] = useState(['mine', 'open', 'breached', 'all'].includes(askedView)
-    ? askedView
-    : session.role === 'customer_care' ? 'mine' : 'open');
+     links already sent. The view and any linked filters live in the address,
+     so a second figure clicked while already here is followed too, and each
+     filter shows as a chip that can be removed. */
+  const [linked, setLinked] = useSearchParams();
+  const askedView = linked.get('view')
+    ?? (linked.get('open') === 'true' ? 'open' : linked.get('breached') === 'true' ? 'breached' : null);
+  const filter = VIEWS.includes(askedView) ? askedView : session.role === 'customer_care' ? 'mine' : 'open';
+  // A tab is a different question: choosing one starts it without the linked filters.
+  const setFilter = (view) => setLinked(new URLSearchParams({ view }));
+  const dropChip = (keys) => {
+    const next = new URLSearchParams(linked);
+    for (const k of keys) next.delete(k);
+    if (!next.get('view')) next.set('view', filter);
+    next.delete('open');
+    setLinked(next);
+  };
+  const chips = chipsFor(linked);
   const [sort, setSort] = useState(null);
   const [dir, setDir] = useState('desc');
   const [offset, setOffset] = useState(0);
@@ -76,11 +109,15 @@ function TicketQueue({ session }) {
     return () => clearTimeout(t);
   }, [typed]);
 
-  // Changing tab is a different question; page 4 of the old one means nothing.
-  useEffect(() => { setOffset(0); }, [filter]);
+  // Changing tab or a linked filter is a different question; page 4 of the old one means nothing.
+  const linkedKey = LINKED.map((k) => linked.get(k) ?? '').join('|');
+  useEffect(() => { setOffset(0); }, [filter, linkedKey]);
 
   const base = { mine: { mine: 'true', open: 'true' }, open: { open: 'true' }, breached: { breached: 'true' }, all: {} }[filter];
   const params = new URLSearchParams({ ...base, limit: String(PAGE), offset: String(offset) });
+  for (const k of LINKED) if (linked.get(k)) params.set(k, linked.get(k));
+  // A resolved window asks about closed cases, which "open" would hide.
+  if (linked.get('resolved_from') || linked.get('resolved_to')) params.delete('open');
   if (sort) { params.set('sort', sort); params.set('dir', dir); }
   if (q) params.set('q', q);
   const query = `?${params}`;
@@ -113,11 +150,13 @@ function TicketQueue({ session }) {
       </div>
 
       {report && (
+        /* QA-05: each opens the list on the cases it counts, across the team's books. */
         <div className="metrics">
-          <div className="card stat"><div className="stat-label">Open</div><div className="stat-value">{report.totals.open}</div></div>
-          <div className="card stat tone-danger"><div className="stat-label">Breached</div><div className="stat-value">{report.totals.breached}</div></div>
-          <div className="card stat tone-good"><div className="stat-label">Resolved today</div><div className="stat-value">{report.totals.resolved_today}</div></div>
-          <div className="card stat"><div className="stat-label">Avg CSAT</div><div className="stat-value">{report.totals.avg_csat ?? '—'}</div></div>
+          <Stat label="Open" value={report.totals.open} sub="All open, in your books" to="/tickets?view=open" />
+          <Stat label="Breached" value={report.totals.breached} sub="Open and past the resolution time" tone="danger" to="/tickets?view=breached" />
+          <Stat label="Resolved today" value={report.totals.resolved_today} sub="In your books" tone="good"
+            to={`/tickets?view=all&resolved_from=${report.today}&resolved_to=${report.today}`} />
+          <Stat label="Avg CSAT" value={report.totals.avg_csat ?? '—'} sub="Rated cases, in your books" to="/tickets?view=all&rated=true" />
         </div>
       )}
 
@@ -129,6 +168,13 @@ function TicketQueue({ session }) {
 
       <div className="card" style={{ marginBottom: 14 }}>
         <div className="card-body row wrap" style={{ gap: 10, alignItems: 'center' }}>
+          {/* QA-05: what a figure linked with, visible and removable. */}
+          {chips.map((c) => (
+            <span key={c.label} className="badge" style={{ alignSelf: 'center' }}>
+              {c.label}
+              <button type="button" className="btn-ghost btn-sm" aria-label={`Clear ${c.label}`} onClick={() => dropChip(c.keys)}>×</button>
+            </span>
+          ))}
           {/* The queue had no way to find one case except paging to it. */}
           <input
             type="search"

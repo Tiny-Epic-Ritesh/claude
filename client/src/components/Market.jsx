@@ -13,7 +13,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { api, publicApi } from '../api.js';
+import { api, publicApi, dmy, dmyTime } from '../api.js';
 import { useApi, Spinner, Icon } from './ui.jsx';
 
 /* --------------------------------------------------------- one index */
@@ -46,8 +46,7 @@ function IndexPill({ ix }) {
  */
 export function MarketStamp({ data, compact = false }) {
   if (!data) return null;
-  const at = data.as_of ? new Date(data.as_of) : null;
-  const time = at ? at.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '—';
+  const time = data.as_of ? dmyTime(data.as_of) : '—';   // QA-17
 
   return (
     <div className={`market-stamp ${compact ? 'is-compact' : ''}`}>
@@ -164,7 +163,7 @@ export function LeadMarketContext({ leadId }) {
                 <div>
                   <strong>{i.name}</strong>
                   <div className="tiny muted">
-                    {i.kind}{i.price_band ? ` · ${i.price_band}` : ''} · closes {i.closes_on}
+                    {i.kind}{i.price_band ? ` · ${i.price_band}` : ''} · closes {dmy(i.closes_on)}
                   </div>
                 </div>
               </li>
@@ -227,6 +226,12 @@ export default function MarketTab() {
             <div>
               <h2>Market news</h2>
               <p>Headlines an RM can open a call with</p>
+              {/* QA-22: said where the headlines are, not left for a reader to guess. */}
+              {data.simulated && (
+                <p className="tiny muted" style={{ margin: '4px 0 0' }}>
+                  Sample headlines from the simulated feed. Each becomes a link to its article once a live news feed is connected.
+                </p>
+              )}
             </div>
           </div>
           <ul className="news-list">
@@ -235,7 +240,8 @@ export default function MarketTab() {
                 <div className="news-meta">
                   <span className="chip chip-soft">{n.category}</span>
                   <span className="tiny muted">
-                    {n.source} · {new Date(n.published_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                    {/* QA-22: the source and when, plainly, on every headline. */}
+                    Source: {n.source} · {dmyTime(n.published_at)}
                   </span>
                 </div>
                 {/* ENH-09: the headline opens the source article.
@@ -275,7 +281,7 @@ export default function MarketTab() {
                 <div>
                   <strong>{i.name}</strong>
                   <div className="tiny muted">
-                    {i.kind}{i.price_band ? ` · ${i.price_band}` : ''} · {i.opens_on} to {i.closes_on}
+                    {i.kind}{i.price_band ? ` · ${i.price_band}` : ''} · {dmy(i.opens_on)} to {dmy(i.closes_on)}
                   </div>
                 </div>
               </li>

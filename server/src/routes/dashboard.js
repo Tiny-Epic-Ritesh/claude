@@ -18,6 +18,7 @@
  */
 
 import { Router } from 'express';
+import { breachedSql } from '../engine/sla.js';
 import { all, one } from '../db.js';
 import { requireUser, leadScope, clientScope, activeOrg, can, orgsFor, reqTicketScope, userCan } from '../auth.js';
 import {
@@ -227,10 +228,8 @@ function caseTiles(req, range) {
   // anything that has slipped since the sweep last ran, so the tile is right
   // between sweeps rather than up to fifteen minutes stale.
   const breached = one(
-    `SELECT COUNT(*) n FROM tickets t
-      WHERE t.status NOT IN ('Resolved','Closed')
-        AND (t.breached = 1
-             OR (t.resolution_due IS NOT NULL AND t.resolution_due < datetime('now'))) ${orgSql}`,
+    // QA-05: the one meaning the Breached list uses too (engine/sla.js).
+    `SELECT COUNT(*) n FROM tickets t WHERE ${breachedSql('t')} ${orgSql}`,
     orgParams,
   ).n;
   const resolved = (() => {
@@ -242,15 +241,16 @@ function caseTiles(req, range) {
   })();
 
   return [
-    tile('Open cases', open, { to: '/tickets?open=true' }),
+    // QA-05: each names its view, so the Cases page opens on exactly this set.
+    tile('Open cases', open, { sub: 'All open, in your books', to: '/tickets?view=open' }),
     tile('SLA breached', breached, {
-      sub: 'Past the promised response time', tone: 'warn',
-      goodWhen: 'down', alert: breached > 0, to: '/tickets?breached=true',
+      sub: 'Open and past the promised resolution time', tone: 'warn',
+      goodWhen: 'down', alert: breached > 0, to: '/tickets?view=breached',
     }),
     tile('Resolved', resolved, {
       sub: range.label,
       tone: 'good',
-      to: `/tickets?resolved_from=${range.from}&resolved_to=${range.to}`,
+      to: `/tickets?view=all&resolved_from=${range.from}&resolved_to=${range.to}`,
     }),
   ];
 }
