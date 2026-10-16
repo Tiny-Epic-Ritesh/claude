@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, money, rupees, shortDate, dateTime, mins, STATE_LABEL, ROLE_LABEL, appUrl, dmy } from '../api.js';
 import { checkField, checkAll, fieldErrorsFrom } from '../fieldRules.js';
-import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, AgeBadge, PriorityBadge, Progress, CardDot, Icon, kycBadge } from '../components/ui.jsx';
+import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, AgeBadge, PriorityBadge, Progress, CardDot, Icon, kycBadge, announce } from '../components/ui.jsx';
 import ActivityComposer from './ActivityComposer.jsx';
 import InCall from './InCall.jsx';
 import ProductCard from '../components/ProductCard.jsx';
@@ -308,7 +308,7 @@ export default function LeadDetail({ session }) {
           lead={lead}
           session={session}
           onClose={() => setEditing(false)}
-          onSaved={() => { setEditing(false); reload(); }}
+          onSaved={() => { setEditing(false); reload(); announce('Lead saved', [`${lead.name}'s details are updated.`]); }}
         />
       )}
     </>
@@ -669,7 +669,12 @@ function TasksTab({ lead, session, reload }) {
     e.preventDefault();
     if (!title.trim() || !due) return;
     setBusy(true);
-    try { await api.post('/tasks', { title, lead_id: lead.id, due_at: due.replace('T', ' ') }); setTitle(''); setDue(''); reload(); }
+    try {
+      const t = await api.post('/tasks', { title, lead_id: lead.id, due_at: due.replace('T', ' ') });
+      // Part 4, item 8.4: "tell the user when a task has been created".
+      announce('Task created', [`“${t.title}” is on your list, due ${dateTime(t.due_at)}.`]);
+      setTitle(''); setDue(''); reload();
+    }
     finally { setBusy(false); }
   }
 
@@ -771,11 +776,16 @@ function NewTicket({ lead, onClose, onCreated }) {
     e.preventDefault();
     setBusy(true);
     try {
-      await api.post('/tickets', {
+      const t = await api.post('/tickets', {
         ...form, lead_id: lead.id,
         category_id: form.category_id || undefined,
         card_id: form.card_id || undefined,
       });
+      // Part 4, item 8.4.
+      announce(`Case ${t.ref} raised`, [
+        t.assignee_id ? 'It is assigned, and the assignee has been notified.' : 'Nobody could be assigned yet; it waits in the case queue.',
+        `Priority ${t.priority}: a first response is due by ${dateTime(t.response_due)} and a resolution by ${dateTime(t.resolution_due)}.`,
+      ]);
       onCreated();
     } catch (err) { setError(err.message); setBusy(false); }
   }
@@ -913,7 +923,14 @@ function JourneyCard({ journey, canManage, onError, reload, setCoach, busy, setB
   async function record(outcome) {
     setBusy(true);
     try {
-      await api.post(`/kyc/journeys/${journey.id}/verification`, { outcome });
+      const r = await api.post(`/kyc/journeys/${journey.id}/verification`, { outcome });
+      // Part 4, item 8.4.
+      const label = (outcomes?.outcomes ?? []).find((o) => o.code === outcome)?.label ?? outcome;
+      announce(r.completed ? 'KYC complete' : r.unchanged ? 'Nothing changed' : 'Verification recorded', [
+        r.completed
+          ? 'The application is complete, the product card is Active, and the lead\'s owner has been told.'
+          : r.unchanged ? `"${label}" was already the recorded outcome.` : `Recorded: ${label}.`,
+      ]);
       reloadJourney();
       reload();
     } catch (err) { onError(err.message); } finally { setBusy(false); }
@@ -923,6 +940,10 @@ function JourneyCard({ journey, canManage, onError, reload, setCoach, busy, setB
     setBusy(true);
     try {
       await api.post(`/kyc/journeys/${journey.id}/objection`, { text, step_code: stepCode || null });
+      announce('Objection raised', [
+        'The application is sent back for the applicant to correct, with your reason.',
+        'It is on the lead\'s timeline, and the card\'s Product RM -- or the lead\'s owner -- has been notified.',
+      ]);
       reloadJourney();
       reload();
     } catch (err) { onError(err.message); } finally { setBusy(false); }
@@ -937,7 +958,11 @@ function JourneyCard({ journey, canManage, onError, reload, setCoach, busy, setB
 
   async function assist() {
     setBusy(true);
-    try { await api.post(`/kyc/journeys/${journey.id}/assist`); reload(); }
+    try {
+      const j = await api.post(`/kyc/journeys/${journey.id}/assist`);
+      announce('You are assisting', [`The application is In Progress again${j.current_step ? ', and the step it is on starts its timer afresh' : ''}.`]);
+      reload();
+    }
     catch (err) { onError(err.message); }
     finally { setBusy(false); }
   }

@@ -1,0 +1,62 @@
+Part 4 item 8.4 -- server/test/round4i.test.mjs on the code before it (64ab127), 16 Oct 2026
+
+
+Part 4, item 8.4: every action says what it did (source checks)
+  FAIL one way to say it: announce(), shown until OK, in the CRM and the partner portal
+       no announce()
+  FAIL each screen that said nothing now says what it did
+       still silent: crm/admin/Automations.jsx, crm/admin/FlowBuilder.jsx, crm/admin/CaptureForms.jsx, crm/Messages.jsx, crm/PartnerProfile.jsx, crm/admin/Campaigns.jsx, crm/LeadDetail.jsx, crm/Tickets.jsx, crm/admin/MetaConnector.jsx, crm/admin/MessagingSetup.jsx, crm/admin/users.jsx, crm/GroupsSetup.jsx, portal/PartnerPortal.jsx, crm/admin/WebhookEndpoints.jsx, crm/admin/Sla.jsx, crm/admin/Rules.jsx, crm/ValidationRules.jsx, crm/Tasks.jsx, crm/ProductsSetup.jsx, crm/Libraries.jsx, crm/ApiAccess.jsx, crm/KycConsole.jsx, crm/FieldMasking.jsx, crm/Clients.jsx, crm/ObjectManager.jsx, crm/admin/TestRecords.jsx, crm/admin/Calendars.jsx, crm/TabVisibility.jsx, crm/Partners.jsx, crm/LeadLists.jsx, crm/Dispositions.jsx, crm/DataTools.jsx, crm/admin/UserExport.jsx, crm/UsersSetup.jsx, crm/Calendar.jsx, crm/BusinessPolicies.jsx, crm/Attendance.jsx
++ actual - expected
+
++ [
++   'crm/admin/Automations.jsx',
++   'crm/admin/FlowBuilder.jsx',
++   'crm/admin/CaptureForms.jsx',
++   'crm/Messages.jsx',
++   'crm/PartnerProfile.jsx',
++   'crm/admin/Campaigns.jsx',
++   'crm/LeadDetail.jsx',
++   'crm/Tickets.jsx',
++   'crm/admin/MetaConnector.jsx',
++   'crm/admin/MessagingSetup.jsx',
++   'crm/admin/users.jsx',
++   'crm/GroupsSetup.jsx',
++   'portal/PartnerPortal.jsx',
++   'crm/admin/WebhookEndpoints.jsx',
++   'crm/admin/Sla.jsx',
++   'crm/admin/Rules.jsx',
++   'crm/ValidationRules.jsx',
++   'crm/Tasks.jsx',
++   'crm/ProductsSetup.jsx',
++   'crm/Libraries.jsx',
++   'crm/ApiAccess.jsx',
++   'crm/KycConsole.jsx',
++   'crm/FieldMasking.jsx',
++   'crm/Clients.jsx',
++   'crm/ObjectManager.jsx',
++   'crm/admin/TestRecords.jsx',
++   'crm/admin/Calendars.jsx',
++   'crm/TabVisibility.jsx',
++   'crm/Partners.jsx',
++   'crm/LeadLists.jsx',
++   'crm/Dispositions.jsx',
++   'crm/DataTools.jsx',
++   'crm/admin/UserExport.jsx',
++   'crm/UsersSetup.jsx',
++   'crm/Calendar.jsx',
++   'crm/BusinessPolicies.jsx',
++   'crm/Attendance.jsx'
++ ]
+- []
+
+  FAIL a message names what the server answered, not a guess (spot checks)
+       The expression evaluated to a falsy value:
+
+  assert(/went to \$\{r\.sent\}/.test(client('crm/admin/Campaigns.jsx')))
+
+  FAIL the KYC stall sweep is a button, not bare text, and says what it found
+       still bare text that says nothing
+  FAIL the list of every action, and what it says, is kept
+       ENOENT: no such file or directory, open 'docs\feedback\PART-4-ACTION-FEEDBACK.md'
+
+0 passed, 5 failed

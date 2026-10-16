@@ -1,0 +1,11 @@
+Part 4 item 8.4 -- server/test/round4i.test.mjs on the fixed code, 16 Oct 2026
+
+
+Part 4, item 8.4: every action says what it did (source checks)
+  ok   one way to say it: announce(), shown until OK, in the CRM and the partner portal
+  ok   each screen that said nothing now says what it did
+  ok   a message names what the server answered, not a guess (spot checks)
+  ok   the KYC stall sweep is a button, not bare text, and says what it found
+  ok   the list of every action, and what it says, is kept
+
+5 passed, 0 failed

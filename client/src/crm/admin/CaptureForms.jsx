@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../api.js';
-import { useApi, Loading, Icon, Modal, ErrorBanner, Spinner, Empty } from '../../components/ui.jsx';
+import { useApi, Loading, Icon, Modal, ErrorBanner, Spinner, Empty, announce } from '../../components/ui.jsx';
 
 /**
  * Capture forms (P3-13).
@@ -90,6 +90,8 @@ export function CaptureForms({ session }) {
     setError(null);
     try {
       await api.patch(`/setup/forms/${type}`, { fields: order });
+      // Part 4, item 8.4.
+      announce('Form saved', [`The ${type} form now asks ${order.length} field${order.length === 1 ? '' : 's'}, in this order, for everyone who logs one.`]);
       setDirty(false);
       reload();
     } catch (err) { setError(err.message); }
@@ -205,7 +207,11 @@ export function CaptureForms({ session }) {
       {making && (
         <NewField
           onClose={() => setMaking(false)}
-          onMade={(f) => { setMaking(false); setOrder([...order, f.api_name]); setDirty(true); reload(); }}
+          onMade={(f) => {
+            setMaking(false); setOrder([...order, f.api_name]); setDirty(true); reload();
+            // Part 4, item 8.4: made, and placed on the form -- which still needs saving.
+            announce('Field created', [`"${f.label}" is added at the end of this form. Save the form to start asking it.`]);
+          }}
           onError={setError}
           session={session}
           type={type}

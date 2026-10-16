@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api, appUrl, token, ROLE_LABEL } from '../../api.js';
-import { useApi, ErrorBanner, Modal, Spinner, Icon } from '../../components/ui.jsx';
+import { useApi, ErrorBanner, Modal, Spinner, Icon, announce } from '../../components/ui.jsx';
 import { stashParentToken } from '../GhostBar.jsx';
 import { checkField } from '../../fieldRules.js';
 import { Handover } from './Handover.jsx';
@@ -63,21 +63,34 @@ export function UserActions({ user, reload, onLink, onError }) {
         Hand over
       </button>
       <button className="btn-sm" onClick={() => setEditing(true)}>Edit</button>
-      <button className="btn-sm" onClick={async () => { await api.patch(`/admin/users/${user.id}`, { active: user.active ? 0 : 1 }); reload(); }}>
+      <button className="btn-sm" onClick={async () => {
+        try {
+          await api.patch(`/admin/users/${user.id}`, { active: user.active ? 0 : 1 });
+          // Part 4, item 8.4.
+          announce(user.active ? `${user.name} disabled` : `${user.name} enabled`, [user.active
+            ? 'They can no longer use the CRM; any session they have open stops working. Their records keep their owner until handed over.'
+            : 'They can sign in again.']);
+          reload();
+        } catch (err) { onError(err.message); }
+      }}>
         {user.active ? 'Disable' : 'Enable'}
       </button>
       {editing && (
         <EditUser
           user={user}
           onClose={() => setEditing(false)}
-          onSaved={() => { setEditing(false); reload(); }}
+          onSaved={() => { setEditing(false); reload(); announce(`${user.name} saved`, ['Their details are updated.']); }}
         />
       )}
       {handing && (
         <Handover
           user={user}
           onClose={() => setHanding(false)}
-          onDone={() => { setHanding(false); reload(); }}
+          onDone={(out) => {
+            setHanding(false); reload();
+            // Part 4, item 8.4: how much moved.
+            announce('Book handed over', [`${out?.moved ?? 0} record${out?.moved === 1 ? '' : 's'} moved from ${user.name} to the people you chose.`]);
+          }}
         />
       )}
     </span>
@@ -305,6 +318,7 @@ export function NewUser({ onClose, onCreated }) {
             product_type_id: form.product_type_id || undefined,
             sales_org: form.sales_org || undefined,
           });
+          announce('User created', [`${form.name} can sign in with the email and password you set.`]);
           onCreated();
         } catch (err) { setError(err.message); setBusy(false); }
       }}>

@@ -18,7 +18,7 @@ import { Fragment, useState } from 'react';
 import { useDraft } from '../components/useDraft.js';
 import PendingBar from '../components/PendingBar.jsx';
 import { api } from '../api.js';
-import { useApi, Icon, Loading, ErrorBanner, Empty } from '../components/ui.jsx';
+import { useApi, Icon, Loading, ErrorBanner, Empty, announce } from '../components/ui.jsx';
 
 /* What each row of the grid actually is. Three mechanisms share one table
    because they share one storage shape, not because they are one thing. */
@@ -42,6 +42,8 @@ export default function TabVisibility() {
         // eslint-disable-next-line no-await-in-loop
         await api.post('/setup/tab-visibility/role', { role: c.role, tab_id: c.tabId, visible: c.value });
       }
+      // Part 4, item 8.4.
+      announce('Tabs saved', [`${changes.length} change${changes.length === 1 ? '' : 's'} saved. Each role sees its tabs as set here when it next loads a page.`]);
       reload();
     },
     (c) => `${c.role}|${c.tabId}`,
@@ -216,7 +218,11 @@ function PersonOverrides({ person, onPick }) {
 
   const set = async (tabId, visible) => {
     setProblem(null);
-    try { await api.post(`/setup/users/${person}/tabs`, { tab_id: tabId, visible }); reload(); }
+    try {
+      await api.post(`/setup/users/${person}/tabs`, { tab_id: tabId, visible });
+      announce('Exception saved', [`This person ${visible ? 'sees' : 'no longer sees'} that tab, whatever their role says.`]);
+      reload();
+    }
     catch (e) { setProblem(e.message); }
   };
 

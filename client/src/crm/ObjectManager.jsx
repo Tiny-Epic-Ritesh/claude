@@ -22,7 +22,7 @@ import { api } from '../api.js';
 import ValidationRules from './ValidationRules.jsx';
 import PicklistValues from './PicklistValues.jsx';
 import ObjectSettings from './ObjectSettings.jsx';
-import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner } from '../components/ui.jsx';
+import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, announce } from '../components/ui.jsx';
 import { Link } from 'react-router-dom';
 
 const TYPE_GROUPS = [
@@ -155,6 +155,8 @@ function ObjectDetail({ entity, onBack }) {
       await api.patch(`/setup/objects/${entity}/field-order`, {
         order: rows.map((f) => f.api_name),
       });
+      // Part 4, item 8.4.
+      announce('Field order saved', ['Every form for this object shows its fields in this order.']);
       setDraft(null);
       reload();
     } catch (err) {
@@ -331,14 +333,14 @@ function ObjectDetail({ entity, onBack }) {
           entity={entity}
           types={data.types}
           onClose={() => setAdding(false)}
-          onSaved={() => { setAdding(false); reload(); }}
+          onSaved={() => { setAdding(false); reload(); announce('Field added', ['It is on the object now.']); }}
         />
       )}
       {settings && (
         <ObjectSettings
           object={data.object}
           onClose={() => setSettings(false)}
-          onSaved={() => { setSettings(false); reload(); }}
+          onSaved={() => { setSettings(false); reload(); announce('Object settings saved', ['They apply from the next screen that shows this object.']); }}
         />
       )}
       {values && (
@@ -346,7 +348,7 @@ function ObjectDetail({ entity, onBack }) {
           entity={entity}
           field={values}
           onClose={() => setValues(null)}
-          onSaved={() => { setValues(null); reload(); }}
+          onSaved={() => { setValues(null); reload(); announce('Values saved', ['The list offers these values from now on. Records keep the values they already hold.']); }}
         />
       )}
       {editing && (
@@ -354,7 +356,7 @@ function ObjectDetail({ entity, onBack }) {
           entity={entity}
           field={editing}
           onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); reload(); }}
+          onSaved={() => { setEditing(null); reload(); announce('Field saved', ['Its settings are updated.']); }}
         />
       )}
     </>

@@ -21,7 +21,7 @@
 
 import { useState } from 'react';
 import { api, dmyTime } from '../api.js';
-import { useApi, Icon, Loading, ErrorBanner, Modal, Spinner, Empty } from '../components/ui.jsx';
+import { useApi, Icon, Loading, ErrorBanner, Modal, Spinner, Empty, announce } from '../components/ui.jsx';
 
 export default function ApiAccess() {
   const [data, { loading, error, reload }] = useApi('/setup/api-credentials');
@@ -42,7 +42,12 @@ export default function ApiAccess() {
   };
 
   const revoke = async (c) => {
-    try { await api.del(`/setup/api-credentials/${c.id}`); reload(); }
+    try {
+      await api.del(`/setup/api-credentials/${c.id}`);
+      // Part 4, item 8.4.
+      announce('Key revoked', [`"${c.label}" stops working on its next request. Whatever uses it needs a new key.`]);
+      reload();
+    }
     catch (err) { setProblem(err.message); }
   };
 
@@ -364,6 +369,7 @@ function ScopeDialog({ credential, data, onClose, onSaved, onError }) {
     setBusy(true);
     try {
       await api.patch(`/setup/api-credentials/${credential.id}`, { scopes: [...scopes] });
+      announce('Key narrowed', [`"${credential.label}" can now do ${scopes.size} thing${scopes.size === 1 ? '' : 's'}, from its next request.`]);
       onSaved();
     } catch (err) { onError(err.message); setBusy(false); }
   };

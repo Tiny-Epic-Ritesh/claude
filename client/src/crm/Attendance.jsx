@@ -20,7 +20,7 @@
 
 import { useState } from 'react';
 import { api, dateTime, istToday } from '../api.js';
-import { useApi, Icon, Modal, Spinner, ErrorBanner } from '../components/ui.jsx';
+import { useApi, Icon, Modal, Spinner, ErrorBanner, announce } from '../components/ui.jsx';
 
 /** "7h 20m" — hours people can read, not a decimal they have to convert. */
 export function readableMinutes(mins) {
@@ -42,7 +42,12 @@ export default function Attendance() {
     setBusy(true);
     setError(null);
     try {
-      await api.post(`/attendance/${what}`, {});
+      const r = await api.post(`/attendance/${what}`, {});
+      // Part 4, item 8.4.
+      const at = what === 'check-in' ? r.session?.checked_in_at : r.session?.checked_out_at;
+      announce(what === 'check-in' ? (r.already ? 'Already checked in' : 'Checked in') : 'Checked out', [
+        at ? `At ${dateTime(at)}.` : null,
+      ]);
       setDismissed(false);
       setOpen(false);
       reload();

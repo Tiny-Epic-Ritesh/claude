@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, shortDate } from '../../api.js';
-import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Icon, useDropUp } from '../../components/ui.jsx';
+import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Icon, useDropUp, announce } from '../../components/ui.jsx';
 
 /*
  * Lifted out of Admin.jsx, which held eleven Setup screens in one file and so
@@ -221,7 +221,12 @@ export function Campaigns() {
           onSend={async () => {
             const c = audience;
             setAudience(null);
-            await act(c.id, 'send', () => api.post(`/admin/campaigns/${c.id}/send`));
+            await act(c.id, 'send', async () => {
+              const r = await api.post(`/admin/campaigns/${c.id}/send`);
+              // Part 4, item 8.4: how many it reached, and who it skipped.
+              announce('Campaign sent', [`"${c.name}" went to ${r.sent} ${r.sent === 1 ? 'person' : 'people'}.`, r.note]);
+              return null;
+            });
           }}
         />
       )}
@@ -251,13 +256,27 @@ function CampaignActions({ campaign: c, busy, onEdit, onPreview, onAct }) {
     !sent && { key: 'test', label: 'Test send to me', icon: 'send_and_archive',
       run: () => onAct(c.id, 'test', () => api.post(`/admin/campaigns/${c.id}/test`)) },
     { key: 'duplicate', label: 'Duplicate', icon: 'content_copy',
-      run: () => onAct(c.id, 'duplicate', () => api.post(`/admin/campaigns/${c.id}/duplicate`)) },
+      run: () => onAct(c.id, 'duplicate', async () => {
+        const copy = await api.post(`/admin/campaigns/${c.id}/duplicate`);
+        announce('Campaign copied', [`"${copy.name}" is a new draft. Nothing sends until you send it.`]);
+      }) },
     c.status === 'Scheduled' && { key: 'pause', label: 'Pause', icon: 'pause',
-      run: () => onAct(c.id, 'pause', () => api.post(`/admin/campaigns/${c.id}/pause`)) },
+      run: () => onAct(c.id, 'pause', async () => {
+        await api.post(`/admin/campaigns/${c.id}/pause`);
+        announce('Campaign paused', [`"${c.name}" will not send at its scheduled time until it is resumed.`]);
+      }) },
     c.status === 'Paused' && { key: 'resume', label: 'Resume', icon: 'play_arrow',
-      run: () => onAct(c.id, 'resume', () => api.post(`/admin/campaigns/${c.id}/resume`)) },
+      run: () => onAct(c.id, 'resume', async () => {
+        const after = await api.post(`/admin/campaigns/${c.id}/resume`);
+        announce('Campaign resumed', [`"${c.name}" is ${String(after.status ?? 'scheduled').toLowerCase()} again.`]);
+      }) },
     { key: 'delete', label: sent ? 'Archive' : 'Delete', icon: sent ? 'inventory_2' : 'delete', danger: !sent,
-      run: () => onAct(c.id, 'delete', () => api.del(`/admin/campaigns/${c.id}`)) },
+      run: () => onAct(c.id, 'delete', async () => {
+        const r = await api.del(`/admin/campaigns/${c.id}`);
+        // A sent campaign is archived, and the server's note says why.
+        if (!r?.note) announce('Campaign deleted', [`"${c.name}" is gone. It had not been sent.`]);
+        return r;
+      }) },
   ].filter(Boolean);
 
   const menuRef = useRef(null);
@@ -344,6 +363,10 @@ function CampaignEditor({ campaign, onClose, onSaved }) {
       };
       if (campaign) await api.patch(`/admin/campaigns/${campaign.id}`, body);
       else await api.post('/admin/campaigns', body);
+      // Part 4, item 8.4.
+      announce(campaign ? 'Campaign saved' : 'Campaign created', [
+        `"${form.name}" is saved. ${body.scheduled_at ? 'It is scheduled; it can still be paused.' : 'Nothing sends until you send it.'}`,
+      ]);
       onSaved();
     } catch (err) { setError(err.message); setBusy(false); }
   }

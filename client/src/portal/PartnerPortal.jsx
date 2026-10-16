@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, token, money, rupees, shortDate, dateTime, monthYear } from '../api.js';
-import { ErrorBanner, Loading, Spinner, Empty, Modal, Tabs } from '../components/ui.jsx';
+import { ErrorBanner, Loading, Spinner, Empty, Modal, Tabs, announce, OutcomeHost } from '../components/ui.jsx';
 import {
   BarChart, Donut, Funnel, ProgressRing, StatTile, compactMoney,
 } from '../components/charts.jsx';
@@ -162,6 +162,8 @@ function Dashboard({ partner, onSignOut }) {
 
   return (
     <div className="portal">
+      {/* Part 4, item 8.4: what an action did, until it is closed. */}
+      <OutcomeHost />
       <header className="portal-head">
         <div className="portal-id">
           <BrandLogo org={p.sales_org} height={28} />
@@ -849,7 +851,11 @@ function RaiseModal({ onClose, onDone }) {
       <form onSubmit={async (e) => {
         e.preventDefault();
         setBusy(true);
-        try { await api.post('/portal/tickets', form, 'partner'); onDone(); }
+        try {
+          const t = await api.post('/portal/tickets', form, 'partner');
+          announce(`Request ${t.ref} raised`, ['Our team replies here, under Support.']);
+          onDone();
+        }
         catch (err) { setError(err.message); setBusy(false); }
       }}>
         <ErrorBanner error={error} />
@@ -986,7 +992,11 @@ function ModuleModal({ module, onClose, onDone }) {
 
   const complete = async () => {
     setBusy(true);
-    try { await api.post(`/portal/training/${encodeURIComponent(module)}/complete`, {}, 'partner'); onDone(); }
+    try {
+      const r = await api.post(`/portal/training/${encodeURIComponent(module)}/complete`, {}, 'partner');
+      announce(r.already ? 'Already complete' : 'Module complete', [`"${module}" is marked complete${r.already ? ' from before' : ''}.`]);
+      onDone();
+    }
     catch (e) { setError(e.message); setBusy(false); }
   };
 

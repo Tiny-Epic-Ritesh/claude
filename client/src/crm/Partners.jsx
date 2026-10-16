@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, shortDate, appUrl } from '../api.js';
 import {
-  useApi, Icon, Loading, ErrorBanner, Empty, Modal, Spinner, Progress, Tabs,
+  useApi, Icon, Loading, ErrorBanner, Empty, Modal, Spinner, Progress, Tabs, announce,
 } from '../components/ui.jsx';
 
 const MODELS = ['Remisier', 'Agent', 'Trainee Entrepreneur', 'Associate', 'Authorised Person'];
@@ -242,6 +242,12 @@ function ExportPartners({ meta, count, query, onClose }) {
     try {
       const r = await api.post(`/partners/export${query}`, { columns: picked, unmask });
       download(r.filename, r.csv);
+      // Part 4, item 8.4: what went into the file.
+      announce('Partners exported', [
+        `${r.rows} partner${r.rows === 1 ? '' : 's'} in ${r.filename}${r.unmasked ? ', with identifiers in the clear' : ', identifiers masked'}.`,
+        r.truncated ? 'Capped: there were more than one export holds.' : null,
+        'The export is in the audit log.',
+      ], r.truncated ? 'warn' : 'ok');
       onClose();
     } catch (e) { setProblem(e.message); setBusy(false); }
   };

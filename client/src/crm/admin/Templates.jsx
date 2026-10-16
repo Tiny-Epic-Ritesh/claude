@@ -161,9 +161,10 @@ export function Templates() {
             setProblem(null);
             /* Said, because the Approved button flipping back is easy to miss
                and the first anybody would otherwise hear of it is a refused send. */
+            // Part 4, item 8.4: an ordinary save says so too.
             setDone(res?.approval_reset
               ? `Saved. "${editing.name}" changed, so it goes back for approval before anything can send it.`
-              : null);
+              : `Saved "${res?.name ?? editing.name ?? 'the template'}".`);
             reload();
           }}
           onError={setProblem}

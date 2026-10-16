@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, shortDate } from '../../api.js';
-import { useApi, Loading, Empty, Icon, ErrorBanner, Modal, Spinner } from '../../components/ui.jsx';
+import { useApi, Loading, Empty, Icon, ErrorBanner, Modal, Spinner, announce } from '../../components/ui.jsx';
 
 /**
  * Meta Lead Ads console (P3-18).
@@ -310,6 +310,8 @@ function Forms({ onError }) {
                         await api.post('/setup/objects/lead/fields/source/values/add',
                           { value: v, sales_org: f.sales_org });
                         await save(f.form_id, { source_label: v });
+                        // Part 4, item 8.4: a new lead source is a change beyond this form.
+                        announce('Lead source added', [`"${v}" is now a lead source in ${f.sales_org === 'BIGUL' ? 'Bigul' : 'Bonanza'}, and leads from this form are given it.`]);
                         reload();
                       }}
                       onError={onError}
@@ -588,10 +590,15 @@ function AdCampaigns({ onError }) {
     if (!draft.name.trim()) return;
     setBusy(true);
     try {
-      await api.post('/admin/connectors/meta/campaigns', {
+      const made = await api.post('/admin/connectors/meta/campaigns', {
         name: draft.name.trim(),
         daily_budget: draft.daily_budget ? Number(draft.daily_budget) : undefined,
       });
+      // Part 4, item 8.4: the server says it is paused, and whether it is real.
+      announce('Meta campaign created', [
+        `"${draft.name.trim()}" -- ${made.note}`,
+        made.simulated ? 'Simulated: Meta is not connected, so nothing was created there.' : null,
+      ]);
       setDraft({ name: '', daily_budget: '' });
       reload();
     } catch (err) { onError(err.message); }
@@ -715,7 +722,12 @@ function Audiences({ onError }) {
   const push = async () => {
     setBusy(true);
     try {
-      await api.post('/admin/connectors/meta/audiences', { name: draft.name.trim(), list_id: Number(draft.list_id) });
+      const out = await api.post('/admin/connectors/meta/audiences', { name: draft.name.trim(), list_id: Number(draft.list_id) });
+      // Part 4, item 8.4: what left, and that it left the country.
+      announce('Audience pushed', [
+        `${out.matched} ${out.matched === 1 ? 'person' : 'people'} from the list sent to Meta as "${draft.name.trim()}", as hashed identifiers. Anyone who opted out of marketing was left out.`,
+        out.simulated ? 'Simulated: Meta is not connected, so nothing left the CRM.' : 'Hashed identifiers have left India; the push is recorded on this screen.',
+      ], out.simulated ? 'ok' : 'warn');
       setDraft({ name: '', list_id: '' });
       reload();
     } catch (err) { onError(err.message); }

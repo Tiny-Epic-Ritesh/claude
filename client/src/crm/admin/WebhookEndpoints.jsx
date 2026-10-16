@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api, dateTime } from '../../api.js';
-import { useApi, Loading, Empty, Icon, Modal, ErrorBanner } from '../../components/ui.jsx';
+import { useApi, Loading, Empty, Icon, Modal, ErrorBanner, announce } from '../../components/ui.jsx';
 
 /**
  * Where an automation is allowed to post (P3-16).
@@ -72,11 +72,20 @@ export function WebhookEndpoints() {
                   <div className="tiny muted">{e.url}</div>
                 </div>
                 <div className="row" style={{ gap: 6 }}>
-                  <button className="btn-sm" onClick={() => act(() => api.patch(`/setup/webhook-endpoints/${e.id}`, { active: !e.active }))}>
+                  <button className="btn-sm" onClick={() => act(async () => {
+                    await api.patch(`/setup/webhook-endpoints/${e.id}`, { active: !e.active });
+                    // Part 4, item 8.4.
+                    announce(e.active ? 'Webhook paused' : 'Webhook resumed', [e.active
+                      ? `Nothing is sent to ${e.name} until it is resumed.`
+                      : `${e.name} receives events again from now on.`]);
+                  })}>
                     {e.active ? 'Pause' : 'Resume'}
                   </button>
                   <button className="btn-sm" onClick={() => setEditing(e)}>Edit</button>
-                  <button className="btn-sm" onClick={() => act(() => api.del(`/setup/webhook-endpoints/${e.id}`))}>Delete</button>
+                  <button className="btn-sm" onClick={() => act(async () => {
+                    await api.del(`/setup/webhook-endpoints/${e.id}`);
+                    announce('Webhook deleted', [`Nothing more is sent to ${e.name}.`]);
+                  })}>Delete</button>
                 </div>
               </div>
 
@@ -153,6 +162,7 @@ function EndpointEditor({ endpoint, sendable, onClose, onSaved }) {
       const body = { name, url, fields, ...(secret ? { secret } : {}) };
       if (endpoint) await api.patch(`/setup/webhook-endpoints/${endpoint.id}`, body);
       else await api.post('/setup/webhook-endpoints', body);
+      announce(endpoint ? 'Webhook saved' : 'Webhook added', [`${name} receives the ${fields.length} field${fields.length === 1 ? '' : 's'} you chose.`]);
       onSaved();
     } catch (err) { setError(err.message); setBusy(false); }
   };

@@ -3896,6 +3896,38 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
 .handover { display: grid; gap: 6px; padding-bottom: 10px; border-bottom: 1px solid var(--hairline-2); }
 .handover:last-child { border-bottom: 0; padding-bottom: 0; }
 
+/* Part 4, item 8.4: what an action did, until it is closed. Opaque, above
+   any dialog, and out of the way of the Copilot's button. */
+.outcome-stack {
+  position: fixed;
+  right: 20px;
+  bottom: 84px;
+  z-index: 3000;
+  display: grid;
+  gap: 10px;
+  width: min(420px, calc(100vw - 32px));
+}
+.outcome-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--glass-border);
+  border-left: 3px solid var(--ok);
+  background: var(--glass-solid);
+  box-shadow: var(--lift-2);
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.outcome-toast.notice-warn { border-left-color: var(--warn); }
+.outcome-toast > .material-symbols-rounded { font-size: 20px; color: var(--ok); flex-shrink: 0; }
+.outcome-toast.notice-warn > .material-symbols-rounded { color: var(--warn); }
+.outcome-text { display: grid; gap: 3px; flex: 1; min-width: 0; }
+.outcome-text strong { color: var(--ink); font-weight: 650; }
+.outcome-text p { margin: 0; }
+@media (max-width: 560px) { .outcome-stack { right: 16px; left: 16px; width: auto; bottom: 76px; } }
+
 /* The whole conversation, scrolled inside the dialog (Part 4, item 2). */
 .thread-all { max-height: min(70vh, 720px); overflow-y: auto; padding-right: 4px; }
 .thread-gap {

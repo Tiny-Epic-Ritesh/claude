@@ -25,7 +25,7 @@
 import { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api, ROLE_LABEL } from '../api.js';
-import { useApi, Icon, ErrorBanner, Empty, Spinner } from '../components/ui.jsx';
+import { useApi, Icon, ErrorBanner, Empty, Spinner, announce } from '../components/ui.jsx';
 import SetupSkeleton from '../setup/SetupSkeleton.jsx';
 import { UserActions, ResetLink, NewUser } from './admin/users.jsx';
 import { ExportUsers, RequiredFields } from './admin/UserExport.jsx';
@@ -111,6 +111,9 @@ export default function UsersSetup() {
       }
     }
     setBusy(false);
+    // Part 4, item 8.4: how many changed, beside how many did not.
+    const changed = picked.size - failed.length;
+    if (changed) announce(active ? 'Users enabled' : 'Users disabled', [`${changed} user${changed === 1 ? '' : 's'} ${active ? 'can sign in again' : 'can no longer use the CRM'}.`]);
     setPicked(new Set());
     if (failed.length) setProblem(`${failed.length} could not be changed — ${failed[0]}`);
     reload();

@@ -13,7 +13,7 @@
 
 import { useState } from 'react';
 import { api } from '../../api.js';
-import { useApi, Modal, ErrorBanner } from '../../components/ui.jsx';
+import { useApi, Modal, ErrorBanner, announce } from '../../components/ui.jsx';
 import ExportDialog from '../../components/ExportDialog.jsx';
 
 /* ------------------------------------------------------------------ export */
@@ -54,6 +54,8 @@ export function RequiredFields({ onClose }) {
     setError(null);
     try {
       await api.post('/setup/users/required-fields', { field, required });
+      // Part 4, item 8.4.
+      announce(required ? 'Field required' : 'Field optional', [`Creating or editing a user now ${required ? 'needs' : 'does not need'} it.`]);
       reload();
     } catch (err) {
       setError(err.message);

@@ -10,7 +10,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, shortDate, dateTime } from '../api.js';
-import { useApi, Icon, Loading, ErrorBanner, Empty, Modal } from '../components/ui.jsx';
+import { useApi, Icon, Loading, ErrorBanner, Empty, Modal, announce } from '../components/ui.jsx';
 import ConditionBuilder from '../components/ConditionBuilder.jsx';
 
 const KIND_BADGE = {
@@ -33,7 +33,12 @@ export default function LeadLists({ session }) {
 
   const refresh = async (id) => {
     setBusy(id); setProblem(null);
-    try { await api.post(`/lists/${id}/refresh`); reload(); }
+    try {
+      const r = await api.post(`/lists/${id}/refresh`);
+      // Part 4, item 8.4.
+      announce('List refreshed', [`It now holds ${r.after} lead${r.after === 1 ? '' : 's'}, ${r.added === 0 ? 'the same as before' : r.added > 0 ? `${r.added} more than before` : `${-r.added} fewer than before`}.`]);
+      reload();
+    }
     catch (e) { setProblem(e.message); }
     finally { setBusy(null); }
   };

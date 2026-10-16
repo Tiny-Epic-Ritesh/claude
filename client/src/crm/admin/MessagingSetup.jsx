@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api, dateTime, ROLE_LABEL } from '../../api.js';
-import { useApi, Loading, Empty, Icon, ErrorBanner } from '../../components/ui.jsx';
+import { useApi, Loading, Empty, Icon, ErrorBanner, announce } from '../../components/ui.jsx';
 
 /**
  * Messaging, for the people who govern it (P3-21).
@@ -182,7 +182,11 @@ function Review({ review, suspended, act, reload }) {
               <button
                 type="button"
                 className="btn-sm"
-                onClick={() => act(() => api.post(`/messages/conversations/${openId}/unfreeze`, {}), refreshOpen)}
+                onClick={() => act(() => api.post(`/messages/conversations/${openId}/unfreeze`, {}), () => {
+                  // Part 4, item 8.4.
+                  announce('Conversation reopened', ['Its members can post in it again.']);
+                  refreshOpen();
+                })}
               >
                 Reopen
               </button>
@@ -226,7 +230,10 @@ function Review({ review, suspended, act, reload }) {
                 disabled={!reason.trim()}
                 onClick={() => act(
                   () => api.post(`/messages/conversations/${openId}/freeze`, { reason }),
-                  () => { setReason(''); refreshOpen(); },
+                  () => {
+                    announce('Conversation frozen', ['Nobody can post in it until it is reopened. What is already there stays as it is.']);
+                    setReason(''); refreshOpen();
+                  },
                 )}
               >
                 <Icon name="lock" size={15} /> Freeze
@@ -248,7 +255,10 @@ function Review({ review, suspended, act, reload }) {
               onCancel={() => setSuspending(null)}
               onSubmit={(why) => act(
                 () => api.post('/messages/suspensions', { user_id: suspending.id, reason: why }),
-                () => { setSuspending(null); reload(); },
+                () => {
+                  announce('Messaging suspended', [`${suspending.name} cannot send messages until restored, and is told why.`]);
+                  setSuspending(null); reload();
+                },
               )}
             />
           )}
@@ -274,7 +284,10 @@ function Review({ review, suspended, act, reload }) {
                 <button
                   type="button"
                   className="btn-sm"
-                  onClick={() => act(() => api.del(`/messages/suspensions/${s.user_id}`), reload)}
+                  onClick={() => act(() => api.del(`/messages/suspensions/${s.user_id}`), () => {
+                    announce('Messaging restored', [`${s.name} can send messages again.`]);
+                    reload();
+                  })}
                 >
                   Restore
                 </button>

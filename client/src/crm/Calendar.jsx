@@ -15,7 +15,7 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, dateTime, dmy } from '../api.js';
-import { useApi, Icon, Loading, ErrorBanner, Empty } from '../components/ui.jsx';
+import { useApi, Icon, Loading, ErrorBanner, Empty, announce } from '../components/ui.jsx';
 
 const KIND = {
   meeting: { icon: 'event', label: 'Outlook', cls: 'is-meeting' },
@@ -51,7 +51,15 @@ export default function Calendar() {
 
   const sync = async () => {
     setSyncing(true); setProblem(null);
-    try { await api.post('/calendar/sync', {}); reload(); }
+    try {
+      const r = await api.post('/calendar/sync', {});
+      // Part 4, item 8.4.
+      announce('Calendar synced', [
+        `${r.pulled} event${r.pulled === 1 ? '' : 's'} read from Outlook${r.withdrawn ? `; ${r.withdrawn} no longer there were taken off` : ''}.`,
+        r.simulated ? 'Simulated: Outlook is not connected.' : null,
+      ]);
+      reload();
+    }
     catch (e) { setProblem(e.message); }
     finally { setSyncing(false); }
   };

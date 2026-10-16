@@ -21,7 +21,7 @@
 
 import { useMemo, useState } from 'react';
 import { api, rupees } from '../api.js';
-import { useApi, Icon, Modal, ErrorBanner, Spinner } from '../components/ui.jsx';
+import { useApi, Icon, Modal, ErrorBanner, Spinner, announce } from '../components/ui.jsx';
 import SetupSkeleton from '../setup/SetupSkeleton.jsx';
 
 const ORG_LABEL = { BONANZA: 'Bonanza', BIGUL: 'Bigul' };
@@ -58,6 +58,10 @@ export default function ProductsSetup() {
     setProblem(null);
     try {
       await api.patch(`/admin/products/${p.id}`, { active: p.active ? 0 : 1 });
+      // Part 4, item 8.4.
+      announce(p.active ? `${p.name} switched off` : `${p.name} switched on`, [p.active
+        ? 'It is no longer offered on new leads. Cards that already have it keep it.'
+        : 'It is offered again.']);
       reload();
     } catch (err) { setProblem(err.message); }
   };
@@ -229,6 +233,7 @@ function ProductEditor({ product, onClose, onSaved, onError }) {
       };
       if (making) await api.post('/admin/products', body);
       else await api.patch(`/admin/products/${product.id}`, body);
+      announce(making ? 'Product added' : 'Product saved', [`"${body.name ?? product?.name}" is ${making ? 'added' : 'updated'}.`]);
       onSaved();
     } catch (err) { setError(err.message); setBusy(false); }
   };
@@ -362,6 +367,7 @@ function Brochure({ productId, onError }) {
     setBusy(true);
     try {
       await api.del(`/admin/products/${productId}/brochure`);
+      announce('Brochure removed', ['Nobody is offered it on a call or a message from now on.']);
       reload();
     } catch (err) { onError(err.message); }
     finally { setBusy(false); }

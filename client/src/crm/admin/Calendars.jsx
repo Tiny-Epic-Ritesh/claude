@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api, dmy } from '../../api.js';
-import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Icon } from '../../components/ui.jsx';
+import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Icon, announce } from '../../components/ui.jsx';
 
 /*
  * Lifted out of Admin.jsx, which held eleven Setup screens in one file and so
@@ -36,9 +36,14 @@ export function Calendars() {
 
   const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-  const drop = async (id) => {
+  const drop = async (id, name) => {
     setError(null);
-    try { await api.del(`/admin/calendars/days/${id}`); reload(); }
+    try {
+      await api.del(`/admin/calendars/days/${id}`);
+      // Part 4, item 8.4.
+      announce('Day removed', [`${name} is an ordinary day again in this calendar, and whatever counts working time by it counts that day.`]);
+      reload();
+    }
     catch (err) { setError(err.message); }
   };
 
@@ -87,7 +92,7 @@ export function Calendars() {
                         SLA clocks that ran over it were counted against. */}
                     {d.on_date > todayInIndia() ? (
                       <button className="btn btn-ghost btn-icon" aria-label={`Remove ${d.name}`}
-                        onClick={() => drop(d.id)}>
+                        onClick={() => drop(d.id, d.name)}>
                         <Icon name="close" size={16} />
                       </button>
                     ) : <span className="tiny muted">kept</span>}
@@ -103,7 +108,7 @@ export function Calendars() {
         <AddCalendarDay
           kind={adding}
           onClose={() => setAdding(null)}
-          onSaved={() => { setAdding(null); reload(); }}
+          onSaved={() => { setAdding(null); reload(); announce('Day added', ['This calendar treats it as set, for whatever counts working time by it.']); }}
         />
       )}
     </>

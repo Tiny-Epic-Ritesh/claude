@@ -11,7 +11,7 @@
 
 import { useState } from 'react';
 import { api, dateTime } from '../../api.js';
-import { useApi, Loading, ErrorBanner, Empty, Icon, Modal } from '../../components/ui.jsx';
+import { useApi, Loading, ErrorBanner, Empty, Icon, Modal, announce } from '../../components/ui.jsx';
 
 export function TestRecords() {
   const [data, { loading, error, reload }] = useApi('/admin/test-records');
@@ -39,7 +39,12 @@ export function TestRecords() {
 
   async function unmark(r) {
     setProblem(null); setDone(null);
-    try { await api.del(`/admin/test-records/${r.id}`); reload(); }
+    try {
+      await api.del(`/admin/test-records/${r.id}`);
+      // Part 4, item 8.4.
+      announce('Unmarked', [`${r.kind_label} ${r.record_id} is no longer marked as test data. Nothing else about it changed.`]);
+      reload();
+    }
     catch (err) { setProblem(err.message); }
   }
 

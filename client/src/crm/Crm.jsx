@@ -4,7 +4,7 @@ import { api, appUrl, token, ROLE_LABEL } from '../api.js';
 import GhostBar, { hasParentToken, parentName, leaveGhost, ghostReturnTo } from './GhostBar.jsx';
 import Attendance from './Attendance.jsx';
 import Inbox from './Inbox.jsx';
-import { Loading, Icon, Avatar, OrgSwitcher, ThemeToggle } from '../components/ui.jsx';
+import { Loading, Icon, Avatar, OrgSwitcher, ThemeToggle, OutcomeHost } from '../components/ui.jsx';
 import { AppLauncher, TabBar, GlobalSearch, UserMenu } from '../components/AppNav.jsx';
 import { applyOrgAccent } from '../theme.js';
 import Login from './Login.jsx';
@@ -464,6 +464,8 @@ export default function Crm() {
       </div>
 
       <Copilot open={copilotOpen} onClose={() => setCopilotOpen(false)} session={session} />
+      {/* Part 4, item 8.4: what any action did, until it is closed. */}
+      <OutcomeHost />
     </div>
   );
 }

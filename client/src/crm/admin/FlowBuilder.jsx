@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api.js';
-import { Loading, Icon, Modal, ErrorBanner, Spinner } from '../../components/ui.jsx';
+import { Loading, Icon, Modal, ErrorBanner, Spinner, announce } from '../../components/ui.jsx';
 import FlowCanvas from './FlowCanvas.jsx';
 import NodePanel from './NodePanel.jsx';
 import StepDrawer from './StepDrawer.jsx';
@@ -274,7 +274,16 @@ export default function FlowBuilder({ id, spec, onBack }) {
 
   const setStatus = async (action) => {
     setBusy(true);
-    try { await api.post(`/admin/automations/${id}/${action}`); await load(); }
+    try {
+      const after = await api.post(`/admin/automations/${id}/${action}`);
+      // Part 4, item 8.4.
+      announce(action === 'activate' ? 'Automation activated' : 'Automation paused', [
+        action === 'activate'
+          ? `"${after.name ?? data?.name}" is active and acts on what happens from now on.`
+          : `"${after.name ?? data?.name}" is paused. It acts on nothing until it is activated again.`,
+      ]);
+      await load();
+    }
     catch (err) { setProblem(err.message); }
     finally { setBusy(false); }
   };

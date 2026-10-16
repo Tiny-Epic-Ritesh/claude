@@ -13,7 +13,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, rupeesCompact, shortDate } from '../api.js';
-import { useApi, Icon, Loading, ErrorBanner, Empty, Stat, Modal } from '../components/ui.jsx';
+import { useApi, Icon, Loading, ErrorBanner, Empty, Stat, Modal, announce } from '../components/ui.jsx';
 import AdvancedSearch from '../components/AdvancedSearch.jsx';
 import ColumnChooser from '../components/ColumnChooser.jsx';
 
@@ -663,6 +663,12 @@ function ExportDialog({ meta, count, query, onClose }) {
       // different set of accounts than the one it was taken from.
       const r = await api.post(`/clients/export?${query}`, { columns: picked, unmask });
       download(r.filename, r.csv);
+      // Part 4, item 8.4: what went into the file.
+      announce('Clients exported', [
+        `${r.rows} account${r.rows === 1 ? '' : 's'} in ${r.filename}${r.unmasked ? ', with identifiers in the clear' : ', identifiers masked'}.`,
+        r.truncated ? 'Capped: there were more than one export holds.' : null,
+        'The export is in the audit log.',
+      ], r.truncated ? 'warn' : 'ok');
       onClose();
     } catch (e) { setProblem(e.message); setBusy(false); }
   };

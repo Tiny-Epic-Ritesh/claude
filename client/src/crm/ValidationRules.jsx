@@ -19,7 +19,7 @@
 
 import { useState } from 'react';
 import { api } from '../api.js';
-import { useApi, Icon, Loading, ErrorBanner, Modal, Spinner, Empty } from '../components/ui.jsx';
+import { useApi, Icon, Loading, ErrorBanner, Modal, Spinner, Empty, announce } from '../components/ui.jsx';
 
 export default function ValidationRules({ entity }) {
   const [data, { loading, error, reload }] = useApi(`/setup/objects/${entity}/validation-rules`);
@@ -148,13 +148,23 @@ function RuleEditor({ entity, rule, meta, onClose, onSaved, onError }) {
       const body = { name: form.name, message: form.message, condition: condition() };
       if (isNew) await api.post(`/setup/objects/${entity}/validation-rules`, body);
       else await api.patch(`/setup/validation-rules/${rule.id}`, { ...body, active: form.active ? 1 : 0 });
+      // Part 4, item 8.4.
+      announce(isNew ? 'Validation rule added' : 'Validation rule saved', [
+        (isNew || form.active)
+          ? `"${form.name}" refuses a save that breaks it, with your message, from now on.`
+          : `"${form.name}" is saved, switched off.`,
+      ]);
       onSaved();
     } catch (err) { onError(err.message); setBusy(false); }
   };
 
   const remove = async () => {
     setBusy(true);
-    try { await api.del(`/setup/validation-rules/${rule.id}`); onSaved(); }
+    try {
+      await api.del(`/setup/validation-rules/${rule.id}`);
+      announce('Validation rule deleted', [`"${rule.name}" no longer checks any save.`]);
+      onSaved();
+    }
     catch (err) { onError(err.message); setBusy(false); }
   };
 

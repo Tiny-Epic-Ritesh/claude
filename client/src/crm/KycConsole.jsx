@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, mins, shortDate, appUrl } from '../api.js';
-import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Progress, Tabs } from '../components/ui.jsx';
+import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Progress, Tabs, announce } from '../components/ui.jsx';
 
 /**
  * Internal KYC console (BRD §7.6, P3).
@@ -40,7 +40,19 @@ export default function KycConsole({ session }) {
           </p>
         </div>
         <div className="row">
-          <button onClick={async () => { await api.post('/kyc/sweep'); reload(); }}>Run stall sweep</button>
+          {/* Part 4, item 8.4: it ran on a click, styled as bare text, and said nothing. */}
+          <button type="button" className="btn" onClick={async () => {
+            try {
+              const r = await api.post('/kyc/sweep');
+              announce('Stall check done', [
+                `Checked ${r.checked} live application${r.checked === 1 ? '' : 's'}.`,
+                r.stalled || r.abandoned
+                  ? `${r.stalled} newly stalled, ${r.abandoned} abandoned; the Product RM or owner of each was notified.`
+                  : 'None had newly stalled or been abandoned. The server checks every 30 seconds by itself.',
+              ], r.stalled || r.abandoned ? 'warn' : 'ok');
+              reload();
+            } catch (err) { setActionError(err.message); }
+          }}>Run stall sweep</button>
           <a className="btn btn-primary" href={appUrl("/dkyc")} target="_blank" rel="noreferrer">Open DKYC portal</a>
         </div>
       </div>
@@ -161,7 +173,10 @@ function JourneyModal({ journey, session, onClose, onChanged, onError }) {
                 }}>Why stuck?</button>
               )}
               {canManage && full.status === 'Abandoned' && (
-                <button className="btn-sm btn-primary" disabled={busy} onClick={() => act(() => api.post(`/kyc/journeys/${journey.id}/assist`))}>Take over</button>
+                <button className="btn-sm btn-primary" disabled={busy} onClick={() => act(async () => {
+                  await api.post(`/kyc/journeys/${journey.id}/assist`);
+                  announce('You are assisting', ['The application is In Progress again, and the step it is on starts its timer afresh.']);
+                })}>Take over</button>
               )}
               {full.resume_token && full.status !== 'Complete' && (
                 <a className="btn btn-sm" href={appUrl(`/dkyc/resume/${full.resume_token}`)} target="_blank" rel="noreferrer">Applicant link</a>
@@ -198,7 +213,10 @@ function JourneyModal({ journey, session, onClose, onChanged, onError }) {
                   <td className="num tiny muted">{mins(s.timer_s || s.timer)}</td>
                   <td className="num">
                     {canOverride && s.status !== 'done' && (
-                      <button className="btn-sm" disabled={busy} onClick={() => act(() => api.post(`/kyc/journeys/${journey.id}/override`, { step_code: s.code, action: 'complete' }))}>
+                      <button className="btn-sm" disabled={busy} onClick={() => act(async () => {
+                        await api.post(`/kyc/journeys/${journey.id}/override`, { step_code: s.code, action: 'complete' });
+                        announce('Step forced complete', [`"${s.label}" is marked complete by override, and the override is in the audit.`], 'warn');
+                      })}>
                         Force complete
                       </button>
                     )}

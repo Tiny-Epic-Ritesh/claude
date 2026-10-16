@@ -13,7 +13,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, shortDate } from '../api.js';
-import { useApi, Icon, Loading, ErrorBanner, Empty, Modal } from '../components/ui.jsx';
+import { useApi, Icon, Loading, ErrorBanner, Empty, Modal, announce } from '../components/ui.jsx';
 
 const STATUS_BADGE = {
   Draft: '', Scheduled: 'badge-blue', Sending: 'badge-amber',
@@ -219,7 +219,7 @@ export default function Campaigns({ session }) {
           lists={lists ?? []}
           templates={(templates ?? []).filter((t) => t.approved)}
           onClose={() => setCreating(false)}
-          onDone={() => { setCreating(false); reload(); }}
+          onDone={() => { setCreating(false); reload(); announce('Campaign created', ['It is a draft or scheduled, as you set it. Nothing sends until it is sent or its time comes.']); }}
           onError={(m) => { setCreating(false); setProblem(m); }}
         />
       )}

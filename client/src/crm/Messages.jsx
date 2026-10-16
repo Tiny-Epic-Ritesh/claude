@@ -17,7 +17,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, dateTime, parseTs, ROLE_LABEL } from '../api.js';
 import {
-  useApi, useDismiss, Loading, ErrorBanner, Empty, Modal, Spinner, Icon, Avatar,
+  useApi, useDismiss, Loading, ErrorBanner, Empty, Modal, Spinner, Icon, Avatar, announce,
 } from '../components/ui.jsx';
 import { useMessageStream } from './messageStream.js';
 
@@ -393,9 +393,11 @@ function MembersPanel({ convo, onClose, onChanged, onLeft, onProblem }) {
   const [adding, setAdding] = useState(false);
   const others = new Set(convo.with.map((p) => p.id));
 
-  const act = async (fn, after) => {
+  /* Part 4, item 8.4: each of these changes who sees the channel, so each
+     says so once it is done. */
+  const act = async (fn, after, said) => {
     onProblem(null);
-    try { await fn(); after?.(); onChanged(); } catch (err) { onProblem(err.message); }
+    try { await fn(); if (said) announce(...said); after?.(); onChanged(); } catch (err) { onProblem(err.message); }
   };
 
   return (
@@ -421,7 +423,8 @@ function MembersPanel({ convo, onClose, onChanged, onLeft, onProblem }) {
                 </span>
               </span>
               {convo.is_creator && others.has(p.id) && (
-                <button type="button" className="btn-ghost btn-sm" onClick={() => act(() => api.del(`/messages/channels/${convo.id}/members/${p.id}`))}>
+                <button type="button" className="btn-ghost btn-sm" onClick={() => act(() => api.del(`/messages/channels/${convo.id}/members/${p.id}`), null,
+                  [`Removed from #${convo.name}`, [`${p.name} no longer sees the channel or its new messages.`]])}>
                   Remove
                 </button>
               )}
@@ -433,7 +436,8 @@ function MembersPanel({ convo, onClose, onChanged, onLeft, onProblem }) {
           <CandidatePicker
             channelId={convo.id}
             onCancel={() => setAdding(false)}
-            onPick={(p) => act(() => api.post(`/messages/channels/${convo.id}/members`, { user_id: p.id }), () => setAdding(false))}
+            onPick={(p) => act(() => api.post(`/messages/channels/${convo.id}/members`, { user_id: p.id }), () => setAdding(false),
+              [`Added to #${convo.name}`, [`${p.name} can now read the channel and post in it.`]])}
           />
         ) : (
           <button type="button" className="btn btn-sm" onClick={() => setAdding(true)}>
@@ -442,15 +446,18 @@ function MembersPanel({ convo, onClose, onChanged, onLeft, onProblem }) {
         ))}
 
         <div className="row wrap" style={{ gap: 6 }}>
-          <button type="button" className="btn-ghost btn-sm" onClick={() => act(() => api.post(`/messages/channels/${convo.id}/leave`, {}), onLeft)}>
+          <button type="button" className="btn-ghost btn-sm" onClick={() => act(() => api.post(`/messages/channels/${convo.id}/leave`, {}), onLeft,
+            [`You left #${convo.name}`, ['It is gone from your list, and you no longer get its messages.']])}>
             Leave the channel
           </button>
           {convo.is_creator && (convo.archived_at ? (
-            <button type="button" className="btn-ghost btn-sm" onClick={() => act(() => api.post(`/messages/channels/${convo.id}/unarchive`, {}), onClose)}>
+            <button type="button" className="btn-ghost btn-sm" onClick={() => act(() => api.post(`/messages/channels/${convo.id}/unarchive`, {}), onClose,
+              [`#${convo.name} reopened`, ['Its members can post in it again.']])}>
               Reopen it
             </button>
           ) : (
-            <button type="button" className="btn-ghost btn-sm" onClick={() => act(() => api.post(`/messages/channels/${convo.id}/archive`, {}), onClose)}>
+            <button type="button" className="btn-ghost btn-sm" onClick={() => act(() => api.post(`/messages/channels/${convo.id}/archive`, {}), onClose,
+              [`#${convo.name} archived`, ['Nobody can post in it now; its messages stay readable. You can reopen it.']])}>
               Archive it
             </button>
           ))}
@@ -888,9 +895,16 @@ function TransferCard({ m, onAct }) {
   const [declining, setDeclining] = useState(false);
   const [reason, setReason] = useState('');
 
-  const decide = (approve) => onAct(() => api.post(`/approvals/${t.approval_id}/decide`, {
-    approve, reason: reason.trim() || undefined,
-  }));
+  /* Part 4, item 8.4: approving moves a lead, which shows nowhere on this card. */
+  const decide = (approve) => onAct(async () => {
+    await api.post(`/approvals/${t.approval_id}/decide`, {
+      approve, reason: reason.trim() || undefined,
+    });
+    // A lead that changed hands meanwhile is refused by the server, as an error.
+    announce(approve ? 'Transfer approved' : 'Transfer declined', approve
+      ? [`${m.lead?.name ?? 'The lead'} now belongs to ${t.requested_by_name}, and it is in the lead's history.`]
+      : [`${t.requested_by_name} sees your reason here. The lead stays where it was.`]);
+  });
 
   return (
     <div className={`card msg-transfer ${m.mine ? 'is-mine' : ''}`}>
@@ -927,7 +941,10 @@ function TransferCard({ m, onAct }) {
         </div>
       )}
       {t.can_withdraw && (
-        <button type="button" className="btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => onAct(() => api.post(`/approvals/${t.approval_id}/withdraw`, {}))}>
+        <button type="button" className="btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => onAct(async () => {
+          await api.post(`/approvals/${t.approval_id}/withdraw`, {});
+          announce('Request withdrawn', ['Nothing changed hands.']);
+        })}>
           Withdraw the request
         </button>
       )}

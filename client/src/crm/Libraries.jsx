@@ -20,7 +20,7 @@
 
 import { useState } from 'react';
 import { api, shortDate } from '../api.js';
-import { useApi, Icon, Loading, ErrorBanner, Empty, Modal, Spinner } from '../components/ui.jsx';
+import { useApi, Icon, Loading, ErrorBanner, Empty, Modal, Spinner, announce } from '../components/ui.jsx';
 
 const STATUS_TONE = {
   approved: 'badge-green', pending: 'badge-amber', rejected: 'badge-amber',
@@ -414,7 +414,12 @@ function AddItem({ libraryId, library, onClose, onAdded, onError }) {
 
   const add = async () => {
     setBusy(true);
-    try { await api.post(`/libraries/${libraryId}/items`, form); onAdded(); }
+    try {
+      const item = await api.post(`/libraries/${libraryId}/items`, form);
+      // Part 4, item 8.4: approved at once, or a draft, as the library is set.
+      announce('Added to the library', [`"${form.name}" is added. ${item?.status === 'approved' ? 'It can be sent now.' : 'It is a draft: it goes out once it is approved.'}`]);
+      onAdded();
+    }
     catch (err) { onError(err.message); setBusy(false); }
   };
 
@@ -482,6 +487,7 @@ function NewLibrary({ roles, onClose, onCreated, onError }) {
         shared_with: restrict ? (form.shared_with ?? []) : null,
         default_expiry_days: form.default_expiry_days || null,
       });
+      announce('Library created', [`"${form.name}" is created${restrict ? ', for the roles you chose' : ''}.`]);
       onCreated();
     } catch (err) { onError(err.message); setBusy(false); }
   };

@@ -15,7 +15,7 @@
 import { useDraft } from '../components/useDraft.js';
 import PendingBar from '../components/PendingBar.jsx';
 import { api, dateTime } from '../api.js';
-import { useApi, Icon, Loading, ErrorBanner } from '../components/ui.jsx';
+import { useApi, Icon, Loading, ErrorBanner, announce } from '../components/ui.jsx';
 
 export default function BusinessPolicies() {
   const [data, { loading, error, reload }] = useApi('/setup/policies');
@@ -26,6 +26,8 @@ export default function BusinessPolicies() {
         // eslint-disable-next-line no-await-in-loop
         await api.put(`/setup/policies/${encodeURIComponent(c.key)}`, { value: c.value });
       }
+      // Part 4, item 8.4.
+      announce('Policies saved', [`${changes.length} change${changes.length === 1 ? '' : 's'} saved, in force from now, and in the audit log.`]);
       reload();
     },
     (c) => c.key,

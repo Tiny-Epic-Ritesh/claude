@@ -14,7 +14,7 @@
 
 import { useState } from 'react';
 import { api, dateTime } from '../api.js';
-import { useApi, Icon, Loading, ErrorBanner, Modal } from '../components/ui.jsx';
+import { useApi, Icon, Loading, ErrorBanner, Modal, announce } from '../components/ui.jsx';
 
 const OUTCOME_BADGE = {
   Connected: 'badge-green',
@@ -154,13 +154,13 @@ export default function Dispositions() {
       {editing && (
         <EditOutcome d={editing} meta={data}
           onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); reload(); }}
+          onSaved={() => { setEditing(null); reload(); announce('Call outcome saved', ['It applies to calls logged from now on; calls already logged keep what they had.']); }}
           onError={(m) => { setEditing(null); setProblem(m); }} />
       )}
       {creating && (
         <NewOutcome meta={data}
           onClose={() => setCreating(false)}
-          onSaved={() => { setCreating(false); reload(); }}
+          onSaved={() => { setCreating(false); reload(); announce('Call outcome added', ['It can be chosen when a call is logged, from now on.']); }}
           onError={(m) => { setCreating(false); setProblem(m); }} />
       )}
     </div>

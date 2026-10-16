@@ -14,7 +14,7 @@ import { useState } from 'react';
 import { useDraft } from '../components/useDraft.js';
 import PendingBar from '../components/PendingBar.jsx';
 import { api } from '../api.js';
-import { useApi, Icon, Loading, ErrorBanner } from '../components/ui.jsx';
+import { useApi, Icon, Loading, ErrorBanner, announce } from '../components/ui.jsx';
 
 export default function FieldMasking() {
   const [data, { loading, error, reload }] = useApi('/setup/field-masking');
@@ -27,6 +27,8 @@ export default function FieldMasking() {
         // eslint-disable-next-line no-await-in-loop
         await api.post('/setup/field-masking', { role: c.role, field: c.field, masked: c.value });
       }
+      // Part 4, item 8.4.
+      announce('Masking saved', [`${changes.length} change${changes.length === 1 ? '' : 's'} saved. Each role sees fields as set here from its next screen.`]);
       reload();
     },
     (c) => `${c.role}|${c.field}`,
@@ -102,6 +104,7 @@ export default function FieldMasking() {
                           setProblem(null);
                           try {
                             await api.del(`/setup/field-masking/fields/${f.field}`);
+                            announce('Field no longer maskable', [`${f.label} is shown in full to everyone who can see it.`], 'warn');
                             reload();
                           } catch (err) { setProblem(err.message); }
                           finally { setBusy(null); }
@@ -192,6 +195,7 @@ function AddField({ strategies, onAdded, onError }) {
           onError(null);
           try {
             await api.post('/setup/field-masking/fields', form);
+            announce('Field made maskable', [`${form.label || form.field} can now be masked for each role in the grid.`]);
             setForm({ field: '', label: '', strategy: 'last4' });
             setOpen(false);
             onAdded();

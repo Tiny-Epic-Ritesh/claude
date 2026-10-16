@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, money, rupees, shortDate, dateTime, monthYear } from '../api.js';
-import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Progress, Tabs } from '../components/ui.jsx';
+import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Progress, Tabs, announce } from '../components/ui.jsx';
 import BackLink from '../components/BackLink.jsx';
 import { CorrectionList, CorrectButton, correctedStyle } from '../components/Corrections.jsx';
 
@@ -34,7 +34,12 @@ function WithdrawPortal({ partner, onClose, onDone }) {
     setBusy(true);
     setError(null);
     try {
-      await api.post(`/partners/${partner.id}/portal-access/withdraw`, { reason });
+      const r = await api.post(`/partners/${partner.id}/portal-access/withdraw`, { reason });
+      // Part 4, item 8.4.
+      announce('Portal access withdrawn', [
+        `${partner.name} can no longer sign in to the partner portal; their password is cancelled.`,
+        r.sessions_ended ? `${r.sessions_ended} signed-in session${r.sessions_ended === 1 ? ' was' : 's were'} ended.` : null,
+      ]);
       onDone();
     } catch (err) { setError(err.message); setBusy(false); }
   }
@@ -263,7 +268,11 @@ export default function PartnerProfile({ session }) {
             {busy ? <Spinner /> : 'AI health check'}
           </button>
           {can('partner.elevate.request') && !isActive && partner.state_code !== 'TERMINATED' && (
-            <button onClick={() => act(() => api.post(`/partners/${id}/request-elevation`))} disabled={busy}>Request elevation</button>
+            <button onClick={() => act(async () => {
+              await api.post(`/partners/${id}/request-elevation`);
+              // Part 4, item 8.4.
+              announce('Elevation requested', [`The Admins have been notified to elevate ${partner.name}. Nothing changes until one of them does.`]);
+            })} disabled={busy}>Request elevation</button>
           )}
           {can('partner.elevate') && !isActive && (
             <button className="btn-primary" onClick={() => act(async () => { setElevated(await api.post(`/partners/${id}/elevate`, {})); })} disabled={busy}>
@@ -289,7 +298,10 @@ export default function PartnerProfile({ session }) {
             <button onClick={() => setArchiving(true)} disabled={busy}>Archive</button>
           )}
           {can('partner.suspend') && partner.archived_at && (
-            <button onClick={() => act(() => api.post(`/partners/${id}/restore`))} disabled={busy}>Restore record</button>
+            <button onClick={() => act(async () => {
+              await api.post(`/partners/${id}/restore`);
+              announce('Record restored', [`${partner.name} is out of the archive and can be worked on again.`]);
+            })} disabled={busy}>Restore record</button>
           )}
         </div>
       </div>

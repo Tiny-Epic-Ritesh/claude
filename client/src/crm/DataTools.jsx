@@ -9,7 +9,7 @@
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api.js';
-import { useApi, Loading, ErrorBanner, Empty, Tabs, Spinner, Icon } from '../components/ui.jsx';
+import { useApi, Loading, ErrorBanner, Empty, Tabs, Spinner, Icon, announce } from '../components/ui.jsx';
 import { dateTime } from '../api.js';
 
 /* ---------------------------------------------------------------- import */
@@ -280,7 +280,12 @@ function RecycleBin() {
 
   const restore = async (id) => {
     setBusy(id);
-    try { await api.post(`/leads/${id}/restore`); reload(); } finally { setBusy(null); }
+    try {
+      await api.post(`/leads/${id}/restore`);
+      // Part 4, item 8.4.
+      announce('Lead restored', ['It is out of the recycle bin and back in the lead list, with its owner and history.']);
+      reload();
+    } catch (err) { announce('Not restored', [err.message], 'warn'); } finally { setBusy(null); }
   };
 
   return (

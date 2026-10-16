@@ -21,7 +21,7 @@
 
 import { useState } from 'react';
 import { api } from '../api.js';
-import { useApi, Icon, Loading, ErrorBanner, Empty, Spinner, Modal, Tabs } from '../components/ui.jsx';
+import { useApi, Icon, Loading, ErrorBanner, Empty, Spinner, Modal, Tabs, announce } from '../components/ui.jsx';
 
 export default function GroupsSetup() {
   const [data, { loading, error, reload }] = useApi('/setup/groups');
@@ -195,6 +195,8 @@ function GroupForm({ group, users, groups, onClose, onSaved, onError }) {
     setBusy(true);
     try {
       await api.del(`/setup/groups/${group.id}`);
+      // Part 4, item 8.4.
+      announce('Group deleted', [`"${group.name}" is deleted.`]);
       onSaved();
     } catch (err) { onError(err.message); setBusy(false); }
   };
@@ -217,6 +219,7 @@ function GroupForm({ group, users, groups, onClose, onSaved, onError }) {
           };
           if (group) await api.patch(`/setup/groups/${group.id}`, body);
           else await api.post('/setup/groups', body);
+          announce(group ? 'Group saved' : 'Group created', [`"${body.name ?? form.name}" is ${group ? 'updated' : 'created'}.`]);
           onSaved();
         } catch (err) { onError(err.message); setBusy(false); }
       }}>

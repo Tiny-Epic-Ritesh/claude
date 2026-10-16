@@ -223,6 +223,52 @@ export function Confirm({
 }
 
 /**
+ * Say what an action did, from anywhere (Part 4, item 8.4).
+ *
+ * Ritesh's Part 4 asks that every action in the CRM say what it actually did,
+ * and that the person can acknowledge or close the message. A screen calls
+ * `announce(title, lines)` once the server has answered, with what the
+ * answer says happened -- never a guess at it; <OutcomeHost /> shows it until
+ * it is closed, the newest three at a time. One host for the whole CRM, so a
+ * message survives the panel or dialog that raised it closing.
+ */
+const OUTCOME_EVENT = 'crm:outcome';
+export function announce(title, lines = [], tone = 'ok') {
+  window.dispatchEvent(new CustomEvent(OUTCOME_EVENT, {
+    detail: { title, lines: [].concat(lines).filter(Boolean), tone },
+  }));
+}
+
+export function OutcomeHost() {
+  const [items, setItems] = useState([]);
+  const seq = useRef(0);
+  useEffect(() => {
+    const on = (e) => {
+      seq.current += 1;
+      setItems((now) => [{ ...e.detail, id: seq.current }, ...now].slice(0, 3));
+    };
+    window.addEventListener(OUTCOME_EVENT, on);
+    return () => window.removeEventListener(OUTCOME_EVENT, on);
+  }, []);
+  if (!items.length) return null;
+  const close = (id) => setItems((now) => now.filter((o) => o.id !== id));
+  return createPortal((
+    <div className="outcome-stack" role="status" aria-live="polite">
+      {items.map((o) => (
+        <div key={o.id} className={`outcome-toast notice-${o.tone}`}>
+          <Icon name={o.tone === 'warn' ? 'warning' : 'check_circle'} />
+          <div className="outcome-text">
+            <strong>{o.title}</strong>
+            {o.lines.map((line, i) => <p key={i}>{line}</p>)}
+          </div>
+          <button type="button" className="btn btn-sm" onClick={() => close(o.id)}>OK</button>
+        </div>
+      ))}
+    </div>
+  ), document.body);
+}
+
+/**
  * Say what an action did, until the reader says OK (Part 4, item 8.4).
  *
  * An action that only closed a panel, or changed a number somewhere else on

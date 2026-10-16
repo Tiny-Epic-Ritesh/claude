@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api, ROLE_LABEL, dateTime } from '../../api.js';
-import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Icon } from '../../components/ui.jsx';
+import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Icon, announce } from '../../components/ui.jsx';
 import { ArchiveOrDelete } from '../../components/Lifecycle.jsx';
 
 /*
@@ -78,9 +78,17 @@ export function Rules() {
                     name: `${r.name} (copy)`, description: r.description,
                     conditions: r.conditions, actions: r.actions, schedule: r.schedule, enabled: 0, priority: r.priority,
                   });
+                  // Part 4, item 8.4.
+                  announce('Rule copied', [`"${r.name} (copy)" is made, switched off. Nothing runs until it is enabled.`]);
                   reload();
                 }}>Duplicate</button>
-                <button className="btn-sm" onClick={async () => { await api.patch(`/admin/rules/${r.id}`, { enabled: r.enabled ? 0 : 1 }); reload(); }}>
+                <button className="btn-sm" onClick={async () => {
+                  await api.patch(`/admin/rules/${r.id}`, { enabled: r.enabled ? 0 : 1 });
+                  announce(r.enabled ? 'Rule disabled' : 'Rule enabled', [r.enabled
+                    ? `"${r.name}" acts on nothing until it is enabled again.`
+                    : `"${r.name}" acts on leads that match it from now on.`]);
+                  reload();
+                }}>
                   {r.enabled ? 'Disable' : 'Enable'}
                 </button>
                 {/* QA-37: switched off, then archived; deleted only as a draft
@@ -158,6 +166,7 @@ export function Rules() {
           onClose={() => setEditing(null)}
           onSaved={(id, thenDryRun) => {
             setEditing(null);
+            announce('Rule saved', [thenDryRun ? 'The dry run below shows what it would do. Nothing was sent.' : 'Saved as it stands; whether it runs is the Enable switch.']);
             reload();
             if (thenDryRun) dryRun(id);
           }}

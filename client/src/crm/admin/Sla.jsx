@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api, ROLE_LABEL, dateTime } from '../../api.js';
-import { useApi, Loading, ErrorBanner, Modal } from '../../components/ui.jsx';
+import { useApi, Loading, ErrorBanner, Modal, announce } from '../../components/ui.jsx';
 
 /*
  * Lifted out of Admin.jsx, which held eleven Setup screens in one file and so
@@ -19,7 +19,12 @@ export function Sla() {
 
   const restore = async (c) => {
     setProblem(null);
-    try { await api.post(`/admin/categories/${c.id}/restore`); reloadCats(); }
+    try {
+      await api.post(`/admin/categories/${c.id}/restore`);
+      // Part 4, item 8.4.
+      announce('Category restored', [`"${c.name}" can be chosen for new cases again.`]);
+      reloadCats();
+    }
     catch (err) { setProblem(err.message); }
   };
 
@@ -108,6 +113,9 @@ function CategoryLifecycle({ category, what, onClose, onDone }) {
     try {
       if (what === 'rename') await api.patch(`/admin/categories/${category.id}`, { name });
       else await api.post(`/admin/categories/${category.id}/retire`, { reason });
+      announce(what === 'rename' ? 'Category renamed' : 'Category retired', [what === 'rename'
+        ? `"${category.name}" is now "${name.trim()}", on every case that has it.`
+        : `"${category.name}" stays on the cases that have it, and goes on no new one.`]);
       onDone();
     } catch (err) { setError(err.message); setBusy(false); }
   }
@@ -171,6 +179,7 @@ function ComplianceFlags({ categories }) {
     setProblem(null);
     try {
       await api.put(`/admin/compliance-flags/${encodeURIComponent(r.flag)}`, draftOf(r));
+      announce('Compliance flag saved', [`"${r.flag}" is updated for calls flagged from now on.`]);
       setDrafts((all) => { const next = { ...all }; delete next[r.flag]; return next; });
       reload();
     } catch (err) { setProblem(`${r.flag}: ${err.message}`); }

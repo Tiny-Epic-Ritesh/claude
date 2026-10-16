@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, dateTime, shortDate, dmy } from '../api.js';
 import {
-  useApi, Icon, Loading, ErrorBanner, Empty, Spinner, PriorityBadge, Tabs, Modal, Stat, Confirm, Outcome,
+  useApi, Icon, Loading, ErrorBanner, Empty, Spinner, PriorityBadge, Tabs, Modal, Stat, Confirm, Outcome, announce,
 } from '../components/ui.jsx';
 import BackLink from '../components/BackLink.jsx';
 import { CorrectionList, CorrectButton, correctedStyle } from '../components/Corrections.jsx';
@@ -350,6 +350,12 @@ function ExportCases({ meta, count, query, onClose }) {
     try {
       const r = await api.post(`/tickets/export${query}`, { columns: picked, unmask });
       download(r.filename, r.csv);
+      // Part 4, item 8.4: what went into the file.
+      announce('Cases exported', [
+        `${r.rows} case${r.rows === 1 ? '' : 's'} in ${r.filename}${r.unmasked ? ', with identifiers in the clear' : ', identifiers masked'}.`,
+        r.truncated ? 'Capped: there were more than one export holds.' : null,
+        'The export is in the audit log.',
+      ], r.truncated ? 'warn' : 'ok');
       onClose();
     } catch (e) { setProblem(e.message); setBusy(false); }
   };
@@ -690,7 +696,11 @@ function TicketDetail({ id, session }) {
         </Modal>
       )}
       {reopening && (
-        <Reopen ticket={ticket} onClose={() => setReopening(false)} onDone={() => { setReopening(false); reload(); }} />
+        <Reopen ticket={ticket} onClose={() => setReopening(false)} onDone={() => {
+          setReopening(false); reload();
+          // Part 4, item 8.4.
+          announce(`${ticket.ref} reopened`, ['It is Open again; its resolved and closed times are cleared, and your reason is an internal note on the case.']);
+        }} />
       )}
     </>
   );

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../../api.js';
-import { useApi, Loading, Empty, Icon, Modal, ErrorBanner, Spinner } from '../../components/ui.jsx';
+import { useApi, Loading, Empty, Icon, Modal, ErrorBanner, Spinner, announce } from '../../components/ui.jsx';
 import FlowBuilder from './FlowBuilder.jsx';
 import { ArchiveOrDelete } from '../../components/Lifecycle.jsx';
 
@@ -284,7 +284,12 @@ function RuleMigration({ onConverted, onError }) {
   const convert = async (r) => {
     setBusy(r.rule.id);
     try {
-      await api.post(`/admin/automations/migration/${r.rule.id}`, { every_hours: r.every_hours });
+      const made = await api.post(`/admin/automations/migration/${r.rule.id}`, { every_hours: r.every_hours });
+      // Part 4, item 8.4.
+      announce(`"${r.rule.name}" converted`, [
+        `It is now a draft automation with ${made.steps} step${made.steps === 1 ? '' : 's'}. Nothing runs until it is activated.`,
+        made.warnings?.length ? `Check before activating: ${made.warnings.join(' ')}` : null,
+      ], made.warnings?.length ? 'warn' : 'ok');
       reload();
       onConverted();
     } catch (err) { onError(err.message); }

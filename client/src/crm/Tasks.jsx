@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, shortDate, dateTime } from '../api.js';
-import { useApi, Icon, Loading, ErrorBanner, Empty, Spinner, Tabs, Modal } from '../components/ui.jsx';
+import { useApi, Icon, Loading, ErrorBanner, Empty, Spinner, Tabs, Modal, announce } from '../components/ui.jsx';
 
 /* Rows per page. The route had no LIMIT, so this table used to render every
    task the caller could see. */
@@ -103,10 +103,13 @@ export function TaskLifecycle({ task, what, session, onClose, onDone }) {
     try {
       if (what === 'cancelling') {
         await api.post(`/tasks/${task.id}/cancel`, { reason });
+        // Part 4, item 8.4.
+        announce('Task cancelled', [`“${task.title}” is cancelled, with your reason. It stays on the list, struck through.`]);
       } else {
-        await api.patch(`/tasks/${task.id}`, {
+        const t = await api.patch(`/tasks/${task.id}`, {
           title, due_at: due.replace('T', ' '), ...(team && assignee ? { assignee_id: Number(assignee) } : {}),
         });
+        announce('Task saved', [`“${t?.title ?? title}” is due ${dateTime(t?.due_at ?? due.replace('T', ' '))}${team && assignee && Number(assignee) !== task.assignee_id ? ', and it is reassigned' : ''}.`]);
       }
       onDone();
     } catch (err) { setError(err.message); setBusy(false); }
@@ -226,9 +229,11 @@ export default function Tasks({ session }) {
     setBusy(true);
     setAddError(null);
     try {
-      await api.post('/tasks', {
+      const t = await api.post('/tasks', {
         ...form, lead_id: linked.id, due_at: form.due_at.replace('T', ' '), assignee_id: form.assignee_id || undefined,
       });
+      // Part 4, item 8.4: "tell the user when a task has been created".
+      announce('Task created', [`“${t.title}” on ${linked.name}, due ${dateTime(t.due_at)}${form.assignee_id ? ', and its assignee is notified' : ', on your list'}.`]);
       setForm({ title: '', due_at: '', priority: 'Normal', assignee_id: '' });
       setLinked(null);
       reload();
