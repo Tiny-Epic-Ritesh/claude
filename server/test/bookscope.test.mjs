@@ -108,6 +108,10 @@ const RECORD = {
   '/api/market/context/:leadId': 'lead',
   '/api/clients/:id': 'client',
   '/api/tickets/:id': 'ticket',
+  // QA-07: what Escalate, Mark resolved and a Manage save would do, read before doing it.
+  '/api/tickets/:id/escalation': 'ticket',
+  '/api/tickets/:id/resolution-check': 'ticket',
+  '/api/tickets/:id/change-preview': 'ticket',
   '/api/lists/:id': 'list',
   '/api/partners/:id': 'partner',
   '/api/partners/:id/insight': 'partner',

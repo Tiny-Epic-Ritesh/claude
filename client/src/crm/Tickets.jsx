@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, dateTime, shortDate, dmy } from '../api.js';
 import {
-  useApi, Icon, Loading, ErrorBanner, Empty, Spinner, PriorityBadge, Tabs, Modal, Stat,
+  useApi, Icon, Loading, ErrorBanner, Empty, Spinner, PriorityBadge, Tabs, Modal, Stat, Confirm, Outcome,
 } from '../components/ui.jsx';
 import BackLink from '../components/BackLink.jsx';
 import { CorrectionList, CorrectButton, correctedStyle } from '../components/Corrections.jsx';
@@ -102,6 +102,8 @@ function TicketQueue({ session }) {
   const [typed, setTyped] = useState('');
   const [q, setQ] = useState('');
   const [exporting, setExporting] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [checked, setChecked] = useState(null);
 
   // A request per keystroke against a desk with thousands of cases.
   useEffect(() => {
@@ -123,7 +125,7 @@ function TicketQueue({ session }) {
   const query = `?${params}`;
 
   const [tickets, { loading, error, reload, total }] = useApi(`/tickets${query}`, [query]);
-  const [report] = useApi(session.permissions.includes('report.team') ? '/tickets/reports/summary' : null);
+  const [report, { reload: reloadReport }] = useApi(session.permissions.includes('report.team') ? '/tickets/reports/summary' : null);
   const [meta] = useApi('/tickets/meta');
   const navigate = useNavigate();
 
@@ -143,9 +145,13 @@ function TicketQueue({ session }) {
           <h1>Tickets</h1>
           <p>SLA timers count business hours only and pause while a ticket is waiting on the client.</p>
         </div>
-        {/* OPS-29: offered to those the sweep accepts. */}
+        {/* OPS-29: offered to those the sweep accepts. Part 4, item 4: it ran
+            on a click with nothing to show for it, styled as bare text; it says
+            what it will do, asks, and says what it did. */}
         {(session.permissions.includes('ticket.reassign') || session.permissions.includes('admin.sla')) && (
-          <button onClick={async () => { await api.post('/tickets/sweep'); reload(); }}>Run SLA sweep</button>
+          <button type="button" className="btn" onClick={() => setChecking(true)}>
+            <Icon name="schedule" size={16} /> Check SLAs now
+          </button>
         )}
       </div>
 
@@ -159,6 +165,14 @@ function TicketQueue({ session }) {
           <Stat label="Avg CSAT" value={report.totals.avg_csat ?? '—'} sub="Rated cases, in your books" to="/tickets?view=all&rated=true" />
         </div>
       )}
+
+      {checking && (
+        <CheckSlas
+          onCancel={() => setChecking(false)}
+          onDone={(result) => { setChecking(false); setChecked(result); reload(); reloadReport(); }}
+        />
+      )}
+      {checked && <Outcome title={checked.title} lines={checked.lines} tone={checked.tone} onClose={() => setChecked(null)} />}
 
       <Tabs
         tabs={[{ key: 'mine', label: 'Assigned to me' }, { key: 'open', label: 'All open' }, { key: 'breached', label: 'Breached' }, { key: 'all', label: 'Everything' }]}
@@ -384,7 +398,78 @@ function ExportCases({ meta, count, query, onClose }) {
   );
 }
 
+/**
+ * The SLA check, asked first (Part 4, item 4).
+ *
+ * The server does this by itself every minute, so the button is for "now",
+ * and for seeing what it found. It covers the business being looked at.
+ */
+function CheckSlas({ onCancel, onDone }) {
+  const [now, { loading, error }] = useApi('/tickets/sweep/preview');
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(null);
+  const where = now?.businesses?.join(' and ') ?? 'your business';
+
+  async function confirm() {
+    setBusy(true);
+    setFailed(null);
+    try {
+      const r = await api.post('/tickets/sweep');
+      onDone({
+        title: 'SLA check done',
+        tone: r.breached ? 'warn' : 'ok',
+        lines: [
+          `Checked ${r.checked} open case${r.checked === 1 ? '' : 's'} in ${r.businesses.join(' and ')}.`,
+          r.breached
+            ? `Newly past their resolution time, now marked breached, assignees and managers told: ${r.breached_refs.join(', ')}.`
+            : 'No case was newly past its resolution time.',
+          r.closed
+            ? `Closed, 72 hours after being resolved: ${r.closed_refs.join(', ')}.`
+            : 'No resolved case was due to close.',
+        ],
+      });
+    } catch (err) { setFailed(err.message); setBusy(false); }
+  }
+
+  return (
+    <Confirm title="Check SLAs now?" subtitle={`Cases in ${where}`} confirmLabel="Check now"
+      busy={busy} error={failed || error} disabled={!now} onConfirm={confirm} onCancel={onCancel}>
+      {loading && !now && <Loading />}
+      {now && (
+        <>
+          <p className="confirm-lead">Checks every open case in {where} against its resolution time, now.</p>
+          <div>
+            <h3>What it does</h3>
+            <ul>
+              <li>A case past its resolution time is marked breached, and its assignee and their manager are told.</li>
+              <li>A case resolved more than 72 hours ago, and not reopened, is closed. The client is not messaged.</li>
+              <li>A case waiting on the client is left alone: its clock is paused.</li>
+              <li>Nothing else changes: no priority, assignee or deadline.</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Right now</h3>
+            <ul>
+              <li>{now.open} open case{now.open === 1 ? '' : 's'}.</li>
+              <li>{now.past_due} past due and not yet marked breached.</li>
+              <li>{now.to_close} resolved more than 72 hours ago.</li>
+            </ul>
+          </div>
+          <div className="notice">
+            <Icon name="info" />
+            <p>The server does the same by itself every minute, so these are usually 0. Use this to see the result at once.</p>
+          </div>
+        </>
+      )}
+    </Confirm>
+  );
+}
+
 /* --------------------------------------------------------------- detail */
+
+/* Part 4, item 2: the panel shows at most this many entries, the original
+   included; Show all opens the whole thread in a dialog of its own. */
+const THREAD_LIMIT = 50;
 
 function TicketDetail({ id, session }) {
   const [ticket, { loading, error, reload }] = useApi(`/tickets/${id}`);
@@ -394,15 +479,34 @@ function TicketDetail({ id, session }) {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState(null);
   const [reopening, setReopening] = useState(false);
+  /* Part 4, items 1 and 3: Escalate, Mark resolved and a Manage change each
+     ask first. Which dialog is open, and what the last action did. */
+  const [asking, setAsking] = useState(null);
+  const [outcome, setOutcome] = useState(null);
+  const [showAll, setShowAll] = useState(false);
+  /* Part 4, item 3.1: Manage holds its changes until Save. */
+  const [draft, setDraft] = useState(null);
 
-  if (loading) return <Loading />;
+  useEffect(() => {
+    if (ticket) setDraft({ status: ticket.status, priority: ticket.priority, assignee_id: ticket.assignee_id ?? null });
+  }, [ticket]);
+
+  if (loading && !ticket) return <Loading />;
   if (error) return <ErrorBanner error={error} />;
+  if (!ticket || !draft) return null;
 
   const can = (p) => session.permissions.includes(p);
   /* QA-37: details change while a case is open; resolved or closed, the way
      back is Reopen, which asks why. */
   const finished = ticket.status === 'Resolved' || ticket.status === 'Closed';
   const statusChoices = !finished ? STATUSES : ticket.status === 'Resolved' ? ['Resolved', 'Closed'] : ['Closed'];
+
+  const changed = {};
+  if (draft.status !== ticket.status) changed.status = draft.status;
+  if (draft.priority !== ticket.priority) changed.priority = draft.priority;
+  if ((draft.assignee_id ?? null) !== (ticket.assignee_id ?? null)) changed.assignee_id = draft.assignee_id;
+  const dirty = Object.keys(changed).length > 0;
+  const discard = () => setDraft({ status: ticket.status, priority: ticket.priority, assignee_id: ticket.assignee_id ?? null });
 
   async function act(fn) {
     setBusy(true);
@@ -411,6 +515,14 @@ function TicketDetail({ id, session }) {
     catch (err) { setActionError(err.message); }
     finally { setBusy(false); }
   }
+
+  const done = (result) => { setAsking(null); setOutcome(result); reload(); };
+
+  /* The original, then the replies; the panel keeps the original and the
+     latest entries after it. */
+  const entries = ticket.replies.length + 1;
+  const visibleReplies = entries > THREAD_LIMIT ? ticket.replies.slice(-(THREAD_LIMIT - 1)) : ticket.replies;
+  const earlier = ticket.replies.length - visibleReplies.length;
 
   return (
     <>
@@ -429,12 +541,16 @@ function TicketDetail({ id, session }) {
           </div>
         </div>
         <div className="row wrap">
-          {can('ticket.escalate') && !finished && <button onClick={() => act(() => api.post(`/tickets/${id}/escalate`, { reason: 'Escalated from ticket view' }))} disabled={busy}>Escalate</button>}
+          {can('ticket.escalate') && !finished && (
+            <button type="button" className="btn" onClick={() => setAsking('escalating')} disabled={busy}>
+              <Icon name="trending_up" size={16} /> Escalate
+            </button>
+          )}
           {can('ticket.reply') && !finished && (
-            <button className="btn-primary" onClick={() => act(() => api.patch(`/tickets/${id}`, { status: 'Resolved' }))} disabled={busy}>Mark resolved</button>
+            <button type="button" className="btn btn-primary" onClick={() => setAsking('resolving')} disabled={busy}>Mark resolved</button>
           )}
           {can('ticket.reply') && finished && (
-            <button className="btn-primary" onClick={() => setReopening(true)} disabled={busy}>Reopen</button>
+            <button type="button" className="btn btn-primary" onClick={() => setReopening(true)} disabled={busy}>Reopen</button>
           )}
         </div>
       </div>
@@ -459,39 +575,43 @@ function TicketDetail({ id, session }) {
 
       <div className="grid grid-2">
         <section className="card">
-          <div className="card-head"><h2>Conversation</h2><span className="tiny muted">{ticket.replies.length} messages</span></div>
+          <div className="card-head">
+            <h2>Conversation</h2>
+            <span className="tiny muted">{entries} {entries === 1 ? 'entry' : 'entries'}</span>
+          </div>
           <div className="card-body stack">
-            <div style={{ borderLeft: '2px solid var(--border)', paddingLeft: 12 }}>
-              <div className="tiny muted">Original · {dateTime(ticket.created_at)}</div>
-              <div className="small" style={{ whiteSpace: 'pre-wrap' }}>{ticket.description}</div>
-            </div>
-            {ticket.replies.map((r) => (
-              <div key={r.id} style={{ borderLeft: `2px solid ${r.internal ? 'var(--accent)' : r.author_type === 'client' ? 'var(--brand)' : 'var(--border)'}`, paddingLeft: 12 }}>
-                <div className="row-between">
-                  <div className="tiny muted">
-                    {r.user_name || r.author_type} · {dateTime(r.created_at)}
-                    {r.internal ? <span className="badge badge-accent" style={{ marginLeft: 6 }}>Internal</span> : null}
-                    {r.corrections?.length > 0 && <span className="badge badge-amber" style={{ marginLeft: 6 }}>Corrected</span>}
-                  </div>
-                  {r.author_type === 'agent' && can('ticket.reply') && (
-                    <CorrectButton entry={r} session={session} path={`/tickets/${id}/replies/${r.id}/correct`} onDone={reload} />
-                  )}
-                </div>
-                <div className="small" style={{ whiteSpace: 'pre-wrap', ...correctedStyle(r) }}>{r.body}</div>
-                <CorrectionList corrections={r.corrections} />
+            <ThreadEntry original ticket={ticket} />
+            {earlier > 0 && (
+              <div className="thread-gap">
+                <span>{earlier} earlier {earlier === 1 ? 'entry is' : 'entries are'} not shown here. This panel shows the latest {THREAD_LIMIT}.</span>
+                <button type="button" className="btn btn-sm" onClick={() => setShowAll(true)}>Show more</button>
               </div>
-            ))}
+            )}
+            {visibleReplies.map((r) => <ThreadEntry key={r.id} entry={r} ticketId={id} session={session} onDone={reload} />)}
+            {earlier > 0 && (
+              <button type="button" className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => setShowAll(true)}>
+                Show more: all {entries} entries
+              </button>
+            )}
 
             {can('ticket.reply') && (
               <form onSubmit={(e) => { e.preventDefault(); if (reply.trim()) act(async () => { await api.post(`/tickets/${id}/replies`, { body: reply, internal }); setReply(''); }); }}>
-                <textarea value={reply} onChange={(e) => setReply(e.target.value)} placeholder="Write a reply…" />
+                <textarea value={reply} onChange={(e) => setReply(e.target.value)}
+                  placeholder={internal ? 'Write a note for your team…' : 'Write a reply to the client…'} />
                 <div className="row-between" style={{ marginTop: 8 }}>
                   <label className="row small" style={{ marginBottom: 0 }}>
                     <input type="checkbox" checked={internal} onChange={(e) => setInternal(e.target.checked)} style={{ width: 15, height: 15 }} />
                     Internal note
                   </label>
-                  <button className="btn-primary" disabled={busy || !reply.trim()}>{busy ? <Spinner /> : 'Send reply'}</button>
+                  <button className="btn-primary" disabled={busy || !reply.trim()}>{busy ? <Spinner /> : internal ? 'Add internal note' : 'Send reply'}</button>
                 </div>
+                {/* Part 4, item 3.3. */}
+                {internal && (
+                  <div className="field-note" role="note">
+                    <Icon name="lock" />
+                    <span>Internal notes are for your team's reference only. They are not shared with the client or customer.</span>
+                  </div>
+                )}
               </form>
             )}
           </div>
@@ -499,31 +619,54 @@ function TicketDetail({ id, session }) {
 
         <section className="card">
           <div className="card-head"><h2>Manage</h2></div>
-          <div className="card-body">
-            <div className="field">
-              <label>Status</label>
-              <select value={ticket.status} onChange={(e) => act(() => api.patch(`/tickets/${id}`, { status: e.target.value }))} disabled={busy || statusChoices.length < 2}>
-                {statusChoices.map((s) => <option key={s}>{s}</option>)}
-              </select>
-              <div className="hint">
-                {finished
-                  ? `This case is ${ticket.status.toLowerCase()}. Its details stay as they are unless it is reopened.`
-                  : 'Moving to “Waiting on Client” pauses the SLA clock.'}
-              </div>
-            </div>
-            <div className="field">
-              <label>Priority</label>
-              <select value={ticket.priority} onChange={(e) => act(() => api.patch(`/tickets/${id}`, { priority: e.target.value }))} disabled={busy || finished}>
-                {['Critical', 'High', 'Medium', 'Low'].map((p) => <option key={p}>{p}</option>)}
-              </select>
-            </div>
-            {can('ticket.reassign') && (
+          <div className="card-body stack">
+            <div className="manage-fields">
               <div className="field">
-                <label>Assignee</label>
-                <select value={ticket.assignee_id || ''} onChange={(e) => act(() => api.patch(`/tickets/${id}`, { assignee_id: Number(e.target.value) }))} disabled={busy || finished}>
-                  <option value="">Unassigned</option>
-                  {(meta?.users || []).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                <label htmlFor="case-status">Status</label>
+                <select id="case-status" value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}
+                  disabled={busy || statusChoices.length < 2}>
+                  {statusChoices.map((s) => <option key={s}>{s}</option>)}
                 </select>
+                {/* Part 4, item 3.2: the note belongs to Status, and looks it. */}
+                {finished ? (
+                  <div className="field-note" role="note">
+                    <Icon name="lock" />
+                    <span>This case is {ticket.status.toLowerCase()}. Its details stay as they are unless it is reopened.</span>
+                  </div>
+                ) : draft.status === 'Waiting on Client' && ticket.status !== 'Waiting on Client' ? (
+                  <div className="field-note field-note-warn" role="note">
+                    <Icon name="pause_circle" />
+                    <span>Moving this ticket to “Waiting on Client” pauses the SLA clock.</span>
+                  </div>
+                ) : ticket.status === 'Waiting on Client' && draft.status === 'Waiting on Client' ? (
+                  <div className="field-note field-note-warn" role="note">
+                    <Icon name="pause_circle" />
+                    <span>The SLA clock is paused while this case waits on the client.</span>
+                  </div>
+                ) : null}
+              </div>
+              <div className="field">
+                <label htmlFor="case-priority">Priority</label>
+                <select id="case-priority" value={draft.priority} onChange={(e) => setDraft({ ...draft, priority: e.target.value })} disabled={busy || finished}>
+                  {['Critical', 'High', 'Medium', 'Low'].map((p) => <option key={p}>{p}</option>)}
+                </select>
+              </div>
+              {can('ticket.reassign') && (
+                <div className="field">
+                  <label htmlFor="case-assignee">Assignee</label>
+                  <select id="case-assignee" value={draft.assignee_id ?? ''}
+                    onChange={(e) => setDraft({ ...draft, assignee_id: e.target.value ? Number(e.target.value) : null })} disabled={busy || finished}>
+                    <option value="">Unassigned</option>
+                    {(meta?.users || []).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                  </select>
+                </div>
+              )}
+            </div>
+            {dirty && (
+              <div className="manage-save">
+                <span className="tiny muted">Not saved yet.</span>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={discard} disabled={busy}>Discard</button>
+                <button type="button" className="btn btn-primary btn-sm" onClick={() => setAsking('changing')} disabled={busy}>Save</button>
               </div>
             )}
             {ticket.csat && <div className="notice">CSAT received: {ticket.csat}/5</div>}
@@ -533,10 +676,263 @@ function TicketDetail({ id, session }) {
           </div>
         </section>
       </div>
+
+      {asking === 'escalating' && <EscalateCase ticket={ticket} onCancel={() => setAsking(null)} onDone={done} />}
+      {asking === 'resolving' && <ResolveCase ticket={ticket} onCancel={() => setAsking(null)} onDone={done} />}
+      {asking === 'changing' && <ChangeCase ticket={ticket} changed={changed} onCancel={() => setAsking(null)} onDone={done} />}
+      {outcome && <Outcome title={outcome.title} lines={outcome.lines} tone={outcome.tone} onClose={() => setOutcome(null)} />}
+      {showAll && (
+        <Modal title={`${ticket.ref} · the whole conversation`} subtitle={`${entries} entries, oldest first`} onClose={() => setShowAll(false)} wide>
+          <div className="thread-all stack">
+            <ThreadEntry original ticket={ticket} />
+            {ticket.replies.map((r) => <ThreadEntry key={r.id} entry={r} ticketId={id} session={session} onDone={reload} />)}
+          </div>
+        </Modal>
+      )}
       {reopening && (
         <Reopen ticket={ticket} onClose={() => setReopening(false)} onDone={() => { setReopening(false); reload(); }} />
       )}
     </>
+  );
+}
+
+/* One entry in the conversation: the original description, or a reply. */
+function ThreadEntry({ original, ticket, entry, ticketId, session, onDone }) {
+  if (original) {
+    return (
+      <div style={{ borderLeft: '2px solid var(--border)', paddingLeft: 12 }}>
+        <div className="tiny muted">Original · {dateTime(ticket.created_at)}</div>
+        <div className="small" style={{ whiteSpace: 'pre-wrap' }}>{ticket.description}</div>
+      </div>
+    );
+  }
+  const r = entry;
+  return (
+    <div style={{ borderLeft: `2px solid ${r.internal ? 'var(--accent)' : r.author_type === 'client' ? 'var(--brand)' : 'var(--border)'}`, paddingLeft: 12 }}>
+      <div className="row-between">
+        <div className="tiny muted">
+          {r.user_name || r.author_type} · {dateTime(r.created_at)}
+          {r.internal ? <span className="badge badge-accent" style={{ marginLeft: 6 }}>Internal</span> : null}
+          {r.corrections?.length > 0 && <span className="badge badge-amber" style={{ marginLeft: 6 }}>Corrected</span>}
+        </div>
+        {r.author_type === 'agent' && session.permissions.includes('ticket.reply') && (
+          <CorrectButton entry={r} session={session} path={`/tickets/${ticketId}/replies/${r.id}/correct`} onDone={onDone} />
+        )}
+      </div>
+      <div className="small" style={{ whiteSpace: 'pre-wrap', ...correctedStyle(r) }}>{r.body}</div>
+      <CorrectionList corrections={r.corrections} />
+    </div>
+  );
+}
+
+/* A server note, coloured by what it is. */
+function Said({ items }) {
+  if (!items?.length) return null;
+  return items.map((item, i) => (
+    <div key={i} className={`notice ${item.tone === 'warn' ? 'notice-warn' : item.tone === 'ok' ? 'notice-ok' : ''}`}>
+      <Icon name={item.tone === 'warn' ? 'warning' : item.tone === 'ok' ? 'check_circle' : 'info'} />
+      <p>{item.text}</p>
+    </div>
+  ));
+}
+
+/**
+ * Escalate, asked first (Part 4, item 1).
+ *
+ * What it shows comes from the server's own rules: who it goes to (OPS-44),
+ * every level above them in the manager hierarchy and the deadline at each
+ * priority, and what happens if the case stays unresolved.
+ */
+function EscalateCase({ ticket, onCancel, onDone }) {
+  const [info, { loading, error }] = useApi(`/tickets/${ticket.id}/escalation`);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(null);
+
+  async function confirm() {
+    setBusy(true);
+    setFailed(null);
+    try {
+      const r = await api.post(`/tickets/${ticket.id}/escalate`, { reason: reason.trim() || 'Escalated from the case page' });
+      onDone({
+        title: `${ticket.ref} escalated`,
+        lines: [
+          `It is now with ${r.escalated_to}, who has been notified.`,
+          r.priority !== ticket.priority ? `Its priority went from ${ticket.priority} to ${r.priority}.` : `Its priority stays ${r.priority}.`,
+          `It is due to be resolved by ${dateTime(r.resolution_due)}.`,
+          r.breached ? 'That time has already passed, so it is marked breached.' : null,
+          'An internal note on the case records the escalation.',
+        ],
+      });
+    } catch (err) { setFailed(err.message); setBusy(false); }
+  }
+
+  return (
+    <Confirm title={`Escalate ${ticket.ref}?`} subtitle={ticket.subject} confirmLabel="Escalate"
+      busy={busy} error={failed || error} disabled={!info || Boolean(info.refusal)}
+      onConfirm={confirm} onCancel={onCancel}>
+      {loading && !info && <Loading label="Working out the escalation…" />}
+      {info && (
+        <>
+          {info.refusal ? (
+            <div className="notice notice-danger"><Icon name="warning" /><p>{info.refusal}</p></div>
+          ) : (
+            <>
+              <p className="confirm-lead">This case will be escalated to {info.to.name} ({info.to.role_label}).</p>
+              <ul>{info.effects.map((e) => <li key={e}>{e}</li>)}</ul>
+              <Said items={info.sla} />
+            </>
+          )}
+          <div>
+            <h3>Escalation path in {info.business}</h3>
+            <div className="confirm-wrap">
+              <table className="confirm-table">
+                <thead><tr><th>Level</th><th>Who</th><th>Priority</th><th>Resolve by</th></tr></thead>
+                <tbody>
+                  {info.chain.map((l) => (
+                    <tr key={l.level} className={l.current ? 'is-current' : undefined}>
+                      <td>{l.level}{l.current ? ' · now' : ''}</td>
+                      <td>{l.who ? `${l.who.name}, ${l.who.role_label}` : 'Unassigned'}</td>
+                      <td>{l.priority}</td>
+                      <td>{dateTime(l.resolution_due)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="tiny muted" style={{ margin: '6px 0 0' }}>
+              The path is the manager hierarchy set in Setup; the times are this case's SLA policy, counted in business hours from when it was opened.
+            </p>
+          </div>
+          {info.if_unresolved.length > 0 && (
+            <div>
+              <h3>If it stays unresolved</h3>
+              <ul>{info.if_unresolved.map((e) => <li key={e}>{e}</li>)}</ul>
+            </div>
+          )}
+          {!info.refusal && (
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label htmlFor="escalate-why">Why (kept as an internal note)</label>
+              <input id="escalate-why" value={reason} onChange={(e) => setReason(e.target.value)}
+                placeholder="The client has called three times about the refund" />
+            </div>
+          )}
+        </>
+      )}
+    </Confirm>
+  );
+}
+
+/**
+ * Mark resolved, asked first (Part 4, item 1): what the case has been
+ * through, what to check, and what resolving sets off.
+ */
+function ResolveCase({ ticket, onCancel, onDone }) {
+  const [info, { loading, error }] = useApi(`/tickets/${ticket.id}/resolution-check`);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(null);
+
+  async function confirm() {
+    setBusy(true);
+    setFailed(null);
+    try {
+      const r = await api.patch(`/tickets/${ticket.id}`, { status: 'Resolved' });
+      const closes = r.resolved_at ? new Date(new Date(`${r.resolved_at.replace(' ', 'T')}Z`).getTime() + 72 * 3600_000) : null;
+      onDone({
+        title: `${ticket.ref} resolved`,
+        lines: [
+          `Resolved at ${dateTime(r.resolved_at)}.`,
+          info?.effects?.[1] ?? null,
+          closes ? `It closes by itself at ${dateTime(closes.toISOString())} unless somebody reopens it.` : null,
+        ],
+      });
+    } catch (err) { setFailed(err.message); setBusy(false); }
+  }
+
+  const s = info?.summary;
+  return (
+    <Confirm title={`Mark ${ticket.ref} resolved?`} subtitle={ticket.subject} confirmLabel="Mark resolved"
+      busy={busy} error={failed || error} disabled={!info} onConfirm={confirm} onCancel={onCancel}>
+      {loading && !info && <Loading label="Reading the case…" />}
+      {info && (
+        <>
+          <p className="confirm-lead">This case will be marked as resolved.</p>
+          <div>
+            <h3>The case so far</h3>
+            <ul>
+              <li>Opened {dateTime(s.opened)} via {s.channel}, priority {s.priority}.</li>
+              <li>{s.client_messages} {s.client_messages === 1 ? 'message' : 'messages'} from the client, {s.replies} {s.replies === 1 ? 'reply' : 'replies'} to them, {s.internal_notes} internal {s.internal_notes === 1 ? 'note' : 'notes'}.</li>
+              {s.last_client && <li>Last from the client, {dateTime(s.last_client.at)}: “{s.last_client.excerpt}{s.last_client.excerpt.length >= 160 ? '…' : ''}”</li>}
+              {s.last_reply_at && <li>Last reply to the client: {dateTime(s.last_reply_at)}.</li>}
+            </ul>
+          </div>
+          <div className="stack" style={{ gap: 8 }}>
+            <h3>Check before resolving</h3>
+            <Said items={info.checks} />
+          </div>
+          <div>
+            <h3>What resolving does</h3>
+            <ul>{info.effects.map((e) => <li key={e}>{e}</li>)}</ul>
+          </div>
+        </>
+      )}
+    </Confirm>
+  );
+}
+
+/**
+ * Save a Manage change, asked first (Part 4, item 3.1): the changes, what
+ * each one does, and what to do before saving.
+ */
+function ChangeCase({ ticket, changed, onCancel, onDone }) {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(changed)) q.set(k, v ?? '');
+  const [info, { loading, error }] = useApi(`/tickets/${ticket.id}/change-preview?${q}`, [q.toString()]);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(null);
+
+  async function confirm() {
+    setBusy(true);
+    setFailed(null);
+    try {
+      const r = await api.patch(`/tickets/${ticket.id}`, changed);
+      onDone({
+        title: `${ticket.ref} saved`,
+        lines: [
+          ...info.changes.map((c) => `${c.label}: ${c.from} → ${c.to}.`),
+          changed.priority ? `It is now due to be resolved by ${dateTime(r.resolution_due)}.` : null,
+          changed.priority && r.breached && !ticket.breached ? 'That time has already passed, so it is marked breached.' : null,
+          changed.assignee_id ? 'The new assignee has been notified.' : null,
+        ],
+      });
+    } catch (err) { setFailed(err.message); setBusy(false); }
+  }
+
+  return (
+    <Confirm title={`Save changes to ${ticket.ref}?`} subtitle={ticket.subject} confirmLabel="Save"
+      busy={busy} error={failed || error} disabled={!info} onConfirm={confirm} onCancel={onCancel}>
+      {loading && !info && <Loading label="Working out what changes…" />}
+      {info && (
+        <>
+          <div className="confirm-wrap">
+            <table className="confirm-table">
+              <thead><tr><th>Field</th><th>Now</th><th>After saving</th></tr></thead>
+              <tbody>{info.changes.map((c) => <tr key={c.field}><td>{c.label}</td><td>{c.from}</td><td><strong>{c.to}</strong></td></tr>)}</tbody>
+            </table>
+          </div>
+          <div className="stack" style={{ gap: 8 }}>
+            <h3>What this changes</h3>
+            <Said items={info.effects} />
+          </div>
+          {info.checks.length > 0 && (
+            <div>
+              <h3>Before you save</h3>
+              <ul>{info.checks.map((c) => <li key={c}>{c}</li>)}</ul>
+            </div>
+          )}
+        </>
+      )}
+    </Confirm>
   );
 }
 

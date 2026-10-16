@@ -7,6 +7,7 @@
 
 import { all, one, run, notify, audit } from '../db.js';
 import { isWorkingTime, addWorkingMinutes } from './calendar.js';
+import { recordChange } from './metadata.js';
 
 /* Default 09:00–19:00, Mon–Sat (BRD risk register: "KYC timer fires out of hours"). */
 export const BUSINESS = { startHour: 9, endHour: 19, days: [1, 2, 3, 4, 5, 6] };
@@ -111,40 +112,128 @@ export function applySla(ticketId) {
  * and the team summary counted every case ever flagged, resolved ones too.
  * The sweep runs every minute, so this is current to the minute.
  */
+/**
+ * The deadlines a case would have under a priority -- Part 4, ruled by Ritesh
+ * on 16 Oct 2026.
+ *
+ * A change of priority, an escalation's included, redoes the deadlines under
+ * the new priority counted from when the case was opened, as Freshdesk and
+ * Zendesk do. They used to stay where they were, so a Low case raised to
+ * Critical kept Low's three days. The case is pinned to the policy in force
+ * now for the new priority, and the time it has spent waiting on the client
+ * still does not count. Reads only: the confirmation dialogs ask it what a
+ * change would do before anybody makes one.
+ */
+export function deadlinesFor(ticket, priority) {
+  const card = ticket.card_id ? one('SELECT product_type_id FROM product_cards WHERE id = ?', [ticket.card_id]) : null;
+  const pin = one(
+    'SELECT id FROM artefact_versions WHERE kind = ? AND logical_id = ? AND is_current = 1',
+    ['sla_policy', `${card?.product_type_id ?? 'null'}:${priority}`],
+  )?.id ?? null;
+  const policy = policyFor(card?.product_type_id, priority, pin);
+  const from = new Date(`${ticket.created_at.replace(' ', 'T')}Z`);
+  // Business minutes already spent waiting on the client, as the resume adds them.
+  const waited = Math.round((ticket.sla_paused_ms ?? 0) / 60_000);
+  const resolution = addBusinessMinutes(from, policy.resolution_mins + waited);
+  return {
+    priority,
+    pin,
+    response_due: toSql(addBusinessMinutes(from, policy.response_mins + waited)),
+    resolution_due: toSql(resolution),
+    resolution_mins: policy.resolution_mins,
+    past_due: resolution < new Date(),
+  };
+}
+
+/** Write deadlinesFor() to the case, and flag it at once if it is already past. */
+export function repriceSla(ticketId, priority) {
+  const ticket = one('SELECT * FROM tickets WHERE id = ?', [ticketId]);
+  if (!ticket) return null;
+  const next = deadlinesFor(ticket, priority);
+  run('UPDATE tickets SET response_due = ?, resolution_due = ?, sla_version_id = ? WHERE id = ?', [
+    next.response_due, next.resolution_due, next.pin, ticketId,
+  ]);
+  flagBreach(one(
+    'SELECT t.*, u.manager_id, u.name AS assignee_name FROM tickets t LEFT JOIN users u ON u.id = t.assignee_id WHERE t.id = ?',
+    [ticketId],
+  ));
+  return next;
+}
+
+/**
+ * Close what was resolved 72 hours ago and not reopened -- Part 4, ruled by
+ * Ritesh on 16 Oct 2026.
+ *
+ * It ran only when somebody pressed Run SLA sweep, and then across both
+ * businesses (OPS-45): a Bonanza agent's press closed Bigul's cases, with no
+ * history entry. It runs by itself now, with the breach check, and each close
+ * is in the case's history and the audit. `books` limits it to those
+ * businesses, for the button.
+ */
+export function closeResolved({ books = null } = {}) {
+  const where = ["status = 'Resolved'", "resolved_at <= datetime('now', '-72 hours')", 'merged_into IS NULL'];
+  const params = [];
+  if (books) {
+    where.push(books.length ? `sales_org IN (${books.map(() => '?').join(',')})` : '1 = 0');
+    params.push(...books);
+  }
+  const due = all(`SELECT id, ref FROM tickets WHERE ${where.join(' AND ')} ORDER BY id`, params);
+  for (const t of due) {
+    run("UPDATE tickets SET status = 'Closed', closed_at = datetime('now'), updated_at = datetime('now') WHERE id = ? AND status = 'Resolved'", [t.id]);
+    recordChange('case', t.id, 'status', 'Resolved', 'Closed', { source: 'automation' });
+    audit(null, 'ticket_auto_closed', 'ticket', t.id, { ref: t.ref, after_hours: 72 });
+  }
+  return { closed: due.length, closed_refs: due.map((t) => t.ref) };
+}
+
 export const breachedSql = (a = 't') => `(${a}.breached = 1 AND ${a}.status NOT IN ('Resolved','Closed') AND ${a}.merged_into IS NULL)`;
 
 /**
  * Sweep open tickets, flag breaches and escalate up the hierarchy.
  * Called on a timer by the server and on demand from the ticket routes.
  */
-export function sweepSla() {
+/* One open case past its resolution time: flag it and tell the assignee and
+   their manager. False when there is nothing to do. */
+function flagBreach(t, now = new Date()) {
+  if (!t || ['Resolved', 'Closed'].includes(t.status) || t.merged_into) return false;
+  // Paused tickets accrue no SLA time.
+  if (t.status === 'Waiting on Client') return false;
+
+  const due = t.resolution_due ? new Date(`${t.resolution_due.replace(' ', 'T')}Z`) : null;
+  if (!due || now <= due || t.breached) return false;
+
+  run('UPDATE tickets SET breached = 1, breached_at = datetime(\'now\'), updated_at = datetime(\'now\') WHERE id = ?', [t.id]);
+
+  // Escalation: notify the assignee and their manager (BRD §7.10 escalation automation).
+  notify(t.assignee_id, `SLA breached — ${t.ref}`, t.subject, `/tickets/${t.id}`);
+  if (t.manager_id) {
+    notify(t.manager_id, `Team SLA breach — ${t.ref}`, `${t.assignee_name || 'Unassigned'}: ${t.subject}`, `/tickets/${t.id}`);
+  }
+  audit(null, 'sla_breach', 'ticket', t.id, { ref: t.ref, priority: t.priority });
+  return true;
+}
+
+/**
+ * Flag every open case past its resolution time. The server runs it every
+ * minute over every business; `books` limits it to those, for the Check SLAs
+ * now button (OPS-45).
+ */
+export function sweepSla({ books = null } = {}) {
+  const where = ["t.status NOT IN ('Resolved', 'Closed')", 't.merged_into IS NULL'];
+  const params = [];
+  if (books) {
+    where.push(books.length ? `t.sales_org IN (${books.map(() => '?').join(',')})` : '1 = 0');
+    params.push(...books);
+  }
   const open = all(`
     SELECT t.*, u.manager_id, u.name AS assignee_name
     FROM tickets t LEFT JOIN users u ON u.id = t.assignee_id
-    WHERE t.status NOT IN ('Resolved', 'Closed') AND t.merged_into IS NULL
-  `);
+    WHERE ${where.join(' AND ')}
+  `, params);
 
   const now = new Date();
-  let breached = 0;
-
-  for (const t of open) {
-    // Paused tickets accrue no SLA time.
-    if (t.status === 'Waiting on Client') continue;
-
-    const due = t.resolution_due ? new Date(`${t.resolution_due.replace(' ', 'T')}Z`) : null;
-    if (!due || now <= due || t.breached) continue;
-
-    run('UPDATE tickets SET breached = 1, breached_at = datetime(\'now\'), updated_at = datetime(\'now\') WHERE id = ?', [t.id]);
-    breached += 1;
-
-    // Escalation: notify the assignee and their manager (BRD §7.10 escalation automation).
-    notify(t.assignee_id, `SLA breached — ${t.ref}`, t.subject, `/tickets/${t.id}`);
-    if (t.manager_id) {
-      notify(t.manager_id, `Team SLA breach — ${t.ref}`, `${t.assignee_name || 'Unassigned'}: ${t.subject}`, `/tickets/${t.id}`);
-    }
-    audit(null, 'sla_breach', 'ticket', t.id, { ref: t.ref, priority: t.priority });
-  }
-  return { checked: open.length, breached };
+  const flagged = open.filter((t) => flagBreach(t, now));
+  return { checked: open.length, breached: flagged.length, breached_refs: flagged.map((t) => t.ref) };
 }
 
 /** Pause/resume the clock as a ticket moves in and out of "Waiting on Client". */

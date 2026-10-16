@@ -50,7 +50,7 @@ import { backfillClients, backfillPanIndex } from './engine/clients.js';
 import { sweepListRefresh } from './engine/leadlists.js';
 import { accessLog, sweepAccessLog } from './engine/accesslog.js';
 
-import { sweepSla } from './engine/sla.js';
+import { sweepSla, closeResolved } from './engine/sla.js';
 import { sweepKyc } from './engine/kyc.js';
 import { runEnabledRules } from './engine/rules.js';
 import { tick as automationTick } from './engine/automation.js';
@@ -524,11 +524,15 @@ const MINUTE = 60_000;
 /* Run each sweep once at startup. Without this a freshly started system serves
    stale SLA and KYC state until the first tick — a journey that should already
    read Abandoned still shows as Stalled for up to thirty seconds. */
-for (const [label, sweep] of [['sla', sweepSla], ['kyc', sweepKyc], ['reminders', sweepReminders], ['metrics', sweepMetrics]]) {
+/* Part 4 (16 Oct): resolved cases close after 72 hours by themselves; only a
+   press of the sweep button closed them before. */
+const sweepCases = () => { sweepSla(); closeResolved(); };
+
+for (const [label, sweep] of [['sla', sweepCases], ['kyc', sweepKyc], ['reminders', sweepReminders], ['metrics', sweepMetrics]]) {
   try { sweep(); } catch (e) { console.error(`[${label}]`, e.message); }
 }
 
-setInterval(() => { try { sweepSla(); } catch (e) { console.error('[sla]', e.message); } }, MINUTE);
+setInterval(() => { try { sweepCases(); } catch (e) { console.error('[sla]', e.message); } }, MINUTE);
 setInterval(() => { try { sweepKyc(); } catch (e) { console.error('[kyc]', e.message); } }, 30_000);
 
 /* Reminders run on their own cadence: a follow-up nudge that arrives ten

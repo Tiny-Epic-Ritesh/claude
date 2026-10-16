@@ -1,0 +1,54 @@
+QA-07 (Part 4 items 1-4, OPS-44, OPS-45) -- server/test/round4g.test.mjs on the unfixed code (620f578), 16 Oct 2026
+
+
+Round 4, QA-07: Part 4 items 1-4, OPS-44, OPS-45
+  FAIL Item 1/3: opening Escalate, Mark resolved or a Manage save changes nothing
+       /tickets/9/escalation answered 404: {"error":"No such endpoint: GET /api/tickets/9/escalation"}
+
+404 !== 200
+
+  FAIL Item 1: the escalation dialog names who it goes to, each level above, the deadlines, and what happens next
+       Expected values to be strictly equal:
+
+404 !== 200
+
+  FAIL OPS-44: with no manager, a case goes to a Sales Supervisor in its own business, or is refused
+       a Bigul case was escalated to Anil Deshpande, who works in BONANZA
+  FAIL Ruled 16 Oct: a change of priority redoes the deadlines from when the case was opened
+       no deadlinesFor in engine/sla.js
+  FAIL Ruled 16 Oct: an escalation raises the priority and redoes the deadlines with it
+       escalated, and still on Low's clock
++ actual - expected
+
++ '2026-10-24 06:33:00'
+- undefined
+
+  FAIL Item 1: Mark resolved says what is outstanding and what resolving sets off
+       Expected values to be strictly equal:
+
+404 !== 200
+
+  FAIL Item 3: the Save dialog lists each change and what it does
+       Expected values to be strictly equal:
+
+404 !== 200
+
+  FAIL The dialogs keep to the reader's business and scope
+       a Bigul Admin read /tickets/16/escalation
+
+404 !== 403
+
+  FAIL OPS-45: the sweep acts on the business being looked at, not the other one
+       the Bigul case was closed, and not by the 72-hour rule
+  FAIL Ruled 16 Oct: the 72-hour close runs by itself, with the breach check
+       the server never closes resolved cases by itself
+  FAIL Item 4: the sweep preview says what a check would find, and changes nothing
+       {"error":"No such endpoint: GET /api/tickets/sweep/preview"}
+
+404 !== 200
+
+  FAIL Items 1-4 on the page: nothing changes without a confirmation, 50 entries, the notes (source check)
+       Escalate still writes on the click
+
+0 passed, 12 failed
+

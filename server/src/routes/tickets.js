@@ -3,16 +3,16 @@
  */
 
 import { exportHeldMasked } from '../engine/policies.js';
-import { istNow } from '../engine/daterange.js';
+import { istNow, dmyTime } from '../engine/daterange.js';
 import { Router } from 'express';
-import { all, one, run, audit, notify } from '../db.js';
-import { can, requireUser, requirePermission, requireAnyPermission, mayUseOrg, activeOrg, reqTicketScope, maskFor, orgScope, userCan } from '../auth.js';
+import { all, one, run, audit, notify, ROLE_LABELS } from '../db.js';
+import { can, requireUser, requirePermission, requireAnyPermission, mayUseOrg, activeOrg, orgsFor, reqTicketScope, maskFor, orgScope, userCan } from '../auth.js';
 import { maskRecord } from '../security.js';
 import { loadInBook } from '../engine/bookscope.js';
 import { assertValid } from '../engine/validation.js';
 import { recordChange } from '../engine/metadata.js';
 import { withCorrections, mayCorrect, addCorrection } from '../engine/corrections.js';
-import { applySla, sweepSla, handleStatusChange, slaRemaining, DEFAULT_SLA, breachedSql } from '../engine/sla.js';
+import { applySla, sweepSla, closeResolved, deadlinesFor, repriceSla, handleStatusChange, slaRemaining, businessMinutesBetween, DEFAULT_SLA, breachedSql } from '../engine/sla.js';
 import { openCase } from '../engine/cases.js';
 import { send } from '../integrations.js';
 import * as ai from '../ai/index.js';
@@ -490,8 +490,246 @@ router.patch('/:id', async (req, res) => {
   }
   if (assignee_id) notify(assignee_id, `Ticket assigned to you — ${ticket.ref}`, ticket.subject, `/tickets/${ticket.id}`);
 
+  /* Part 4, ruled 16 Oct: a new priority redoes the deadlines, from when the
+     case was opened. They stayed put, so a Low case raised to Critical kept
+     Low's three days. */
+  if (priority && priority !== ticket.priority) {
+    const before = { response_due: ticket.response_due, resolution_due: ticket.resolution_due };
+    const after = repriceSla(ticket.id, priority);
+    audit(req.user.id, 'ticket_sla_repriced', 'ticket', ticket.id, { from: ticket.priority, to: priority, before, after });
+  }
+
   await refreshSummary(Number(req.params.id));
   res.json(decorate(one('SELECT * FROM tickets WHERE id = ?', [req.params.id])));
+});
+
+/* ------------------------------------------- what an action would do */
+
+/* An escalation raises the priority one step; Critical stays Critical. */
+const raised = (p) => ({ Low: 'Medium', Medium: 'High' }[p] ?? 'Critical');
+
+const bookName = (code) => one('SELECT name FROM sales_orgs WHERE code = ?', [code])?.name ?? code;
+const person = (u) => (u ? { id: u.id, name: u.name, role: u.role, role_label: ROLE_LABELS[u.role] ?? u.role } : null);
+
+/**
+ * Who an escalation goes to: the assignee's manager, when they are active and
+ * work in the case's business; otherwise a Sales Supervisor in the case's
+ * business; otherwise nobody, and the escalation is refused.
+ *
+ * OPS-44. With no manager it went to the first active Sales Supervisor in
+ * either business, so a Bigul case could land with Bonanza's supervisor -- and
+ * a manager who had left was handed cases too.
+ */
+function escalationTarget(ticket) {
+  const assignee = ticket.assignee_id ? one('SELECT * FROM users WHERE id = ?', [ticket.assignee_id]) : null;
+  const manager = assignee?.manager_id ? one('SELECT * FROM users WHERE id = ? AND active = 1', [assignee.manager_id]) : null;
+  if (manager && mayUseOrg(manager, ticket.sales_org)) return { user: manager, how: 'manager', assignee };
+  const supervisor = all("SELECT * FROM users WHERE role = 'sales_supervisor' AND active = 1 AND id != ? ORDER BY id", [ticket.assignee_id ?? -1])
+    .find((u) => mayUseOrg(u, ticket.sales_org));
+  if (supervisor) return { user: supervisor, how: 'supervisor', assignee };
+  return {
+    user: null,
+    assignee,
+    refusal: `Nobody to escalate ${ticket.ref} to: ${assignee ? `${assignee.name} has no manager` : 'it has no assignee and so no manager'} in ${bookName(ticket.sales_org)}, and ${bookName(ticket.sales_org)} has no active Sales Supervisor. An Admin can set a manager in Setup.`,
+  };
+}
+
+/* The case, loaded within the reader's book and scope -- as the detail is. */
+function visibleCase(req) {
+  const found = loadInBook(req, 'ticket', req.params.id);
+  if (found.error) return found;
+  if (!found.row) return { status: 404, error: 'Ticket not found' };
+  const scope = reqTicketScope(req, 't');
+  const visible = one(`SELECT 1 v FROM tickets t WHERE t.id = ? AND ${scope.sql}`, [found.row.id, ...scope.params]);
+  if (!visible) return { status: 403, error: 'This case is outside your visibility scope' };
+  return found;
+}
+
+/* What resolving or closing does, said the same way by both dialogs. */
+function finishEffects(ticket, to) {
+  const lead = ticket.lead_id ? one('SELECT name, mobile FROM leads WHERE id = ?', [ticket.lead_id]) : null;
+  return [
+    to === 'Resolved'
+      ? 'Its status becomes Resolved, and the time is recorded as its resolution.'
+      : 'Its status becomes Closed.',
+    lead?.mobile
+      ? `${lead.name} is sent a WhatsApp asking them to rate the help from 1 to 5.`
+      : 'No client with a mobile number is linked, so nobody is asked for a rating.',
+    ...(to === 'Resolved' ? ['If nobody reopens it, it closes by itself 72 hours after it is resolved.'] : []),
+    'Its details stop changing. Reopening it later asks for a reason, which is kept on the case.',
+  ];
+}
+
+/* What a change of priority does, given the deadlines it would bring. */
+function priorityEffects(ticket, next) {
+  const out = [{ tone: 'info', text: `Its deadlines are redone under ${next.priority}, counted from when it was opened on ${dmyTime(ticket.created_at)}: a first response by ${dmyTime(next.response_due)} and a resolution by ${dmyTime(next.resolution_due)}.` }];
+  if (ticket.breached) {
+    out.push({ tone: 'info', text: `It has already breached its SLA${ticket.breached_at ? ` (${dmyTime(ticket.breached_at)})` : ''}. A new priority does not undo that.` });
+  } else if (next.past_due && ticket.status !== 'Waiting on Client') {
+    out.push({ tone: 'warn', text: 'That resolution time has already passed, so the case is marked breached at once, and its assignee and their manager are told.' });
+  }
+  return out;
+}
+
+/**
+ * Before Escalate (Part 4, item 1): who it goes to, every level above, the
+ * deadlines at each, and what happens if it stays unresolved. Read-only.
+ *
+ * There is no separate escalation matrix to read: the chain is the manager
+ * hierarchy in Setup, and the times are the case's SLA policy -- the
+ * configuration Part 4 says to use.
+ */
+router.get('/:id/escalation', requirePermission('ticket.escalate'), (req, res) => {
+  const found = visibleCase(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const ticket = found.row;
+  if (DONE.includes(ticket.status)) {
+    return res.status(409).json({ error: `${ticket.ref} is ${ticket.status.toLowerCase()}. Reopen it first.`, reopen_first: true });
+  }
+  const target = escalationTarget(ticket);
+  const chain = [{
+    level: 1, who: person(target.assignee), priority: ticket.priority,
+    resolution_due: ticket.resolution_due, current: true,
+  }];
+  /* Each further escalation goes one manager up and one priority up. */
+  let at = target.user;
+  let priority = ticket.priority;
+  const seen = new Set([ticket.assignee_id]);
+  while (at && !seen.has(at.id) && chain.length < 5) {
+    seen.add(at.id);
+    priority = raised(priority);
+    chain.push({ level: chain.length + 1, who: person(at), priority, resolution_due: deadlinesFor(ticket, priority).resolution_due });
+    const up = at.manager_id ? one('SELECT * FROM users WHERE id = ? AND active = 1', [at.manager_id]) : null;
+    at = up && mayUseOrg(up, ticket.sales_org) ? up : null;
+  }
+  const next = target.user ? deadlinesFor(ticket, raised(ticket.priority)) : null;
+  const above = chain[2]?.who ?? null;
+  res.json({
+    ref: ticket.ref,
+    business: bookName(ticket.sales_org),
+    to: person(target.user),
+    how: target.how ?? null,
+    refusal: target.refusal ?? null,
+    priority: { from: ticket.priority, to: raised(ticket.priority) },
+    next,
+    chain,
+    effects: target.user ? [
+      `The case moves to ${target.user.name}${target.how === 'manager' ? `, ${target.assignee?.name ?? 'the assignee'}'s manager` : `, a Sales Supervisor in ${bookName(ticket.sales_org)} (${target.assignee?.name ?? 'the case'} has no manager there)`}, who is notified.`,
+      ticket.priority === 'Critical'
+        ? 'Its priority stays Critical, the highest.'
+        : `Its priority goes from ${ticket.priority} to ${raised(ticket.priority)}.`,
+      'An internal note records who escalated it and why. The client is not told.',
+    ] : [],
+    sla: next && raised(ticket.priority) !== ticket.priority ? priorityEffects(ticket, next) : [],
+    if_unresolved: target.user ? [
+      next ? `If it is not resolved by ${dmyTime(next.resolution_due)}, it is marked breached within a minute, and ${target.user.name}${above ? ` and ${above.name} are` : ' is'} told.` : null,
+      above ? `Escalating it again moves it to ${above.name} (${above.role_label}) at ${chain[2].priority}.` : 'There is nobody above them in the hierarchy to escalate to after this.',
+    ].filter(Boolean) : [],
+  });
+});
+
+/**
+ * Before Mark resolved (Part 4, item 1): what the case has been through, what
+ * to check first, and what resolving does. Read-only.
+ */
+router.get('/:id/resolution-check', requirePermission('ticket.reply'), (req, res) => {
+  const found = visibleCase(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const ticket = found.row;
+  const replies = all('SELECT author_type, internal, created_at, body FROM ticket_replies WHERE ticket_id = ? ORDER BY created_at, id', [ticket.id]);
+  const count = (fn) => replies.filter(fn).length;
+  const publicReplies = replies.filter((r) => r.author_type === 'agent' && !r.internal);
+  const lastAgent = publicReplies.at(-1) ?? null;
+  const lastClient = replies.filter((r) => r.author_type === 'client' || r.author_type === 'partner').at(-1) ?? null;
+  const tasks = all("SELECT id, title, due_at FROM tasks WHERE ticket_id = ? AND status NOT IN ('Done', 'Completed', 'Cancelled') ORDER BY due_at", [ticket.id]);
+
+  const checks = [];
+  if (!publicReplies.length) {
+    checks.push({ tone: 'warn', text: 'Nobody has replied to the client on this case. Reply first, so they know what was done.' });
+  } else if (lastClient && lastClient.created_at > lastAgent.created_at) {
+    checks.push({ tone: 'warn', text: `The client's last message, on ${dmyTime(lastClient.created_at)}, has no reply after it.` });
+  }
+  if (ticket.status === 'Waiting on Client') {
+    checks.push({ tone: 'warn', text: 'The case is waiting on the client. Resolve it only if they have answered, or no longer need anything.' });
+  }
+  if (tasks.length) {
+    checks.push({ tone: 'warn', text: `${tasks.length} open task${tasks.length === 1 ? '' : 's'} on this case: ${tasks.map((t) => t.title).join('; ')}. They stay open after it is resolved.` });
+  }
+  if (ticket.breached) {
+    checks.push({ tone: 'info', text: `It breached its SLA${ticket.breached_at ? ` on ${dmyTime(ticket.breached_at)}` : ''}. Resolving it does not undo that.` });
+  }
+  if (!checks.length) checks.push({ tone: 'ok', text: 'Nothing outstanding: the client has had the last word from you, and no task is open on the case.' });
+
+  res.json({
+    ref: ticket.ref,
+    status: ticket.status,
+    summary: {
+      opened: ticket.created_at,
+      channel: ticket.channel,
+      priority: ticket.priority,
+      ai_summary: ticket.ai_summary ?? null,
+      client_messages: count((r) => r.author_type === 'client' || r.author_type === 'partner'),
+      replies: publicReplies.length,
+      internal_notes: count((r) => r.author_type === 'agent' && r.internal),
+      events: count((r) => r.author_type === 'system'),
+      last_client: lastClient ? { at: lastClient.created_at, excerpt: String(lastClient.body ?? '').slice(0, 160) } : null,
+      last_reply_at: lastAgent?.created_at ?? null,
+    },
+    checks,
+    effects: finishEffects(ticket, 'Resolved'),
+  });
+});
+
+/**
+ * Before a Manage change is saved (Part 4, item 3): the changes, what each
+ * does, and what to check first. Read-only; the save is the PATCH above.
+ */
+router.get('/:id/change-preview', (req, res) => {
+  const found = visibleCase(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const ticket = found.row;
+  const { status, priority } = req.query;
+  const assigneeId = req.query.assignee_id === undefined ? undefined : (Number(req.query.assignee_id) || null);
+
+  if (status !== undefined && !STATUSES.includes(status)) return res.status(400).json({ error: `Status must be one of ${STATUSES.join(', ')}` });
+  if (priority !== undefined && !PRIORITIES.includes(priority)) return res.status(400).json({ error: `Priority must be one of ${PRIORITIES.join(', ')}` });
+  if (assigneeId !== undefined && !userCan(req.user, 'ticket.reassign')) {
+    return res.status(403).json({ error: 'Reassignment requires Customer Care, a Supervisor or an Admin', required: 'ticket.reassign' });
+  }
+
+  const changes = [];
+  const effects = [];
+  const checks = [];
+  const name = (id) => (id ? one('SELECT name FROM users WHERE id = ?', [id])?.name ?? `#${id}` : 'Unassigned');
+
+  if (status !== undefined && status !== ticket.status) {
+    changes.push({ field: 'status', label: 'Status', from: ticket.status, to: status });
+    if (status === 'Waiting on Client') {
+      effects.push({ tone: 'info', text: 'The SLA clock pauses. When the case moves on, its deadlines move out by the business time it spent waiting.' });
+      checks.push('Send the client your question first, as a reply with Internal note unticked, so they know what you are waiting for.');
+    } else if (ticket.status === 'Waiting on Client') {
+      const waited = ticket.sla_paused_at ? businessMinutesBetween(new Date(`${ticket.sla_paused_at.replace(' ', 'T')}Z`), new Date()) : 0;
+      effects.push({ tone: 'info', text: `The SLA clock restarts, and the deadlines move out by the business time spent waiting -- about ${Math.round(waited / 60)} h so far.` });
+    } else if (status === 'Resolved' || status === 'Closed') {
+      effects.push(...finishEffects(ticket, status).map((text) => ({ tone: 'info', text })));
+      checks.push('Make sure the client has had a reply saying what was done.');
+    } else {
+      effects.push({ tone: 'info', text: 'The SLA clock keeps running.' });
+    }
+  }
+  if (priority !== undefined && priority !== ticket.priority) {
+    changes.push({ field: 'priority', label: 'Priority', from: ticket.priority, to: priority });
+    effects.push(...priorityEffects(ticket, deadlinesFor(ticket, priority)));
+    checks.push('Say why in an internal note. The client is not told of a change of priority.');
+  }
+  if (assigneeId !== undefined && assigneeId !== (ticket.assignee_id ?? null)) {
+    changes.push({ field: 'assignee_id', label: 'Assignee', from: name(ticket.assignee_id), to: name(assigneeId) });
+    effects.push(assigneeId
+      ? { tone: 'info', text: `${name(assigneeId)} is notified, and the case moves to their queue.` }
+      : { tone: 'warn', text: 'Nobody holds the case: no assignee is told of a breach until somebody takes it.' });
+    if (assigneeId) checks.push(`Leave an internal note with what ${name(assigneeId)} needs to know.`);
+  }
+  res.json({ ref: ticket.ref, changes, effects, checks });
 });
 
 router.post('/:id/escalate', requirePermission('ticket.escalate'), (req, res) => {
@@ -506,21 +744,29 @@ router.post('/:id/escalate', requirePermission('ticket.escalate'), (req, res) =>
     return res.status(409).json({ error: `${ticket.ref} is ${ticket.status.toLowerCase()}. Reopen it first.`, reopen_first: true });
   }
 
-  const assignee = ticket.assignee_id ? one('SELECT * FROM users WHERE id = ?', [ticket.assignee_id]) : null;
-  const manager = assignee?.manager_id
-    ? one('SELECT * FROM users WHERE id = ?', [assignee.manager_id])
-    : one("SELECT * FROM users WHERE role = 'sales_supervisor' AND active = 1 LIMIT 1");
+  const target = escalationTarget(ticket);
+  if (!target.user) return res.status(400).json({ error: target.refusal });
+  const manager = target.user;
+  const priority = raised(ticket.priority);
 
-  if (!manager) return res.status(400).json({ error: 'No escalation target found in the hierarchy' });
-
-  run("UPDATE tickets SET assignee_id = ?, priority = CASE priority WHEN 'Low' THEN 'Medium' WHEN 'Medium' THEN 'High' ELSE 'Critical' END, updated_at = datetime('now') WHERE id = ?",
-    [manager.id, req.params.id]);
+  run('UPDATE tickets SET assignee_id = ?, priority = ?, updated_at = datetime(\'now\') WHERE id = ?',
+    [manager.id, priority, req.params.id]);
   run('INSERT INTO ticket_replies (ticket_id, body, author_type, user_id, internal) VALUES (?,?,?,?,1)', [
     req.params.id, `Escalated by ${req.user.name}. ${req.body.reason || ''}`, 'system', req.user.id,
   ]);
+  // Part 4, ruled 16 Oct: the raised priority's deadlines, from when the case was opened.
+  const sla = priority !== ticket.priority ? repriceSla(ticket.id, priority) : null;
   notify(manager.id, `Escalated — ${ticket.ref}`, ticket.subject, `/tickets/${ticket.id}`);
-  audit(req.user.id, 'ticket_escalated', 'ticket', Number(req.params.id), { to: manager.id });
-  res.json({ escalated_to: manager.name });
+  audit(req.user.id, 'ticket_escalated', 'ticket', Number(req.params.id), { to: manager.id, how: target.how, priority, sla });
+  const now = one('SELECT resolution_due, breached FROM tickets WHERE id = ?', [ticket.id]);
+  /* QA-07: everything the confirmation promised, as it turned out. */
+  res.json({
+    escalated_to: manager.name,
+    how: target.how,
+    priority,
+    resolution_due: now.resolution_due,
+    breached: Boolean(now.breached),
+  });
 });
 
 router.post('/:id/merge', requirePermission('ticket.merge'), (req, res) => {
@@ -641,10 +887,44 @@ router.post('/export', requirePermission('export.case'), (req, res) => {
 
 /* OPS-29. Any signed-in user could close every case resolved over 72 hours
    ago and run the SLA sweep. It belongs to whoever manages the case queue --
-   Customer Care runs it from the Tickets screen -- or administers the SLA. */
-router.post('/sweep', requireAnyPermission('ticket.reassign', 'admin.sla'), (_req, res) => {
-  run("UPDATE tickets SET status = 'Closed', closed_at = datetime('now') WHERE status = 'Resolved' AND resolved_at <= datetime('now', '-72 hours')");
-  res.json(sweepSla());
+   Customer Care runs it from the Tickets screen -- or administers the SLA.
+
+   OPS-45, and Part 4 item 4. It closed resolved cases and flagged breaches in
+   both businesses, whoever pressed it, and the close happened only on a
+   press. Both run by themselves every minute now (index.js); the button does
+   the same at once, for the business being looked at -- or the reader's
+   businesses, when no one is chosen -- and says what it did. */
+const sweepBooks = (req) => {
+  const active = activeOrg(req);
+  return active && mayUseOrg(req.user, active) ? [active] : orgsFor(req.user);
+};
+
+router.get('/sweep/preview', requireAnyPermission('ticket.reassign', 'admin.sla'), (req, res) => {
+  const books = sweepBooks(req);
+  const marks = books.map(() => '?').join(',') || "''";
+  const open = all(
+    `SELECT status, resolution_due, breached FROM tickets
+      WHERE sales_org IN (${marks}) AND status NOT IN ('Resolved', 'Closed') AND merged_into IS NULL`, books,
+  );
+  const now = new Date();
+  res.json({
+    businesses: books.map(bookName),
+    open: open.length,
+    past_due: open.filter((t) => !t.breached && t.status !== 'Waiting on Client' && t.resolution_due
+      && new Date(`${t.resolution_due.replace(' ', 'T')}Z`) < now).length,
+    to_close: one(
+      `SELECT COUNT(*) n FROM tickets WHERE sales_org IN (${marks}) AND status = 'Resolved'
+        AND resolved_at <= datetime('now', '-72 hours') AND merged_into IS NULL`, books,
+    ).n,
+  });
+});
+
+router.post('/sweep', requireAnyPermission('ticket.reassign', 'admin.sla'), (req, res) => {
+  const books = sweepBooks(req);
+  const closed = closeResolved({ books });
+  const swept = sweepSla({ books });
+  audit(req.user.id, 'sla_sweep_run', 'ticket', null, { books, ...swept, ...closed });
+  res.json({ businesses: books.map(bookName), ...swept, ...closed });
 });
 
 router.get('/reports/summary', requirePermission('report.team'), (req, res) => {

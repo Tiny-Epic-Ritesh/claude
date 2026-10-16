@@ -193,6 +193,60 @@ export function Modal({ title, subtitle, onClose, children, wide }) {
 }
 
 /**
+ * Ask before an action that changes a record (Part 4, items 1, 3 and 4).
+ *
+ * Opening it changes nothing; Cancel, Close, Escape and a click outside all
+ * leave the record as it was. The body says what the action will do, which the
+ * caller asks the server for, so the dialog describes the rules the action
+ * will actually run under rather than a copy of them.
+ */
+export function Confirm({
+  title, subtitle, children, confirmLabel = 'Confirm', busy = false, error = null,
+  disabled = false, danger = false, onConfirm, onCancel,
+}) {
+  const cancel = busy ? () => {} : onCancel;
+  return (
+    <Modal title={title} subtitle={subtitle} onClose={cancel} wide>
+      <div className="stack confirm-body">
+        <ErrorBanner error={error} />
+        {children}
+        <div className="confirm-actions">
+          <button type="button" className="btn" onClick={cancel} disabled={busy}>Cancel</button>
+          <button type="button" className={`btn ${danger ? 'btn-danger' : 'btn-primary'}`}
+            onClick={onConfirm} disabled={busy || disabled}>
+            {busy ? <Spinner /> : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * Say what an action did, until the reader says OK (Part 4, item 8.4).
+ *
+ * An action that only closed a panel, or changed a number somewhere else on
+ * the page, left the person who pressed it to work out whether it had worked
+ * and what it had set in motion -- a task on somebody's list, a message to a
+ * client. Each line here is something that actually happened.
+ */
+export function Outcome({ title, lines = [], tone = 'ok', onClose }) {
+  return (
+    <Modal title={title} onClose={onClose}>
+      <div className="stack confirm-body">
+        <div className={`notice notice-${tone}`} role="status">
+          <Icon name={tone === 'warn' ? 'warning' : 'check_circle'} />
+          <div>{lines.filter(Boolean).map((line, i) => <p key={i}>{line}</p>)}</div>
+        </div>
+        <div className="confirm-actions">
+          <button type="button" className="btn btn-primary" onClick={onClose} autoFocus>OK</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/**
  * One headline figure.
  *
  * ENH-05: a count you cannot open is trivia. When the server gives the metric a

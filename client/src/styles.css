@@ -3805,6 +3805,80 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
 .notice-ok { border-left-color: var(--ok); }
 .notice-ok > .material-symbols-rounded { color: var(--ok); }
 
+/* ------------------------------------- Part 4: confirm, outcome, field notes */
+
+.confirm-body { gap: 14px; }
+.confirm-body h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.confirm-body ul { margin: 0; padding-left: 18px; font-size: 13px; color: var(--ink-2); }
+.confirm-body li + li { margin-top: 4px; }
+.confirm-body .notice { margin-bottom: 0; }
+.confirm-lead { margin: 0; font-size: 15px; font-weight: 600; color: var(--ink); }
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid var(--hairline);
+  padding-top: 12px;
+}
+.confirm-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.confirm-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--hairline);
+}
+.confirm-table td { padding: 8px; border-bottom: 1px solid var(--hairline-2); color: var(--ink-2); vertical-align: top; }
+.confirm-table tr.is-current td { background: var(--accent-soft); color: var(--ink); }
+.confirm-wrap { overflow-x: auto; }
+
+/* A note that belongs to one field: set apart from the labels by a tint, an
+   icon and a size of its own (Part 4, item 3.2 -- the Waiting on Client note
+   read as the label of the field below it). */
+.field-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-2);
+  background: var(--accent-soft);
+}
+.field-note .material-symbols-rounded { font-size: 16px; color: var(--accent-dark); flex-shrink: 0; margin-top: 1px; }
+.field-note-warn { background: var(--warn-soft); }
+.field-note-warn .material-symbols-rounded { color: var(--warn); }
+.manage-fields { display: grid; gap: 18px; }
+.manage-fields .field { margin-bottom: 0; }
+.manage-save { display: flex; justify-content: flex-end; gap: 8px; align-items: center; }
+.manage-save .tiny { margin-right: auto; }
+
+/* The whole conversation, scrolled inside the dialog (Part 4, item 2). */
+.thread-all { max-height: min(70vh, 720px); overflow-y: auto; padding-right: 4px; }
+.thread-gap {
+  font-size: 12px;
+  color: var(--ink-3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: var(--hairline-2);
+}
+
 @media (max-width: 560px) {
   .intent-switch { grid-template-columns: 1fr; }
   .bulk-bar { left: 12px; right: 12px; transform: none; border-radius: var(--r-lg); justify-content: center; }
