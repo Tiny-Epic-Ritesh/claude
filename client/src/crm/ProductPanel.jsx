@@ -20,8 +20,10 @@
  */
 
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api, rupees, dateTime, shortDate, appUrl, STATE_LABEL } from '../api.js';
-import { useApi, Icon, Loading, ErrorBanner, Empty, Modal } from '../components/ui.jsx';
+import { useApi, Icon, Loading, ErrorBanner, Empty, Modal, Outcome } from '../components/ui.jsx';
+import RequestProductRm from './ProductRmRequest.jsx';
 
 const CHANNEL = {
   call: { label: 'Start a call', icon: 'call' },
@@ -40,52 +42,61 @@ const STATE_BADGE = {
   ON_HOLD: 'badge-amber',
 };
 
-export default function ProductPanel({ cardId, onClose, onDone, onContact, onCrossSell }) {
+export default function ProductPanel({ cardId, me, onClose, onDone, onContact, onCrossSell }) {
+  const navigate = useNavigate();
   const [d, { loading, error, reload }] = useApi(cardId ? `/cards/${cardId}/detail` : null, [cardId]);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
-  const [showMoves, setShowMoves] = useState(false);
   const [failed, setFailed] = useState(null);
+  /* Part 4, items 8.2 to 8.4: the handover dialog, and what an action did. */
+  const [asking, setAsking] = useState(false);
+  const [outcome, setOutcome] = useState(null);
 
   if (loading && !d) return <Modal title="Loading…" onClose={onClose}><Loading /></Modal>;
   if (error) return <Modal title="Product" onClose={onClose}><ErrorBanner error={error} /></Modal>;
   if (!d) return null;
 
+  /* What it did, until OK; then the panel closes and the lead reloads. */
+  if (outcome) return <Outcome title={outcome.title} lines={outcome.lines} tone={outcome.tone} onClose={() => onDone?.()} />;
+  if (asking) {
+    return (
+      <RequestProductRm cardId={d.id} onCancel={() => setAsking(false)}
+        onDone={(result) => { setAsking(false); setOutcome(result); }} />
+    );
+  }
+
   /* QA-42. A refusal went to the lead page, behind this panel, so a move that
      failed looked like a button that did nothing. It is said here, where the
-     button is. */
+     button is. Part 4, item 8.4: and what worked says what it did. */
   const act = async (fn) => {
     setBusy(true);
     setFailed(null);
-    // A step that has something to say returns it as a string (QA-21).
-    try { const said = await fn(); onDone?.(typeof said === 'string' ? said : undefined); }
+    try { const said = await fn(); if (said) setOutcome(said); else onDone?.(); }
     catch (e) { setFailed(e.message); setBusy(false); }
   };
 
-  // QA-42: and a move that worked says so, rather than only closing the panel.
+  // QA-42: a move that worked says so. Part 4, item 8.4: and everything it set off.
   const move = (to) => act(async () => {
     const r = await api.post(`/cards/${d.id}/state`, { state: to, note: note || undefined });
-    return `${d.product_name} is now ${STATE_LABEL[r.to] ?? r.to}.`;
+    return { title: `${d.product_name} is now ${STATE_LABEL[r.to] ?? r.to}`, lines: r.effects ?? [`${d.product_name} is now ${STATE_LABEL[r.to] ?? r.to}.`] };
   });
 
   const perform = async (action) => {
     if (!action || !action.allowed) return;
     switch (action.kind) {
       case 'state': return move(action.to);
-      case 'rm': return act(async () => {
-        const r = await api.post(`/cards/${d.id}/request-product-rm`, {
-          reason: note || 'Sales RM requested product expertise',
-        });
-        /* QA-21. The route makes each of them a High-priority task due in four
-           hours and a notification; say who, instead of a generic "done". */
-        const who = r.product_rms ?? [];
-        return who.length
-          ? `Asked ${who.join(', ')}, the ${r.product} Product RM${who.length === 1 ? '' : 's'}. A High-priority task due in 4 hours is on ${who.length === 1 ? 'their' : 'each of their'} list.`
-          : `No Product RM is set up for ${r.product ?? 'this product'}, so nobody was asked.`;
-      });
+      // Part 4, items 8.2 and 8.3: who is asked, what they get, and the handover -- before anything is sent.
+      case 'rm': return setAsking(true);
       case 'kyc': return act(async () => {
         const j = await api.post('/kyc/journeys', { lead_id: d.lead_id, card_id: d.id });
         window.open(appUrl(`/dkyc/resume/${j.resume_token}`), '_blank', 'noopener');
+        return {
+          title: 'KYC started',
+          lines: [
+            `A KYC application for ${d.product_name} was started for ${d.lead_name}.`,
+            'It opened in a new tab, at its first step. Its progress shows on this product and on the KYC board.',
+          ],
+        };
       });
       case 'kyc_view':
         if (d.kyc?.resume_token) {
@@ -98,18 +109,32 @@ export default function ProductPanel({ cardId, onClose, onDone, onContact, onCro
       case 'cross_sell':
         onCrossSell?.();
         return undefined;
-      case 'review': return act(() => api.post('/tasks', {
-        title: `Review ${d.product_name}`,
-        description: note || null,
-        lead_id: d.lead_id,
-        card_id: d.id,
-        due_at: new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 19).replace('T', ' '),
-      }));
+      case 'review': return act(async () => {
+        const t = await api.post('/tasks', {
+          title: `Review ${d.product_name}`,
+          description: note || null,
+          lead_id: d.lead_id,
+          card_id: d.id,
+          due_at: new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 19).replace('T', ' '),
+        });
+        return { title: 'Review scheduled', lines: [`A task “${t.title}” is on your list, due ${dateTime(t.due_at)}.`] };
+      });
       default: return undefined;
     }
   };
 
+  /* Part 4, item 8.2: talk it over with the people on a handover. */
+  const message = async (userId) => {
+    setFailed(null);
+    try {
+      const out = await api.post('/messages/conversations', { user_id: userId });
+      navigate(`/messages?c=${out.id}`);
+    } catch (e) { setFailed(e.message); }
+  };
+
   const next = d.next;
+  const at = next.path.findIndex((p) => p.code === d.state);
+  const recommended = next.primary?.kind === 'state' ? next.primary.to : null;
 
   return (
     <Modal
@@ -121,11 +146,28 @@ export default function ProductPanel({ cardId, onClose, onDone, onContact, onCro
       <div className="stack" style={{ gap: 14 }}>
         <ErrorBanner error={failed} onDismiss={() => setFailed(null)} />
 
+        {/* Part 4, item 8.1: where the card is on the road. */}
+        <div>
+          <ol className="stage-track" aria-label="Stages">
+            {next.path.map((p, i) => (
+              <li key={p.code} className={i === at ? 'is-current' : at > -1 && i < at ? 'is-done' : undefined}
+                aria-current={i === at ? 'true' : undefined}>
+                {p.label}
+              </li>
+            ))}
+          </ol>
+          {at === -1 && (
+            <div className="tiny muted" style={{ marginTop: 6 }}>
+              Now <strong>{next.state_label}</strong>, which is off the road above.
+            </div>
+          )}
+        </div>
+
         {/* 1 — the directive. Named, not implied. */}
         <div className={`next-step ${next.urgent ? 'is-urgent' : ''}`}>
           <div className="next-step-head">
             <Icon name={next.urgent ? 'priority_high' : 'arrow_forward'} size={18} />
-            <span className="next-step-title">{next.headline}</span>
+            <span className="next-step-title">Recommended: {next.headline}</span>
           </div>
           <p className="next-step-why">{next.why}</p>
 
@@ -144,36 +186,89 @@ export default function ProductPanel({ cardId, onClose, onDone, onContact, onCro
                 {next.second.label}
               </button>
             )}
-            {/* The obvious move is not always the right one, so every legal
-                transition stays beside the suggestion rather than behind it. */}
-            {next.alternatives.length > 0 && (
-              <button className="btn-ghost btn-sm" onClick={() => setShowMoves((v) => !v)}>
-                {showMoves ? 'Hide other moves' : 'Other moves'}
-              </button>
-            )}
           </div>
-
-          {showMoves && (
-            <div className="stack" style={{ gap: 8, marginTop: 10 }}>
-              <div className="field">
-                <label htmlFor="pp-note">Note (optional)</label>
-                <input id="pp-note" value={note} onChange={(e) => setNote(e.target.value)}
-                  placeholder="Why this move — shows in the card history" />
-              </div>
-              <div className="row wrap" style={{ gap: 6 }}>
-                {next.alternatives.map((a) => (
-                  <button key={a.to} className="btn-sm" disabled={busy || a.allowed === false}
-                    title={a.blocked_reason ?? undefined} onClick={() => move(a.to)}>
-                    {a.label}
-                  </button>
-                ))}
-              </div>
-              {next.alternatives.some((a) => a.allowed === false) && (
-                <div className="tiny muted">A greyed move is one your role cannot make.</div>
-              )}
-            </div>
+          {next.primary?.kind === 'rm' && (
+            <p className="tiny muted" style={{ margin: '8px 0 0' }}>
+              You see who is asked and what they get, and write the handover, before anything is sent.
+            </p>
           )}
         </div>
+
+        {/* Part 4, item 8.1: every move from here, what it means and what it
+            sets off -- not hidden behind a button. The legal moves are the
+            server's (engine/nextaction.js), so what is offered is what the
+            move will accept. */}
+        {next.alternatives.length > 0 && (
+          <div className="moves">
+            <div className="row-between" style={{ alignItems: 'baseline' }}>
+              <div className="field-label">Every move from {next.state_label}</div>
+              <span className="tiny muted">Choose by what the client said</span>
+            </div>
+            <div className="move-list">
+              {next.alternatives.map((a) => (
+                <div key={a.to} className={`move ${a.allowed === false ? 'is-blocked' : ''}`}>
+                  <div className="move-text">
+                    <strong>
+                      {a.label}
+                      {a.to === recommended && <span className="badge badge-accent" style={{ marginLeft: 6 }}>Recommended</span>}
+                    </strong>
+                    <span className="small">{a.means}</span>
+                    {a.sets_off && <span className="tiny muted">{a.sets_off}</span>}
+                    {a.allowed === false && <span className="tiny muted">Your role cannot make this move.</span>}
+                  </div>
+                  <button type="button" className="btn btn-sm" disabled={busy || a.allowed === false}
+                    title={a.blocked_reason ?? undefined} onClick={() => move(a.to)}>
+                    Move to {a.label}
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="field" style={{ marginBottom: 0, marginTop: 10 }}>
+              <label htmlFor="pp-note">Why (optional, kept in the card history)</label>
+              <input id="pp-note" value={note} onChange={(e) => setNote(e.target.value)}
+                placeholder="They want to wait until their bonus in March" />
+            </div>
+          </div>
+        )}
+
+        {/* Part 4, item 8.2: the handovers on this product, for the owner and
+            the Product RM alike, and a way to talk it over. */}
+        {d.rm_requests?.length > 0 && (
+          <div className="card">
+            <div className="card-head">
+              <h3 style={{ fontSize: 14, margin: 0 }}>Handovers</h3>
+              <span className="tiny muted">{d.rm_requests.length} Product RM request{d.rm_requests.length === 1 ? '' : 's'}</span>
+            </div>
+            <div className="card-body stack" style={{ gap: 12 }}>
+              {d.rm_requests.map((r) => {
+                const people = [{ id: r.requested_by, name: r.requested_by_name }, ...r.asked]
+                  .filter((p, i, all) => p.id && p.id !== me && all.findIndex((q) => q.id === p.id) === i);
+                return (
+                  <div key={r.id} className="handover">
+                    <div className="tiny muted">{dateTime(r.created_at)} · {r.requested_by_name ?? 'Someone'} asked {r.asked.map((a) => a.name).join(', ')}</div>
+                    <div className="small"><strong>Needs to know:</strong> {r.needs_to_know}</div>
+                    {r.status_summary && <div className="small muted">{r.status_summary}</div>}
+                    {r.conversations && (
+                      <details>
+                        <summary className="tiny">Conversations so far</summary>
+                        <div className="small" style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{r.conversations}</div>
+                      </details>
+                    )}
+                    {people.length > 0 && (
+                      <div className="row wrap" style={{ gap: 6 }}>
+                        {people.map((p) => (
+                          <button key={p.id} type="button" className="btn btn-sm" onClick={() => message(p.id)}>
+                            <Icon name="chat" size={15} /> Message {p.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* 2 — do it now (ENH-10d). */}
         <div>

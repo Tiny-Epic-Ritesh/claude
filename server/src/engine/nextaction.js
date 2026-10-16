@@ -71,6 +71,23 @@ export const MOVE_NEEDS = {
 };
 
 /**
+ * What each move means, and what it sets off beyond the card's own history and
+ * the line on the lead's timeline that every move writes -- Part 4, item 8.1.
+ * Said beside each move, so a rep choosing one knows what they are choosing.
+ * Kept true to the state route in routes/crm.js, which does each of these.
+ */
+export const MOVE_MEANS = {
+  EXPLORING: { means: 'They are open to hearing about it.', sets_off: 'Raises the lead score by 5.' },
+  WARM: { means: 'They are interested and qualified, so it enters the pipeline.', sets_off: 'Raises the lead score by 15, and every Product RM for this product is told, for awareness only.' },
+  PRODUCT_RM_ENGAGED: { means: 'A Product RM is working with them on it.', sets_off: 'A Product RM making this move becomes the card\'s Product RM.' },
+  KYC_IN_PROGRESS: { means: 'They have started the application.', sets_off: 'Moves the card only: Start KYC is what opens the application itself.' },
+  ACTIVE: { means: 'They hold it.', sets_off: 'If there is a product nobody has raised with them yet, the lead\'s owner gets a task to introduce it, due in two days.' },
+  ON_HOLD: { means: 'Paused, at their request or yours. Nothing is lost; it waits for a review.', sets_off: null },
+  LOST: { means: 'They have said no, or gone elsewhere. Reopening it later starts again at Exploring.', sets_off: null },
+  INACTIVE: { means: 'Back to not started.', sets_off: null },
+};
+
+/**
  * What to do next, per state.
  *
  * `kind` tells the client how to perform it:
@@ -175,8 +192,11 @@ export function nextAction(card, caps, { daysInState = 0 } = {}) {
     second: decorate(base.second),
     alternatives: (TRANSITIONS[card.state] ?? []).map((to) => ({
       to, label: STATE_LABEL[to] ?? to,
+      ...(MOVE_MEANS[to] ?? {}),
       ...decorate({ needs: MOVE_NEEDS[to] }),
     })),
+    /* The road, so the panel can show where the card is on it (item 8.1). */
+    path: ['EXPLORING', 'WARM', 'PRODUCT_RM_ENGAGED', 'KYC_IN_PROGRESS', 'ACTIVE'].map((code) => ({ code, label: STATE_LABEL[code] })),
   };
 }
 

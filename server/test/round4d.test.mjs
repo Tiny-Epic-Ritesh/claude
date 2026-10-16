@@ -149,7 +149,8 @@ try {
     assert(/<ErrorBanner error=\{failed\}/.test(panel), 'the panel does not show its own refusal');
     assert(!/onError/.test(panel), 'the panel still hands its errors to the page behind it');
     assert(/disabled=\{busy \|\| a\.allowed === false\}/.test(panel), 'a move the role cannot make is still offered');
-    assert(/return `\$\{d\.product_name\} is now \$\{STATE_LABEL\[r\.to\] \?\? r\.to\}\.`;/.test(panel), 'a move that worked says nothing');
+    // Part 4, item 8.4: the move's title, and the server's list of what it did.
+    assert(/title: `\$\{d\.product_name\} is now \$\{STATE_LABEL\[r\.to\] \?\? r\.to\}`, lines: r\.effects/.test(panel), 'a move that worked says nothing');
   });
 } finally {
   sweep();

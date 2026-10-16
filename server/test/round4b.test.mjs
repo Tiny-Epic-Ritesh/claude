@@ -230,8 +230,12 @@ try {
   });
 
   await test('QA-21 the panel shows that answer (source check)', async () => {
+    /* Part 4, item 8.2 moved the request into its own dialog, which names who
+       was asked; the panel shows it until OK. */
     const panel = source('crm/ProductPanel.jsx');
-    assert(/product_rms/.test(panel) && /onDone\?\.\(typeof said === 'string'/.test(panel));
+    const request = source('crm/ProductRmRequest.jsx');
+    assert(/product_rms/.test(request), 'the request does not say who was asked');
+    assert(/onDone=\{\(result\) => \{ setAsking\(false\); setOutcome\(result\); \}\}/.test(panel), 'the panel does not show what the request did');
   });
 
   /* ============================================================ QA-23 */

@@ -747,6 +747,25 @@ CREATE INDEX IF NOT EXISTS idx_corrections_note ON corrections(note_id);
 CREATE INDEX IF NOT EXISTS idx_corrections_activity ON corrections(activity_id);
 CREATE INDEX IF NOT EXISTS idx_corrections_reply ON corrections(reply_id);
 
+/* Part 4, item 8.2: a lead owner asking for a Product RM, with the handover --
+   where the lead and the product stand, what has been said, and what the
+   Product RM needs to know first. A request between colleagues, so it is not
+   on the client's timeline (non-negotiable 1); it is shown on the product card
+   to both sides and copied into each Product RM's task. */
+CREATE TABLE IF NOT EXISTS product_rm_requests (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  card_id        INTEGER NOT NULL REFERENCES product_cards(id) ON DELETE CASCADE,
+  lead_id        INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  sales_org      TEXT NOT NULL,
+  requested_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  asked          TEXT NOT NULL DEFAULT '[]',   -- the Product RMs asked: [{id, name}]
+  status_summary TEXT,
+  conversations  TEXT,
+  needs_to_know  TEXT NOT NULL,
+  created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_product_rm_requests_card ON product_rm_requests(card_id);
+
 /* QA-37, "Retire test records" (Ritesh, 14 Oct: an explicit test-record mark
    an Admin sets). A record is marked here, by kind and id, and later retired
    through its own lifecycle -- a lead to the recycle bin, a case closed, a

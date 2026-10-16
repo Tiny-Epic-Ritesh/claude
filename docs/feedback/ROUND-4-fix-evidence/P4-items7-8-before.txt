@@ -1,0 +1,44 @@
+Part 4 items 7 and 8.1-8.3, and N-12's Product RM request -- server/test/round4h.test.mjs on the unfixed code (620f578), 16 Oct 2026. Item 7's behaviour already held there (the form's route: false, OPS-19's refusal); its first test passes for that reason.
+
+
+Part 4, items 7 and 8: lead ownership, product moves, the Product RM handover
+  ok   Item 7: what the New lead form sends leaves the lead with the Sales RM, and no other owner is accepted
+  FAIL Item 7: the form shows the person's own name and offers nobody else (source check)
+       the owner field does not name the person
+  FAIL Item 8.1: the card says where it is on the road, and what every move means
+       no road
++ actual - expected
+
++ undefined
+- [
+-   'EXPLORING',
+-   'WARM',
+-   'PRODUCT_RM_ENGAGED',
+-   'KYC_IN_PROGRESS',
+-   'ACTIVE'
+- ]
+
+  FAIL Items 8.1 and 8.4: a move says what it did
+       nothing said
+  FAIL Item 8.2: the request says who is asked and how, and drafts the handover
+       {"error":"No such endpoint: GET /api/cards/498/product-rm-request"}
+
+404 !== 200
+
+  FAIL Items 8.2 and 8.3: the handover goes into each task and stays on the product; the answer says what was set off
+       a request with nothing for the Product RM was sent
+
+200 !== 400
+
+  FAIL N-12: the other business, and a colleague without sight of the lead, cannot ask
+       a Bigul Admin asked: 200 {"requested":true,"notified":1,"texted":0,"product_rms":["Ritu Bansal"],"product":"Equity & Derivatives"}
+  FAIL Item 8.2: a Product RM who takes a card on becomes its Product RM
+       the card has no Product RM
+
+null !== 39
+
+  FAIL Item 8 on the page: the road, every move, the handover dialog, from the panel and the lead header (source check)
+       no road
+
+1 passed, 8 failed
+

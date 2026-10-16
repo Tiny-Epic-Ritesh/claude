@@ -93,22 +93,22 @@ export function useLeadActions({ session, reload, onError, onNotice }) {
 
     if (action.kind === 'state' && step.card_id) {
       try {
-        await api.post(`/cards/${step.card_id}/state`, {
+        const r = await api.post(`/cards/${step.card_id}/state`, {
           state: action.to,
           note: 'From the next-step advice on the lead',
         });
-        onNotice?.(`${step.product} moved to ${action.to.toLowerCase()}.`);
+        // Part 4, item 8.4: what the move did, not only that it happened.
+        onNotice?.((r.effects ?? [`${step.product} moved to ${action.to.toLowerCase()}.`]).join(' '));
         reload?.();
       } catch (err) { onError?.(err.message); }
       return;
     }
 
+    /* Part 4, item 8.2: the same handover as the product panel's -- who is
+       asked, what they get, what they need to know -- never a bare request
+       to /cards/:id/request-product-rm. */
     if (action.kind === 'rm' && step.card_id) {
-      try {
-        await api.post(`/cards/${step.card_id}/request-product-rm`, {});
-        onNotice?.(`A Product RM has been requested for ${step.product}.`);
-        reload?.();
-      } catch (err) { onError?.(err.message); }
+      setModal({ kind: 'product_rm', lead, cardId: step.card_id });
       return;
     }
 

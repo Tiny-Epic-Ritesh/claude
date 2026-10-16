@@ -126,7 +126,8 @@ test('the runner acts on the card rather than opening a modal', () => {
   const fn = actions.slice(actions.indexOf('async function nextStep'));
   assert(/cards\/\$\{step\.card_id\}\/state/.test(fn),
     'the state action does not post to the card it was given');
-  assert(/request-product-rm/.test(fn),
+  // Part 4, item 8.2: through the handover dialog, as the product panel asks.
+  assert(/kind: 'product_rm'/.test(fn),
     'the Product RM request is still unwired');
   assert(/action\.to/.test(fn),
     'the runner ignores the state the advice asked for, as the old modal did');

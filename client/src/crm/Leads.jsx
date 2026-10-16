@@ -597,7 +597,7 @@ export default function Leads({ session }) {
       />
 
       {creating && (
-        <NewLead meta={meta} mayReassign={session.permissions.includes('lead.reassign')} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); navigate(`/leads/${id}`); }} />
+        <NewLead meta={meta} me={session.name} mayReassign={session.permissions.includes('lead.reassign')} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); navigate(`/leads/${id}`); }} />
       )}
     </>
   );
@@ -605,7 +605,7 @@ export default function Leads({ session }) {
 
 /** DD-MM-YYYY, from the YYYY-MM-DD a link carries. */
 
-function NewLead({ meta, mayReassign, onClose, onCreated }) {
+function NewLead({ meta, me, mayReassign, onClose, onCreated }) {
   const [form, setForm] = useState({ name: '', mobile: '', email: '', city: '', source: 'Website', risk_profile: 'Moderate', language: 'English', owner_id: '' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -663,12 +663,13 @@ function NewLead({ meta, mayReassign, onClose, onCreated }) {
           {/* OPS-19. Only someone who may reassign is offered other owners; the
               server refuses the rest, as the edit does. */}
           <select value={form.owner_id} onChange={set('owner_id')} disabled={!mayReassign}>
-            <option value="">Assign to me</option>
+            {/* Part 4, item 7: the person's own name, not "Assign to me". */}
+            <option value="">{me ? `${me} (you)` : 'Assign to me'}</option>
             {mayReassign && (meta?.users || []).filter((u) => ['caller', 'dealer', 'sales_rm'].includes(u.role)).map((u) => (
               <option key={u.id} value={u.id}>{u.name}</option>
             ))}
           </select>
-          {!mayReassign && <span className="tiny muted">Only a Sales Supervisor or Admin can create a lead for someone else.</span>}
+          {!mayReassign && <span className="tiny muted">A lead you create is yours. Only a Sales Supervisor or Admin can create one for someone else.</span>}
         </div>
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button type="button" onClick={onClose}>Cancel</button>

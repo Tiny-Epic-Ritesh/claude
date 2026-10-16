@@ -3865,6 +3865,37 @@ tbody tr.is-selected:hover { background: var(--accent-soft); }
 .manage-save { display: flex; justify-content: flex-end; gap: 8px; align-items: center; }
 .manage-save .tiny { margin-right: auto; }
 
+/* Part 4, item 8.1: where a product card is on the road, and every move. */
+.stage-track { display: flex; flex-wrap: wrap; gap: 4px; list-style: none; margin: 0; padding: 0; }
+.stage-track li {
+  flex: 1 1 96px;
+  padding: 7px 8px;
+  border-radius: 10px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.25;
+  color: var(--ink-3);
+  background: var(--hairline-2);
+}
+.stage-track li.is-done { color: var(--ink-2); background: var(--accent-soft); }
+.stage-track li.is-current { color: #fff; font-weight: 650; background: var(--accent-dark); }
+.move-list { display: grid; gap: 8px; margin-top: 8px; }
+.move {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--glass-2);
+}
+.move-text { display: grid; gap: 2px; min-width: 0; }
+.move.is-blocked { opacity: 0.7; }
+@media (max-width: 560px) { .move { flex-direction: column; align-items: stretch; } }
+.handover { display: grid; gap: 6px; padding-bottom: 10px; border-bottom: 1px solid var(--hairline-2); }
+.handover:last-child { border-bottom: 0; padding-bottom: 0; }
+
 /* The whole conversation, scrolled inside the dialog (Part 4, item 2). */
 .thread-all { max-height: min(70vh, 720px); overflow-y: auto; padding-right: 4px; }
 .thread-gap {

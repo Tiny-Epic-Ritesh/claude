@@ -481,6 +481,7 @@ function Cards({ lead, session, reload, onNotice, onContact, showAll, onShowAll 
       {open && (
         <ProductPanel
           cardId={open.id}
+          me={session.id}
           onClose={() => setOpen(null)}
           onDone={(msg) => { setOpen(null); if (msg) onNotice?.(msg); reload(); }}
           onContact={(channel) => { setOpen(null); onContact?.(channel); }}

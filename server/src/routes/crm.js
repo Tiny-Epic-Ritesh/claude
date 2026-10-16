@@ -24,7 +24,8 @@ import { assignLead } from '../engine/assignment.js';
 import { request as requestApproval, BULK_THRESHOLD } from '../engine/approvals.js';
 import { metricsFor } from '../engine/metrics.js';
 import { kycStatusSql, kycStatusFor } from '../engine/kycstatus.js';
-import { nextAction, nextStepForLead, MOVE_NEEDS } from '../engine/nextaction.js';
+import { nextAction, nextStepForLead, MOVE_NEEDS, STATE_LABEL } from '../engine/nextaction.js';
+import { dmyTime } from '../engine/daterange.js';
 import { loadInBook } from '../engine/bookscope.js';
 import { withCorrections, mayCorrect, addCorrection } from '../engine/corrections.js';
 import { cancelReminders } from '../engine/followups.js';
@@ -1463,10 +1464,20 @@ router.post('/cards/:id/state', (req, res) => {
   }
 
   const from = card.state;
+  /* Part 4, item 8.2: nothing set the card's Product RM, so the card and the
+     pipeline showed one only where the seed had put it. A Product RM taking a
+     card on is now its Product RM. */
+  const takesOn = state === 'PRODUCT_RM_ENGAGED' && req.user.role === 'product_rm';
   run(
-    'UPDATE product_cards SET state = ?, contact_flag = COALESCE(?, contact_flag), lost_reason = ?, last_state_at = datetime(\'now\') WHERE id = ?',
-    [state, contact_flag || null, lost_reason || null, req.params.id],
+    'UPDATE product_cards SET state = ?, contact_flag = COALESCE(?, contact_flag), lost_reason = ?, last_state_at = datetime(\'now\'), product_rm_id = CASE WHEN ? THEN ? ELSE product_rm_id END WHERE id = ?',
+    [state, contact_flag || null, lost_reason || null, takesOn ? 1 : 0, req.user.id, req.params.id],
   );
+  /* Part 4, item 8.4: what the move did, said back to whoever made it. */
+  const effects = [
+    `${card.product_name} moved from ${STATE_LABEL[from] ?? from} to ${STATE_LABEL[state] ?? state}.`,
+    'It is in the card history, and on the lead timeline.',
+  ];
+  if (takesOn) effects.push('You are now its Product RM.');
   run('INSERT INTO card_audit (card_id, from_state, to_state, user_id, note) VALUES (?,?,?,?,?)', [
     req.params.id, from, state, req.user.id, note || null,
   ]);
@@ -1477,13 +1488,16 @@ router.post('/cards/:id/state', (req, res) => {
 
   // Warm notifies the Product RM for awareness only — no action required by default (OD-03).
   if (state === 'WARM') {
-    const productRms = all("SELECT id FROM users WHERE role = 'product_rm' AND product_type_id = ? AND active = 1", [card.product_type_id]);
+    const productRms = all("SELECT id, name FROM users WHERE role = 'product_rm' AND product_type_id = ? AND active = 1", [card.product_type_id]);
     const lead = one('SELECT name FROM leads WHERE id = ?', [card.lead_id]);
     for (const rm of productRms) {
       notify(rm.id, `Warm card — ${card.product_name}`,
         `${lead?.name} was marked Warm by ${req.user.name}. Awareness only; no action needed unless the Sales RM requests it.`,
         `/leads/${card.lead_id}`);
     }
+    effects.push(productRms.length
+      ? `Told, for awareness only: ${productRms.map((r) => r.name).join(', ')}.`
+      : `No Product RM is set up for ${card.product_name}, so nobody was told.`);
   }
 
   // A card going Active raises the cross-sell prompt (BRD §7.2).
@@ -1495,27 +1509,140 @@ router.post('/cards/:id/state', (req, res) => {
       [card.lead_id],
     );
     if (other && lead?.owner_id) {
-      run("INSERT INTO tasks (title, lead_id, assignee_id, created_by, due_at, priority) VALUES (?,?,?,?,datetime('now','+2 days'),'Normal')", [
-        `${card.product_name} is now Active — consider introducing ${other.name}`, card.lead_id, lead.owner_id, req.user.id,
+      const title = `${card.product_name} is now Active — consider introducing ${other.name}`;
+      const task = run("INSERT INTO tasks (title, lead_id, assignee_id, created_by, due_at, priority) VALUES (?,?,?,?,datetime('now','+2 days'),'Normal')", [
+        title, card.lead_id, lead.owner_id, req.user.id,
       ]);
+      const made = one('SELECT t.due_at, u.name FROM tasks t LEFT JOIN users u ON u.id = t.assignee_id WHERE t.id = ?', [Number(task.lastInsertRowid)]);
+      effects.push(`A task for ${made?.name ?? 'the lead\'s owner'}: “${title}”, due ${dmyTime(made?.due_at)}.`);
     }
   }
 
   audit(req.user.id, 'card_state', 'product_card', card.id, { from, to: state });
-  res.json({ ok: true, from, to: state });
+  res.json({ ok: true, from, to: state, effects });
 });
 
-router.post('/cards/:id/request-product-rm', requirePermission('card.request.productrm'), (req, res) => {
-  const card = one('SELECT pc.*, pt.name AS product_name FROM product_cards pc JOIN product_types pt ON pt.id = pc.product_type_id WHERE pc.id = ?', [req.params.id]);
-  if (!card) return res.status(404).json({ error: 'Card not found' });
-
-  const lead = one('SELECT * FROM leads WHERE id = ?', [card.lead_id]);
-  const rms = all(
-    "SELECT id, name, phone FROM users WHERE role = 'product_rm' AND product_type_id = ? AND active = 1",
-    [card.product_type_id],
+/**
+ * The card, its lead and the Product RMs a request would ask -- loaded within
+ * the reader's book and scope.
+ *
+ * N-12. The request read the card by id alone: anybody holding
+ * card.request.productrm could ask the other business's Product RMs about the
+ * other business's client -- a task, a notification and an SMS each, carrying
+ * the client's name -- and was told the RMs' names. Ruled 16 Oct: fixed here.
+ */
+function rmRequestContext(req) {
+  const inBook = loadInBook(req, 'card', req.params.id);
+  if (inBook.error) return { status: inBook.status, error: inBook.error };
+  const scope = reqScope(req, 'l');
+  const card = one(
+    `SELECT pc.*, pt.name AS product_name, l.name AS lead_name, l.stage AS lead_stage, l.sales_org,
+            l.owner_id, ou.name AS owner_name,
+            CAST(julianday('now') - julianday(pc.last_state_at) AS INTEGER) AS days_in_state
+       FROM product_cards pc
+       JOIN product_types pt ON pt.id = pc.product_type_id
+       JOIN leads l ON l.id = pc.lead_id
+       LEFT JOIN users ou ON ou.id = l.owner_id
+      WHERE pc.id = ? AND l.deleted_at IS NULL AND ${scope.sql}`,
+    [inBook.row.id, ...scope.params],
   );
+  if (!card) return { status: 403, error: 'This product is on a lead outside your visibility scope' };
+  const rms = all(
+    "SELECT * FROM users WHERE role = 'product_rm' AND product_type_id = ? AND active = 1 ORDER BY name",
+    [card.product_type_id],
+  ).filter((u) => mayUseOrg(u, card.sales_org));
+  const business = one('SELECT name FROM sales_orgs WHERE code = ?', [card.sales_org])?.name ?? card.sales_org;
+  return { card, rms, business };
+}
 
-  const body = `${req.user.name} has asked for your involvement on ${lead?.name}. ${req.body.reason || ''}`.trim();
+/**
+ * Before Request Product RM (Part 4, items 8.2 and 8.3): who is asked and
+ * why them, what each of them gets, and a handover drafted from the card and
+ * the lead's recent interactions for the owner to correct. Read-only.
+ */
+router.get('/cards/:id/product-rm-request', requirePermission('card.request.productrm'), (req, res) => {
+  const ctx = rmRequestContext(req);
+  if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
+  const { card, rms, business } = ctx;
+  const kyc = kycStatusFor(card.lead_id);
+  const recent = applyFieldSecurity('interaction', all(
+    `SELECT a.id, a.type, a.direction, a.subject, a.body, a.outcome, a.created_at, a.user_id, u.name AS user_name
+       FROM activities a LEFT JOIN users u ON u.id = a.user_id
+      WHERE a.lead_id = ? AND a.direction != 'system'
+      ORDER BY a.created_at DESC LIMIT 6`,
+    [card.lead_id],
+  ), req.user, { caps: req.caps });
+  const line = (a) => `${dmyTime(a.created_at)} · ${a.type}${a.outcome ? ` (${a.outcome})` : ''}: ${(a.body || a.subject || '').replace(/\s+/g, ' ').slice(0, 160)}`;
+  res.json({
+    product: card.product_name,
+    business,
+    lead: card.lead_name,
+    asked: rms.map((r) => ({ id: r.id, name: r.name, has_mobile: Boolean(r.phone) })),
+    how: rms.length
+      ? `Every active Product RM for ${card.product_name} in ${business} is asked. The one who takes it on moves the card to Product RM engaged and becomes its Product RM.`
+      : `No active Product RM is set up for ${card.product_name} in ${business}, so nobody can be asked. An Admin sets one up in Setup → Users.`,
+    each_gets: [
+      'A High-priority task on their list, due in 4 hours, with your handover in it.',
+      'A notification in the CRM.',
+      'An SMS, if their mobile is on record. It names the client and you, nothing more.',
+    ],
+    stays: 'The card stays Warm until one of them takes it on. The request is shown on this product to you and to them, and is not on the client\'s timeline.',
+    draft: {
+      status_summary: [
+        `Lead stage: ${card.lead_stage}.`,
+        `${card.product_name}: ${STATE_LABEL[card.state] ?? card.state}${card.days_in_state ? ` for ${card.days_in_state} days` : ''}.`,
+        `KYC: ${kyc ?? 'not started'}.`,
+        card.value > 0 ? `Value: ₹${Number(card.value).toLocaleString('en-IN')}.` : null,
+        `Owner: ${card.owner_name ?? 'unassigned'}.`,
+      ].filter(Boolean).join(' '),
+      conversations: recent.length ? recent.map(line).join('\n') : 'No interactions logged yet.',
+    },
+    previous: rmRequestsFor(card.id).slice(0, 3),
+  });
+});
+
+/* The requests already made on a card, newest first, for the panel. */
+function rmRequestsFor(cardId) {
+  return all(
+    `SELECT r.id, r.asked, r.status_summary, r.conversations, r.needs_to_know, r.created_at,
+            u.name AS requested_by_name, r.requested_by
+       FROM product_rm_requests r LEFT JOIN users u ON u.id = r.requested_by
+      WHERE r.card_id = ? ORDER BY r.created_at DESC, r.id DESC LIMIT 10`,
+    [cardId],
+  ).map((r) => ({ ...r, asked: (() => { try { return JSON.parse(r.asked); } catch { return []; } })() }));
+}
+
+router.post('/cards/:id/request-product-rm', requirePermission('card.request.productrm'), (req, res) => {
+  const ctx = rmRequestContext(req);
+  if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
+  const { card, rms } = ctx;
+  const lead = { id: card.lead_id, name: card.lead_name };
+
+  /* The handover (item 8.2). A caller sending only a reason -- the API as it
+     was -- has that as what the Product RM needs to know. */
+  const handover = req.body.handover ?? {};
+  const needs = String(handover.needs_to_know ?? req.body.reason ?? '').trim();
+  if (!needs) return res.status(400).json({ error: 'Say what the Product RM needs to know before approaching the client', field: 'needs_to_know' });
+  const statusSummary = String(handover.status_summary ?? '').trim() || null;
+  const conversations = String(handover.conversations ?? '').trim() || null;
+  if (!rms.length) {
+    return res.status(409).json({ error: `No active Product RM is set up for ${card.product_name}, so nobody can be asked. An Admin sets one up in Setup → Users.` });
+  }
+
+  const requestId = Number(run(
+    `INSERT INTO product_rm_requests (card_id, lead_id, sales_org, requested_by, asked, status_summary, conversations, needs_to_know)
+     VALUES (?,?,?,?,?,?,?,?)`,
+    [card.id, card.lead_id, card.sales_org, req.user.id, JSON.stringify(rms.map((r) => ({ id: r.id, name: r.name }))),
+      statusSummary, conversations, needs],
+  ).lastInsertRowid);
+  const taskBody = [
+    `Asked by ${req.user.name}.`,
+    `What you need to know: ${needs}`,
+    statusSummary ? `Where it stands: ${statusSummary}` : null,
+    conversations ? `Conversations so far:\n${conversations}` : null,
+  ].filter(Boolean).join('\n\n');
+
+  const body = `${req.user.name} has asked for your involvement on ${lead?.name}.`;
   let texted = 0;
 
   for (const rm of rms) {
@@ -1537,10 +1664,11 @@ router.post('/cards/:id/request-product-rm', requirePermission('card.request.pro
       texted += 1;
     }
 
-    run("INSERT INTO tasks (title, lead_id, card_id, assignee_id, created_by, due_at, priority) VALUES (?,?,?,?,?,datetime('now','+4 hours'),'High')", [
-      `Product RM intervention requested on ${lead?.name} (${card.product_name})`, card.lead_id, card.id, rm.id, req.user.id,
+    run("INSERT INTO tasks (title, description, lead_id, card_id, assignee_id, created_by, due_at, priority) VALUES (?,?,?,?,?,?,datetime('now','+4 hours'),'High')", [
+      `Product RM intervention requested on ${lead?.name} (${card.product_name})`, taskBody, card.lead_id, card.id, rm.id, req.user.id,
     ]);
   }
+  const due = one("SELECT due_at FROM tasks WHERE card_id = ? AND created_by = ? ORDER BY id DESC LIMIT 1", [card.id, req.user.id])?.due_at ?? null;
 
   /* Deliberately no activity on the lead.
    *
@@ -1550,10 +1678,19 @@ router.post('/cards/:id/request-product-rm', requirePermission('card.request.pro
    * another for help is not. The record survives in three places that are
    * better homes for it -- the High-priority task on this lead, the audit row
    * below, and the card's own history. */
-  audit(req.user.id, 'product_rm_requested', 'product_card', card.id, { reason: req.body.reason });
+  audit(req.user.id, 'product_rm_requested', 'product_card', card.id, { request_id: requestId, asked: rms.map((r) => r.id) });
   /* QA-21. Named, so the person asking learns who now holds it rather than
-     that "something happened". */
-  res.json({ requested: true, notified: rms.length, texted, product_rms: rms.map((r) => r.name), product: card.product_name });
+     that "something happened". Part 4, item 8.3: and everything it set off. */
+  res.json({
+    requested: true,
+    request_id: requestId,
+    notified: rms.length,
+    texted,
+    product_rms: rms.map((r) => r.name),
+    asked: rms.map((r) => ({ id: r.id, name: r.name })),
+    product: card.product_name,
+    task_due_at: due,
+  });
 });
 
 /**
@@ -1636,6 +1773,8 @@ router.get('/cards/:id/detail', (req, res) => {
     activities,
     history,
     kyc: journey ?? null,
+    // Part 4, item 8.2: the handovers on this product, for the owner and the Product RM alike.
+    rm_requests: rmRequestsFor(card.id),
   });
 });
 

@@ -116,6 +116,8 @@ const RECORD = {
   '/api/partners/:id': 'partner',
   '/api/partners/:id/insight': 'partner',
   '/api/cards/:id/detail': 'card',
+  // Part 4, item 8.2: who a Product RM request would ask, and the drafted handover.
+  '/api/cards/:id/product-rm-request': 'card',
   '/api/cards/:id/audit': 'card',
   '/api/kyc/journeys/:id': 'journey',
   '/api/kyc/journeys/:id/coach': 'journey',

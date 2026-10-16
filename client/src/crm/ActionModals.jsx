@@ -15,12 +15,13 @@ import { api, money, appUrl } from '../api.js';
 import { useApi, Modal, Spinner, ErrorBanner, Loading, Icon } from '../components/ui.jsx';
 import ActivityComposer from './ActivityComposer.jsx';
 import EmailComposer from './EmailComposer.jsx';
+import { ProductRmFlow } from './ProductRmRequest.jsx';
 
 const CHANNEL_LABEL = { whatsapp: 'WhatsApp', sms: 'SMS', email: 'Email' };
 
 export default function ActionModal({ state, session, onClose, onDone, onNotice }) {
   if (!state) return null;
-  const { kind, lead, channel, ids, calling, simulated } = state;
+  const { kind, lead, channel, ids, calling, simulated, cardId } = state;
 
   const common = { lead, session, onClose, onDone, onNotice };
   const bulk = { ids, onClose, onDone, onNotice };
@@ -45,6 +46,8 @@ export default function ActionModal({ state, session, onClose, onDone, onNotice 
     case 'task': return <TaskModal {...common} />;
     case 'case': return <CaseModal {...common} />;
     case 'card': return <CardModal {...common} />;
+    // Part 4, item 8.2: asking for a Product RM is a handover, from wherever it is asked.
+    case 'product_rm': return <ProductRmFlow cardId={cardId} onClose={onClose} onDone={onDone} />;
     case 'kyc': return <KycModal {...common} />;
     case 'stage': return <StageModal {...common} />;
     case 'owner': return <OwnerModal {...common} />;
