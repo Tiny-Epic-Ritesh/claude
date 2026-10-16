@@ -1,0 +1,34 @@
+QA-15 -- server/test/round4f.test.mjs on the unfixed code (620f578), 16 Oct 2026
+
+
+Round 4, QA-15: the lead list pages and sorts
+  FAIL QA-15: every column the server can order offers a sort on its header
+       the header matches a column to the sortable list by the sort key, not the column
+  FAIL QA-15: each newly offered sort orders the whole list on the server
+       not ordered: state asc, state desc, language asc, language desc, risk_profile asc, risk_profile desc, client_code asc, client_code desc
++ actual - expected
+
++ [
++   'state asc',
++   'state desc',
++   'language asc',
++   'language desc',
++   'risk_profile asc',
++   'risk_profile desc',
++   'client_code asc',
++   'client_code desc'
++ ]
+- []
+
+  FAIL QA-15: the page size and the count show whenever there is a lead, not only past one page
+       the pager shows only when (count > pageSize || offset > 0)
++ actual - expected
+
++ '(count > pageSize || offset > 0)'
+- 'count > 0'
+
+  FAIL QA-15: Bulk update says it acts on what the filter matches, not "across all pages"
+       still says "across all pages"
+
+0 passed, 4 failed
+

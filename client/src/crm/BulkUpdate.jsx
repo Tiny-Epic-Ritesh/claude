@@ -131,7 +131,8 @@ export default function BulkUpdate({ selected, total, query, onClose, onDone }) 
         <label className={`pick-row ${mode === 'all' ? 'is-chosen' : ''}`}>
           <input type="radio" name="bulkmode" checked={mode === 'all'} onChange={() => setMode('all')} />
           <span>
-            <strong>Select all {total.toLocaleString('en-IN')} leads across all pages</strong>
+            {/* QA-15: true whether the filter fills one page or forty. */}
+            <strong>Select all {total.toLocaleString('en-IN')} leads this filter matches</strong>
             <div className="tiny muted">Everything this filter matches, not just what is on screen.</div>
           </span>
         </label>

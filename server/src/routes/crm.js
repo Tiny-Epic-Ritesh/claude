@@ -176,6 +176,11 @@ export const LEAD_SORTS = {
   updated_at: 'l.updated_at',
   callback_at: 'l.callback_at',
   age: 'l.created_at',
+  // QA-15: the other plain columns the list can show.
+  state: 'l.state',
+  language: 'l.language',
+  risk_profile: 'l.risk_profile',
+  client_code: 'l.client_code',
 };
 
 /* Age counts the other way round: ascending age is the newest lead first, which

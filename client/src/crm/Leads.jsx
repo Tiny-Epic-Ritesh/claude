@@ -111,12 +111,30 @@ const LEAD_COLUMNS = {
   callback_at: { cls: 'tiny muted', render: (l) => (l.callback_at ? shortDate(l.callback_at) : '—') },
 };
 
+/* QA-15. Which columns order the list, and by which server sort (`key`).
+   `col` names the table column where it differs from the sort: the list was
+   matched to the columns by the sort key alone, and Age, Owner and Partner
+   are the columns age_days, owner_name and partner_name -- so only Lead and
+   Stage ever offered a sort. Products, AUM and Score are assembled
+   per page and stay plain (see the header below). Mobile and Email stay
+   plain too: where they are masked, the order would say what the mask
+   hides. */
 const SORTABLE = [
-  { key: 'name', label: 'Lead' },
-  { key: 'stage', label: 'Stage' },
-  { key: 'age', label: 'Age' },
-  { key: 'owner', label: 'Owner' },
-  { key: 'partner', label: 'Partner' },
+  { key: 'name' },
+  { key: 'stage' },
+  { col: 'age_days', key: 'age' },
+  { col: 'owner_name', key: 'owner' },
+  { col: 'partner_name', key: 'partner' },
+  { key: 'city' },
+  { key: 'state' },
+  { key: 'source' },
+  { key: 'language' },
+  { key: 'risk_profile' },
+  { key: 'kyc_status' },
+  { key: 'client_code' },
+  { key: 'created_at' },
+  { key: 'updated_at' },
+  { key: 'callback_at' },
 ];
 
 export default function Leads({ session }) {
@@ -428,7 +446,7 @@ export default function Leads({ session }) {
                     the query, so offering a header that only reordered the
                     fifty rows in front of you would be a sort that lies. */}
                 {visibleCols.map((c) => {
-                  const sortable = SORTABLE.find((sc) => sc.key === c.key);
+                  const sortable = SORTABLE.find((sc) => (sc.col ?? sc.key) === c.key);
                   return sortable
                     ? <SortTh key={c.key} col={{ key: sortable.key, label: c.label }} sort={sort} dir={dir} onSort={setSort} />
                     : (
@@ -485,7 +503,9 @@ export default function Leads({ session }) {
         {/* Where you are in the book, and how to leave. P3-37.
             Hidden during an advanced search, which returns its own fixed result
             set rather than a page of one. */}
-        {!found && !loading && (count > pageSize || offset > 0) && (
+        {/* QA-15: always shown. It appeared only when the book overflowed a
+            page, so 41 leads at 50 a page showed no count and no page size. */}
+        {!found && !loading && count > 0 && (
           <div className="card-foot row wrap" style={{ gap: 10, justifyContent: 'space-between' }}>
             <span className="tiny muted">
               {(offset + 1).toLocaleString('en-IN')}–{Math.min(offset + pageSize, count).toLocaleString('en-IN')}
@@ -493,7 +513,7 @@ export default function Leads({ session }) {
             </span>
 
             <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-              <label className="tiny muted" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <label className="tiny muted" style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
                 Per page
                 <select
                   value={pageSize}

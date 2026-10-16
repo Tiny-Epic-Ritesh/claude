@@ -1,0 +1,11 @@
+QA-15 -- server/test/round4f.test.mjs on the fixed code, 16 Oct 2026
+
+
+Round 4, QA-15: the lead list pages and sorts
+  ok   QA-15: every column the server can order offers a sort on its header
+  ok   QA-15: each newly offered sort orders the whole list on the server
+  ok   QA-15: the page size and the count show whenever there is a lead, not only past one page
+  ok   QA-15: Bulk update says it acts on what the filter matches, not "across all pages"
+
+4 passed, 0 failed
+
