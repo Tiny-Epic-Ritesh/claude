@@ -10,7 +10,7 @@ against this document and earlier feedback IDs." This is that document.
 ## The ledger — every point in the report, and where it stands
 
 Kept current: a commit that closes a point changes its row here and says so.
-Last updated **15 October 2026**: `84c2c2f`, `eaf4743`, `d34bb6b`, the rulings of 13 October, `72fa94d` (OPS-15, 16, 17, 25, 26), `e02fb6d` (OPS-18 to 24), `1c3b18c` (QA-02), `ca7d4ee` (QA-13), `9aa78bf` (QA-06), `a3be2c1` (QA-09, 24, 34, 35), `93607f5` (OPS-27 to 31), `b9b3807` (QA-29, QA-42), `b663fb4` (OPS-32 recorded open; a Dealer may mark Warm), the rulings of 14 October, `0efa39b` (the QA-02 cleanup workflow; help lines), `826ae09` (QA-33's emergency activation), `f54c4f6` (QA-28's categories and the Compliance role), `88c2c67` (multiple nominees, QA-34), `32278d2` (referral commission and retention policies; QA-37's lead purge), `8840d1c` (OPS-33 to 35 recorded open), `69f8d16` (QA-37 batch 1: lists and templates), `de28b1c` (QA-37 batch 2: tasks, cases and corrections), `9224a07` (QA-37 batch 3: library content, holidays and case categories), `2f628d6` (QA-37 batch 4: automation rules and flows), `82d7989` (OPS-36 to 40 recorded open), `b0c97b8` (nominees to SEBI's May 2026 circular), `6fc4f64` (QA-37 batch 5: partners, KYC journeys and retiring test records; QA-37 closed), `a21a6a7` (OPS-41 recorded open), `ce5b6d0` (the firm's nomination obligations under SEBI's May 2026 circular), `cd3ab93` (OPS-42 recorded open), `bd13b87` (OPS-42 fixed: capabilities, not roles, and the API integration role), `670fc3e` (the 15 Oct answers on the nomination pop-up), `3034d0f` (a switch per business for the nomination reminders, off), `bf9067f` (OPS-43 recorded open), `df97dbc` (OPS-32 to 41 and 43 fixed; QA-13 marked fixed, its leftovers having been built on 14 Oct), and the commit after it (batch one: QA-05, 12, 17, 18, 22, 25, 43, with before/after screens in [ROUND-4-fix-evidence/](ROUND-4-fix-evidence/)).
+Last updated **16 October 2026**: `84c2c2f`, `eaf4743`, `d34bb6b`, the rulings of 13 October, `72fa94d` (OPS-15, 16, 17, 25, 26), `e02fb6d` (OPS-18 to 24), `1c3b18c` (QA-02), `ca7d4ee` (QA-13), `9aa78bf` (QA-06), `a3be2c1` (QA-09, 24, 34, 35), `93607f5` (OPS-27 to 31), `b9b3807` (QA-29, QA-42), `b663fb4` (OPS-32 recorded open; a Dealer may mark Warm), the rulings of 14 October, `0efa39b` (the QA-02 cleanup workflow; help lines), `826ae09` (QA-33's emergency activation), `f54c4f6` (QA-28's categories and the Compliance role), `88c2c67` (multiple nominees, QA-34), `32278d2` (referral commission and retention policies; QA-37's lead purge), `8840d1c` (OPS-33 to 35 recorded open), `69f8d16` (QA-37 batch 1: lists and templates), `de28b1c` (QA-37 batch 2: tasks, cases and corrections), `9224a07` (QA-37 batch 3: library content, holidays and case categories), `2f628d6` (QA-37 batch 4: automation rules and flows), `82d7989` (OPS-36 to 40 recorded open), `b0c97b8` (nominees to SEBI's May 2026 circular), `6fc4f64` (QA-37 batch 5: partners, KYC journeys and retiring test records; QA-37 closed), `a21a6a7` (OPS-41 recorded open), `ce5b6d0` (the firm's nomination obligations under SEBI's May 2026 circular), `cd3ab93` (OPS-42 recorded open), `bd13b87` (OPS-42 fixed: capabilities, not roles, and the API integration role), `670fc3e` (the 15 Oct answers on the nomination pop-up), `3034d0f` (a switch per business for the nomination reminders, off), `bf9067f` (OPS-43 recorded open), `df97dbc` (OPS-32 to 41 and 43 fixed; QA-13 marked fixed, its leftovers having been built on 14 Oct), `de27e4a` (batch one: QA-05, 12, 17, 18, 22, 25, 43, with before/after screens in [ROUND-4-fix-evidence/](ROUND-4-fix-evidence/)), and the commit after it (the approved QA-16 design, Ritesh's Part 4, and Ritesh's rulings of 15 and 16 October).
 
 **States.** *fixed* — in code, tested, pushed. *not started* — open, no
 blocker. *needs decision* — waiting on Ritesh, and nothing is built until it is
@@ -34,16 +34,16 @@ but are as much part of the report.
 | QA-04 | P1 | **fixed** `eaf4743` | The Leads page reads the date window — and the source chart's `source` — a tile sends, and shows each as a removable chip. Tile and list compare the same dates. Both compared IST dates against UTC timestamps: adjacent (j), `OPS-24`, fixed — both read IST days now. |
 | QA-05 | P1 | **fixed** `eaf4743` and batch one | Every Customer Care figure (Open assigned, Due today, SLA breached, Resolved today, Waiting on client, CSAT) says it is the person's own and opens the Cases page on exactly the cases it counts; the team summary on the Cases page does the same. The Cases page reads every filter a link brings -- assigned, breached, status, due today, rated, resolved and created windows -- and shows each as a chip that can be removed; Home's tiles name their view. "SLA breached" means one thing everywhere: open and flagged by the minute-by-minute sweep (`breachedSql`), where the tile also counted paused cases past due and the list counted resolved ones. "Resolved today" was the agent's own, and Home's month-to-date figure everyone's -- both now say so. Days are India days. `round4e.test.mjs` checks each figure's count against its list. |
 | QA-06 | P1 | **fixed** · QA-06 commit | Ruled 13 Oct. The Marketing Manager holds `pii.unmask` and sees identifiers unmasked by default (Setup → Field masking can still mask any field for the role), and holds `export.lead`, so the list Export that opened and then refused now works. **Setup → Business policies → Marketing's exports carry personal data**: *Unmasked* (the default, as ruled) or *Masked*, which refuses a clear export from every export route. **One masking rule everywhere:** the masker learnt the names a join gives identifiers (`lead_mobile`, `applicant_mobile`, `applicant_email`), and list members (the auditor's list #3), the case queue and case, the KYC health board and journey — the applicant's form included — a lead's journeys and the email composer now mask as the lead list does. Found by `server/test/piimasking.test.mjs`, which plants a lead and calls every GET route as a masked role. |
-| QA-07 | P1 | not started | A UI build: draft-until-Save on Manage, and a consequence summary with Confirm for Escalate and Resolve (Ritesh's Part 4). Confirmed by the report; no code defect to trace. |
+| QA-07 | P1 | not started | A UI build: draft-until-Save on Manage, and a consequence summary with Confirm for Escalate and Resolve -- Part 4 items 1 to 4 (see [below](#riteshs-part-4)). Ruled: a change of priority, an escalation's included, recalculates the case's deadlines from when it was opened (16 Oct); resolved cases close after 72 hours by themselves, per business, and the button checks SLAs now (16 Oct, with `OPS-45`); an escalation with no manager goes to a Sales Supervisor in the case's own business or is refused (15 Oct, `OPS-44`). |
 | QA-08 | P1 | **fixed** `84c2c2f` | Every link book-checked too. |
 | QA-09 | P1 | **fixed** · definitions commit | Set from standard broking practice and written down: [QA-09-DEFINITIONS.md](QA-09-DEFINITIONS.md). *Won* is an opened account (a UCC); *Trading* is an account that traded in the last 90 days and *Dormant* one that has not; the exchanges' *Inactive* is 24 months (NSE/INSP/64718, Oct 2024); an Active product card is not an account; commission *accrued* is earned and unpaid, *paid* is paid. The Partner Portal now reads Trading and Dormant from the account, ends its funnel at *Account opened*, counts conversions as accounts, and shows paid and accrued commission apart; the CRM's partner conversions are accounts too. |
-| QA-10 | P1 | not started | A UI build: an opaque, scrollable call panel with a visible End call and state-aware actions. Confirmed by the report; needs a design pass in both themes. |
+| QA-10 | P1 | not started | A UI build: an opaque, scrollable call panel with a visible End call and state-aware actions -- Part 4 item 9. Ruled 15 Oct: keep the panel and redesign it. Needs a design pass in both themes. |
 | QA-11 | P1 | **fixed** `eaf4743` | One resolver, `fill()` in the merge engine, for the composer, test-send and campaign send. A field masked for the sender is refused by name. **`{{name}}` in campaigns is now the first name**, as the picker always said. The picker's static examples are untouched. |
 | QA-12 | P1 | **fixed** `eaf4743` and batch one | The screen shows `CRM_PUBLIC_URL` or the origin it is itself using -- https. Ruled 15 Oct: an API key is refused (403, `insecure_transport`, "rotate it") when the proxy's `X-Forwarded-Proto` says http; without the header nothing changes, so nothing breaks. nginx untouched. |
 | QA-13 | P1 | **fixed** · QA-13 commit, `0efa39b`, `32278d2` | Ruled 13 Oct and built. **Setup → Business policies** (new, `admin.policies`, Admins and Superadmins, draft until Save, every change in the configuration audit) holds one switch per business — *Bonanza partners may refer Bigul products* and the reverse — both **off**. Off, the portal offers the partner's own business's products only and refuses a referral for the other's; on, the other's are offered labelled with their business, a referral for one becomes a lead in that business attributed to the partner, and the partner can follow it in the portal. The public account-opening page is **a page per business**, as ruled: `/dkyc` is Bonanza's, `/dkyc?business=bigul` Bigul's, each with its own products, name, logo and regulatory line, and a resumed application wears its own business's name. Bonanza Equity no longer pitches "the Bigul flat plan". **Plans, ruled 13 Oct and built:** Bigul's flat plan is offered on Bigul applications only. **Both leftovers built 14 Oct:** each business's page shows its own help line (`0efa39b`), and how a cross-business referral is paid is a Business policy (`32278d2`). |
-| QA-14 | P2 | not started | Pipeline multi-select products and per-stage filters. |
+| QA-14 | P2 | not started | Pipeline multi-select products and per-stage filters -- Part 4 items 10 and 11. Ruled 15 Oct: each stage filters by name or mobile, owner, days in the stage and last contacted. |
 | QA-15 | P2 | not started | Pagination and column sorting, `P3-36`/`37`/`39`. |
-| QA-16 | P2 | not started | Report builder and dashboard creation, `P3-06`/`P2-17` — gated on `N-4a`. |
+| QA-16 | P2 | not started | Report builder and dashboard creation, `P3-06`/`P2-17`. `N-4a` answered on 15 Oct by reading both LeadSquared accounts, read-only ([QA-16-LEADSQUARED-REPORTS.md](QA-16-LEADSQUARED-REPORTS.md)); the design drawn from it was approved the same day ([QA-16-REPORTS-DESIGN.md](QA-16-REPORTS-DESIGN.md)) and is built in the order of its section 6. |
 | QA-17 | P2 | **fixed** batch one | Ruled 15 Oct: 15-10-2026, and 15-10-2026 14:30 IST with a time. One formatter (`dmy`/`dmyTime` in client api.js; the same in server engine/daterange.js for messages), in India whatever the browser's zone; the two shared helpers every screen used now say it. A bare day (a holiday, an IPO close) printed raw because the parser could not read it -- fixed. The hand-made formats (calendar, reports, integrations, imports, API keys, KYC, telephony, commission months) and the server's follow-up confirmation, reminders, nomination acknowledgement and holiday errors use it. Storage and the API stay ISO. |
 | QA-18 | P2 | **fixed** batch one | Ruled 15 Oct: Marketing is not offered the Service Console (`hiddenFor`). The outside click: **not reproduced** -- the audited launcher already closed on an outside press, and does in a headless run; hardened anyway, catching the press before anything on the page can swallow it (pointerdown, capture phase), touch included, and closing on navigation and on leaving the window. |
 | QA-19 | P2 | **fixed** `eaf4743` | "Create list" goes to Lead Lists for whoever holds `list.create`. |
@@ -96,7 +96,28 @@ none is "unverified".
 | Pilot gates: credential hashing, session expiry and revocation, server-side authorisation, partner isolation, KYC document encryption and retention, consent and DND, India residency, the pilot database, latency and availability | §1 | not started as an **evidence** exercise. Some exist in code (passwords are hashed; PAN is encrypted); none has been written up as the auditor asks |
 | Implementation sequence, steps 1–9 | §6 | Steps 1 (records), 5 (validation, partly), 6 (partner activation) advanced by `84c2c2f`. Step 2, QA-02, built 13 Oct. Steps 3, 4, 7, 8, 9 not started |
 | Evidence attached to each fix | §6 | Tests in `round4.test.mjs`; before/after screenshots need the deployed build |
-| Regression table against Rounds 1–3 and Ritesh's Part 4 | §4 | Each item maps to an ID above; nothing there is separate work |
+| Regression table against Rounds 1–3 and Ritesh's Part 4 | §4 | Rounds 1–3: each item maps to an ID above. Part 4 has its own table, [below](#riteshs-part-4): two of its items are not in the report |
+
+### Ritesh's Part 4
+
+Ritesh's own feedback, eleven items, received 15 October: [PART-4-source.md](PART-4-source.md), verbatim.
+The auditor's QA-07, QA-10 and QA-14 are drawn from it; items 7 and 8 are not in
+the report. It asks for a completion report against each item, which this table
+becomes as they close.
+
+| Item | What | Report ID | State |
+|---|---|---|---|
+| 1 | Confirm before Escalate and Mark resolved, with the escalation chain and what happens next | QA-07 | not started |
+| 2 | At most 50 conversation entries, and Show more for the whole history | QA-07 | not started |
+| 3 | Manage: changes held until Save and a confirmation; the SLA note under Status; what an internal note is | QA-07 | not started. Ruled 16 Oct: a priority change recalculates the deadlines from creation |
+| 4 | Run SLA sweep: say what it does, confirm, show the result; rounded, both themes | QA-07 | not started. Ruled 16 Oct: the 72-hour close runs by itself per business (`OPS-45`) |
+| 5 | The case summary cards open their cases | QA-05 | **fixed** `de27e4a`. Ruled 15 Oct: Average CSAT opens the rated cases |
+| 6 | Dates as DD-MM-YYYY everywhere | QA-17 | **fixed** `de27e4a`, as 15-10-2026 14:30 IST (ruled 15 Oct) |
+| 7 | A Sales RM's new lead is theirs, their name shown, no other owner offered | -- | partly: the server refuses another owner without `lead.reassign` (`OPS-19`) and the form locks the field, but it says "Assign to me" rather than the person's name |
+| 8 | Product moves made clear; the Product RM handover explained, with context and a way to talk; every action says what it did | -- | not started. Ruled 16 Oct: the handover is a request on the product card, copied to each Product RM's task, with a Message button |
+| 9 | The Start call pop-up | QA-10 | not started. Ruled 15 Oct: keep and redesign |
+| 10 | Pipeline: choose several products | QA-14 | not started |
+| 11 | Pipeline: quick filters in each stage | QA-14 | not started. Ruled 15 Oct: name or mobile, owner, days in stage, last contacted |
 
 ### Found while fixing, needing their own OPS ids
 
@@ -123,7 +144,12 @@ across businesses); and the nomination obligations one more, `OPS-42` (an API
 key's scopes not enforced by the route guard; fixed 15 Oct on Ritesh's go-ahead); and its
 reminder switches one more, `OPS-43` (business policies changed across
 businesses), recorded open on his yes. **All eleven open ones fixed 15 Oct** on
-his word ("Fix all 11 now"), `OPS-43` to his ruling of the same day. State of each is in the OPS table at the top
+his word ("Fix all 11 now"), `OPS-43` to his ruling of the same day. Reading
+for Part 4 found two more, each to be fixed inside the item that exposed it, on
+Ritesh's word: `OPS-44` (15 Oct: an escalation with no manager went to any Sales
+Supervisor, in either business) and `OPS-45` (16 Oct: the SLA sweep closed
+resolved cases in both businesses). A third, Request Product RM with no business
+or visibility check, is fixed under `N-12` as ruled. State of each is in the OPS table at the top
 of [OUTSTANDING.md](OUTSTANDING.md). Not counted above: they are not report IDs.
 
 ### Rulings asked for
@@ -138,7 +164,13 @@ categories, and a Compliance role to receive them, built). Answered 15 Oct,
 the nomination pop-up (QA-34's row): the platform's own pop-up stays, staff
 record nominations made outside the CRM by hand for now, the spec's
 recipient is not yet known, and the half-yearly reminders wait behind a
-switch per business, off. Nothing is still open here. The DKYC half of QA-13 was
+switch per business, off. Answered 15 Oct, Part 4: Average CSAT opens the
+rated cases; the call panel is kept and redesigned; each pipeline stage filters
+by name or mobile, owner, days in stage and last contacted; `OPS-44` is fixed
+inside QA-07. Answered 16 Oct, Part 4: the 72-hour close runs by itself per
+business; a priority change recalculates deadlines from the case's creation;
+the Product RM handover is a request on the card with a Message button; the
+unchecked Product RM request is fixed under `N-12`. Nothing is still open here. The DKYC half of QA-13 was
 answered the same day: a separate page per business.
 
 ## Read this first: the build they tested is the build we have
