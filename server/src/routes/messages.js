@@ -8,7 +8,7 @@
  */
 
 import express, { Router } from 'express';
-import { requireUser } from '../auth.js';
+import { requireUser, requireShared } from '../auth.js';
 import { rateLimiter } from '../security.js';
 import * as M from '../engine/messaging.js';
 import * as C from '../engine/channels.js';
@@ -209,7 +209,7 @@ router.post('/channels/:id/unarchive', (req, res) => answer(res, C.unarchive(me(
 /* ------------------------------------------------------------ the grid */
 
 router.get('/policy', gridAdmin, (req, res) => res.json(M.policyGrid()));
-router.put('/policy', gridAdmin, (req, res) => answer(res, M.setPolicy(me(req), req.body ?? {})));
+router.put('/policy', gridAdmin, requireShared, (req, res) => answer(res, M.setPolicy(me(req), req.body ?? {})));
 
 /* ------------------------------------------------------------ reviewing */
 

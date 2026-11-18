@@ -99,6 +99,8 @@ export const SECTIONS = [
     blurb: 'What each role may do, and how far it can see',
     keywords: ['role', 'permission', 'capability', 'access', 'grant', 'revoke', 'profile', 'permission set', 'data scope', 'visibility', 'sharing'],
     Component: RolesSetup,
+    // Ruled 18 Nov: settings both businesses share are a Superadmin's (setup.shared).
+    shared: 'Shared by Bonanza and Bigul. Only a Superadmin can change these settings; you can read them.',
   },
   {
     key: 'navigation',
@@ -109,6 +111,8 @@ export const SECTIONS = [
     blurb: 'Which tabs and apps each role sees',
     keywords: ['tab', 'menu', 'nav', 'app', 'hide', 'show', 'launcher', 'sidebar'],
     Component: TabVisibility,
+    // Ruled 18 Nov: settings both businesses share are a Superadmin's (setup.shared).
+    shared: "What each role sees is shared by Bonanza and Bigul, so only a Superadmin can change it. A person's own tab exceptions in your business are yours to set.",
   },
   {
     key: 'groups',
@@ -129,6 +133,8 @@ export const SECTIONS = [
     blurb: 'Which roles see mobile numbers and PAN in the clear',
     keywords: ['mask', 'pan', 'mobile', 'pii', 'unmask', 'redact', 'privacy', 'dpdp', 'personal data', 'hide'],
     Component: FieldMasking,
+    // Ruled 18 Nov: settings both businesses share are a Superadmin's (setup.shared).
+    shared: 'Shared by Bonanza and Bigul. Only a Superadmin can change these settings; you can read them.',
   },
   {
     key: 'policies',
@@ -161,6 +167,8 @@ export const SECTIONS = [
     blurb: 'Fields, picklist values, layout order and validation rules',
     keywords: ['object', 'field', 'picklist', 'dropdown', 'value', 'stage', 'source', 'custom field', 'schema', 'layout', 'validation', 'required', 'formula', 'rollup', 'lead', 'client', 'case', 'ticket'],
     Component: ObjectManager,
+    // Ruled 18 Nov: settings both businesses share are a Superadmin's (setup.shared).
+    shared: "Fields, forms and the values both businesses use are shared by Bonanza and Bigul, so only a Superadmin can change them. Your business's own picklist values and validation rules are yours.",
   },
   {
     key: 'products',
@@ -200,6 +208,8 @@ export const SECTIONS = [
     blurb: 'What happens automatically when a record changes',
     keywords: ['rule', 'automation', 'trigger', 'workflow', 'assign', 'routing', 'score', 'auto', 'when then'],
     Component: Rules,
+    // Ruled 18 Nov: settings both businesses share are a Superadmin's (setup.shared).
+    shared: 'Shared by Bonanza and Bigul. Only a Superadmin can change these settings; you can read them.',
   },
   {
     key: 'forms',
@@ -210,6 +220,8 @@ export const SECTIONS = [
     blurb: 'What an RM is asked for when they log a call, meeting or visit',
     keywords: ['form', 'phone call form', 'capture', 'activity', 'disposition form', 'fields', 'call form'],
     Component: CaptureForms,
+    // Ruled 18 Nov: settings both businesses share are a Superadmin's (setup.shared).
+    shared: 'Shared by Bonanza and Bigul. Only a Superadmin can change these settings; you can read them.',
   },
   {
     key: 'outcomes',
@@ -220,6 +232,8 @@ export const SECTIONS = [
     blurb: 'The dispositions an RM picks after a call',
     keywords: ['disposition', 'outcome', 'call result', 'sub-disposition', 'not interested', 'callback', 'connected'],
     Component: Dispositions,
+    // Ruled 18 Nov: settings both businesses share are a Superadmin's (setup.shared).
+    shared: 'Shared by Bonanza and Bigul. Only a Superadmin can change these settings; you can read them.',
   },
   {
     key: 'sla',
@@ -230,6 +244,8 @@ export const SECTIONS = [
     blurb: 'Response and resolution clocks, and how cases are classified',
     keywords: ['sla', 'response time', 'resolution', 'breach', 'escalation', 'clock', 'category', 'case', 'ticket', 'priority'],
     Component: Sla,
+    // Ruled 18 Nov: settings both businesses share are a Superadmin's (setup.shared).
+    shared: 'Shared by Bonanza and Bigul. Only a Superadmin can change these settings; you can read them.',
   },
   {
     key: 'calendars',
@@ -240,6 +256,8 @@ export const SECTIONS = [
     blurb: 'Business hours and holidays — when the SLA clock runs',
     keywords: ['calendar', 'holiday', 'business hours', 'working day', 'weekend', 'diwali', 'shift', 'timing'],
     Component: Calendars,
+    // Ruled 18 Nov: settings both businesses share are a Superadmin's (setup.shared).
+    shared: 'Shared by Bonanza and Bigul. Only a Superadmin can change these settings; you can read them.',
   },
   {
     key: 'journeys',
@@ -295,6 +313,8 @@ export const SECTIONS = [
     blurb: 'Who may message whom, and reviewing conversations',
     keywords: ['message', 'chat', 'dm', 'direct message', 'conversation', 'internal communication', 'slack', 'monitor', 'compliance', 'review', 'freeze', 'suspend'],
     Component: MessagingSetup,
+    // Ruled 18 Nov: settings both businesses share are a Superadmin's (setup.shared).
+    shared: 'Who may message whom is shared by Bonanza and Bigul, so only a Superadmin can change it. Reviewing conversations is unaffected.',
   },
 
   /* --------------------------------------------------------- integrations */

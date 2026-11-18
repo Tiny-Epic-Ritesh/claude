@@ -165,6 +165,14 @@ export const PERMISSIONS = {
   'admin.objects':        ['superadmin', 'admin'],
   'admin.policies':       ['superadmin', 'admin'],         // QA-13, QA-06: business policies in Setup
   'admin.system':         ['superadmin'],
+  /* Ruled 18 Nov 2026 (Ritesh): a setting both businesses share -- roles,
+     fields and forms, call outcomes, working calendars, case categories and
+     SLA, automation rules, field masking, the role tab grid and column
+     defaults, the messaging grid, picklist values and validation rules for
+     both businesses, a shared queue's members -- is changed by a Superadmin.
+     Each business's Admin keeps their own business: users, queues, products,
+     content, campaigns, KRA. */
+  'setup.shared':         ['superadmin'],
 
   // Marketing
   'campaign.manage':      ['superadmin', 'admin', 'marketing_manager'],
@@ -517,6 +525,52 @@ export const requirePermission = (permission) => (req, res, next) => {
   if (!userCan(req.user, permission)) return refuse(req, res, permission);
   next();
 };
+
+/* ----------------------------------------------- settings both businesses share */
+
+export const SHARED_SETTING = 'This setting is shared by Bonanza and Bigul, so only a Superadmin can change it';
+
+/** May this request change a setting both businesses share? (setup.shared) */
+export const mayChangeShared = (user) => userCan(user, 'setup.shared');
+
+/** Route guard for a setting both businesses share, saying why it refuses. */
+export const requireShared = (req, res, next) => {
+  if (!req.user) return res.status(401).json({ error: 'Sign in required' });
+  if (!mayChangeShared(req.user)) return res.status(403).json({ error: SHARED_SETTING, required: 'setup.shared' });
+  next();
+};
+
+/**
+ * The Superadmin's own powers: what the permission matrix gives to nobody else
+ * (today admin.system, setup.shared and partner.elevate.emergency). Read from
+ * the code rather than the roles table, so a role somebody creates cannot
+ * dilute it.
+ */
+const RESERVED = new Set(Object.entries(PERMISSIONS)
+  .filter(([, roles]) => roles.length === 1 && roles[0] === 'superadmin')
+  .map(([capability]) => capability));
+
+/**
+ * Which of the Superadmin's own powers `capabilities` would hand over that
+ * `actor` does not hold -- empty when the actor may grant them.
+ *
+ * You can only give a Superadmin's power if you hold it. A role, a permission
+ * set, a sign-in as somebody else and a password reset each hand powers over,
+ * and none compared them with the giver's: an Admin could make any user --
+ * themselves included -- a Superadmin, put admin.system in a permission set
+ * and assign it, or issue themselves a reset link for a Superadmin's account.
+ * The businesses a user may reach were already held to this (mayUseOrg on
+ * org_access). Only the reserved powers are judged: an Admin holds "view all
+ * leads" rather than an RM's "view own leads", and approves partner elevations
+ * rather than requesting them, so every ordinary role stays theirs to give.
+ */
+export function grantGap(actor, capabilities) {
+  const held = actor?.[CAPS] ?? effectiveCapabilities(actor);
+  return [...new Set(capabilities)].filter((c) => RESERVED.has(c) && !held.has(c)).sort();
+}
+
+/** Does `target` hold a Superadmin power `actor` does not? Then the actor may not change them. */
+export const outranks = (target, actor) => grantGap(actor, [...effectiveCapabilities(target)]).length > 0;
 
 /** The refusal, saying whether it was the key's scope or the person's access. */
 function refuse(req, res, required) {

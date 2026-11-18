@@ -37,6 +37,8 @@ const RUN = Date.now().toString(36);
 const MARK = `LC4 probe ${RUN}`;
 
 const ADMIN = await probeAdmin('lc4-admin', { role: 'admin', sales_org: 'BONANZA' });
+/* Ruled 18 Nov: settings both businesses share are a Superadmin's (setup.shared). */
+const SUPER = await probeAdmin('lc4-super', { role: 'superadmin' });
 const BIGUL = await probeAdmin('lc4-bigul', { role: 'admin', sales_org: 'BIGUL' });
 const as = (who) => async (method, url, body) => {
   const res = await fetch(`${BASE}/api${url}`, { method, headers: who.headers, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -70,19 +72,19 @@ try {
   await test('a rule never switched on is deleted, with its name typed', async () => {
     const r = makeRule('draft');
     assert.equal(rule(r).first_enabled_at, null);
-    assert.equal((await as(ADMIN)('DELETE', `/admin/rules/${r}`)).status, 400, 'deleted without the name typed');
-    const res = await as(ADMIN)('DELETE', `/admin/rules/${r}`, { confirm_name: `${MARK} draft` });
+    assert.equal((await as(SUPER)('DELETE', `/admin/rules/${r}`)).status, 400, 'deleted without the name typed');
+    const res = await as(SUPER)('DELETE', `/admin/rules/${r}`, { confirm_name: `${MARK} draft` });
     assert.equal(res.status, 200, `delete answered ${res.status}: ${res.body?.error}`);
     assert.equal(rule(r), undefined);
   });
 
   await test('switched on once by any door, a rule is never again a draft', async () => {
     const viaScreen = makeRule('screen');
-    assert.equal((await as(ADMIN)('PATCH', `/admin/rules/${viaScreen}`, { enabled: 1 })).status, 200);
+    assert.equal((await as(SUPER)('PATCH', `/admin/rules/${viaScreen}`, { enabled: 1 })).status, 200);
     assert(rule(viaScreen).first_enabled_at, 'switching it on was not recorded');
-    assert.equal((await as(ADMIN)('PATCH', `/admin/rules/${viaScreen}`, { enabled: 0 })).status, 200);
+    assert.equal((await as(SUPER)('PATCH', `/admin/rules/${viaScreen}`, { enabled: 0 })).status, 200);
     assert(rule(viaScreen).first_enabled_at, 'switching it off erased the record');
-    const refused = await as(ADMIN)('DELETE', `/admin/rules/${viaScreen}`, { confirm_name: `${MARK} screen` });
+    const refused = await as(SUPER)('DELETE', `/admin/rules/${viaScreen}`, { confirm_name: `${MARK} screen` });
     assert.equal(refused.status, 409, `a rule that had been on was deleted: HTTP ${refused.status}`);
     assert.equal(refused.body.archive_instead, true);
 
@@ -94,26 +96,29 @@ try {
 
   await test('a rule is switched off before it is archived; archived, it is read-only until restored', async () => {
     const r = makeRule('archive', 1);
-    assert.equal((await as(ADMIN)('POST', `/admin/rules/${r}/archive`, { reason: 'Replaced by a flow' })).status, 409, 'a live rule was archived');
+    assert.equal((await as(SUPER)('POST', `/admin/rules/${r}/archive`, { reason: 'Replaced by a flow' })).status, 409, 'a live rule was archived');
     run('UPDATE rules SET enabled = 0 WHERE id = ?', [r]);
-    assert.equal((await as(ADMIN)('POST', `/admin/rules/${r}/archive`, { reason: '' })).status, 400, 'archived with no reason');
-    const res = await as(ADMIN)('POST', `/admin/rules/${r}/archive`, { reason: 'Replaced by a flow' });
+    assert.equal((await as(SUPER)('POST', `/admin/rules/${r}/archive`, { reason: '' })).status, 400, 'archived with no reason');
+    const res = await as(SUPER)('POST', `/admin/rules/${r}/archive`, { reason: 'Replaced by a flow' });
     assert.equal(res.status, 200, `archive answered ${res.status}: ${res.body?.error}`);
-    assert.equal(rule(r).archived_by, ADMIN.id);
+    assert.equal(rule(r).archived_by, SUPER.id);
 
-    assert.equal((await as(ADMIN)('PATCH', `/admin/rules/${r}`, { enabled: 1 })).status, 409, 'an archived rule was switched on');
-    assert.equal((await as(ADMIN)('PATCH', `/admin/rules/${r}`, { name: 'renamed' })).status, 409);
-    assert.equal((await as(ADMIN)('POST', `/admin/rules/${r}/run`, { dry_run: false })).status, 409, 'an archived rule was run for real');
-    assert.equal((await as(ADMIN)('POST', `/admin/rules/${r}/run`, { dry_run: true })).status, 200, 'a dry run of an archived rule was refused');
+    assert.equal((await as(SUPER)('PATCH', `/admin/rules/${r}`, { enabled: 1 })).status, 409, 'an archived rule was switched on');
+    assert.equal((await as(SUPER)('PATCH', `/admin/rules/${r}`, { name: 'renamed' })).status, 409);
+    assert.equal((await as(SUPER)('POST', `/admin/rules/${r}/run`, { dry_run: false })).status, 409, 'an archived rule was run for real');
+    assert.equal((await as(SUPER)('POST', `/admin/rules/${r}/run`, { dry_run: true })).status, 200, 'a dry run of an archived rule was refused');
 
     const v = snapshot('rule', r, { note: 'probe' });
-    const rollback = await as(ADMIN)('POST', `/admin/versions/${v.id}/restore`);
+    // Ruled 18 Nov: a rule is shared, so rolling one back is a Superadmin's.
+    const byAdmin = await as(ADMIN)('POST', `/admin/versions/${v.id}/restore`);
+    assert.equal(byAdmin.status, 403, `an Admin rolled back a shared rule: HTTP ${byAdmin.status}`);
+    const rollback = await as(SUPER)('POST', `/admin/versions/${v.id}/restore`);
     assert.equal(rollback.status, 409, 'a rollback switched an archived rule back on');
     assert.equal(rule(r).enabled, 0);
 
-    assert.equal((await as(ADMIN)('POST', `/admin/rules/${r}/restore`)).status, 200);
+    assert.equal((await as(SUPER)('POST', `/admin/rules/${r}/restore`)).status, 200);
     assert.equal(rule(r).archived_at, null);
-    assert.equal((await as(ADMIN)('PATCH', `/admin/rules/${r}`, { name: `${MARK} back` })).status, 200, 'a restored rule is still frozen');
+    assert.equal((await as(SUPER)('PATCH', `/admin/rules/${r}`, { name: `${MARK} back` })).status, 200, 'a restored rule is still frozen');
   });
 
   /* ------------------------------------------------------------- flows */
@@ -192,7 +197,7 @@ try {
   run("DELETE FROM artefact_versions WHERE kind = 'rule' AND logical_id IN (SELECT CAST(id AS TEXT) FROM rules WHERE name LIKE ?)", [`${MARK}%`]);
   run('DELETE FROM rules WHERE name LIKE ?', [`${MARK}%`]);
   run('DELETE FROM leads WHERE id = ?', [lead]);
-  for (const p of [ADMIN, BIGUL]) p.cleanup();
+  for (const p of [ADMIN, BIGUL, SUPER]) p.cleanup();
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

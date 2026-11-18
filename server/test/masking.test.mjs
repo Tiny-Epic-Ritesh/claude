@@ -28,7 +28,8 @@ const BASE = process.env.TEST_BASE || 'http://localhost:4100';
    admin@bonanza.test, and ten a minute is the limiter's budget for one account --
    so the eleventh attempt was refused and the failure looked like a broken
    feature. A test that needs to sign in as somebody brings its own somebody. */
-const PROBE = await probeAdmin('masking');
+/* Ruled 18 Nov: settings both businesses share are a Superadmin's (setup.shared). */
+const PROBE = await probeAdmin('masking', { role: 'superadmin' });
 
 /* One sign-in for the file. Ten a minute per account is the limit, and several
    test files sharing one admin account reach it easily. */
