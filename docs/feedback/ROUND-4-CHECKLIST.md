@@ -18,7 +18,7 @@ point, plus the work in flight beside it.
 - Per-ID detail, with the reasoning behind each fix, stays in
   [ROUND-4-TRIAGE.md](ROUND-4-TRIAGE.md).
 
-**How to read it — proposed, waiting on Ritesh's confirmation:**
+**How to read it — confirmed by Ritesh, 18 Nov:**
 
 - `[x]` ~~struck through~~ = fixed in code, and an automated test for it
   passes on 18 Nov.
@@ -29,16 +29,18 @@ point, plus the work in flight beside it.
 
 ---
 
-## A · Pending — my work, in proposed priority order
+## A · Pending — my work, in priority order
 
-The order is a proposal. Tell me if you want it changed.
+Order confirmed by Ritesh, 18 Nov. **How a fix reaches labs, ruled 18 Nov:** I open a
+pull request to `main` for each finished item or small batch; Ritesh reviews and merges,
+which deploys to labs.
 
 | # | Item | From the report | State |
 |---|---|---|---|
 | A1 | `[~]` **OPS-46** — typed times saved 5½ h late; the office calendar ran on UTC | Not in the report (found 16 Oct, Part 4 item 8.4) | Fixed and tested, commit `d56bbf2`. **Not on GitHub yet:** the push from this session was refused (403). |
 | A2 | `[ ]` **The P0 permission gate** — direct API allow/deny tests for all 11 internal roles and the partner role, in both businesses, covering allowed, denied, masked and exported values. Includes `N-12`: put every POST and PATCH route that takes a record id under the business-boundary test, then fix what that finds | §1 "P0: 11 roles and API-enforced permissions"; §5 "direct API negative tests"; §6 steps 1 and 7 | Not started. The largest open item. |
 | A3 | `[ ]` **OPS-47 to OPS-54** — find the eight unrecorded defects again, write each down, fix each in its own commit | Not in the report | Not started. They were never written down, so what is found may not be the same eight. |
-| A4 | `[ ]` **QA-10** (P1) — the call panel: opaque, scrolls, End call always visible, actions that follow the call's state, both themes | §2 QA-10; Part 4 item 9 | Not started. Ruled 15 Oct: keep the panel and redesign it. Waiting on B6. |
+| A4 | `[ ]` **QA-10** (P1) — the call panel: opaque, scrolls, End call always visible, actions that follow the call's state, both themes | §2 QA-10; Part 4 item 9 | Not started. Ruled 15 Oct: keep the panel and redesign it. Ruled 18 Nov: a design preview in both themes first, built only once approved. |
 | A5 | `[ ]` **BRD gate checks the auditor could not run** — (a) the 60-second Product RM notification after a Warm handoff; (b) DKYC step timers, abandonment, and a Product Supervisor's override written with a reason and audited; (c) SLA sweep, reopen by a portal reply, CSAT submission, a case with more than 50 messages; (d) a Caller's and a Dealer's full disposition through to the Sales RM handoff; (e) a partner's full activation — eight steps, a separate Admin approval, portal sign-in | §1 P1–P4; §5 | Not started. The real dialler's 90 s / 120 s timing is blocked on the CUBE credential (B12). |
 | A6 | `[ ]` **Pilot gates, with evidence** — credential hashing, session expiry and revocation, server-side authorisation, partner isolation, KYC document encryption and retention, consent and DND, India residency, the pilot database, response time and availability: a write-up and an automated test for each | §1 last paragraph; §6 step 9 | Not started as an evidence exercise. Some exist in code (passwords hashed, PAN encrypted). The database gate waits on B7. |
 | A7 | `[ ]` **QA-14** (P2) — Pipeline: choose several products; quick filters in each stage by name or mobile, owner, days in stage, last contacted | §3 QA-14; Part 4 items 10–11 | Not started. Filters ruled 15 Oct. |
@@ -60,7 +62,7 @@ Nothing here is built or changed until you answer.
 | B3 | `[ ]` **Confirm partner #9 can no longer sign in** to the portal on labs. | The fixed build withdraws every `partner<id>` password and its sessions when it first starts (`OPS-15`). Nobody has looked since. | Your check |
 | B4 | `[ ]` **After the retest, retire the auditor's synthetic records** in Setup → Test records: leads #40–44, cases #9–11, lists #3–4, campaigns #3–4, partners #9–10, rule #6, automation #2, the QA library item and content. | §9. Until then, nothing may touch them: they are the reproductions. | Your action |
 | B5 | `[ ]` **OPS-46: tasks saved on labs before the fix** still show 5½ h late. Correct them, or leave them as test data? | Old rows cannot be told apart from system-made ones with certainty, so a correction would be a judgement call. | Decision |
-| B6 | `[ ]` **QA-10: do you want a design preview (both themes) before I build the call panel?** | Ruled "keep and redesign"; whether you sign off a design first was not said. | Decision |
+| B6 | `[x]` ~~**QA-10: a design preview (both themes) before I build the call panel?**~~ **Yes** — answered 18 Nov. | Ruled "keep and redesign" on 15 Oct. | Decision |
 | B7 | `[ ]` **The pilot database.** The BRD makes PostgreSQL a pilot gate; the build runs on SQLite. Move before the pilot, or stay on SQLite for UAT and decide later? | §1 pilot gates; A6 depends on it. | Decision |
 | B8 | `[ ]` **QA-22: which news provider?** Headlines become links as soon as a feed supplies the URL. | Open since 15 Oct. | Decision |
 | B9 | `[ ]` **QA-34: who on the trading-platform side receives the nomination pop-up spec**, and when the half-yearly nomination reminders should be switched on (off for both businesses). | Open since 15 Oct. | Decision |
