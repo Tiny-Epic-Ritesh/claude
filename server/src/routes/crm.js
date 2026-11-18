@@ -26,7 +26,8 @@ import { metricsFor } from '../engine/metrics.js';
 import { kycStatusSql, kycStatusFor } from '../engine/kycstatus.js';
 import { nextAction, nextStepForLead, MOVE_NEEDS, STATE_LABEL } from '../engine/nextaction.js';
 import { dmyTime, typedToStored } from '../engine/daterange.js';
-import { loadInBook, taskOutOfBook } from '../engine/bookscope.js';
+import { loadInBook } from '../engine/bookscope.js';
+import { taskFor } from '../engine/taskaccess.js';
 import { withCorrections, mayCorrect, addCorrection } from '../engine/corrections.js';
 import { cancelReminders } from '../engine/followups.js';
 import {
@@ -2146,31 +2147,7 @@ router.post('/tasks', (req, res) => {
  * book if there is a lead, and then the task's assignee, its creator (QA-37:
  * "assignee, creator, their supervisor"), or somebody holding report.team.
  */
-function taskFor(req) {
-  const scope = reqScope(req, 'l');
-  const task = one(
-    `SELECT t.* FROM tasks t
-      WHERE t.id = ?
-        AND (t.lead_id IS NULL OR EXISTS (
-          SELECT 1 FROM leads l WHERE l.id = t.lead_id AND l.deleted_at IS NULL AND ${scope.sql}))`,
-    [req.params.id, ...scope.params],
-  );
-  if (!task) return { status: 404, body: { error: 'Task not found' } };
-  /* N-12: the scope above judges a task by its lead, and let one with no lead
-     through -- a task linked only to a partner, case or card in the other
-     business. Each link is asked now. */
-  const outOfBook = taskOutOfBook(req, task);
-  if (outOfBook) return { status: outOfBook.status, body: { error: outOfBook.error } };
-  if (task.assignee_id !== req.user.id && task.created_by !== req.user.id && !userCan(req.user, 'report.team')) {
-    return { status: 403, body: { error: 'That task belongs to somebody else', required: 'report.team' } };
-  }
-  /* QA-37: cancelled is where a task ends. It stays, with its reason, and
-     nothing about it changes. */
-  if (task.status === 'Cancelled') {
-    return { status: 409, body: { error: `"${task.title}" was cancelled, so it stays as it is. Add a new task instead.` } };
-  }
-  return { task };
-}
+/* The rule itself now lives in engine/taskaccess.js (A12), shared with the follow-up routes. */
 
 router.patch('/tasks/:id', (req, res) => {
   const found = taskFor(req);

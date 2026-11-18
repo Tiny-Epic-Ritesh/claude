@@ -31,7 +31,7 @@ import {
 } from '../engine/followups.js';
 import * as geolocation from '../engine/geolocation.js';
 import { withCorrections, mayCorrect, addCorrection } from '../engine/corrections.js';
-import { taskOutOfBook } from '../engine/bookscope.js';
+import { taskFor } from '../engine/taskaccess.js';
 
 const router = Router();
 router.use(requireUser);
@@ -367,17 +367,13 @@ router.post('/', requirePermission('lead.contact'), (req, res) => {
  * nothing chases, which is precisely the failure this module exists to prevent.
  */
 router.patch('/follow-ups/:taskId', requirePermission('lead.contact'), (req, res) => {
-  const task = one('SELECT * FROM tasks WHERE id = ?', [req.params.taskId]);
-  if (!task) return res.status(404).json({ error: 'Task not found' });
-  // N-12: a follow-up is its records' business's (taskOutOfBook).
-  const outOfBook = taskOutOfBook(req, task);
-  if (outOfBook) return res.status(outOfBook.status).json({ error: outOfBook.error });
-
-  const mayReschedule = task.assignee_id === req.user.id
-    || ['sales_supervisor', 'product_supervisor', 'admin', 'superadmin'].includes(req.user.role);
-  if (!mayReschedule) {
-    return res.status(403).json({ error: 'You can only reschedule your own follow-ups' });
-  }
+  /* A12 (B13, ruled 18 Nov): the rule every task change asks -- its books
+     (N-12), and the assignee, the creator or a team manager. It named four
+     roles here, the same four that hold report.team, by role and not by
+     capability. */
+  const found = taskFor(req, req.params.taskId);
+  if (!found.task) return res.status(found.status).json(found.body);
+  const { task } = found;
 
   const { note } = req.body;
   const dueAt = typedToStored(req.body.due_at); // OPS-46: typed as India time
@@ -422,11 +418,12 @@ router.patch('/follow-ups/:taskId', requirePermission('lead.contact'), (req, res
  * reminder for work already done is how people learn to ignore the bell.
  */
 router.post('/follow-ups/:taskId/complete', requirePermission('lead.contact'), (req, res) => {
-  const task = one('SELECT * FROM tasks WHERE id = ?', [req.params.taskId]);
-  if (!task) return res.status(404).json({ error: 'Task not found' });
-  // N-12: completed by id from the other business, before this.
-  const outOfBook = taskOutOfBook(req, task);
-  if (outOfBook) return res.status(outOfBook.status).json({ error: outOfBook.error });
+  /* A12 (B13, ruled 18 Nov): the same rule as rescheduling. Completing asked
+     nobody, so anyone who may contact leads could mark another person's
+     follow-up done -- off their list, its reminders stopped. */
+  const found = taskFor(req, req.params.taskId);
+  if (!found.task) return res.status(found.status).json(found.body);
+  const { task } = found;
 
   run("UPDATE tasks SET status = 'Done', updated_at = datetime('now') WHERE id = ?", [task.id]);
   cancelReminders(task.id, 'completed');
