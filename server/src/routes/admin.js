@@ -272,13 +272,26 @@ router.get('/products/brochure-formats', requirePermission('admin.products'), (_
  * rather than trusted from the request, since a Content-Type is whatever the
  * caller says it is.
  */
+/* N-12: a product belongs to one business (QA-32), so a write by id asks it.
+   The brochure upload, its removal and the product edit took the id alone: a
+   Bigul Admin could remove a Bonanza product's brochure, or rename it. */
+function productInBook(req, res) {
+  const product = one('SELECT id, name, sales_org FROM product_types WHERE id = ?', [req.params.id]);
+  if (!product) { res.status(404).json({ error: 'Product not found' }); return null; }
+  if (product.sales_org && !mayUseOrg(req.user, product.sales_org)) {
+    res.status(403).json({ error: 'This product belongs to another business' });
+    return null;
+  }
+  return product;
+}
+
 router.post(
   '/products/:id/brochure',
   requirePermission('admin.products'),
   express.raw({ type: '*/*', limit: BROCHURE_MAX }),
   (req, res) => {
-    const product = one('SELECT id, name FROM product_types WHERE id = ?', [req.params.id]);
-    if (!product) return res.status(404).json({ error: 'Product not found' });
+    const product = productInBook(req, res);
+    if (!product) return undefined;
 
     const bytes = req.body;
     if (!Buffer.isBuffer(bytes) || !bytes.length) {
@@ -315,12 +328,14 @@ router.post(
 );
 
 router.delete('/products/:id/brochure', requirePermission('admin.products'), (req, res) => {
+  if (!productInBook(req, res)) return undefined;
   run('DELETE FROM product_brochure WHERE product_type_id = ?', [req.params.id]);
   audit(req.user.id, 'product_brochure_removed', 'product', Number(req.params.id), {});
   res.json({ ok: true });
 });
 
 router.patch('/products/:id', requirePermission('admin.products'), (req, res) => {
+  if (!productInBook(req, res)) return undefined;
   if (req.body.min_investment !== undefined && req.body.min_investment !== null && req.body.min_investment !== '') {
     const minimum = Number(req.body.min_investment);
     if (!(Number.isFinite(minimum) && minimum >= 0)) {
@@ -1336,7 +1351,7 @@ router.post('/test-records', requirePermission('admin.test_records'), (req, res)
 });
 
 router.delete('/test-records/:id', requirePermission('admin.test_records'), (req, res) => {
-  const out = unmarkTestRecord(req.params.id, req.user);
+  const out = unmarkTestRecord(req.params.id, req.user, readsBook(req));
   if (out.error) return res.status(out.status).json({ error: out.error });
   return res.json(out);
 });

@@ -31,6 +31,7 @@ import {
 } from '../engine/followups.js';
 import * as geolocation from '../engine/geolocation.js';
 import { withCorrections, mayCorrect, addCorrection } from '../engine/corrections.js';
+import { taskOutOfBook } from '../engine/bookscope.js';
 
 const router = Router();
 router.use(requireUser);
@@ -368,6 +369,9 @@ router.post('/', requirePermission('lead.contact'), (req, res) => {
 router.patch('/follow-ups/:taskId', requirePermission('lead.contact'), (req, res) => {
   const task = one('SELECT * FROM tasks WHERE id = ?', [req.params.taskId]);
   if (!task) return res.status(404).json({ error: 'Task not found' });
+  // N-12: a follow-up is its records' business's (taskOutOfBook).
+  const outOfBook = taskOutOfBook(req, task);
+  if (outOfBook) return res.status(outOfBook.status).json({ error: outOfBook.error });
 
   const mayReschedule = task.assignee_id === req.user.id
     || ['sales_supervisor', 'product_supervisor', 'admin', 'superadmin'].includes(req.user.role);
@@ -420,6 +424,9 @@ router.patch('/follow-ups/:taskId', requirePermission('lead.contact'), (req, res
 router.post('/follow-ups/:taskId/complete', requirePermission('lead.contact'), (req, res) => {
   const task = one('SELECT * FROM tasks WHERE id = ?', [req.params.taskId]);
   if (!task) return res.status(404).json({ error: 'Task not found' });
+  // N-12: completed by id from the other business, before this.
+  const outOfBook = taskOutOfBook(req, task);
+  if (outOfBook) return res.status(outOfBook.status).json({ error: outOfBook.error });
 
   run("UPDATE tasks SET status = 'Done', updated_at = datetime('now') WHERE id = ?", [task.id]);
   cancelReminders(task.id, 'completed');

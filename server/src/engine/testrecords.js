@@ -227,9 +227,14 @@ export function retireTestRecords({ ids = null, reason, user, mayReadBook }) {
 }
 
 /** Take a mark off a record not yet retired -- it was marked by mistake. */
-export function unmarkTestRecord(markId, user) {
+export function unmarkTestRecord(markId, user, mayReadBook) {
   const mark = one('SELECT * FROM test_records WHERE id = ?', [Number(markId) || -1]);
   if (!mark) return { status: 404, error: 'No such mark' };
+  /* N-12: the mark is on a record of one business, as marking it asked. A
+     Bigul Admin took the mark off a Bonanza lead by the mark's id. Answered as
+     "no such mark", the way marking answers a record outside the business. */
+  const record = TEST_KINDS[mark.entity]?.load(mark.record_id);
+  if (record?.book && !mayReadBook(record.book)) return { status: 404, error: 'No such mark' };
   if (mark.retired_at) return { status: 409, error: 'It has been retired; the mark stays as the record of that' };
   run('DELETE FROM test_records WHERE id = ?', [mark.id]);
   audit(user.id, 'test_record_unmarked', mark.entity, mark.record_id, { mark: mark.id });

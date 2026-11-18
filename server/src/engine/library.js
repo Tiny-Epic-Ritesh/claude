@@ -66,8 +66,15 @@ export function mayRead(library, user) {
 }
 
 /** Only the owning role, or an administrator, changes a library. */
+/* N-12: and only in the library's own business, as mayRead already asks. */
 export const mayManage = (library, user) =>
-  Boolean(library) && (library.owner_role === user.role || userCan(user, 'admin.content'));
+  Boolean(library) && (!library.sales_org || orgsFor(user).includes(library.sales_org))
+    && (library.owner_role === user.role || userCan(user, 'admin.content'));
+
+/* N-12: an item is client-facing copy written for one business (OPS-40), so
+   changing it asks that business too -- filed or unfiled. */
+export const mayManageItem = (item, user) =>
+  Boolean(item) && (!item.sales_org || orgsFor(user).includes(item.sales_org));
 
 export const libraries = (user) => all(
   'SELECT * FROM content_library WHERE active = 1 ORDER BY name',
