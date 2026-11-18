@@ -52,7 +52,7 @@ which deploys to labs.
 | A9 | `[ ]` **What the auditor could not confirm from earlier rounds** — check each, then fix what is missing: (a) `P3-10` geolocation: the stored activity's location and the denied-permission path; (b) `P3-18` Meta: account, page and permission management, notification and report controls; (c) `P3-33/34/41` import: the four-step upload and mapping route, and its updated-count behaviour; the Data Tools CSV path does not update duplicates; (d) Round 1 login alignment and dark-mode contrast, Part 2 chart types, Part 3 AI summary buttons; (e) a click-test of every button on the 28 Setup screens | §4 | Not started. `P3-07` is a question for you (B11). |
 | A10 | `[ ]` **Before/after evidence for each fix** — screen, role, business, URL, local date and time, record id | §6 "Minimum test evidence" | Partly. Batch one, QA-07, QA-15 and Part 4 have screens in [ROUND-4-fix-evidence/](ROUND-4-fix-evidence/); the rest have tests only. |
 | A11 | `[x]` ~~Correct the stale lines in ROUND-4-TRIAGE.md~~ — the counts paragraph still said 5 open, and the deploy row said "pending deploy" | — | Done with this checklist. |
-| A12 | `[ ]` **One rule for a follow-up's Complete and Reschedule:** the assignee, the creator, or their team manager — the rule the Tasks page already uses | B13, decided 18 Nov | Not started. Right after A2c, with the permission work. |
+| A12 | `[x]` ~~**One rule for a follow-up's Complete and Reschedule:** the assignee, the creator, or their team manager — the rule the Tasks page already uses~~ | B13, decided 18 Nov | **Done.** The rule now lives in one place (`engine/taskaccess.js`), asked by the Tasks page's routes and both follow-up routes. Before, another RM or a Caller could complete somebody's follow-up, and a cancelled one could be completed. `a12followups.test.mjs` (5; 3 fail on the old code, the 2 that pass being what still works). Your retest: as an RM, try to complete a colleague's follow-up — refused; your own, or a team member's as their manager, works. |
 | A13 | `[ ]` **An org-chart view of the Sales groups tree**, members and managers shown, linked from Roles & permissions | B11, decided 18 Nov (P3-07 accepted as built) | Not started. Small; with A9. |
 | A14 | `[ ]` **Size the shifting and reactivation journeys** for the LeadSquared migration — a sizing note, not a build | Migration mapping Q7, decided 18 Nov: later, sized now | Not started. Before migration work begins. |
 
@@ -85,6 +85,24 @@ another team can give.
 | B17 | `[x]` ~~**Q10: corrections to the automation builder**~~ | **Closed as approved** (18 Nov). Later changes come as new feedback. | Decided |
 | B18 | `[ ]` **LeadSquared migration mapping:** a 15-minute skim of its tables for anything wrong (Q8), before migration work starts. Q7 is decided: shifting and reactivation journeys later, sized now (A14). | [MIGRATION-STAGE-SOURCE-MAPPING.md](MIGRATION-STAGE-SOURCE-MAPPING.md) §4. | Your action |
 | B19 | `[ ]` **Who may create a Compliance officer, and sign in as one?** Compliance approves the KYC journey changes an Admin makes (`kyc.journey.approve`, ruled for QA-37). Today an Admin may create a Compliance user and sign in as them, and so could approve their own change. **Recommendation:** Compliance accounts are created by a Superadmin, and nobody signs in as a Compliance officer — as already holds for a Superadmin. | Found 18 Nov building A2c. Nothing changed. | Decision |
+
+---
+
+## D · Outside Round 4, still open
+
+Older work from the earlier rounds that is not in the QA report, so that one
+list holds everything. Recorded in [OUTSTANDING.md](OUTSTANDING.md).
+
+| # | Item | State |
+|---|---|---|
+| D1 | `[ ]` **Lead escalation:** "raise to your manager", climbing to a Sales Head if it is not answered — with a Sales Head role | Decided 6 Oct (P3-21). Not started; unblocked. |
+| D2 | `[ ]` **Port the ten LeadSquared flows** (`P3-16-automation-design.md` §8) | Definitions read live on 12 Oct (`BIGUL-AUTOMATIONS-FINAL.md`): four need no porting, three become lookup data the business owns. Not started; unblocked. |
+| D3 | `[ ]` **Automations that run on a client rather than a lead** (`OPS-02`) | A scoping proposal for your approval comes first. |
+| D4 | `[ ]` **Connectors:** Meta → CUBE → SMS → Google, one build (`P2-14`, `P2-23`, `P3-20`) | Blocked: the SMS gateway names per business, and who owns each vendor account (B12). |
+| D5 | `[ ]` **Outlook per user from Setup** (`P2-25`) | Blocked: Compliance's ruling on Microsoft Graph (B12). SMTP works today. |
+| D6 | `[ ]` **UAT → Production, with promote and rollback** (`P2-03`) | Blocked: no production environment yet (B12). |
+| D7 | `[ ]` **CUBE call check, recordings, transcription and the AI call summary** (`P3-44`, `P3-14`) | Blocked: the CUBE test login (B12). |
+| D8 | `[ ]` **Internal messaging's live updates through the production proxy** (`P3-21`) | Needs UAT or production to check. |
 
 ---
 
