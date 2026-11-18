@@ -65,6 +65,8 @@ const membersBefore = queueMembers();
 const marked = await call(BNZ, 'POST', '/admin/test-records', { entity: 'lead', record_id: leadId, note: MARK });
 assert.equal(marked.status, 201, JSON.stringify(marked.body));
 const markId = one("SELECT id FROM test_records WHERE entity = 'lead' AND record_id = ?", [leadId]).id;
+const madeFailures = [];
+const madeRuns = [];
 
 try {
   await test('a follow-up on a Bonanza lead cannot be completed or moved from Bigul', async () => {
@@ -137,6 +139,24 @@ try {
     assert.ok(one('SELECT id FROM test_records WHERE id = ?', [markId]), 'the mark was removed');
   });
 
+  await test('a Bonanza lead\'s automation failures and runs are neither listed nor acted on from Bigul', async () => {
+    const ruleId = one('SELECT id FROM rules ORDER BY id LIMIT 1').id;
+    const failure = Number(run('INSERT INTO rule_failures (rule_id, lead_id, action_type, error) VALUES (?,?,?,?)',
+      [ruleId, leadId, 'task', MARK]).lastInsertRowid);
+    madeFailures.push(failure);
+    const health = await call(BGL, 'GET', '/admin/rules/health');
+    assert.equal(health.status, 200, JSON.stringify(health.body));
+    assert.ok(!health.body.failures.some((f) => f.id === failure), 'the failure, and the lead\'s name, were listed to Bigul');
+    refused(await call(BGL, 'POST', `/admin/rules/failures/${failure}/resolve`), 'resolve');
+    refused(await call(BGL, 'POST', `/admin/rules/failures/${failure}/retry`), 'retry');
+    assert.equal(one('SELECT resolved_at FROM rule_failures WHERE id = ?', [failure]).resolved_at, null);
+    madeRuns.push(Number(run('INSERT INTO rule_runs (rule_id, lead_id, matched, detail) VALUES (?,?,1,?)', [ruleId, leadId, MARK]).lastInsertRowid));
+    const runs = await call(BGL, 'GET', `/admin/rules/${ruleId}/runs`);
+    assert.ok(!runs.body.some((r) => r.lead_id === leadId), 'a Bonanza lead\'s run was listed to Bigul');
+    const own = await call(BNZ, 'GET', '/admin/rules/health');
+    assert.ok(own.body.failures.some((f) => f.id === failure), 'Bonanza\'s own failure was not listed to Bonanza');
+  });
+
   await test('Bonanza\'s own Admin still can', async () => {
     const done = await call(BNZ, 'POST', `/activities/follow-ups/${task.id}/complete`);
     assert.equal(done.status, 200, JSON.stringify(done.body));
@@ -148,6 +168,8 @@ try {
     assert.equal(unmarked.status, 200, JSON.stringify(unmarked.body));
   });
 } finally {
+  for (const id of madeFailures) run('DELETE FROM rule_failures WHERE id = ?', [id]);
+  for (const id of madeRuns) run('DELETE FROM rule_runs WHERE id = ?', [id]);
   run('DELETE FROM test_records WHERE entity = ? AND record_id = ?', ['lead', leadId]);
   run('DELETE FROM reminders WHERE task_id IN (?, ?)', [task.id, partnerTask.id]);
   run('DELETE FROM tasks WHERE id IN (?, ?)', [task.id, partnerTask.id]);

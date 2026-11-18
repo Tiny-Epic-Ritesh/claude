@@ -1061,13 +1061,35 @@ router.delete('/rules/:id', requirePermission('admin.rules'), (req, res) => {
 });
 
 router.get('/rules/:id/runs', requirePermission('admin.rules'), (req, res) => {
-  res.json(all('SELECT r.*, l.name AS lead_name FROM rule_runs r LEFT JOIN leads l ON l.id = r.lead_id WHERE r.rule_id = ? ORDER BY r.created_at DESC LIMIT 100', [req.params.id]));
+  /* N-12: each run names its lead, so only the reader's businesses' runs. */
+  const orgs = orgsFor(req.user);
+  const marks = orgs.map(() => '?').join(',') || 'NULL';
+  res.json(all(
+    `SELECT r.*, l.name AS lead_name FROM rule_runs r LEFT JOIN leads l ON l.id = r.lead_id
+      WHERE r.rule_id = ? AND (r.lead_id IS NULL OR l.sales_org IN (${marks}))
+      ORDER BY r.created_at DESC LIMIT 100`,
+    [req.params.id, ...orgs],
+  ));
 });
 
 /** Automation health — conflicts, ambiguous ordering and the failure queue. */
-router.get('/rules/health', requirePermission('admin.rules'), (_req, res) => {
-  res.json(healthReport());
+router.get('/rules/health', requirePermission('admin.rules'), (req, res) => {
+  res.json(healthReport(orgsFor(req.user)));
 });
+
+/* N-12: a failure is on a lead, and a lead is one business's. Resolving one
+   hides it from the queue and retrying one runs a rule on that lead; both took
+   the failure by id from either business. Answered as not found, as the list
+   now does not show it. */
+const failureInBook = (req, res) => {
+  const row = one('SELECT * FROM rule_failures WHERE id = ?', [req.params.id]);
+  const lead = row?.lead_id ? one('SELECT sales_org FROM leads WHERE id = ?', [row.lead_id]) : null;
+  if (!row || (lead && !mayUseOrg(req.user, lead.sales_org))) {
+    res.status(404).json({ error: 'Failure not found' });
+    return null;
+  }
+  return row;
+};
 
 /**
  * Mark a failure dealt with.
@@ -1077,8 +1099,8 @@ router.get('/rules/health', requirePermission('admin.rules'), (_req, res) => {
  * how a queue becomes background noise.
  */
 router.post('/rules/failures/:id/resolve', requirePermission('admin.rules'), (req, res) => {
-  const row = one('SELECT * FROM rule_failures WHERE id = ?', [req.params.id]);
-  if (!row) return res.status(404).json({ error: 'Failure not found' });
+  const row = failureInBook(req, res);
+  if (!row) return undefined;
 
   run("UPDATE rule_failures SET resolved_at = datetime('now'), resolved_by = ? WHERE id = ?",
     [req.user.id, req.params.id]);
@@ -1088,8 +1110,8 @@ router.post('/rules/failures/:id/resolve', requirePermission('admin.rules'), (re
 
 /** Re-run one rule against just the lead that failed. */
 router.post('/rules/failures/:id/retry', requirePermission('admin.rules'), (req, res) => {
-  const row = one('SELECT * FROM rule_failures WHERE id = ?', [req.params.id]);
-  if (!row) return res.status(404).json({ error: 'Failure not found' });
+  const row = failureInBook(req, res);
+  if (!row) return undefined;
 
   /* QA-02. A retry puts the given-up action back and runs it now. It counts as
      resolved only if something actually ran: a rule held by office hours, or a
