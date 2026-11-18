@@ -37,7 +37,7 @@ which deploys to labs.
 
 | # | Item | From the report | State |
 |---|---|---|---|
-| A1 | `[~]` **OPS-46** — typed times saved 5½ h late; the office calendar ran on UTC | Not in the report (found 16 Oct, Part 4 item 8.4) | Fixed and tested, commit `d56bbf2`. **Not on GitHub yet:** the push from this session was refused (403). |
+| A1 | `[x]` ~~**OPS-46** — typed times saved 5½ h late; the office calendar ran on UTC~~ | Not in the report (found 16 Oct, Part 4 item 8.4) | Fixed and tested, commit `d56bbf2`, in pull request #2 for Ritesh to merge. Your retest: the five checks in the PR. |
 | A2 | `[ ]` **The P0 permission gate** — direct API allow/deny tests for all 11 internal roles and the partner role, in both businesses, covering allowed, denied, masked and exported values. Includes `N-12`: put every POST and PATCH route that takes a record id under the business-boundary test, then fix what that finds | §1 "P0: 11 roles and API-enforced permissions"; §5 "direct API negative tests"; §6 steps 1 and 7 | Not started. The largest open item. |
 | A3 | `[ ]` **OPS-47 to OPS-54** — find the eight unrecorded defects again, write each down, fix each in its own commit | Not in the report | Not started. They were never written down, so what is found may not be the same eight. |
 | A4 | `[ ]` **QA-10** (P1) — the call panel: opaque, scrolls, End call always visible, actions that follow the call's state, both themes | §2 QA-10; Part 4 item 9 | Not started. Ruled 15 Oct: keep the panel and redesign it. Ruled 18 Nov: a design preview in both themes first, built only once approved. |
