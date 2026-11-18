@@ -72,19 +72,20 @@ but are as much part of the report.
 | QA-42 | P1 | **fixed** 13 Oct | Watched as the Dealer in the Service Console, as in the auditor's screenshot. Start engaging opens the panel and Mark as Exploring works. The reported result came from the panel's other moves: it offered every legal move whether or not the role may make it, and sent a refusal to the page behind it. Lost, which a Dealer cannot set, answered 403 and nothing showed -- no change, Activity 0, no product mutation in the audit, as reported. A move the role cannot make is now disabled with the reason, a refusal shows in the panel, and a move that worked says so. The auditor also asked for a Dealer's Warm to be refused; **ruled 13 Oct: a Dealer may mark Warm** -- the role matrix is right, so there is no refusal to test. `round4d.test.mjs`. |
 | QA-43 | P1 | **fixed** `eaf4743` and batch one | One rule for which KYC journeys a person sees (`journeyScope`): the product in their books, and its lead one they may see; a journey with no lead yet only for those who see every lead. The board, every cockpit, the detail, the coach and the Copilot use it. Before, the board listed every journey in the business and the detail refused those whose lead the reader could not see -- a Caller, Dealer, Sales RM or Partner RM was listed journeys they could not open. The two writes `N-12` named (take over, force a step) are held to it too. Checked for every role that reads KYC, journey by journey. |
 
-Counted: **fixed 37** — QA-01, 02, 03, 04, 05, 06, 08, 09, 11, 12, 13, 17, 18, 19, 20, 21,
-22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 37, 38, 39, 40, 41, 42, 43. **Closed by
-ruling 1** — QA-36. **Partly fixed 0.** **Open 5** — QA-07 and QA-10 (UI builds);
-QA-14, QA-15 and QA-16 (feature requests under earlier IDs; QA-16 is being designed from both
-LeadSquared accounts' reports, read 15 Oct, for approval before it is built). Every open ID is traced or classified;
-none is "unverified".
+Counted (corrected 18 Nov; this paragraph had not followed the 16 Oct commits): **fixed 39** —
+QA-01, 02, 03, 04, 05, 06, 07, 08, 09, 11, 12, 13, 15, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
+27, 28, 29, 30, 31, 32, 33, 34, 35, 37, 38, 39, 40, 41, 42, 43. **Closed by ruling 1** — QA-36.
+**Partly fixed 0.** **Open 3** — QA-10 (a UI build), QA-14 and QA-16 (feature requests under
+earlier IDs; QA-16's design was approved 15 Oct). Every open ID is traced or classified; none is
+"unverified". The working checklist, with what waits on Ritesh, is
+[ROUND-4-CHECKLIST.md](ROUND-4-CHECKLIST.md).
 
 ### Everything else the report asks for
 
 | Point | Where in the report | State |
 |---|---|---|
 | Per-ID status back, against the report and earlier IDs | §7, retest gate | **Delivered** — this document, kept current |
-| Re-run the linked reproduction paths **after deployment** | §7, retest gate | Pending a deploy of `84c2c2f` to labs.tinyepic.in — a deployment, which I do not do |
+| Re-run the linked reproduction paths **after deployment** | §7, retest gate | **Deployed:** GitHub Actions run #296 put `5019787` (16 Oct) on UAT, successfully. The re-run itself is Ritesh's or the auditor's: [ROUND-4-CHECKLIST.md](ROUND-4-CHECKLIST.md) B1 (corrected 18 Nov) |
 | **Revoke synthetic partner #9's portal access and sessions** — "priority cleanup" | §9, and QA-33 | **handled in code, pending deploy.** `OPS-15`'s start-up check withdraws every stored `partner<id>` password with its sessions, #9's included, the first time the fixed build starts on labs; the record itself is kept, as §9 asks. *Withdraw portal access* now exists on the partner's page. |
 | A scoped, auditable cleanup mechanism for test entities the UI cannot retire | §9 | **built** in QA-37 batch 5: Setup → Test records. An Admin marks a record as test data, the list previews what retiring does to each (or what stops it), and retiring takes each out of use through its own lifecycle, with a reason; nothing is deleted. Running it on labs is Ritesh's, after the retest. |
 | Preserve reproduction records #40–#44, cases #9–#11, lists #3–#4, campaigns #3–#4, partners #9–#10, rule #6, automation #2 until retest | §9 | Nothing here touches them; they live in labs.tinyepic.in's database |
@@ -94,7 +95,7 @@ none is "unverified".
 | BRD gate P3 — DKYC validation, timers, abandonment, audited override | §1 | QA-34 fixed; timers, abandonment and the override write untested |
 | BRD gate P4 — SLA sweep and reopen, live delivery, CSAT | §1 | QA-30 fixed; the rest untested |
 | Pilot gates: credential hashing, session expiry and revocation, server-side authorisation, partner isolation, KYC document encryption and retention, consent and DND, India residency, the pilot database, latency and availability | §1 | not started as an **evidence** exercise. Some exist in code (passwords are hashed; PAN is encrypted); none has been written up as the auditor asks |
-| Implementation sequence, steps 1–9 | §6 | Steps 1 (records), 5 (validation, partly), 6 (partner activation) advanced by `84c2c2f`. Step 2, QA-02, built 13 Oct. Steps 3, 4, 7, 8, 9 not started |
+| Implementation sequence, steps 1–9 | §6 | Steps 1–7: every QA ID under them is fixed (corrected 18 Nov; this row predated the 13–16 Oct fixes). The role-by-role API proof steps 1 and 7 ask for is the P0 gate row above. Steps 8 and 9 open: [ROUND-4-CHECKLIST.md](ROUND-4-CHECKLIST.md) A4–A9 |
 | Evidence attached to each fix | §6 | Tests in `round4.test.mjs`; before/after screenshots need the deployed build |
 | Regression table against Rounds 1–3 and Ritesh's Part 4 | §4 | Rounds 1–3: each item maps to an ID above. Part 4 has its own table, [below](#riteshs-part-4): two of its items are not in the report |
 
