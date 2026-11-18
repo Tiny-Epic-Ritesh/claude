@@ -40,8 +40,9 @@ export default function KycConsole({ session }) {
           </p>
         </div>
         <div className="row">
-          {/* Part 4, item 8.4: it ran on a click, styled as bare text, and said nothing. */}
-          <button type="button" className="btn" onClick={async () => {
+          {/* Part 4, item 8.4: it ran on a click, styled as bare text, and said nothing.
+              A2d: it takes kyc.manage, so it is offered only to those who hold it. */}
+          {(session?.permissions ?? []).includes('kyc.manage') && <button type="button" className="btn" onClick={async () => {
             try {
               const r = await api.post('/kyc/sweep');
               announce('Stall check done', [
@@ -52,7 +53,7 @@ export default function KycConsole({ session }) {
               ], r.stalled || r.abandoned ? 'warn' : 'ok');
               reload();
             } catch (err) { setActionError(err.message); }
-          }}>Run stall sweep</button>
+          }}>Run stall sweep</button>}
           <a className="btn btn-primary" href={appUrl("/dkyc")} target="_blank" rel="noreferrer">Open DKYC portal</a>
         </div>
       </div>

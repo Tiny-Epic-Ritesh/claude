@@ -139,22 +139,37 @@ const APPLY = {
     return { moved, requested: ids.length, skipped: ids.length - moved };
   },
 
-  bulk_reassign: (req) => {
+  bulk_reassign: (req, decidedBy) => {
     const ids = req.payload?.lead_ids ?? [];
     const owner = Number(req.payload?.owner_id);
     if (!ids.length || !owner) throw new Error('Nothing to move, or nobody to move it to');
 
+    /* A2d: checked now, as the account move above is, not only when it was
+       asked. The new owner may have left while this waited, and a lead may
+       have been deleted or moved to the other business; a decision made before
+       that happened does not carry it across. This moved any lead id it was
+       given, into any business. */
+    const to = one('SELECT id, sales_org FROM users WHERE id = ? AND active = 1', [owner]);
+    if (!to) throw new Error('That owner is no longer active');
+
     let moved = 0;
     for (const id of ids) {
+      const lead = one('SELECT id, owner_id, sales_org FROM leads WHERE id = ? AND deleted_at IS NULL', [id]);
+      if (!lead || lead.sales_org !== to.sales_org) continue;
       // owner_queue_id is cleared too: a lead cannot be owned by a person and a
       // queue at once.
       const r = run(
         "UPDATE leads SET owner_id = ?, owner_queue_id = NULL, updated_at = datetime('now') WHERE id = ?",
         [owner, id],
       );
+      // One row per lead, as the routes that move them alone write: who was
+      // moved, and by whose decision, stays answerable.
+      if (r.changes) {
+        audit(decidedBy?.id ?? null, 'lead.reassign', 'lead', id, { from: lead.owner_id, to: owner, via_approval: req.id });
+      }
       moved += r.changes;
     }
-    return { moved };
+    return { moved, requested: ids.length, skipped: ids.length - moved };
   },
 
   /* P3-21. Checked again now, not only when it was asked: a request can sit
@@ -269,6 +284,14 @@ router.post('/', (req, res) => {
   const needed = REQUEST_CAP[scope];
   if (needed && !req.caps.has(needed)) {
     return res.status(403).json({ error: `Requesting this needs ${needed}`, required: needed });
+  }
+
+  /* A2d. Whatever is asked here is about a record in the asker's own books,
+     or about configuration, which has none -- read the way the decision reads
+     it (inReach), so nothing can be raised that nobody in the right business
+     could decide. A partner is read below, and says so in its own words. */
+  if (spec.entity !== 'partner' && !inReach({ entity: spec.entity, entity_id: Number(entityId) || -1 }, req.user)) {
+    return res.status(404).json({ error: 'That record was not found' });
   }
 
   /* OPS-25. A partner request was raised without reading the partner: the

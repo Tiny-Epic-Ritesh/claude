@@ -3166,6 +3166,14 @@ CREATE TABLE IF NOT EXISTS approvals (
 CREATE INDEX IF NOT EXISTS idx_approvals_pending ON approvals(entity, entity_id, status);
 CREATE INDEX IF NOT EXISTS idx_approvals_scope ON approvals(scope, status);
 
+/* A2d. A bulk move of leads or accounts names the person they move to: its
+   entity_id has always been that person's user id. It was filed as 'lead' or
+   'client', so its business was read from whichever lead or account shared
+   the number. Filed as what it is; runs on every boot and changes nothing the
+   second time. */
+UPDATE approvals SET entity = 'user'
+ WHERE scope IN ('bulk_reassign', 'bulk_client_reassign') AND entity <> 'user';
+
 /* ---- Internal messaging (P3-21) ------------------------------------- */
 
 /* A conversation, and who is in it. Members are rows rather than two columns

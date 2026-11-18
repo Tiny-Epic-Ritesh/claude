@@ -64,8 +64,16 @@ export const APPROVAL_SCOPES = {
   },
   bulk_reassign: {
     label: 'Bulk lead reassignment',
-    entity: 'lead',
+    /* About the person the leads move to: entity_id is their user id, as both
+       routes that raise it have always written it, and the request is in their
+       business -- the only one the leads can be in, since both routes leave the
+       rest behind. It was filed as 'lead', so its business was read from
+       whichever lead happened to share that number: for six of the eleven
+       seeded owners a lead in the other business, whose Admins were then the
+       ones asked to decide it, while the owner's own never saw it (A2d). */
+    entity: 'user',
     approver: 'lead.reassign',
+    raisedFrom: 'a bulk change of owner, on the leads list or a lead list',
     describe: (r) => `Move ${r.payload?.lead_ids?.length ?? 0} leads to ${r.subject_name}`,
     why: 'Moves a book between people — attribution, incentives and coverage all follow it.',
   },
@@ -112,8 +120,10 @@ export const APPROVAL_SCOPES = {
      it books and whoever the client rings when something goes wrong. */
   bulk_client_reassign: {
     label: 'Bulk account reassignment',
-    entity: 'client',
+    // The person the accounts move to, as the lead move above (A2d).
+    entity: 'user',
     approver: 'client.reassign',
+    raisedFrom: 'a bulk change of owner on accounts',
     describe: (r) => `Move ${r.payload?.client_ids?.length ?? 0} accounts to ${r.subject_name}`,
     why: 'Moves live accounts between people — the relationship, the brokerage they book, '
       + 'and who the client rings all follow the owner.',
@@ -389,6 +399,9 @@ export const orgOf = (entity, entityId) => {
     client: 'SELECT sales_org FROM clients WHERE id = ?',
     // A KYC journey belongs to its product, and a product to one business.
     product_type: 'SELECT sales_org FROM product_types WHERE id = ?',
+    /* A bulk move belongs to the business of the person it moves to (A2d):
+       the leads or accounts it carries are in theirs, and only theirs. */
+    user: 'SELECT sales_org FROM users WHERE id = ?',
   }[entity];
   if (!sql) return null;
   return one(sql, [entityId])?.sales_org ?? null;

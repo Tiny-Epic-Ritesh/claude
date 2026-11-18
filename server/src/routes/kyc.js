@@ -240,7 +240,12 @@ internal.get('/journeys/:id/coach', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-internal.post('/sweep', (_req, res) => res.json(kyc.sweepKyc()));
+/* A2d: any signed-in user could run this, over both businesses' journeys,
+   and was told both businesses' counts -- the case sweep's OPS-29 and OPS-45
+   again. It takes kyc.manage, as the console's other writes do, and acts on
+   the reader's own businesses; the server's own sweep still covers every
+   journey every 30 seconds. */
+internal.post('/sweep', requirePermission('kyc.manage'), (req, res) => res.json(kyc.sweepKyc({ orgs: orgsFor(req.user) })));
 
 /* ================================ public =============================== */
 

@@ -11,7 +11,7 @@
  */
 
 import { all, one, run, SALES_ORGS } from '../db.js';
-import { leadScope, clientScope, can, userCan } from '../auth.js';
+import { leadScope, clientScope, ticketScope, partnerScope, can, userCan } from '../auth.js';
 import { resolveRange, inRange } from './daterange.js';
 
 /* ------------------------------------------------------------ shipped KRA */
@@ -205,6 +205,14 @@ export function actualFor(source, user, range) {
   const maySeeClients = userCan(user, 'client.view.all') || userCan(user, 'client.view.own');
   const cScope = maySeeClients ? clientScope(user, 'c') : null;
   const created = inRange('l.created_at', range);
+  /* A2d. Cases, partners and KYC applications were counted across the whole
+     firm -- both businesses, and everybody's -- so a Bigul scorecard carried
+     Bonanza's figures, and a Partner RM's "Active partners" was every active
+     partner there is. Each is now counted through the reader's own scope, as
+     the lead and account figures above always were: no figure on a scorecard
+     is made of records its reader may not see. */
+  const tScope = ticketScope(user, 't');
+  const pScope = partnerScope(user, 'p');
 
   const num = (sql, params) => {
     try { return one(sql, params)?.n ?? null; } catch { return null; }
@@ -292,34 +300,42 @@ export function actualFor(source, user, range) {
         lScope.params);
 
     case 'kyc_stalled':
+      // An application is the desk's through its lead, as "Unattended" is.
       return num(
-        `SELECT COUNT(*) n FROM kyc_journeys j
+        `SELECT COUNT(*) n FROM kyc_journeys j JOIN leads l ON l.id = j.lead_id
           WHERE j.status NOT IN ('Complete','Abandoned')
-            AND julianday('now') - julianday(j.started_at) > 7`, []);
+            AND julianday('now') - julianday(j.started_at) > 7
+            AND l.deleted_at IS NULL AND ${lScope.sql}`, lScope.params);
 
     case 'partners_active':
-      return num("SELECT COUNT(*) n FROM partners WHERE state_code = 'ACTIVE'", []);
+      return num(`SELECT COUNT(*) n FROM partners p WHERE p.state_code = 'ACTIVE' AND ${pScope.sql}`, pScope.params);
 
     case 'partner_leads':
+      /* Referrals from the partners the reader looks after, in that partner's
+         own business. */
       return num(
-        `SELECT COUNT(*) n FROM leads l WHERE l.partner_id IS NOT NULL AND l.deleted_at IS NULL AND ${created.sql}`,
-        created.params);
+        `SELECT COUNT(*) n FROM leads l JOIN partners p ON p.id = l.partner_id
+          WHERE l.deleted_at IS NULL AND l.sales_org = p.sales_org AND ${created.sql} AND ${pScope.sql}`,
+        [...created.params, ...pScope.params]);
 
     case 'onboarding_stalled':
-      return num("SELECT COUNT(*) n FROM partners WHERE state_code = 'ONBOARDING'", []);
+      return num(`SELECT COUNT(*) n FROM partners p WHERE p.state_code = 'ONBOARDING' AND ${pScope.sql}`, pScope.params);
 
     case 'cases_resolved': {
       const r = inRange('t.resolved_at', range);
-      return num(`SELECT COUNT(*) n FROM tickets t WHERE t.resolved_at IS NOT NULL AND ${r.sql}`, r.params);
+      return num(`SELECT COUNT(*) n FROM tickets t WHERE t.resolved_at IS NOT NULL AND ${r.sql} AND ${tScope.sql}`,
+        [...r.params, ...tScope.params]);
     }
 
     case 'sla_breaches':
       return num(
         `SELECT COUNT(*) n FROM tickets t WHERE t.status NOT IN ('Resolved','Closed')
-           AND (t.breached = 1 OR (t.resolution_due IS NOT NULL AND t.resolution_due < datetime('now')))`, []);
+           AND (t.breached = 1 OR (t.resolution_due IS NOT NULL AND t.resolution_due < datetime('now')))
+           AND ${tScope.sql}`, tScope.params);
 
     case 'csat':
-      return num('SELECT CAST(AVG(csat) * 20 AS INTEGER) n FROM tickets WHERE csat IS NOT NULL', []);
+      return num(`SELECT CAST(AVG(t.csat) * 20 AS INTEGER) n FROM tickets t WHERE t.csat IS NOT NULL AND ${tScope.sql}`,
+        tScope.params);
 
     case 'followups_kept':
       // No completion timestamp on reminders yet, so this is honestly unknown

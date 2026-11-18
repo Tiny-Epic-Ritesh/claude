@@ -20,7 +20,7 @@
 
 import { Router } from 'express';
 import { all, one, run, audit, transact } from '../db.js';
-import { requireUser, requirePermission, orgsFor, activeOrg, mayUseOrg } from '../auth.js';
+import { requireUser, requirePermission, orgsFor, activeOrg, mayUseOrg, userCan } from '../auth.js';
 import {
   TRIGGERS, STEP_KINDS, isTrigger, validate, report, whatRunsOn, enter,
 } from '../engine/automation.js';
@@ -102,6 +102,11 @@ const OPEN_WHEN_ARCHIVED = new Set(['/restore', '/test']);
  */
 router.use('/:id', (req, res, next) => {
   if (req.method === 'GET' || !/^\d+$/.test(req.params.id)) return next();
+  /* A2d: this ran before each route's own requirePermission('admin.rules'), so
+     a request about to be refused could still record a flow version under the
+     asker's name and be told the flow was archived. Every write here takes
+     admin.rules: without it, nothing happens before the route says no. */
+  if (!userCan(req.user, 'admin.rules')) return next();
   const auto = one('SELECT * FROM automation WHERE id = ?', [req.params.id]);
   if (!auto || !mayUseOrg(req.user, auto.sales_org)) return next();
   if (auto.archived_at && !OPEN_WHEN_ARCHIVED.has(req.path) && !(req.method === 'DELETE' && req.path === '/')) {

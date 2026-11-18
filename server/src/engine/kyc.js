@@ -981,8 +981,22 @@ export function completeJourney(journeyId, form) {
  * Sweep in-progress journeys: flag stalls, abandon after an hour, pause on tickets.
  * Runs on an interval and is also exposed to the CRM for a manual refresh.
  */
-export function sweepKyc() {
-  const live = all("SELECT * FROM kyc_journeys WHERE status IN ('In Progress','Stalled')");
+/**
+ * The server runs this every 30 seconds over every journey. A2d: the button
+ * asks with `orgs`, the reader's businesses -- a journey belongs to its
+ * product's business (OPS-41), its lead's if it has no product.
+ */
+export function sweepKyc({ orgs = null } = {}) {
+  const live = orgs
+    ? all(
+      `SELECT j.* FROM kyc_journeys j
+         LEFT JOIN product_types p ON p.id = j.product_type_id
+         LEFT JOIN leads l ON l.id = j.lead_id
+        WHERE j.status IN ('In Progress','Stalled')
+          AND COALESCE(p.sales_org, l.sales_org) IN (${orgs.map(() => '?').join(',') || 'NULL'})`,
+      orgs,
+    )
+    : all("SELECT * FROM kyc_journeys WHERE status IN ('In Progress','Stalled')");
   let stalled = 0;
   let abandoned = 0;
 
