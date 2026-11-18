@@ -7437,3 +7437,13 @@ a.msg-chip:hover { color: var(--ink); border-color: var(--accent); }
 @media (min-width: 1100px) {
   .main-content.with-copilot { padding-right: min(420px, 100vw); }
 }
+
+/* Ruled 18 Nov: settings both businesses share are a Superadmin's. The note
+   under a shared Setup screen's title, for everybody else -- the shared look of
+   field notes, sized for the page head. */
+.setup-pagehead p.setup-shared-note {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+}

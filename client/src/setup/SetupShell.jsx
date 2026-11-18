@@ -198,8 +198,11 @@ function SectionLink({ section, pinned, onTogglePin }) {
  * above the title is the answer to "where am I", which a flat sidebar of 22
  * items does not otherwise give.
  */
-function PageHead({ section }) {
+function PageHead({ section, session }) {
   if (!section) return null;
+  /* Ruled 18 Nov: a setting both businesses share is changed by a Superadmin.
+     Said before anybody edits, rather than discovered as a refusal on Save. */
+  const sharedNote = section.shared && !(session?.permissions ?? []).includes('setup.shared') ? section.shared : null;
   const group = GROUPS.find((g) => g.key === section.group);
   return (
     <header className="setup-pagehead">
@@ -222,6 +225,11 @@ function PageHead({ section }) {
         )}
         <h1>{section.label}</h1>
         <p>{section.blurb}</p>
+        {sharedNote && (
+          <p className="field-note setup-shared-note" role="note">
+            <Icon name="lock" size={14} /> {sharedNote}
+          </p>
+        )}
       </div>
       {/* Screens promote their primary action into here. Empty until one does,
           which is why it collapses rather than reserving space. */}
@@ -421,7 +429,7 @@ export default function SetupShell({ session, orgs = [], activeOrg, onSwitchOrg,
         )}
 
         <main className="setup-main" data-density={density}>
-          <PageHead section={current} />
+          <PageHead section={current} session={session} />
 
           {/* Keyed on the path so a crash on one screen clears when you leave
               it, rather than sticking until a full reload. */}

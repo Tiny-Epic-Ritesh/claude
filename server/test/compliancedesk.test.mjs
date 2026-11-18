@@ -131,18 +131,23 @@ try {
     }
   });
 
-  await test('an Admin changes a flag\'s route in Setup, and the change is audited and used', async () => {
+  /* Ruled 18 Nov: a flag's route serves both businesses, so it is a shared
+     setting -- changed by a Superadmin, refused to an Admin. */
+  await test('a Superadmin changes a flag\'s route in Setup, and the change is audited and used', async () => {
     const complaint = one("SELECT id FROM ticket_categories WHERE name = 'Complaint'");
-    const res = await as(ADMIN)('PUT', `/admin/compliance-flags/${encodeURIComponent('Urgency on funds')}`, { category_id: complaint.id, priority: 'Critical' });
+    const byAdmin = await as(ADMIN)('PUT', `/admin/compliance-flags/${encodeURIComponent('Urgency on funds')}`, { category_id: complaint.id, priority: 'Critical' });
+    assert.equal(byAdmin.status, 403, `an Admin changed a shared route: HTTP ${byAdmin.status}`);
+    assert.equal(byAdmin.body?.required, 'setup.shared');
+    const res = await as(SUPER)('PUT', `/admin/compliance-flags/${encodeURIComponent('Urgency on funds')}`, { category_id: complaint.id, priority: 'Critical' });
     assert.equal(res.status, 200, `the change answered ${res.status}: ${res.body?.error}`);
     const audit = one("SELECT * FROM config_audit WHERE area = 'compliance_flag' AND target = 'Urgency on funds' ORDER BY id DESC LIMIT 1");
-    assert(audit && audit.actor_id === ADMIN.id, 'the change is not in the configuration audit');
+    assert(audit && audit.actor_id === SUPER.id, 'the change is not in the configuration audit');
     const t = await flagCall(bonanzaLead, 'Urgency on funds');
     assert.equal(t.category_name, 'Complaint');
     assert.equal(t.priority, 'Critical');
   });
 
-  await test('a restart does not undo an Admin\'s route', async () => {
+  await test('a restart does not undo a Superadmin\'s route', async () => {
     ensureComplianceRouting();
     const complaint = one("SELECT id FROM ticket_categories WHERE name = 'Complaint'");
     assert.equal(routeRow('Urgency on funds').category_id, complaint.id);
@@ -150,7 +155,7 @@ try {
   });
 
   await test('Setup refuses what is not a route', async () => {
-    const put = (flag, body, who = ADMIN) => as(who)('PUT', `/admin/compliance-flags/${encodeURIComponent(flag)}`, body);
+    const put = (flag, body, who = SUPER) => as(who)('PUT', `/admin/compliance-flags/${encodeURIComponent(flag)}`, body);
     const complaint = one("SELECT id FROM ticket_categories WHERE name = 'Complaint'");
     assert.equal((await put('Urgency on funds', { category_id: complaint.id, priority: 'Whenever' })).status, 400);
     assert.equal((await put('Urgency on funds', { category_id: 999999, priority: 'High' })).status, 400);

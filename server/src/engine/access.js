@@ -102,6 +102,7 @@ export const CAPABILITY_CATALOGUE = [
   ['admin.objects', 'Configure objects & fields', 'Setup', 'Add fields, rename labels, edit picklists', 1],
   ['admin.policies', 'Manage business policies', 'Setup', 'What partners may refer, and how exports carry personal data', 1],
   ['admin.system', 'System configuration', 'Setup', 'Sales orgs, integrations, platform settings', 1],
+  ['setup.shared', 'Change settings both businesses share', 'Setup', 'Roles, fields and forms, call outcomes, working calendars, case categories and SLA, automation rules, field masking, the role tab grid and column defaults, the messaging grid, and picklist values, validation rules and queues for both businesses', 1],
 
   // Marketing
   ['campaign.manage', 'Manage campaigns', 'Marketing', null, 0],

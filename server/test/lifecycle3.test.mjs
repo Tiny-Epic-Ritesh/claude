@@ -37,6 +37,8 @@ const MARK = `LC3 probe ${RUN}`;
 
 const AUTHOR = await probeAdmin('lc3-author', { role: 'marketing_manager', sales_org: 'BONANZA' });
 const APPROVER = await probeAdmin('lc3-approver', { role: 'admin', sales_org: 'BONANZA' });
+/* Ruled 18 Nov: settings both businesses share are a Superadmin's (setup.shared). */
+const SUPER = await probeAdmin('lc3-super', { role: 'superadmin' });
 const BIGUL = await probeAdmin('lc3-bigul', { role: 'admin', sales_org: 'BIGUL' });
 const as = (who) => async (method, url, body) => {
   const res = await fetch(`${BASE}/api${url}`, { method, headers: who.headers, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -138,19 +140,19 @@ try {
     const today = one("SELECT date('now', '+330 minutes') d").d;
     const future = one("SELECT date('now', '+330 minutes', '+400 days') d").d;
 
-    assert.equal((await as(APPROVER)('POST', '/admin/calendars/office/days', { on_date: past, name: `${MARK} past` })).status, 409, 'a past day was added');
-    assert.equal((await as(APPROVER)('POST', '/admin/calendars/office/days', { on_date: today, name: `${MARK} today` })).status, 409, 'today was added');
-    const added = await as(APPROVER)('POST', '/admin/calendars/office/days', { on_date: future, name: `${MARK} future` });
+    assert.equal((await as(SUPER)('POST', '/admin/calendars/office/days', { on_date: past, name: `${MARK} past` })).status, 409, 'a past day was added');
+    assert.equal((await as(SUPER)('POST', '/admin/calendars/office/days', { on_date: today, name: `${MARK} today` })).status, 409, 'today was added');
+    const added = await as(SUPER)('POST', '/admin/calendars/office/days', { on_date: future, name: `${MARK} future` });
     assert.equal(added.status, 201, `a future day was refused: ${added.body?.error}`);
     const futureRow = one('SELECT id FROM calendar_days WHERE name = ?', [`${MARK} future`]);
     days.push(futureRow.id);
-    assert.equal((await as(APPROVER)('DELETE', `/admin/calendars/days/${futureRow.id}`)).status, 200, 'a future day could not be removed');
+    assert.equal((await as(SUPER)('DELETE', `/admin/calendars/days/${futureRow.id}`)).status, 200, 'a future day could not be removed');
 
     const office = one("SELECT id FROM calendars WHERE kind = 'office'").id;
     const old = Number(run("INSERT INTO calendar_days (calendar_id, on_date, name, source) VALUES (?, ?, ?, 'manual')",
       [office, past, `${MARK} old`]).lastInsertRowid);
     days.push(old);
-    const refused = await as(APPROVER)('DELETE', `/admin/calendars/days/${old}`);
+    const refused = await as(SUPER)('DELETE', `/admin/calendars/days/${old}`);
     assert.equal(refused.status, 409, `a past holiday was removed: HTTP ${refused.status}`);
     assert(one('SELECT id FROM calendar_days WHERE id = ?', [old]), 'the past day went anyway');
   });
@@ -168,10 +170,10 @@ try {
     ).lastInsertRowid);
     tickets.push(kept);
 
-    assert.equal((await as(APPROVER)('PATCH', `/admin/categories/${cat}`, { name: `${MARK} other` })).status, 409, 'two categories share a name');
-    assert.equal((await as(APPROVER)('PATCH', `/admin/categories/${cat}`, { name: `${MARK} payouts` })).status, 200);
-    assert.equal((await as(APPROVER)('POST', `/admin/categories/${cat}/retire`, { reason: '' })).status, 400, 'retired with no reason');
-    const res = await as(APPROVER)('POST', `/admin/categories/${cat}/retire`, { reason: 'Merged into account changes' });
+    assert.equal((await as(SUPER)('PATCH', `/admin/categories/${cat}`, { name: `${MARK} other` })).status, 409, 'two categories share a name');
+    assert.equal((await as(SUPER)('PATCH', `/admin/categories/${cat}`, { name: `${MARK} payouts` })).status, 200);
+    assert.equal((await as(SUPER)('POST', `/admin/categories/${cat}/retire`, { reason: '' })).status, 400, 'retired with no reason');
+    const res = await as(SUPER)('POST', `/admin/categories/${cat}/retire`, { reason: 'Merged into account changes' });
     assert.equal(res.status, 200, `retire answered ${res.status}: ${res.body?.error}`);
 
     const meta = await as(APPROVER)('GET', '/meta');
@@ -185,14 +187,14 @@ try {
     run('UPDATE tickets SET category_id = ? WHERE id = ?', [cat, kept]);
     assert.equal((await as(APPROVER)('GET', `/tickets/${kept}`)).status, 200, 'a case with a retired category cannot be opened');
 
-    assert.equal((await as(APPROVER)('POST', `/admin/categories/${cat}/restore`)).status, 200);
+    assert.equal((await as(SUPER)('POST', `/admin/categories/${cat}/restore`)).status, 200);
     assert(one('SELECT active FROM ticket_categories WHERE id = ?', [cat]).active === 1);
   });
 
   await test('a category a compliance flag opens cases in is not retired until the flag is re-routed', async () => {
     const routed = one('SELECT category_id, flag FROM compliance_flag_routes WHERE category_id IS NOT NULL LIMIT 1');
     assert(routed, 'no compliance flag is routed anywhere to test with');
-    const res = await as(APPROVER)('POST', `/admin/categories/${routed.category_id}/retire`, { reason: 'Probing the refusal' });
+    const res = await as(SUPER)('POST', `/admin/categories/${routed.category_id}/retire`, { reason: 'Probing the refusal' });
     assert.equal(res.status, 409, `a compliance category was retired: HTTP ${res.status}`);
     assert(res.body.flags.includes(routed.flag), 'the refusal does not name the flag');
     assert.equal(one('SELECT active FROM ticket_categories WHERE id = ?', [routed.category_id]).active, 1);
@@ -213,7 +215,7 @@ try {
   run('DELETE FROM calendar_days WHERE name LIKE ?', [`${MARK}%`]);
   run('DELETE FROM content_items WHERE library_id = ?', [library]);
   run('DELETE FROM content_library WHERE id = ?', [library]);
-  for (const p of [AUTHOR, APPROVER, BIGUL]) p.cleanup();
+  for (const p of [AUTHOR, APPROVER, BIGUL, SUPER]) p.cleanup();
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

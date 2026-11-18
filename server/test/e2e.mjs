@@ -2045,7 +2045,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
   suite('15 automation rule builder');
 
   await check('the rule library exposes condition fields and action types', async () => {
-    const { data } = await req('/api/admin/rules', { token: T.admin, expect: 200 });
+    const { data } = await req('/api/admin/rules', { token: T.superadmin, expect: 200 });
     assert(data.condition_fields.length >= 10, 'condition field library too small');
     assert(data.action_types.length >= 5, 'action type library too small');
     assert(data.rules.length >= 1, 'no seeded rules');
@@ -2054,7 +2054,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
 
   await check('a dry run reports matches without performing actions', async () => {
     const { data } = await req(`/api/admin/rules/${REF.ruleId}/run`, {
-      method: 'POST', token: T.admin, expect: 200, body: { dry_run: true },
+      method: 'POST', token: T.superadmin, expect: 200, body: { dry_run: true },
     });
     eq(data.dry_run, true, 'dry_run flag');
     assert('evaluated' in data && 'matched_count' in data, 'dry run result shape');
@@ -2065,20 +2065,20 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
 
   await check('a rule can be created, enabled and disabled', async () => {
     const { data } = await req('/api/admin/rules', {
-      method: 'POST', token: T.admin, expect: 201,
+      method: 'POST', token: T.superadmin, expect: 201,
       body: {
         name: 'E2E rule', description: 'created by the test suite',
         conditions: [{ field: 'lead_age_days', op: 'gt', value: 3650 }],
         actions: [{ type: 'notify', params: { role_or_user: 'admin', message: 'e2e' } }],
       },
     });
-    await req(`/api/admin/rules/${data.id}`, { method: 'PATCH', token: T.admin, expect: 200, body: { enabled: 1 } });
-    await req(`/api/admin/rules/${data.id}`, { method: 'PATCH', token: T.admin, expect: 200, body: { enabled: 0 } });
+    await req(`/api/admin/rules/${data.id}`, { method: 'PATCH', token: T.superadmin, expect: 200, body: { enabled: 1 } });
+    await req(`/api/admin/rules/${data.id}`, { method: 'PATCH', token: T.superadmin, expect: 200, body: { enabled: 0 } });
   });
 
   await check('a rule without conditions is rejected', async () => {
     await req('/api/admin/rules', {
-      method: 'POST', token: T.admin, expect: 400,
+      method: 'POST', token: T.superadmin, expect: 400,
       body: { name: 'Bad rule', conditions: [], actions: [{ type: 'notify', params: {} }] },
     });
   });
@@ -3343,7 +3343,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
   await check('roles are data, not code', async () => {
     // The audit's Part 4.1 complaint: four fixed roles meant every persona had
     // to become a "Permission Template". Roles must be creatable at runtime.
-    const { data } = await req('/api/setup/roles', { token: T.admin, expect: 200 });
+    const { data } = await req('/api/setup/roles', { token: T.superadmin, expect: 200 });
     assert(data.length >= 11, `expected the shipped roles, got ${data.length}`);
 
     const rm = data.find((r) => r.code === 'sales_rm');
@@ -3354,7 +3354,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
   });
 
   await check('the capability catalogue is grouped and marks sensitive grants', async () => {
-    const { data } = await req('/api/setup/capabilities', { token: T.admin, expect: 200 });
+    const { data } = await req('/api/setup/capabilities', { token: T.superadmin, expect: 200 });
     assert(data.categories.length > 3, 'capabilities are not grouped');
 
     const all_ = data.categories.flatMap((c) => c.capabilities);
@@ -3365,7 +3365,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
 
   await check('an administrator can create a new role without a developer', async () => {
     const { data } = await req('/api/setup/roles', {
-      method: 'POST', token: T.admin, expect: 201,
+      method: 'POST', token: T.superadmin, expect: 201,
       body: {
         code: `regional_sup_${RUN}`.slice(0, 30),
         name: 'Regional Supervisor',
@@ -3381,11 +3381,11 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
 
   await check('a role can be cloned from an existing one', async () => {
     const { data } = await req('/api/setup/roles', {
-      method: 'POST', token: T.admin, expect: 201,
+      method: 'POST', token: T.superadmin, expect: 201,
       body: { code: `clone_${RUN}`.slice(0, 30), name: 'Cloned Caller', clone_from: 'caller' },
     });
 
-    const { data: roles } = await req('/api/setup/roles', { token: T.admin, expect: 200 });
+    const { data: roles } = await req('/api/setup/roles', { token: T.superadmin, expect: 200 });
     const cloned = roles.find((r) => r.code === data.code);
     const source = roles.find((r) => r.code === 'caller');
     eq(cloned.capabilities.length, source.capabilities.length, 'clone did not copy capabilities');
@@ -3394,34 +3394,36 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
 
   await check('role codes are validated and unique', async () => {
     await req('/api/setup/roles', {
-      method: 'POST', token: T.admin, expect: 400,
+      method: 'POST', token: T.superadmin, expect: 400,
       body: { code: 'Bad Code!', name: 'Nope' },
     });
     await req('/api/setup/roles', {
-      method: 'POST', token: T.admin, expect: 409,
+      method: 'POST', token: T.superadmin, expect: 409,
       body: { code: 'sales_rm', name: 'Duplicate' },
     });
   });
 
   await check('a system role cannot be deleted', async () => {
-    await req('/api/setup/roles/sales_rm', { method: 'DELETE', token: T.admin, expect: 400 });
+    await req('/api/setup/roles/sales_rm', { method: 'DELETE', token: T.superadmin, expect: 400 });
   });
 
   await check('a role still held by users cannot be deleted', async () => {
-    const { data } = await req('/api/setup/roles/caller', { method: 'DELETE', token: T.admin, expect: 400 });
+    const { data } = await req('/api/setup/roles/caller', { method: 'DELETE', token: T.superadmin, expect: 400 });
     assert(data.error, 'no error explaining why');
   });
 
   await check('an unused custom role can be deleted', async () => {
     const code = need(REF.clonedRole, 'the cloned role');
-    await req(`/api/setup/roles/${code}`, { method: 'DELETE', token: T.admin, expect: 204 });
+    await req(`/api/setup/roles/${code}`, { method: 'DELETE', token: T.superadmin, expect: 204 });
   });
 
-  await check('an admin cannot remove their own ability to manage roles', async () => {
+  await check('a Superadmin cannot remove their own ability to manage roles', async () => {
     // The classic administration accident, and unrecoverable without database
-    // access. It has to be refused rather than confirmed.
-    const { data } = await req('/api/setup/roles/admin', {
-      method: 'PATCH', token: T.admin, expect: 400,
+    // access. It has to be refused rather than confirmed. Ruled 18 Nov: roles
+    // are shared by both businesses, so only a Superadmin edits them -- and the
+    // guard now stands in front of the Superadmin.
+    const { data } = await req('/api/setup/roles/superadmin', {
+      method: 'PATCH', token: T.superadmin, expect: 400,
       body: { capabilities: ['lead.view.all'] },
     });
     assert(/your own/i.test(data.error), `unexpected: ${data.error}`);
@@ -3438,12 +3440,12 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
 
   await check('editing a role replaces its permissions, both adding and removing', async () => {
     const code = need(REF.customRole, 'the custom role');
-    const { data: before } = await req('/api/setup/roles', { token: T.admin, expect: 200 });
+    const { data: before } = await req('/api/setup/roles', { token: T.superadmin, expect: 200 });
     const start = before.find((r) => r.code === code);
     assert(start.capabilities.includes('lead.contact'), 'fixture changed — expected lead.contact');
 
     await req(`/api/setup/roles/${code}`, {
-      method: 'PATCH', token: T.admin, expect: 200,
+      method: 'PATCH', token: T.superadmin, expect: 200,
       body: {
         name: 'Regional Head',
         data_scope: 'org',
@@ -3451,7 +3453,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
       },
     });
 
-    const { data: after } = await req('/api/setup/roles', { token: T.admin, expect: 200 });
+    const { data: after } = await req('/api/setup/roles', { token: T.superadmin, expect: 200 });
     const end = after.find((r) => r.code === code);
     eq(end.name, 'Regional Head', 'name not saved');
     eq(end.data_scope, 'org', 'scope not saved');
@@ -3466,7 +3468,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
     // stored, leaving the role blank in every list that shows it.
     const code = need(REF.customRole, 'the custom role');
     await req(`/api/setup/roles/${code}`, {
-      method: 'PATCH', token: T.admin, expect: 400, body: { name: '   ' },
+      method: 'PATCH', token: T.superadmin, expect: 400, body: { name: '   ' },
     });
   });
 
@@ -3489,7 +3491,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
     await req('/api/tickets/reports/summary', { token: probe, expect: 403 });
 
     await req(`/api/setup/roles/${code}`, {
-      method: 'PATCH', token: T.admin, expect: 200,
+      method: 'PATCH', token: T.superadmin, expect: 200,
       body: { name: 'Regional Head', capabilities: ['lead.view.own', 'client.view.own', 'report.team'] },
     });
     await req('/api/tickets/reports/summary', { token: probe, expect: 200 });
@@ -3497,7 +3499,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
     // And revocation, on the same token, is what actually has to work: an
     // administrator taking access away expects it gone now, not at expiry.
     await req(`/api/setup/roles/${code}`, {
-      method: 'PATCH', token: T.admin, expect: 200,
+      method: 'PATCH', token: T.superadmin, expect: 200,
       body: { name: 'Regional Head', capabilities: ['lead.view.own', 'client.view.own'] },
     });
     await req('/api/tickets/reports/summary', { token: probe, expect: 403 });
@@ -3508,17 +3510,17 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
      * ticked codes, silently dropping any the server does not know. If the
      * catalogue ever drifted from the capabilities table, permissions would
      * appear to save and then not be there. */
-    const { data: cat } = await req('/api/setup/capabilities', { token: T.admin, expect: 200 });
+    const { data: cat } = await req('/api/setup/capabilities', { token: T.superadmin, expect: 200 });
     const offered = cat.categories.flatMap((c) => c.capabilities.map((x) => x.code));
     eq(offered.length, cat.total, 'the grouped catalogue and its total disagree');
     assert(new Set(offered).size === offered.length, 'a capability appears in two categories');
 
     const code = need(REF.customRole, 'the custom role');
     await req(`/api/setup/roles/${code}`, {
-      method: 'PATCH', token: T.admin, expect: 200,
+      method: 'PATCH', token: T.superadmin, expect: 200,
       body: { name: 'Regional Head', capabilities: offered },
     });
-    const { data: roles } = await req('/api/setup/roles', { token: T.admin, expect: 200 });
+    const { data: roles } = await req('/api/setup/roles', { token: T.superadmin, expect: 200 });
     const granted = roles.find((r) => r.code === code).capabilities;
     eq(granted.length, offered.length,
       `${offered.length - granted.length} of the offered permissions were dropped on save`);
@@ -3626,7 +3628,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
 
   await check('a rule that names a field the object lacks is refused', async () => {
     const { data } = await req('/api/setup/objects/lead/validation-rules', {
-      method: 'POST', token: T.admin, expect: 400,
+      method: 'POST', token: T.superadmin, expect: 400,
       body: {
         name: 'Nonsense', message: 'never',
         condition: { all: [{ field: 'not_a_field', op: 'is_blank' }] },
@@ -3637,25 +3639,25 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
 
   await check('a rule must carry a message the person saving can act on', async () => {
     await req('/api/setup/objects/lead/validation-rules', {
-      method: 'POST', token: T.admin, expect: 400,
+      method: 'POST', token: T.superadmin, expect: 400,
       body: { name: 'Silent', message: '  ', condition: { all: [{ field: 'pan', op: 'is_blank' }] } },
     });
   });
 
   await check('a rule can be switched off without being deleted', async () => {
-    const { data } = await req('/api/setup/objects/lead/validation-rules', { token: T.admin, expect: 200 });
+    const { data } = await req('/api/setup/objects/lead/validation-rules', { token: T.superadmin, expect: 200 });
     const rule = data.rules.find((r) => /PAN/i.test(r.name));
     assert(rule, 'the seeded PAN rule is missing');
 
     await req(`/api/setup/validation-rules/${rule.id}`, {
-      method: 'PATCH', token: T.admin, expect: 200, body: { active: 0 },
+      method: 'PATCH', token: T.superadmin, expect: 200, body: { active: 0 },
     });
 
     const id = need(REF.validationLead, 'the validation probe lead');
     await req(`/api/leads/${id}`, { method: 'PATCH', token: T.admin, expect: 200, body: { pan: '' } });
 
     await req(`/api/setup/validation-rules/${rule.id}`, {
-      method: 'PATCH', token: T.admin, expect: 200, body: { active: 1 },
+      method: 'PATCH', token: T.superadmin, expect: 200, body: { active: 1 },
     });
     await req(`/api/leads/${id}`, { method: 'PATCH', token: T.admin, expect: 422, body: { stage: 'Won' } });
   });
@@ -3665,7 +3667,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
        existing records blocks every edit to all of them, including the edit
        that would fix them. */
     const { data } = await req('/api/setup/objects/lead/validation-rules/preview', {
-      method: 'POST', token: T.admin, expect: 200,
+      method: 'POST', token: T.superadmin, expect: 200,
       body: { condition: { all: [{ field: 'pan', op: 'is_blank' }] } },
     });
     assert(typeof data.checked === 'number' && typeof data.failing === 'number',
@@ -3924,14 +3926,14 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
   });
 
   await check('an unknown object is a 404, not an empty form', async () => {
-    await req('/api/meta/fields/not_a_thing', { token: T.admin, expect: 404 });
+    await req('/api/meta/fields/not_a_thing', { token: T.superadmin, expect: 404 });
   });
 
   /* ---- custom fields, end to end through the API ---- */
 
   await check('an administrator adds a field without a migration', async () => {
     const { data } = await req('/api/setup/objects/lead/fields', {
-      method: 'POST', token: T.admin, expect: 201,
+      method: 'POST', token: T.superadmin, expect: 201,
       body: {
         label: `E2E Channel ${RUN}`,
         type: 'picklist',
@@ -3981,7 +3983,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
   await check('the API name is frozen once the field exists', async () => {
     const name = need(REF.customField, 'the custom field');
     await req(`/api/setup/objects/lead/fields/${name}`, {
-      method: 'PATCH', token: T.admin, expect: 400,
+      method: 'PATCH', token: T.superadmin, expect: 400,
       body: { type: 'number' },
     });
   });
@@ -3989,7 +3991,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
   await check('the label can be renamed and the API name does not move', async () => {
     const name = need(REF.customField, 'the custom field');
     const { data } = await req(`/api/setup/objects/lead/fields/${name}`, {
-      method: 'PATCH', token: T.admin, expect: 200,
+      method: 'PATCH', token: T.superadmin, expect: 200,
       body: { label: 'Renamed By Test' },
     });
     eq(data.label, 'Renamed By Test', 'label did not change');
@@ -3998,14 +4000,14 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
 
   await check('a core field cannot be deleted', async () => {
     await req('/api/setup/objects/lead/fields/stage', {
-      method: 'DELETE', token: T.admin, expect: 400,
+      method: 'DELETE', token: T.superadmin, expect: 400,
     });
   });
 
   await check('deactivating a field keeps its stored values', async () => {
     const name = need(REF.customField, 'the custom field');
     const { data } = await req(`/api/setup/objects/lead/fields/${name}`, {
-      method: 'DELETE', token: T.admin, expect: 200,
+      method: 'DELETE', token: T.superadmin, expect: 200,
     });
     assert(data.values_retained >= 1, 'the stored value was discarded with the field');
   });
@@ -4022,7 +4024,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
     // The governance gate. 289 unowned custom fields is what its absence
     // looks like after four years.
     await req('/api/setup/objects/lead/fields', {
-      method: 'POST', token: T.admin, expect: 400,
+      method: 'POST', token: T.superadmin, expect: 400,
       body: { label: `No Purpose ${RUN}`, type: 'text' },
     });
   });
@@ -4082,7 +4084,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
     const lead = need(REF.leadId, 'a lead');
     await req(`/api/leads/${lead}?unmask=true`, { token: T.sales_supervisor, expect: 200 });
 
-    const { data: log } = await req('/api/admin/audit', { token: T.admin, expect: 200 });
+    const { data: log } = await req('/api/admin/audit', { token: T.superadmin, expect: 200 });
     const data = log.rows;
     assert(data.some((r) => r.action === 'pii_unmasked'),
       'a PII reveal left no audit trail');
@@ -5559,7 +5561,7 @@ await check('a per-channel withdrawal closes only that channel', async () => {
   suite('37 Dispositions in Setup (ENH-21c)');
 
   await check('the outcomes are configuration, with their effects visible', async () => {
-    const { data } = await req('/api/setup/dispositions', { token: T.admin, expect: 200 });
+    const { data } = await req('/api/setup/dispositions', { token: T.superadmin, expect: 200 });
     assert(data.dispositions.length >= 20, 'the shipped matrix is missing');
     eq(data.outcomes.includes('Connected'), true, 'Connected is missing');
     eq(data.outcomes.includes('Not Connected'), true, 'Not Connected is missing');
@@ -5569,7 +5571,7 @@ await check('a per-channel withdrawal closes only that channel', async () => {
   });
 
   await check('an edit is recorded as the business owning that row', async () => {
-    const { data: before } = await req('/api/setup/dispositions', { token: T.admin, expect: 200 });
+    const { data: before } = await req('/api/setup/dispositions', { token: T.superadmin, expect: 200 });
     const row = before.dispositions.find((d) => d.code === 'CALL_PITCH_DONE');
     assert(row, 'CALL_PITCH_DONE is missing from the shipped matrix');
 
@@ -5584,7 +5586,7 @@ await check('a per-channel withdrawal closes only that channel', async () => {
      * is recorded is that the label changes and the stamp lands, and both are
      * as true on the tenth run as on the first. */
     const { data } = await req(`/api/setup/dispositions/${row.id}`, {
-      method: 'PATCH', token: T.admin, expect: 200,
+      method: 'PATCH', token: T.superadmin, expect: 200,
       body: { label: `Pitch delivered ${RUN}`, hint: 'Say what they pushed back on.' },
     });
     eq(data.label, `Pitch delivered ${RUN}`, 'the label did not change');
@@ -5596,7 +5598,7 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     // The whole point of ENH-21c: seedDispositions() runs on every boot, and
     // before this it overwrote every column -- so a change made in Setup would
     // silently revert at the next restart and the screen would be a lie.
-    const { data: check1 } = await req('/api/setup/dispositions', { token: T.admin, expect: 200 });
+    const { data: check1 } = await req('/api/setup/dispositions', { token: T.superadmin, expect: 200 });
     const row = check1.dispositions.find((d) => d.code === 'CALL_PITCH_DONE');
     assert(row.label.startsWith('Pitch delivered'), 'the edit did not persist');
 
@@ -5606,19 +5608,19 @@ await check('a per-channel withdrawal closes only that channel', async () => {
 
   await check('a disposition drives what the RM is actually asked for', async () => {
     // The obligation is enforced where it matters, not only displayed in Setup.
-    const { data: leads } = await req('/api/leads?limit=1', { token: T.admin, expect: 200 });
+    const { data: leads } = await req('/api/leads?limit=1', { token: T.superadmin, expect: 200 });
     const leadId = leads[0].id;
     await req('/api/activities', {
-      method: 'POST', token: T.admin, expect: 400,
+      method: 'POST', token: T.superadmin, expect: 400,
       body: { lead_id: leadId, type: 'Call', outcome: 'Connected', sub_disposition: 'CALL_CALLBACK' },
     });
   });
 
   await check('an unknown card state is refused rather than stored', async () => {
-    const { data } = await req('/api/setup/dispositions', { token: T.admin, expect: 200 });
+    const { data } = await req('/api/setup/dispositions', { token: T.superadmin, expect: 200 });
     const row = data.dispositions[0];
     await req(`/api/setup/dispositions/${row.id}`, {
-      method: 'PATCH', token: T.admin, expect: 400,
+      method: 'PATCH', token: T.superadmin, expect: 400,
       body: { sets_card_state: 'NOT_A_STATE' },
     });
   });
@@ -5626,7 +5628,7 @@ await check('a per-channel withdrawal closes only that channel', async () => {
   await check('a new outcome can be added and appears in the picker', async () => {
     const code = `E2E_OUTCOME_${RUN}`;
     const { data } = await req('/api/setup/dispositions', {
-      method: 'POST', token: T.admin, expect: 201,
+      method: 'POST', token: T.superadmin, expect: 201,
       body: {
         code, label: 'Asked for a brochure', activity_type: 'Call',
         outcome: 'Connected', requires_datetime: false,
@@ -5634,21 +5636,21 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     });
     eq(data.is_custom, 1, 'a hand-made outcome should be marked as yours');
 
-    const { data: meta } = await req('/api/activities/meta', { token: T.admin, expect: 200 });
+    const { data: meta } = await req('/api/activities/meta', { token: T.superadmin, expect: 200 });
     const calls = meta.dispositions?.Call ?? [];
     const connected = calls.find((g) => g.outcome === 'Connected');
     assert(connected.options.some((o) => o.code === code), 'the new outcome never reached the picker');
   });
 
   await check('retiring keeps history readable instead of deleting it', async () => {
-    const { data } = await req('/api/setup/dispositions', { token: T.admin, expect: 200 });
+    const { data } = await req('/api/setup/dispositions', { token: T.superadmin, expect: 200 });
     const row = data.dispositions.find((d) => d.code === `E2E_OUTCOME_${RUN}`);
     const { data: gone } = await req(`/api/setup/dispositions/${row.id}`, {
-      method: 'DELETE', token: T.admin, expect: 200,
+      method: 'DELETE', token: T.superadmin, expect: 200,
     });
     eq(gone.retired, true, 'it should retire, not delete');
 
-    const { data: after } = await req('/api/setup/dispositions', { token: T.admin, expect: 200 });
+    const { data: after } = await req('/api/setup/dispositions', { token: T.superadmin, expect: 200 });
     const still = after.dispositions.find((d) => d.code === `E2E_OUTCOME_${RUN}`);
     assert(still, 'the row was deleted - activities referencing it would be unreadable');
     eq(still.active, 0, 'it should be inactive');
@@ -5695,7 +5697,7 @@ await check('a per-channel withdrawal closes only that channel', async () => {
   });
 
   await check('the matrix reports where each answer came from', async () => {
-    const { data } = await req('/api/setup/field-masking', { token: T.admin, expect: 200 });
+    const { data } = await req('/api/setup/field-masking', { token: T.superadmin, expect: 200 });
     const marketing = data.matrix.find((m) => m.role === 'marketing_manager');
     eq(marketing.fields.pan.masked, false, 'marketing sees a PAN by default (QA-06)');
     eq(marketing.fields.mobile.masked, false, 'marketing sees a mobile by default (QA-06)');
@@ -5709,7 +5711,7 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     // Masking, this time: every field is clear for Marketing by default
     // (QA-06), so this proves the configuration can close one field alone.
     await req('/api/setup/field-masking', {
-      method: 'POST', token: T.admin, expect: 200,
+      method: 'POST', token: T.superadmin, expect: 200,
       body: { role: 'marketing_manager', field: 'mobile', masked: true },
     });
 
@@ -5719,14 +5721,14 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     assert(!/\u2022/.test(String(lead.email ?? '')), `the email should still be clear: ${lead.email}`);
 
     await req('/api/setup/field-masking', {
-      method: 'POST', token: T.admin, expect: 200,
+      method: 'POST', token: T.superadmin, expect: 200,
       body: { role: 'marketing_manager', field: 'mobile', masked: null },
     });
   });
 
   await check('resetting returns the field to the shipped default', async () => {
     await req('/api/setup/field-masking', {
-      method: 'POST', token: T.admin, expect: 200,
+      method: 'POST', token: T.superadmin, expect: 200,
       body: { role: 'marketing_manager', field: 'mobile', masked: null },
     });
     const lead = await firstLead(await login('marketing@bonanza.test'));
@@ -5741,7 +5743,7 @@ await check('a per-channel withdrawal closes only that channel', async () => {
        put back after it: Marketing's mobile masked, its email clear. Every
        field is clear for Marketing by default since QA-06. */
     await req('/api/setup/field-masking', {
-      method: 'POST', token: T.admin, expect: 200,
+      method: 'POST', token: T.superadmin, expect: 200,
       body: { role: 'marketing_manager', field: 'mobile', masked: true },
     });
     const token = await login('marketing@bonanza.test');
@@ -5761,14 +5763,14 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     if (hit) assert(/\u2022/.test(hit.mobile), 'global search leaked an unmasked mobile');
 
     await req('/api/setup/field-masking', {
-      method: 'POST', token: T.admin, expect: 200,
+      method: 'POST', token: T.superadmin, expect: 200,
       body: { role: 'marketing_manager', field: 'mobile', masked: null },
     });
   });
 
   await check('an unmaskable field is refused', async () => {
     await req('/api/setup/field-masking', {
-      method: 'POST', token: T.admin, expect: 400,
+      method: 'POST', token: T.superadmin, expect: 400,
       body: { role: 'caller', field: 'name', masked: true },
     });
   });
@@ -7376,7 +7378,7 @@ await check('a per-channel withdrawal closes only that channel', async () => {
 
   await check('saving a rule produces a version', async () => {
     const { data: created } = await req('/api/admin/rules', {
-      method: 'POST', token: T.admin, expect: 201,
+      method: 'POST', token: T.superadmin, expect: 201,
       body: {
         name: `E2E versioned rule ${RUN}`,
         description: 'first',
@@ -7386,7 +7388,7 @@ await check('a per-channel withdrawal closes only that channel', async () => {
     });
     REF.versionedRuleId = created.id;
 
-    const { data } = await req(`/api/admin/versions/rule/${created.id}`, { token: T.admin, expect: 200 });
+    const { data } = await req(`/api/admin/versions/rule/${created.id}`, { token: T.superadmin, expect: 200 });
     eq(data.versions.length, 1, 'creating a rule did not record a version');
     eq(data.current.version, 1, 'the first version is not current');
     eq(data.label, 'Automation rule', 'the artefact does not name itself');
@@ -7395,11 +7397,11 @@ await check('a per-channel withdrawal closes only that channel', async () => {
   await check('editing it supersedes, and only one version is current', async () => {
     const id = need(REF.versionedRuleId, 'a versioned rule');
     await req(`/api/admin/rules/${id}`, {
-      method: 'PATCH', token: T.admin, expect: 200,
+      method: 'PATCH', token: T.superadmin, expect: 200,
       body: { description: 'second', note: 'Reworded' },
     });
 
-    const { data } = await req(`/api/admin/versions/rule/${id}`, { token: T.admin, expect: 200 });
+    const { data } = await req(`/api/admin/versions/rule/${id}`, { token: T.superadmin, expect: 200 });
     eq(data.versions.length, 2, 'the edit did not record a version');
     eq(data.current.version, 2, 'the current pointer did not move');
     eq(data.versions.filter((v) => v.is_current).length, 1, 'two versions claim to be current');
@@ -7407,10 +7409,10 @@ await check('a per-channel withdrawal closes only that channel', async () => {
 
   await check('the diff names the field that changed', async () => {
     const id = need(REF.versionedRuleId, 'a versioned rule');
-    const { data: hist } = await req(`/api/admin/versions/rule/${id}`, { token: T.admin, expect: 200 });
+    const { data: hist } = await req(`/api/admin/versions/rule/${id}`, { token: T.superadmin, expect: 200 });
     const [v2, v1] = hist.versions;
 
-    const { data } = await req(`/api/admin/versions/diff?a=${v1.id}&b=${v2.id}`, { token: T.admin, expect: 200 });
+    const { data } = await req(`/api/admin/versions/diff?a=${v1.id}&b=${v2.id}`, { token: T.superadmin, expect: 200 });
     eq(data.identical, false, 'a real change diffed to nothing');
     const changed = data.changes.map((c) => c.field);
     assert(changed.includes('description'), `description not listed: ${changed.join(', ')}`);
@@ -7419,16 +7421,16 @@ await check('a per-channel withdrawal closes only that channel', async () => {
 
   await check('rolling back restores the values and keeps the history', async () => {
     const id = need(REF.versionedRuleId, 'a versioned rule');
-    const { data: hist } = await req(`/api/admin/versions/rule/${id}`, { token: T.admin, expect: 200 });
+    const { data: hist } = await req(`/api/admin/versions/rule/${id}`, { token: T.superadmin, expect: 200 });
     const first = hist.versions.find((v) => v.version === 1);
 
     const { data } = await req(`/api/admin/versions/${first.id}/restore`, {
-      method: 'POST', token: T.admin, expect: 200,
+      method: 'POST', token: T.superadmin, expect: 200,
     });
     eq(data.ok, true, 'the rollback was refused');
     eq(data.restored_from, 1);
 
-    const { data: after } = await req(`/api/admin/versions/rule/${id}`, { token: T.admin, expect: 200 });
+    const { data: after } = await req(`/api/admin/versions/rule/${id}`, { token: T.superadmin, expect: 200 });
     // A rollback that deleted the versions in between would destroy the record
     // of what was live last Tuesday, which is what an auditor asks about.
     eq(after.versions.length, 3, 'the rollback removed history instead of adding to it');
@@ -7438,13 +7440,13 @@ await check('a per-channel withdrawal closes only that channel', async () => {
 
   await check('a diff across two different artefacts is refused', async () => {
     const id = need(REF.versionedRuleId, 'a versioned rule');
-    const { data: hist } = await req(`/api/admin/versions/rule/${id}`, { token: T.admin, expect: 200 });
-    const { data: index } = await req('/api/admin/versions', { token: T.admin, expect: 200 });
+    const { data: hist } = await req(`/api/admin/versions/rule/${id}`, { token: T.superadmin, expect: 200 });
+    const { data: index } = await req('/api/admin/versions', { token: T.superadmin, expect: 200 });
     const other = index.recent.find((v) => v.logical_id !== String(id) || v.kind !== 'rule');
     if (!other) return;
 
     await req(`/api/admin/versions/diff?a=${hist.versions[0].id}&b=${other.id}`,
-      { token: T.admin, expect: 400 });
+      { token: T.superadmin, expect: 400 });
   });
 
   await check('the version history needs admin.rules', async () => {
@@ -7455,11 +7457,11 @@ await check('a per-channel withdrawal closes only that channel', async () => {
   });
 
   await check('an artefact nobody versions says so', async () => {
-    await req('/api/admin/versions/not_a_thing/1', { token: T.admin, expect: 404 });
+    await req('/api/admin/versions/not_a_thing/1', { token: T.superadmin, expect: 404 });
   });
 
   await check('every versioned kind is offered by name', async () => {
-    const { data } = await req('/api/admin/versions', { token: T.admin, expect: 200 });
+    const { data } = await req('/api/admin/versions', { token: T.superadmin, expect: 200 });
     const keys = data.kinds.map((k) => k.key).sort();
     // The four the audit found unversioned.
     for (const k of ['kyc_journey', 'rule', 'sla_policy', 'template']) {

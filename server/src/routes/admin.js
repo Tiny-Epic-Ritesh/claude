@@ -6,7 +6,8 @@
 import express, { Router } from 'express';
 import { dmy, typedToStored } from '../engine/daterange.js';
 import { all, one, run, audit, ROLES, ROLE_LABELS } from '../db.js';
-import { requireUser, requirePermission, requireAnyPermission, permissionsFor, orgsFor, activeOrg, mayUseOrg, mayUnmask, PERMISSIONS } from '../auth.js';
+import { requireUser, requirePermission, requireAnyPermission, permissionsFor, orgsFor, activeOrg, mayUseOrg, mayUnmask, PERMISSIONS, requireShared, mayChangeShared, SHARED_SETTING, grantGap, outranks } from '../auth.js';
+import { roleCapabilities } from '../engine/access.js';
 import { fill, maskedTokens } from '../engine/mergefields.js';
 import { hashPassword } from '../security.js';
 import { CONDITION_FIELDS, ACTION_TYPES, runRule } from '../engine/rules.js';
@@ -76,6 +77,9 @@ router.post('/users', requirePermission('admin.users'), async (req, res) => {
   if (!name?.trim() || !email?.trim()) return res.status(400).json({ error: 'Name and email are required' });
   if (!ROLES.includes(role)) return res.status(400).json({ error: `Role must be one of: ${ROLES.join(', ')}` });
   if (one('SELECT id FROM users WHERE lower(email) = lower(?)', [email])) return res.status(409).json({ error: 'That email already exists' });
+  // You can only give what you hold, as /setup/users asks.
+  const roleGap = grantGap(req.user, [...roleCapabilities(role)]);
+  if (roleGap.length) return res.status(403).json({ error: `Only a Superadmin can give that role: ${role} includes: ${roleGap.join(', ')}`, field: 'role', required: roleGap });
 
   /* The book, which this route never set.
    *
@@ -110,10 +114,18 @@ router.patch('/users/:id', requirePermission('admin.users'), async (req, res) =>
    * writes the same columns, has checked this all along; so have ghost and
    * reset-link. This endpoint was the one that did not.
    */
-  const target = one('SELECT id, sales_org FROM users WHERE id = ?', [req.params.id]);
+  const target = one('SELECT id, name, role, sales_org FROM users WHERE id = ?', [req.params.id]);
   if (!target) return res.status(404).json({ error: 'User not found' });
   if (!mayUseOrg(req.user, target.sales_org)) {
     return res.status(403).json({ error: 'That user is outside your sales org' });
+  }
+  // Not an account above you, and no role beyond what you hold (/setup/users asks the same).
+  if (outranks(target, req.user)) {
+    return res.status(403).json({ error: `${target.name} holds Superadmin powers you do not, so only a Superadmin can change this account` });
+  }
+  if (req.body?.role) {
+    const roleGap = grantGap(req.user, [...roleCapabilities(req.body.role)]);
+    if (roleGap.length) return res.status(403).json({ error: `Only a Superadmin can give that role: ${req.body.role} includes: ${roleGap.join(', ')}`, field: 'role', required: roleGap });
   }
 
   /* `cube_campaign_id`, `phone_extension` and `cti_agent_id` are the three
@@ -365,7 +377,7 @@ router.get('/sla', (_req, res) => {
   });
 });
 
-router.post('/sla', requirePermission('admin.sla'), (req, res) => {
+router.post('/sla', requirePermission('admin.sla'), requireShared, (req, res) => {
   const { product_type_id, priority, response_mins, resolution_mins } = req.body;
   run(
     `INSERT INTO sla_policies (product_type_id, priority, response_mins, resolution_mins) VALUES (?,?,?,?)
@@ -383,7 +395,7 @@ router.post('/sla', requirePermission('admin.sla'), (req, res) => {
 
 router.get('/categories', (_req, res) => res.json(all('SELECT * FROM ticket_categories ORDER BY name')));
 
-router.post('/categories', requirePermission('admin.sla'), (req, res) => {
+router.post('/categories', requirePermission('admin.sla'), requireShared, (req, res) => {
   const result = run('INSERT INTO ticket_categories (name, auto_assign_role) VALUES (?,?)', [req.body.name, req.body.auto_assign_role || null]);
   res.status(201).json({ id: Number(result.lastInsertRowid) });
 });
@@ -393,7 +405,7 @@ router.post('/categories', requirePermission('admin.sla'), (req, res) => {
    that have it keep it, and it can be restored. */
 const loadCategory = (id) => one('SELECT * FROM ticket_categories WHERE id = ?', [id]);
 
-router.patch('/categories/:id', requirePermission('admin.sla'), (req, res) => {
+router.patch('/categories/:id', requirePermission('admin.sla'), requireShared, (req, res) => {
   const cat = loadCategory(req.params.id);
   if (!cat) return res.status(404).json({ error: 'No such category' });
   const name = req.body?.name !== undefined ? String(req.body.name).trim() : cat.name;
@@ -407,7 +419,7 @@ router.patch('/categories/:id', requirePermission('admin.sla'), (req, res) => {
   return res.json(loadCategory(cat.id));
 });
 
-router.post('/categories/:id/retire', requirePermission('admin.sla'), (req, res) => {
+router.post('/categories/:id/retire', requirePermission('admin.sla'), requireShared, (req, res) => {
   const cat = loadCategory(req.params.id);
   if (!cat) return res.status(404).json({ error: 'No such category' });
   if (!cat.active) return res.status(409).json({ error: `"${cat.name}" is already retired` });
@@ -423,7 +435,7 @@ router.post('/categories/:id/retire', requirePermission('admin.sla'), (req, res)
   return res.json(loadCategory(cat.id));
 });
 
-router.post('/categories/:id/restore', requirePermission('admin.sla'), (req, res) => {
+router.post('/categories/:id/restore', requirePermission('admin.sla'), requireShared, (req, res) => {
   const cat = loadCategory(req.params.id);
   if (!cat) return res.status(404).json({ error: 'No such category' });
   if (cat.active) return res.status(409).json({ error: `"${cat.name}" is not retired` });
@@ -438,7 +450,7 @@ router.get('/compliance-flags', requirePermission('admin.sla'), (_req, res) => {
   res.json({ routes: listRoutes(), priorities: CASE_PRIORITIES });
 });
 
-router.put('/compliance-flags/:flag', requirePermission('admin.sla'), (req, res) => {
+router.put('/compliance-flags/:flag', requirePermission('admin.sla'), requireShared, (req, res) => {
   const done = setRoute(req.params.flag, req.body ?? {}, req.user.id);
   if (done.error) return res.status(done.status ?? 400).json(done);
   res.json(done);
@@ -965,7 +977,7 @@ router.get('/rules', requirePermission('admin.rules'), (_req, res) => {
   });
 });
 
-router.post('/rules', requirePermission('admin.rules'), (req, res) => {
+router.post('/rules', requirePermission('admin.rules'), requireShared, (req, res) => {
   const { name, description, conditions, actions, schedule, enabled = 0, priority = 100 } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'Rule name is required' });
   if (!conditions?.length) return res.status(400).json({ error: 'A rule needs at least one condition' });
@@ -982,7 +994,7 @@ router.post('/rules', requirePermission('admin.rules'), (req, res) => {
   res.status(201).json({ id: ruleId });
 });
 
-router.patch('/rules/:id', requirePermission('admin.rules'), (req, res) => {
+router.patch('/rules/:id', requirePermission('admin.rules'), requireShared, (req, res) => {
   const rule = one('SELECT * FROM rules WHERE id = ?', [req.params.id]);
   if (!rule) return res.status(404).json({ error: 'Rule not found' });
   // QA-37: archived is read-only, switching it on included, until it is restored.
@@ -1006,7 +1018,7 @@ router.patch('/rules/:id', requirePermission('admin.rules'), (req, res) => {
 });
 
 /** Dry-run evaluates and reports without performing a single action. */
-router.post('/rules/:id/run', requirePermission('admin.rules'), (req, res) => {
+router.post('/rules/:id/run', requirePermission('admin.rules'), requireShared, (req, res) => {
   const dryRun = req.body.dry_run !== false;
   const rule = one('SELECT name, archived_at FROM rules WHERE id = ?', [req.params.id]);
   if (rule?.archived_at && !dryRun) return res.status(409).json({ error: `"${rule.name}" is archived. Restore it first.` });
@@ -1016,7 +1028,7 @@ router.post('/rules/:id/run', requirePermission('admin.rules'), (req, res) => {
 /* QA-37: a rule is switched off, and archived once it has run; deleted only
    as a draft never switched on, with its name typed. Archived, it is
    read-only and out of the way, and can be restored. */
-router.post('/rules/:id/archive', requirePermission('admin.rules'), (req, res) => {
+router.post('/rules/:id/archive', requirePermission('admin.rules'), requireShared, (req, res) => {
   const rule = one('SELECT * FROM rules WHERE id = ?', [req.params.id]);
   if (!rule) return res.status(404).json({ error: 'Rule not found' });
   if (rule.archived_at) return res.status(409).json({ error: `"${rule.name}" is already archived` });
@@ -1028,7 +1040,7 @@ router.post('/rules/:id/archive', requirePermission('admin.rules'), (req, res) =
   return res.json(one('SELECT * FROM rules WHERE id = ?', [rule.id]));
 });
 
-router.post('/rules/:id/restore', requirePermission('admin.rules'), (req, res) => {
+router.post('/rules/:id/restore', requirePermission('admin.rules'), requireShared, (req, res) => {
   const rule = one('SELECT * FROM rules WHERE id = ?', [req.params.id]);
   if (!rule) return res.status(404).json({ error: 'Rule not found' });
   if (!rule.archived_at) return res.status(409).json({ error: `"${rule.name}" is not archived` });
@@ -1037,7 +1049,7 @@ router.post('/rules/:id/restore', requirePermission('admin.rules'), (req, res) =
   return res.json(one('SELECT * FROM rules WHERE id = ?', [rule.id]));
 });
 
-router.delete('/rules/:id', requirePermission('admin.rules'), (req, res) => {
+router.delete('/rules/:id', requirePermission('admin.rules'), requireShared, (req, res) => {
   const rule = one('SELECT * FROM rules WHERE id = ?', [req.params.id]);
   if (!rule) return res.status(404).json({ error: 'Rule not found' });
   /* What it did is the record: its firings, its runs and the tasks and
@@ -1192,6 +1204,25 @@ router.post('/versions/:id/restore', requirePermission('admin.rules'), (req, res
   /* QA-37. A rule version carries `enabled`, so rolling an archived rule back
      would switch it on past its own archive. */
   const asked = versionById(Number(req.params.id));
+  if (!asked) return res.status(404).json({ error: 'No such version' });
+  /* Ruled 18 Nov: restoring an old version follows what is restored. A rule,
+     an SLA policy and the call outcomes are shared by both businesses, so a
+     Superadmin's; a template, a KYC journey (its product's), a KRA metric or
+     an incentive plan is its business's Admin's. A kind not named here is
+     treated as shared rather than guessed at. */
+  const OWN_BUSINESS = {
+    template: 'SELECT sales_org FROM templates WHERE id = ?',
+    kyc_journey: 'SELECT sales_org FROM product_types WHERE id = ?',
+    kra_metric: 'SELECT sales_org FROM kra_metrics WHERE id = ?',
+    incentive_plan: 'SELECT sales_org FROM incentive_plans WHERE id = ?',
+  };
+  const ownerSql = OWN_BUSINESS[asked.kind];
+  const org = ownerSql ? one(ownerSql, [asked.logical_id])?.sales_org ?? null : null;
+  if (!org) {
+    if (!mayChangeShared(req.user)) return res.status(403).json({ error: SHARED_SETTING, required: 'setup.shared' });
+  } else if (!mayUseOrg(req.user, org)) {
+    return res.status(403).json({ error: 'That belongs to another business' });
+  }
   if (asked?.kind === 'rule' && one('SELECT archived_at FROM rules WHERE id = ?', [asked.logical_id])?.archived_at) {
     return res.status(409).json({ error: 'That rule is archived. Restore the rule before rolling it back.' });
   }
@@ -2334,7 +2365,7 @@ router.get('/calendars', requirePermission('admin.sla'), (_req, res) => {
   });
 });
 
-router.patch('/calendars/:kind', requirePermission('admin.sla'), (req, res) => {
+router.patch('/calendars/:kind', requirePermission('admin.sla'), requireShared, (req, res) => {
   if (!CALENDAR_KINDS.includes(req.params.kind)) {
     return res.status(404).json({ error: `No ${req.params.kind} calendar` });
   }
@@ -2343,7 +2374,7 @@ router.patch('/calendars/:kind', requirePermission('admin.sla'), (req, res) => {
   return res.json(out);
 });
 
-router.post('/calendars/:kind/days', requirePermission('admin.sla'), (req, res) => {
+router.post('/calendars/:kind/days', requirePermission('admin.sla'), requireShared, (req, res) => {
   if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.on_date)) && !isFutureDate(req.body.on_date)) {
     return res.status(409).json({ error: `${dmy(req.body.on_date)} has begun or passed. Only future days can be added.`, field: 'on_date' });
   }
@@ -2353,7 +2384,7 @@ router.post('/calendars/:kind/days', requirePermission('admin.sla'), (req, res) 
   return res.status(201).json(listCalendars().find((c) => c.kind === req.params.kind));
 });
 
-router.delete('/calendars/days/:id', requirePermission('admin.sla'), (req, res) => {
+router.delete('/calendars/days/:id', requirePermission('admin.sla'), requireShared, (req, res) => {
   /* QA-37: future dates only. A past or today's holiday is what every SLA
      clock that ran over it was counted against; taking it out now would move
      those due dates after the fact. */

@@ -452,12 +452,16 @@ try {
       assert.equal(rowsOf(SOURCE).find((r) => r.value === BIGUL_SOURCE)?.sales_org, 'BIGUL',
         "a Bonanza administrator moved Bigul's value out of its book");
 
-      /* Their own book they may. */
+      /* Taking a value both businesses use into their own book takes it out of
+         the other's list too. Ruled 18 Nov: a value both businesses use is a
+         shared setting, so that move is a Superadmin's. */
       const theirs = await asThem(rows.map((r) => (
         r.value === SHARED_SOURCE ? { ...r, sales_org: 'BONANZA' } : r
       )));
-      assert.equal(theirs.status, 200, `HTTP ${theirs.status}: ${JSON.stringify(theirs.body)}`);
-      assert.equal(rowsOf(SOURCE).find((r) => r.value === SHARED_SOURCE)?.sales_org, 'BONANZA');
+      assert.equal(theirs.status, 403, `HTTP ${theirs.status}: ${JSON.stringify(theirs.body)}`);
+      assert.equal(theirs.body?.required, 'setup.shared');
+      assert.equal(rowsOf(SOURCE).find((r) => r.value === SHARED_SOURCE)?.sales_org ?? null, null,
+        'a Bonanza administrator took a shared value out of Bigul\'s list');
 
       const back = await asThem(rows);
       assert.equal(back.status, 200, `HTTP ${back.status}: ${JSON.stringify(back.body)}`);

@@ -28,12 +28,12 @@ import { all, one, run, audit, transact, SALES_ORGS, CARD_STATES, ROLES } from '
 import { MANUAL_TYPES as MANUAL_ACTIVITY_TYPES } from './activities.js';
 import {
   requireUser, requirePermission, orgsFor, mayUseOrg, can, permissionsFor, activeOrg,
-  userCan,
+  userCan, requireShared, mayChangeShared, SHARED_SETTING, grantGap, outranks,
 } from '../auth.js';
 import { hashPassword, validate, newSessionToken, STRATEGY_LABEL } from '../security.js';
 import { assertValid, requiredFields, setRequired } from '../engine/validation.js';
 import {
-  invalidate, explainAccess, dataScope, CAPABILITY_CATALOGUE, effectiveCapabilities,
+  invalidate, explainAccess, dataScope, CAPABILITY_CATALOGUE, effectiveCapabilities, roleCapabilities,
 } from '../engine/access.js';
 import { vendorStatus } from '../vendors/config.js';
 import {
@@ -127,7 +127,7 @@ router.get('/roles', requirePermission('admin.roles'), (_req, res) => {
  * four fixed roles meant every new persona became a "Permission Template",
  * which is how one question ended up spread across four mechanisms.
  */
-router.post('/roles', requirePermission('admin.roles'), (req, res) => {
+router.post('/roles', requirePermission('admin.roles'), requireShared, (req, res) => {
   const { code, name, description, data_scope: scope = 'own', capabilities = [], clone_from: cloneFrom } = req.body;
 
   const invalid = validate(req.body, { code: ['required', 'max:40'], name: ['required', 'max:80'] });
@@ -167,7 +167,7 @@ router.post('/roles', requirePermission('admin.roles'), (req, res) => {
 });
 
 /** Update a role's capabilities and scope. System roles may be edited, not deleted. */
-router.patch('/roles/:code', requirePermission('admin.roles'), (req, res) => {
+router.patch('/roles/:code', requirePermission('admin.roles'), requireShared, (req, res) => {
   const role = one('SELECT * FROM roles WHERE code = ?', [req.params.code]);
   if (!role) return res.status(404).json({ error: 'Role not found' });
 
@@ -189,6 +189,13 @@ router.patch('/roles/:code', requirePermission('admin.roles'), (req, res) => {
   if (capabilities && role.code === req.user.role && !capabilities.includes('admin.roles')) {
     return res.status(400).json({
       error: 'That would remove your own ability to manage roles. Grant it to another role first.',
+      field: 'capabilities',
+    });
+  }
+  // Ruled 18 Nov: the same accident, for the power to change shared settings.
+  if (capabilities && role.code === req.user.role && !capabilities.includes('setup.shared') && mayChangeShared(req.user)) {
+    return res.status(400).json({
+      error: 'That would remove your own ability to change shared settings. Grant it to another role first.',
       field: 'capabilities',
     });
   }
@@ -216,7 +223,7 @@ router.patch('/roles/:code', requirePermission('admin.roles'), (req, res) => {
   return res.json(one('SELECT * FROM roles WHERE code = ?', [role.code]));
 });
 
-router.delete('/roles/:code', requirePermission('admin.roles'), (req, res) => {
+router.delete('/roles/:code', requirePermission('admin.roles'), requireShared, (req, res) => {
   const role = one('SELECT * FROM roles WHERE code = ?', [req.params.code]);
   if (!role) return res.status(404).json({ error: 'Role not found' });
   if (role.is_system) return res.status(400).json({ error: 'System roles cannot be deleted' });
@@ -257,6 +264,13 @@ router.post('/permission-sets', requirePermission('admin.roles'), (req, res) => 
   const invalid = validate(req.body, { name: ['required', 'max:80'] });
   if (invalid) return res.status(400).json(invalid);
   if (org && !mayUseOrg(req.user, org)) return res.status(403).json({ error: `You cannot create sets in ${org}` });
+  /* You can only give what you hold: a set listing a permission its maker does
+     not hold is a way to hand it out, to anybody, themselves included. */
+  const known = new Set(all('SELECT code FROM capabilities').map((c) => c.code));
+  const gap = grantGap(req.user, capabilities.filter((c) => known.has(c)));
+  if (gap.length) {
+    return res.status(403).json({ error: `Only a Superadmin can grant ${gap.join(', ')}`, field: 'capabilities', required: gap });
+  }
 
   const result = run(
     'INSERT INTO permission_sets (name, description, sales_org, created_by) VALUES (?,?,?,?)',
@@ -283,6 +297,11 @@ router.post('/users/:id/permission-sets', requirePermission('admin.roles'), (req
   const { set_id: setId, reason } = req.body;
   const set = one('SELECT * FROM permission_sets WHERE id = ? AND active = 1', [setId]);
   if (!set) return res.status(404).json({ error: 'Permission set not found' });
+  const setGap = grantGap(req.user, all('SELECT capability FROM permission_set_capabilities WHERE set_id = ?', [set.id]).map((r) => r.capability));
+  if (setGap.length) {
+    return res.status(403).json({ error: `Only a Superadmin can grant "${set.name}": it includes ${setGap.join(', ')}`, required: setGap });
+  }
+  if (outranks(user, req.user)) return res.status(403).json({ error: `${user.name} holds Superadmin powers you do not, so only a Superadmin can change this account` });
 
   run(
     'INSERT OR REPLACE INTO user_permission_sets (user_id, set_id, granted_by, reason) VALUES (?,?,?,?)',
@@ -297,6 +316,7 @@ router.delete('/users/:id/permission-sets/:setId', requirePermission('admin.role
   if (!user) return res.status(404).json({ error: 'User not found' });
   if (!mayUseOrg(req.user, user.sales_org)) return res.status(403).json({ error: 'That user is outside your sales org' });
 
+  if (outranks(user, req.user)) return res.status(403).json({ error: `${user.name} holds Superadmin powers you do not, so only a Superadmin can change this account` });
   run('DELETE FROM user_permission_sets WHERE user_id = ? AND set_id = ?', [user.id, req.params.setId]);
   audit(req.user.id, 'permission_set_revoked', 'user', user.id, { set_id: Number(req.params.setId) });
   return res.json(explainAccess(one('SELECT * FROM users WHERE id = ?', [user.id])));
@@ -758,6 +778,12 @@ router.post('/users', requirePermission('admin.users'), async (req, res) => {
   if (!one('SELECT code FROM roles WHERE code = ? AND active = 1', [role])) {
     return res.status(400).json({ error: `"${role}" is not an active role`, field: 'role' });
   }
+  /* You can only give what you hold. Before this an Admin could create a
+     Superadmin -- and so anything a Superadmin may do. */
+  const roleGap = grantGap(req.user, [...roleCapabilities(role)]);
+  if (roleGap.length) {
+    return res.status(403).json({ error: `Only a Superadmin can give that role: ${role} includes: ${roleGap.join(', ')}`, field: 'role', required: roleGap });
+  }
 
   const targetOrg = org || req.user.sales_org || 'BONANZA';
   if (!mayUseOrg(req.user, targetOrg)) {
@@ -806,6 +832,16 @@ router.patch('/users/:id', requirePermission('admin.users'), async (req, res) =>
   const user = one('SELECT * FROM users WHERE id = ?', [req.params.id]);
   if (!user) return res.status(404).json({ error: 'User not found' });
   if (!mayUseOrg(req.user, user.sales_org)) return res.status(403).json({ error: 'That user is outside your sales org' });
+  /* Not an account that holds more than you: its role, its password and its
+     manager are how it is taken over. And a role you give, to anybody or to
+     yourself, holds nothing you do not. */
+  if (outranks(user, req.user)) return res.status(403).json({ error: `${user.name} holds Superadmin powers you do not, so only a Superadmin can change this account` });
+  if (req.body?.role) {
+    const roleGap = grantGap(req.user, [...roleCapabilities(req.body.role)]);
+    if (roleGap.length) {
+      return res.status(403).json({ error: `Only a Superadmin can give that role: ${req.body.role} includes: ${roleGap.join(', ')}`, field: 'role', required: roleGap });
+    }
+  }
 
   const {
     name, role, manager_id: managerId, product_type_id: productTypeId,
@@ -878,6 +914,7 @@ router.post('/users/:id/active', requirePermission('admin.users'), (req, res) =>
   if (!user) return res.status(404).json({ error: 'User not found' });
   if (!mayUseOrg(req.user, user.sales_org)) return res.status(403).json({ error: 'That user is outside your sales org' });
   if (user.id === req.user.id) return res.status(400).json({ error: 'You cannot deactivate yourself' });
+  if (outranks(user, req.user)) return res.status(403).json({ error: `${user.name} holds Superadmin powers you do not, so only a Superadmin can change this account` });
 
   const active = req.body.active ? 1 : 0;
 
@@ -1267,7 +1304,7 @@ router.delete('/columns/:list', (req, res) => {
  * Audited, unlike the personal one: this decides what a colleague opens the
  * list to tomorrow morning.
  */
-router.put('/columns/:list/role/:role', requirePermission('admin.users'), (req, res) => {
+router.put('/columns/:list/role/:role', requirePermission('admin.users'), requireShared, (req, res) => {
   const { list, role } = req.params;
   if (!isList(list)) return res.status(404).json({ error: `There is no list called "${list}"` });
   if (!ROLES.includes(role)) return res.status(400).json({ error: `No such role: ${role}` });
@@ -1355,7 +1392,7 @@ router.get('/objects/:entity', requirePermission('admin.objects'), (req, res) =>
 });
 
 /** Rename an object's labels. The API name never moves. */
-router.patch('/objects/:entity', requirePermission('admin.objects'), (req, res) => {
+router.patch('/objects/:entity', requirePermission('admin.objects'), requireShared, (req, res) => {
   const def = entityDef(req.params.entity);
   if (!def) return res.status(404).json({ error: 'No such object' });
 
@@ -1398,7 +1435,7 @@ router.patch('/objects/:entity', requirePermission('admin.objects'), (req, res) 
  * four test fields in production is what happens when anyone can add a field
  * and nobody owns it afterwards. Purpose and owner are required.
  */
-router.post('/objects/:entity/fields', requirePermission('admin.objects'), (req, res) => {
+router.post('/objects/:entity/fields', requirePermission('admin.objects'), requireShared, (req, res) => {
   const def = entityDef(req.params.entity);
   if (!def) return res.status(404).json({ error: 'No such object' });
 
@@ -1584,7 +1621,7 @@ router.get('/forms', requirePermission('admin.objects'), (_req, res) => {
  * a per-form ordering table would be a table to maintain for a difference
  * nobody has asked for.
  */
-router.patch('/forms/:type', requirePermission('admin.objects'), (req, res) => {
+router.patch('/forms/:type', requirePermission('admin.objects'), requireShared, (req, res) => {
   const type = req.params.type;
   if (!MANUAL_ACTIVITY_TYPES.includes(type)) {
     return res.status(400).json({ error: `"${type}" is not an activity somebody can log` });
@@ -1639,7 +1676,7 @@ function readTypes(field) {
   return [...MANUAL_ACTIVITY_TYPES];
 }
 
-router.patch('/objects/:entity/fields/:apiName', requirePermission('admin.objects'), (req, res) => {
+router.patch('/objects/:entity/fields/:apiName', requirePermission('admin.objects'), requireShared, (req, res) => {
   const field = fieldDef(req.params.entity, req.params.apiName);
   if (!field) return res.status(404).json({ error: 'No such field' });
 
@@ -1761,6 +1798,9 @@ router.post('/users/:id/reset-link', requirePermission('admin.users'), (req, res
   if (!mayUseOrg(req.user, user.sales_org)) {
     return res.status(403).json({ error: 'That user is outside your access' });
   }
+  /* The link is handed to the person asking for it, so issuing one for an
+     account that holds more than they do was a way to become that account. */
+  if (outranks(user, req.user)) return res.status(403).json({ error: `${user.name} holds Superadmin powers you do not, so only a Superadmin can change this account` });
 
   const token = newSessionToken();
   run('DELETE FROM password_reset WHERE user_id = ?', [user.id]);
@@ -2129,6 +2169,10 @@ router.post('/objects/:entity/validation-rules', requirePermission('admin.object
   if (org && (!SALES_ORGS.includes(org) || !mayUseOrg(req.user, org))) {
     return res.status(403).json({ error: 'That business is outside your access', field: 'sales_org' });
   }
+  // Ruled 18 Nov: a rule for both businesses is a shared setting.
+  if (!org && !mayChangeShared(req.user)) {
+    return res.status(403).json({ error: `${SHARED_SETTING}: a rule for both businesses`, required: 'setup.shared', field: 'sales_org', fix: 'Make the rule your business’s own, or ask a Superadmin.' });
+  }
 
   const invalid = validateRule(req.params.entity, { condition, message });
   if (invalid) return res.status(400).json(invalid);
@@ -2149,6 +2193,10 @@ router.patch('/validation-rules/:id', requirePermission('admin.objects'), (req, 
   if (!rule) return res.status(404).json({ error: 'Rule not found' });
   if (rule.sales_org && !mayUseOrg(req.user, rule.sales_org)) {
     return res.status(403).json({ error: 'That rule belongs to another business' });
+  }
+  // Ruled 18 Nov: a rule for both businesses is a shared setting.
+  if (!rule.sales_org && !mayChangeShared(req.user)) {
+    return res.status(403).json({ error: `${SHARED_SETTING}: a rule for both businesses`, required: 'setup.shared' });
   }
 
   const { name, description, condition, message, active } = req.body;
@@ -2184,6 +2232,10 @@ router.delete('/validation-rules/:id', requirePermission('admin.objects'), (req,
   if (!rule) return res.status(404).json({ error: 'Rule not found' });
   if (rule.sales_org && !mayUseOrg(req.user, rule.sales_org)) {
     return res.status(403).json({ error: 'That rule belongs to another business' });
+  }
+  // Ruled 18 Nov: a rule for both businesses is a shared setting.
+  if (!rule.sales_org && !mayChangeShared(req.user)) {
+    return res.status(403).json({ error: `${SHARED_SETTING}: a rule for both businesses`, required: 'setup.shared' });
   }
 
   run('DELETE FROM validation_rule WHERE id = ?', [rule.id]);
@@ -2223,7 +2275,7 @@ router.post('/objects/:entity/validation-rules/preview', requirePermission('admi
  * client that filtered its list — inactive fields hidden, say — cannot silently
  * reset everything it could not see.
  */
-router.patch('/objects/:entity/field-order', requirePermission('admin.objects'), (req, res) => {
+router.patch('/objects/:entity/field-order', requirePermission('admin.objects'), requireShared, (req, res) => {
   const def = entityDef(req.params.entity);
   if (!def) return res.status(404).json({ error: 'No such object' });
 
@@ -2276,7 +2328,7 @@ router.patch('/objects/:entity/field-order', requirePermission('admin.objects'),
  * it silently wrong. Deactivation removes it from layouts and pickers while the
  * record of what it once held survives.
  */
-router.delete('/objects/:entity/fields/:apiName', requirePermission('admin.objects'), (req, res) => {
+router.delete('/objects/:entity/fields/:apiName', requirePermission('admin.objects'), requireShared, (req, res) => {
   const field = fieldDef(req.params.entity, req.params.apiName);
   if (!field) return res.status(404).json({ error: 'No such field' });
   if (!field.is_custom) {
@@ -2361,6 +2413,14 @@ router.post('/objects/:entity/fields/:apiName/values/add', requirePermission('ad
     }
     if (!mayUseOrg(req.user, org)) return res.status(403).json({ error: `You cannot add a value for ${org}` });
   }
+  // Ruled 18 Nov: a value for both businesses is a shared setting.
+  if (org === null && !mayChangeShared(req.user)) {
+    return res.status(403).json({
+      error: `${SHARED_SETTING}: a value both businesses use`,
+      required: 'setup.shared',
+      fix: perBook ? 'Add it for your own business instead, or ask a Superadmin.' : 'Ask a Superadmin.',
+    });
+  }
 
   const existing = one('SELECT * FROM picklist_value WHERE field_id = ? AND value = ?', [field.id, value]);
   if (existing?.active) {
@@ -2413,6 +2473,17 @@ router.post('/objects/:entity/fields/:apiName/values/merge', requirePermission('
   if (target.sales_org && !mayUseOrg(req.user, target.sales_org)) {
     return res.status(403).json({ error: `"${to}" belongs to ${target.sales_org}` });
   }
+  /* Ruled 18 Nov. The records moved are only the reader's businesses', but the
+     merged-away value is retired from the list for everyone -- so merging away
+     a value both businesses use changes the other business's list too. An
+     orphan, or a value of the reader's own business, is theirs to merge. */
+  const merging = live.find((v) => String(v.value) === from);
+  if (merging && (merging.sales_org ?? null) === null && !mayChangeShared(req.user)) {
+    return res.status(403).json({
+      error: `${SHARED_SETTING}: "${from}" is a value both businesses use`,
+      required: 'setup.shared',
+    });
+  }
 
   const orgs = orgsFor(req.user);
   const result = transact(() => {
@@ -2437,6 +2508,27 @@ router.post('/objects/:entity/fields/:apiName/values/merge', requirePermission('
       : null,
   });
 });
+
+/**
+ * Did this save change a value both businesses use?
+ *
+ * Ruled 18 Nov: such a value is a shared setting. The screen saves the whole
+ * list, so a business's Admin sends the shared values back with every save;
+ * judging the payload as a whole would lock them out of their own values. So
+ * only the shared ones are compared -- which there are, in what order, and
+ * what each says -- and a business's own values, wherever they sit among
+ * them, are that business's Admin's to change.
+ */
+function sharedValuesChanged(before, values) {
+  const norm = (v) => JSON.stringify([
+    String(v.value ?? v.label), String(v.label ?? v.value), v.controlling_value ?? null,
+    v.colour ?? null, Boolean(v.is_default),
+  ]);
+  const shared = (list) => list.filter((v) => (v.sales_org ?? null) === null).map(norm);
+  const was = shared(before);
+  const now = shared(values);
+  return was.length !== now.length || was.some((v, i) => v !== now[i]);
+}
 
 /** Picklist values, including the cascade. */
 router.put('/objects/:entity/fields/:apiName/values', requirePermission('admin.objects'), (req, res) => {
@@ -2501,6 +2593,14 @@ router.put('/objects/:entity/fields/:apiName/values', requirePermission('admin.o
         });
       }
     }
+  }
+
+  if (!mayChangeShared(req.user) && sharedValuesChanged(before, values)) {
+    return res.status(403).json({
+      error: `${SHARED_SETTING}: a ${field.label} value both businesses use`,
+      required: 'setup.shared',
+      fix: 'Change only your business’s own values, or ask a Superadmin.',
+    });
   }
 
   /* Retiring a value that records already hold is allowed — it is often exactly
@@ -2665,7 +2765,7 @@ router.get('/tab-visibility', requirePermission('admin.roles'), (_req, res) => {
   });
 });
 
-router.post('/tab-visibility/role', requirePermission('admin.roles'), (req, res) => {
+router.post('/tab-visibility/role', requirePermission('admin.roles'), requireShared, (req, res) => {
   const { role, tab_id: tabId, visible } = req.body ?? {};
   if (!role || !tabId) return res.status(400).json({ error: 'Give a role and a tab' });
   const knownSetup = isSetupTabId(tabId) && isSetupSection(sectionKeyOf(tabId));
@@ -2900,7 +3000,7 @@ router.get('/dispositions', requirePermission('admin.rules'), (_req, res) => {
   });
 });
 
-router.patch('/dispositions/:id', requirePermission('admin.rules'), (req, res) => {
+router.patch('/dispositions/:id', requirePermission('admin.rules'), requireShared, (req, res) => {
   const row = one('SELECT * FROM dispositions WHERE id = ?', [req.params.id]);
   if (!row) return res.status(404).json({ error: 'Disposition not found' });
 
@@ -2935,7 +3035,7 @@ router.patch('/dispositions/:id', requirePermission('admin.rules'), (req, res) =
   res.json({ ...after, version: version?.version ?? null });
 });
 
-router.post('/dispositions', requirePermission('admin.rules'), (req, res) => {
+router.post('/dispositions', requirePermission('admin.rules'), requireShared, (req, res) => {
   const { code, label, activity_type: type, outcome } = req.body ?? {};
   if (!code || !label || !type || !outcome) {
     return res.status(400).json({ error: 'A disposition needs a code, a label, an activity type and an outcome' });
@@ -2973,7 +3073,7 @@ router.post('/dispositions', requirePermission('admin.rules'), (req, res) => {
  * leave those records describing an outcome nobody can look up. Deactivating
  * takes it out of the picker and leaves the history readable.
  */
-router.delete('/dispositions/:id', requirePermission('admin.rules'), (req, res) => {
+router.delete('/dispositions/:id', requirePermission('admin.rules'), requireShared, (req, res) => {
   const row = one('SELECT * FROM dispositions WHERE id = ?', [req.params.id]);
   if (!row) return res.status(404).json({ error: 'Disposition not found' });
 
@@ -3018,7 +3118,7 @@ router.get('/field-masking', requirePermission('admin.users'), (_req, res) => {
   });
 });
 
-router.post('/field-masking', requirePermission('admin.users'), (req, res) => {
+router.post('/field-masking', requirePermission('admin.users'), requireShared, (req, res) => {
   const { role, field, masked } = req.body ?? {};
   if (!role || !field) return res.status(400).json({ error: 'Give a role and a field' });
   if (!isMaskable(field)) {
@@ -3048,7 +3148,7 @@ router.post('/field-masking', requirePermission('admin.users'), (req, res) => {
  * capability as the matrix: it is the same decision, one level up.
  */
 
-router.post('/field-masking/fields', requirePermission('admin.users'), (req, res) => {
+router.post('/field-masking/fields', requirePermission('admin.users'), requireShared, (req, res) => {
   const { field, label, strategy } = req.body ?? {};
   if (!field) return res.status(400).json({ error: 'Give a field name' });
 
@@ -3059,7 +3159,7 @@ router.post('/field-masking/fields', requirePermission('admin.users'), (req, res
   res.json({ ok: true, fields: maskableFields() });
 });
 
-router.delete('/field-masking/fields/:field', requirePermission('admin.users'), (req, res) => {
+router.delete('/field-masking/fields/:field', requirePermission('admin.users'), requireShared, (req, res) => {
   const result = removeMaskable(req.params.field);
   if (result.error) return res.status(400).json({ error: result.error });
 

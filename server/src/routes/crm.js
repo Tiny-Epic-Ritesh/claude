@@ -6,7 +6,7 @@ import { exportHeldMasked, wonRefusal, policy } from '../engine/policies.js';
 import { purgeableLeads, purgeLeads } from '../engine/retention.js';
 import { Router } from 'express';
 import { all, one, run, audit, notify, daysSince, ageBand, AGE_BANDS, CARD_COLOUR, CARD_STATES } from '../db.js';
-import { can, requireUser, requirePermission, reqScope, isReadOnlyOnLeads, unmaskRequested, maskFor, orgsFor, activeOrg, mayUseOrg, userCan } from '../auth.js';
+import { can, requireUser, requirePermission, reqScope, isReadOnlyOnLeads, unmaskRequested, maskFor, orgsFor, activeOrg, mayUseOrg, userCan, mayChangeShared, SHARED_SETTING } from '../auth.js';
 import { owdGrant } from '../engine/owd.js';
 import { encryptField, decryptField, maskRecord, maskRecords, validate, blindIndex } from '../security.js';
 import { sendCsv } from '../engine/csv.js';
@@ -2416,6 +2416,10 @@ router.put('/queues/:id/members', requirePermission('admin.users'), (req, res) =
   // N-12: a business's queue is that business's to staff.
   if (queue.sales_org && !mayUseOrg(req.user, queue.sales_org)) {
     return res.status(403).json({ error: 'This queue belongs to another business' });
+  }
+  // Ruled 18 Nov: a queue serving both businesses is staffed by a Superadmin.
+  if (!queue.sales_org && !mayChangeShared(req.user)) {
+    return res.status(403).json({ error: SHARED_SETTING, required: 'setup.shared' });
   }
 
   const n = setMembers(queue.id, req.body?.roles ?? []);

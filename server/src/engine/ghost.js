@@ -33,7 +33,8 @@
 
 import { one, run } from '../db.js';
 import { newSessionToken } from '../security.js';
-import { isApiOnly } from './access.js';
+import { isApiOnly, effectiveCapabilities } from './access.js';
+import { grantGap } from '../auth.js';
 
 /** A ghost session is short by design. */
 export const GHOST_MINUTES = 60;
@@ -54,6 +55,13 @@ export function mayGhost(actor, target) {
 
   if (target.role === 'superadmin') {
     return 'Nobody can sign in as a Super Admin — that would make impersonation a way to gain permissions';
+  }
+  /* You can only reach what you hold. The rules below go by role, and a
+     permission set can give a person more than their role: signing in as
+     somebody holding a Superadmin power the actor does not would hand it over. */
+  const above = grantGap(actor, [...effectiveCapabilities(target)]);
+  if (above.length) {
+    return `${target.name} holds Superadmin powers you do not (${above.join(', ')}), so signing in as them would hand those to you`;
   }
   if (actor.role === 'superadmin') return null;
 

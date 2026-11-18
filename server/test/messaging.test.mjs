@@ -98,6 +98,8 @@ const B = await probeAdmin('msg-b', { role: 'sales_rm', sales_org: 'BONANZA' });
 const C = await probeAdmin('msg-c', { role: 'sales_rm', sales_org: 'BONANZA' });
 const BIG = await probeAdmin('msg-big', { role: 'sales_rm', sales_org: 'BIGUL' });
 const MON = await probeAdmin('msg-mon', { role: 'admin', sales_org: 'BONANZA' });
+/* Ruled 18 Nov: settings both businesses share are a Superadmin's (setup.shared). */
+const GRID = await probeAdmin('msg-grid', { role: 'superadmin' });
 
 /* B's supervisor on the org chart. Never signs in -- only has to be told. */
 const SUP = Number(run(
@@ -138,7 +140,7 @@ const call = async (probe, method, path, body) => {
   return { status: res.status, body: json };
 };
 
-const setCell = (reach) => call(MON, 'PUT', '/messages/policy', { from_role: 'sales_rm', to_role: 'sales_rm', reach });
+const setCell = (reach) => call(GRID, 'PUT', '/messages/policy', { from_role: 'sales_rm', to_role: 'sales_rm', reach });
 const thread = async (probe, id) => (await call(probe, 'GET', `/messages/conversations/${id}/messages`)).body.messages;
 
 let AB; // the conversation between A and B, used throughout
@@ -902,7 +904,7 @@ await test('a conversation that holds messages cannot be deleted', () => {
    there when the end-to-end suite runs. */
 clean();
 restoreCell();
-for (const p of [A, B, C, BIG, MON]) p.cleanup();
+for (const p of [A, B, C, BIG, MON, GRID]) p.cleanup();
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exitCode = failed ? 1 : 0;
