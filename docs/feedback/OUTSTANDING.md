@@ -342,7 +342,7 @@ those answers turned into work that nobody is blocked on any more.
 | `OPS-12` | Bulk-setting `stage` (`/leads/bulk/field` and the list bulk field) takes `lead.edit` alone, where PATCH and the list bulk stage require `lead.stage.change`. Found 18 Sep beside `OPS-11`. | **Done** — 18 Sep |
 | `OPS-13` | A list's bulk edit and the single-lead edit write any text into `stage`, where the other two bulk stage routes refuse a value that is not one of the six. Found 18 Sep while fixing `OPS-12`. | **Done** — 18 Sep, on the ruling that the Stage picklist in Setup decides |
 | ~~`OPS-14`~~ | Language, Risk profile and Source took any text on the single-lead edit and bulk update, though each has a picklist in Setup. Ruled 18 Sep: Setup's picklist decides. Found 18 Sep, the writers fixed 6 Oct, and the last three halves on 12 Oct -- the cleanup screen (add back or merge away), the import's mapping step for values the list does not hold, and the Meta form's Source, which was free text and is now the list. | **Done** — 12 Oct |
-| `Q10` | Corrections to the automation builder | Unknown until named |
+| ~~`Q10`~~ | Corrections to the automation builder | **Closed 18 Nov as approved**, on Ritesh's word; later changes come as new feedback |
 
 **Still blocked on someone else:** `P3-06` behind `N-4a`, the connectors behind
 `A-4`, and the three CUBE tickets behind `N-6`.
