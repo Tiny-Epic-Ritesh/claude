@@ -152,17 +152,26 @@ export function ambiguousOrdering() {
   }));
 }
 
-/** Everything a Setup screen needs to show about automation health. */
-export function healthReport() {
+/**
+ * Everything a Setup screen needs to show about automation health.
+ *
+ * N-12: the failure queue names the lead each failure was on, so it lists only
+ * the reader's businesses' -- `orgs` -- where it listed both to anybody who
+ * manages rules. A failure on no lead is about the rule alone and shows to all.
+ */
+export function healthReport(orgs = []) {
   const conflicts = detectConflicts();
   const ordering = ambiguousOrdering();
+  const marks = orgs.map(() => '?').join(',') || 'NULL';
   const failures = all(
     `SELECT f.*, r.name AS rule_name, l.name AS lead_name
      FROM rule_failures f
      LEFT JOIN rules r ON r.id = f.rule_id
      LEFT JOIN leads l ON l.id = f.lead_id
      WHERE f.resolved_at IS NULL
+       AND (f.lead_id IS NULL OR l.sales_org IN (${marks}))
      ORDER BY f.created_at DESC LIMIT 100`,
+    orgs,
   );
 
   return {

@@ -17,7 +17,7 @@
  */
 
 import { Router } from 'express';
-import { dmyTime } from '../engine/daterange.js';
+import { dmyTime, typedToStored, storedToDate } from '../engine/daterange.js';
 import { all, one, run, audit } from '../db.js';
 import { requireUser, requirePermission, reqScope, mayUseOrg } from '../auth.js';
 import { validate } from '../security.js';
@@ -31,6 +31,7 @@ import {
 } from '../engine/followups.js';
 import * as geolocation from '../engine/geolocation.js';
 import { withCorrections, mayCorrect, addCorrection } from '../engine/corrections.js';
+import { taskOutOfBook } from '../engine/bookscope.js';
 
 const router = Router();
 router.use(requireUser);
@@ -155,7 +156,7 @@ router.post('/', requirePermission('lead.contact'), (req, res) => {
   const {
     lead_id, card_id, type, direction = 'outbound', subject, body,
     disposition: code, duration_s, sentiment,
-    follow_up_at, meeting_at, meeting_mode, meeting_location, reason,
+    meeting_mode, meeting_location, reason,
     geo = null,
     respect_business_hours = true,
     client_ref = null,
@@ -164,6 +165,16 @@ router.post('/', requirePermission('lead.contact'), (req, res) => {
 
   const invalid = validate(req.body, { type: ['required'], subject: ['max:200'] });
   if (invalid) return res.status(400).json(invalid);
+
+  /* OPS-46: a follow-up or meeting time is typed as India time. Converted once,
+     here, so the activity, the task and its reminders all hold the same UTC
+     instant -- and so nextStepAt reads the converted value from the body. */
+  for (const field of ['follow_up_at', 'meeting_at']) {
+    if (req.body[field] === undefined || req.body[field] === null || req.body[field] === '') continue;
+    const stored = typedToStored(req.body[field]);
+    if (!stored) return res.status(400).json({ error: 'This outcome needs more detail', fields: { [field]: 'Not a valid date and time' } });
+    req.body[field] = stored;
+  }
 
   /* Already logged?
    *
@@ -260,8 +271,8 @@ router.post('/', requirePermission('lead.contact'), (req, res) => {
       req.user.id,
       disposition?.outcome ?? null,
       disposition?.label ?? null,
-      follow_up_at ?? null,
-      meeting_at ?? null,
+      req.body.follow_up_at ?? null, // OPS-46: the converted value
+      req.body.meeting_at ?? null,
       meeting_mode ?? null,
       meeting_location ?? null,
       reason ?? null,
@@ -358,6 +369,9 @@ router.post('/', requirePermission('lead.contact'), (req, res) => {
 router.patch('/follow-ups/:taskId', requirePermission('lead.contact'), (req, res) => {
   const task = one('SELECT * FROM tasks WHERE id = ?', [req.params.taskId]);
   if (!task) return res.status(404).json({ error: 'Task not found' });
+  // N-12: a follow-up is its records' business's (taskOutOfBook).
+  const outOfBook = taskOutOfBook(req, task);
+  if (outOfBook) return res.status(outOfBook.status).json({ error: outOfBook.error });
 
   const mayReschedule = task.assignee_id === req.user.id
     || ['sales_supervisor', 'product_supervisor', 'admin', 'superadmin'].includes(req.user.role);
@@ -365,11 +379,12 @@ router.patch('/follow-ups/:taskId', requirePermission('lead.contact'), (req, res
     return res.status(403).json({ error: 'You can only reschedule your own follow-ups' });
   }
 
-  const { due_at: dueAt, note } = req.body;
-  if (!dueAt || Number.isNaN(Date.parse(dueAt))) {
+  const { note } = req.body;
+  const dueAt = typedToStored(req.body.due_at); // OPS-46: typed as India time
+  if (!dueAt) {
     return res.status(400).json({ error: 'A valid new date and time is required', field: 'due_at' });
   }
-  if (new Date(dueAt).getTime() < Date.now() - 60_000) {
+  if (storedToDate(dueAt).getTime() < Date.now() - 60_000) {
     return res.status(400).json({ error: 'That is in the past — pick a future date and time', field: 'due_at' });
   }
 
@@ -409,6 +424,9 @@ router.patch('/follow-ups/:taskId', requirePermission('lead.contact'), (req, res
 router.post('/follow-ups/:taskId/complete', requirePermission('lead.contact'), (req, res) => {
   const task = one('SELECT * FROM tasks WHERE id = ?', [req.params.taskId]);
   if (!task) return res.status(404).json({ error: 'Task not found' });
+  // N-12: completed by id from the other business, before this.
+  const outOfBook = taskOutOfBook(req, task);
+  if (outOfBook) return res.status(outOfBook.status).json({ error: outOfBook.error });
 
   run("UPDATE tasks SET status = 'Done', updated_at = datetime('now') WHERE id = ?", [task.id]);
   cancelReminders(task.id, 'completed');

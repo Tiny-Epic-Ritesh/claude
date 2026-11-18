@@ -258,6 +258,24 @@ export const dmyTime = (s) => {
   return `${p.dd}-${p.mm}-${p.yyyy} ${p.hh}:${p.mi} IST`;
 };
 
+/**
+ * A stored time as an <input type="datetime-local"> value, in India time
+ * (OPS-46). Stored times are UTC; the input shows and sends India time, and
+ * the server converts what it sends back.
+ */
+export const istInput = (s) => {
+  const d = parseTs(s);
+  if (!d) return '';
+  const p = istParts(d);
+  return `${p.yyyy}-${p.mm}-${p.dd}T${p.hh}:${p.mi}`;
+};
+
+/** Has this stored time passed? Stored times are UTC (OPS-46). */
+export const isPast = (s) => {
+  const d = parseTs(s);
+  return Boolean(d) && d.getTime() < Date.now();
+};
+
 /** 10-2026, for a month such as a commission period ("2026-10"). */
 export const monthYear = (s) => (/^\d{4}-\d{2}$/.test(String(s ?? '')) ? String(s).split('-').reverse().join('-') : (s || '—'));
 

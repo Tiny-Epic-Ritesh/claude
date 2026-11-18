@@ -4,7 +4,7 @@
  */
 
 import express, { Router } from 'express';
-import { dmy } from '../engine/daterange.js';
+import { dmy, typedToStored } from '../engine/daterange.js';
 import { all, one, run, audit, ROLES, ROLE_LABELS } from '../db.js';
 import { requireUser, requirePermission, requireAnyPermission, permissionsFor, orgsFor, activeOrg, mayUseOrg, mayUnmask, PERMISSIONS } from '../auth.js';
 import { fill, maskedTokens } from '../engine/mergefields.js';
@@ -272,13 +272,26 @@ router.get('/products/brochure-formats', requirePermission('admin.products'), (_
  * rather than trusted from the request, since a Content-Type is whatever the
  * caller says it is.
  */
+/* N-12: a product belongs to one business (QA-32), so a write by id asks it.
+   The brochure upload, its removal and the product edit took the id alone: a
+   Bigul Admin could remove a Bonanza product's brochure, or rename it. */
+function productInBook(req, res) {
+  const product = one('SELECT id, name, sales_org FROM product_types WHERE id = ?', [req.params.id]);
+  if (!product) { res.status(404).json({ error: 'Product not found' }); return null; }
+  if (product.sales_org && !mayUseOrg(req.user, product.sales_org)) {
+    res.status(403).json({ error: 'This product belongs to another business' });
+    return null;
+  }
+  return product;
+}
+
 router.post(
   '/products/:id/brochure',
   requirePermission('admin.products'),
   express.raw({ type: '*/*', limit: BROCHURE_MAX }),
   (req, res) => {
-    const product = one('SELECT id, name FROM product_types WHERE id = ?', [req.params.id]);
-    if (!product) return res.status(404).json({ error: 'Product not found' });
+    const product = productInBook(req, res);
+    if (!product) return undefined;
 
     const bytes = req.body;
     if (!Buffer.isBuffer(bytes) || !bytes.length) {
@@ -315,12 +328,14 @@ router.post(
 );
 
 router.delete('/products/:id/brochure', requirePermission('admin.products'), (req, res) => {
+  if (!productInBook(req, res)) return undefined;
   run('DELETE FROM product_brochure WHERE product_type_id = ?', [req.params.id]);
   audit(req.user.id, 'product_brochure_removed', 'product', Number(req.params.id), {});
   res.json({ ok: true });
 });
 
 router.patch('/products/:id', requirePermission('admin.products'), (req, res) => {
+  if (!productInBook(req, res)) return undefined;
   if (req.body.min_investment !== undefined && req.body.min_investment !== null && req.body.min_investment !== '') {
     const minimum = Number(req.body.min_investment);
     if (!(Number.isFinite(minimum) && minimum >= 0)) {
@@ -1046,13 +1061,35 @@ router.delete('/rules/:id', requirePermission('admin.rules'), (req, res) => {
 });
 
 router.get('/rules/:id/runs', requirePermission('admin.rules'), (req, res) => {
-  res.json(all('SELECT r.*, l.name AS lead_name FROM rule_runs r LEFT JOIN leads l ON l.id = r.lead_id WHERE r.rule_id = ? ORDER BY r.created_at DESC LIMIT 100', [req.params.id]));
+  /* N-12: each run names its lead, so only the reader's businesses' runs. */
+  const orgs = orgsFor(req.user);
+  const marks = orgs.map(() => '?').join(',') || 'NULL';
+  res.json(all(
+    `SELECT r.*, l.name AS lead_name FROM rule_runs r LEFT JOIN leads l ON l.id = r.lead_id
+      WHERE r.rule_id = ? AND (r.lead_id IS NULL OR l.sales_org IN (${marks}))
+      ORDER BY r.created_at DESC LIMIT 100`,
+    [req.params.id, ...orgs],
+  ));
 });
 
 /** Automation health — conflicts, ambiguous ordering and the failure queue. */
-router.get('/rules/health', requirePermission('admin.rules'), (_req, res) => {
-  res.json(healthReport());
+router.get('/rules/health', requirePermission('admin.rules'), (req, res) => {
+  res.json(healthReport(orgsFor(req.user)));
 });
+
+/* N-12: a failure is on a lead, and a lead is one business's. Resolving one
+   hides it from the queue and retrying one runs a rule on that lead; both took
+   the failure by id from either business. Answered as not found, as the list
+   now does not show it. */
+const failureInBook = (req, res) => {
+  const row = one('SELECT * FROM rule_failures WHERE id = ?', [req.params.id]);
+  const lead = row?.lead_id ? one('SELECT sales_org FROM leads WHERE id = ?', [row.lead_id]) : null;
+  if (!row || (lead && !mayUseOrg(req.user, lead.sales_org))) {
+    res.status(404).json({ error: 'Failure not found' });
+    return null;
+  }
+  return row;
+};
 
 /**
  * Mark a failure dealt with.
@@ -1062,8 +1099,8 @@ router.get('/rules/health', requirePermission('admin.rules'), (_req, res) => {
  * how a queue becomes background noise.
  */
 router.post('/rules/failures/:id/resolve', requirePermission('admin.rules'), (req, res) => {
-  const row = one('SELECT * FROM rule_failures WHERE id = ?', [req.params.id]);
-  if (!row) return res.status(404).json({ error: 'Failure not found' });
+  const row = failureInBook(req, res);
+  if (!row) return undefined;
 
   run("UPDATE rule_failures SET resolved_at = datetime('now'), resolved_by = ? WHERE id = ?",
     [req.user.id, req.params.id]);
@@ -1073,8 +1110,8 @@ router.post('/rules/failures/:id/resolve', requirePermission('admin.rules'), (re
 
 /** Re-run one rule against just the lead that failed. */
 router.post('/rules/failures/:id/retry', requirePermission('admin.rules'), (req, res) => {
-  const row = one('SELECT * FROM rule_failures WHERE id = ?', [req.params.id]);
-  if (!row) return res.status(404).json({ error: 'Failure not found' });
+  const row = failureInBook(req, res);
+  if (!row) return undefined;
 
   /* QA-02. A retry puts the given-up action back and runs it now. It counts as
      resolved only if something actually ran: a rule held by office hours, or a
@@ -1336,7 +1373,7 @@ router.post('/test-records', requirePermission('admin.test_records'), (req, res)
 });
 
 router.delete('/test-records/:id', requirePermission('admin.test_records'), (req, res) => {
-  const out = unmarkTestRecord(req.params.id, req.user);
+  const out = unmarkTestRecord(req.params.id, req.user, readsBook(req));
   if (out.error) return res.status(out.status).json({ error: out.error });
   return res.json(out);
 });
@@ -1589,8 +1626,11 @@ function approvedTemplate(templateId, channel, org) {
 }
 
 router.post('/campaigns', requirePermission('campaign.manage'), (req, res) => {
-  const { name, channel, template_id, list_id, scheduled_at } = req.body ?? {};
+  const { name, channel, template_id, list_id } = req.body ?? {};
   if (!name?.trim()) return res.status(400).json({ error: 'Give the campaign a name' });
+  /* OPS-46: a schedule is typed as India time and stored as UTC. */
+  const scheduled_at = req.body?.scheduled_at ? typedToStored(req.body.scheduled_at) : null;
+  if (req.body?.scheduled_at && !scheduled_at) return res.status(400).json({ error: 'The schedule is not a date and time', field: 'scheduled_at' });
   if (!channel) return res.status(400).json({ error: 'Choose a channel' });
   if (!list_id) return res.status(400).json({ error: 'Choose a list to send to' });
 
@@ -1668,8 +1708,13 @@ router.patch('/campaigns/:id', requirePermission('campaign.manage'), (req, res) 
   const params = [];
   for (const f of fields) {
     if (req.body?.[f] === undefined) continue;
+    let value = req.body[f] === '' ? null : req.body[f];
+    if (f === 'scheduled_at' && value !== null) {
+      value = typedToStored(value); // OPS-46
+      if (!value) return res.status(400).json({ error: 'The schedule is not a date and time', field: 'scheduled_at' });
+    }
     sets.push(`${f} = ?`);
-    params.push(req.body[f] === '' ? null : req.body[f]);
+    params.push(value);
   }
   if (!sets.length) return res.json(campaign);
 

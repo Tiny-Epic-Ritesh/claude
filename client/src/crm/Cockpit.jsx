@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, money, rupees, shortDate, dateTime, mins, STATE_LABEL, ROLE_LABEL } from '../api.js';
+import { api, money, rupees, shortDate, dateTime, mins, STATE_LABEL, ROLE_LABEL, isPast } from '../api.js';
 import { useApi, Loading, ErrorBanner, Stat, Empty, CardStrip, AgeBadge, PriorityBadge, Progress, Tabs, Icon, kycBadge } from '../components/ui.jsx';
 import Dashboard from './Dashboard.jsx';
 
@@ -91,7 +91,7 @@ export default function Cockpit({ session }) {
             <table>
               <tbody>
                 {data.tasks.slice(0, 6).map((t) => {
-                  const overdue = new Date(t.due_at) < new Date();
+                  const overdue = isPast(t.due_at);
                   return (
                     <tr key={t.id} className={t.lead_id ? 'row-link' : ''} onClick={() => t.lead_id && navigate(`/leads/${t.lead_id}`)}>
                       <td>

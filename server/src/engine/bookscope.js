@@ -125,3 +125,27 @@ export function reachable(req, org) {
 }
 
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/**
+ * Whether a task may be changed by this request, judged by what it is linked to.
+ *
+ * A task has no business of its own: it carries its records' (QA-08 checks each
+ * link when a task is made). Every link must be in the reader's books -- a lead,
+ * a card, a case or a partner -- or the task is refused, as the record would be.
+ * N-12: the follow-up routes changed a task by id with no business at all, and
+ * the task guard on /tasks/:id checked a lead's but let a task linked only to a
+ * partner, case or card through.
+ *
+ * Returns null when the task may be changed, or `{ error, status }`. A task
+ * with no link at all has no business to check; the caller's own rule (whose
+ * task it is) decides that one.
+ */
+export function taskOutOfBook(req, task) {
+  const links = [['lead', task.lead_id], ['card', task.card_id], ['ticket', task.ticket_id], ['partner', task.partner_id]];
+  for (const [kind, id] of links) {
+    if (id === null || id === undefined || id === '') continue;
+    const found = loadInBook(req, kind, id);
+    if (found.error) return { error: found.error, status: found.status };
+  }
+  return null;
+}

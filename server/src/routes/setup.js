@@ -2688,8 +2688,13 @@ router.post('/tab-visibility/role', requirePermission('admin.roles'), (req, res)
 });
 
 router.get('/users/:id/tabs', requirePermission('admin.roles'), (req, res) => {
-  const user = one('SELECT id, name, role FROM users WHERE id = ?', [req.params.id]);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+  const found = one('SELECT id, name, role, sales_org FROM users WHERE id = ?', [req.params.id]);
+  if (!found) return res.status(404).json({ error: 'User not found' });
+  /* N-12: a person is their business's to configure, as /users/:id/access
+     already held. The conformance test said this route was guarded the same
+     way; it was not, read or write. */
+  if (!mayUseOrg(req.user, found.sales_org)) return res.status(403).json({ error: 'That user is outside your sales org' });
+  const { sales_org: _org, ...user } = found;
 
   const overrides = new Map(overridesFor(user.id).map((o) => [o.tab_id, Boolean(o.visible)]));
   res.json({
@@ -2710,8 +2715,11 @@ router.get('/users/:id/tabs', requirePermission('admin.roles'), (req, res) => {
 });
 
 router.post('/users/:id/tabs', requirePermission('admin.roles'), (req, res) => {
-  const user = one('SELECT id, name, role FROM users WHERE id = ?', [req.params.id]);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+  const found = one('SELECT id, name, role, sales_org FROM users WHERE id = ?', [req.params.id]);
+  if (!found) return res.status(404).json({ error: 'User not found' });
+  // N-12: a Bigul Admin changed which tabs a Bonanza user sees.
+  if (!mayUseOrg(req.user, found.sales_org)) return res.status(403).json({ error: 'That user is outside your sales org' });
+  const { sales_org: _org, ...user } = found;
 
   const { tab_id: tabId, visible } = req.body ?? {};
   const knownSetup = isSetupTabId(tabId) && isSetupSection(sectionKeyOf(tabId));

@@ -155,6 +155,13 @@ export function ownerOf(record) {
 export function assignToQueue(leadId, queueId, { actorId = null } = {}) {
   const queue = one('SELECT * FROM queues WHERE id = ?', [queueId]);
   if (!queue) return { ok: false, error: 'No such queue' };
+  /* N-12: never into the other business's queue, whoever asks -- a lead there
+     sits on a worklist its own people cannot see. A shared queue takes either. */
+  const lead = one('SELECT sales_org FROM leads WHERE id = ? AND deleted_at IS NULL', [leadId]);
+  if (!lead) return { ok: false, error: 'Lead not found' };
+  if (queue.sales_org && queue.sales_org !== lead.sales_org) {
+    return { ok: false, error: `${queue.name} is the other business's queue` };
+  }
 
   run(
     "UPDATE leads SET owner_queue_id = ?, owner_id = NULL, updated_at = datetime('now') WHERE id = ?",

@@ -34,6 +34,7 @@
  */
 
 import { all, one, run, transact } from '../db.js';
+import { IST_OFFSET_MIN, storedToDate } from './daterange.js';
 
 export const CALENDAR_KINDS = ['office', 'exchange'];
 
@@ -117,7 +118,17 @@ function load() {
 
 export const invalidate = () => { cache = null; };
 
-const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+/* OPS-46. Opening hours, weekdays and holidays are India's, whatever zone the
+   server's clock is set to. These used getHours() and getDay(), which read the
+   machine's zone: in the container, UTC, so the office "opened" at 14:30 IST
+   and a Saturday began at 05:30 on Saturday. Each function now reads an
+   instant as India wall-clock -- shifted, then read with getUTC* -- and turns
+   the answer back into an instant. India has no daylight saving. */
+const SHIFT = IST_OFFSET_MIN * 60_000;
+const instant = (value) => storedToDate(value) ?? new Date(NaN);
+const wall = (value) => new Date(instant(value).getTime() + SHIFT);
+const unwall = (w) => new Date(w.getTime() - SHIFT);
+const iso = (w) => w.toISOString().slice(0, 10);
 
 export function calendarFor(kind = 'office') {
   const c = load()[kind];
@@ -128,22 +139,23 @@ export function calendarFor(kind = 'office') {
 /** Is this a working day on this calendar? */
 export function isWorkingDay(date, kind = 'office') {
   const cal = calendarFor(kind);
-  const d = new Date(date);
-  if (!cal.week.includes(d.getDay())) return false;
-  return !cal.closed.has(iso(d));
+  const w = wall(date);
+  if (!cal.week.includes(w.getUTCDay())) return false;
+  return !cal.closed.has(iso(w));
 }
 
 /** When does this calendar close on this date? Half-days close early. */
 export function closingHour(date, kind = 'office') {
   const cal = calendarFor(kind);
-  return cal.half.get(iso(new Date(date))) ?? cal.close_hour;
+  return cal.half.get(iso(wall(date))) ?? cal.close_hour;
 }
 
 export function isWorkingTime(date, kind = 'office') {
   const cal = calendarFor(kind);
-  const d = new Date(date);
+  const d = instant(date);
   if (!isWorkingDay(d, kind)) return false;
-  return d.getHours() >= cal.open_hour && d.getHours() < closingHour(d, kind);
+  const hour = wall(d).getUTCHours();
+  return hour >= cal.open_hour && hour < closingHour(d, kind);
 }
 
 /**
@@ -155,29 +167,29 @@ export function isWorkingTime(date, kind = 'office') {
  */
 export function nextWorkingTime(from, kind = 'office') {
   const cal = calendarFor(kind);
-  const d = new Date(from);
-  if (Number.isNaN(d.getTime())) return new Date();
+  if (Number.isNaN(instant(from).getTime())) return new Date();
+  const w = wall(from);
 
   // A guard, not an expectation: a calendar closed every day of the week would
   // otherwise spin forever.
   for (let guard = 0; guard < 400; guard += 1) {
-    if (!isWorkingDay(d, kind)) {
-      d.setDate(d.getDate() + 1);
-      d.setHours(cal.open_hour, 0, 0, 0);
+    if (!isWorkingDay(unwall(w), kind)) {
+      w.setUTCDate(w.getUTCDate() + 1);
+      w.setUTCHours(cal.open_hour, 0, 0, 0);
       continue;
     }
-    if (d.getHours() < cal.open_hour) {
-      d.setHours(cal.open_hour, 0, 0, 0);
-      return d;
+    if (w.getUTCHours() < cal.open_hour) {
+      w.setUTCHours(cal.open_hour, 0, 0, 0);
+      return unwall(w);
     }
-    if (d.getHours() >= closingHour(d, kind)) {
-      d.setDate(d.getDate() + 1);
-      d.setHours(cal.open_hour, 0, 0, 0);
+    if (w.getUTCHours() >= closingHour(unwall(w), kind)) {
+      w.setUTCDate(w.getUTCDate() + 1);
+      w.setUTCHours(cal.open_hour, 0, 0, 0);
       continue;
     }
-    return d;
+    return unwall(w);
   }
-  return d;
+  return unwall(w);
 }
 
 /**
@@ -202,8 +214,9 @@ export function addWorkingMinutes(from, minutes, kind = 'office') {
    * makes an eight-week SLA about fifty iterations.
    */
   for (let guard = 0; guard < 2000; guard += 1) {
-    const closes = new Date(cursor);
-    closes.setHours(closingHour(cursor, kind), 0, 0, 0);
+    const closesW = wall(cursor);
+    closesW.setUTCHours(closingHour(cursor, kind), 0, 0, 0);
+    const closes = unwall(closesW);
 
     const availableToday = Math.max(0, Math.round((closes - cursor) / 60_000));
 
@@ -214,31 +227,31 @@ export function addWorkingMinutes(from, minutes, kind = 'office') {
     remaining -= availableToday;
 
     // Move to the opening of the next working day.
-    const nextDay = new Date(cursor);
-    nextDay.setDate(nextDay.getDate() + 1);
-    nextDay.setHours(cal.open_hour, 0, 0, 0);
-    cursor = nextWorkingTime(nextDay, kind);
+    const nextDay = wall(cursor);
+    nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+    nextDay.setUTCHours(cal.open_hour, 0, 0, 0);
+    cursor = nextWorkingTime(unwall(nextDay), kind);
   }
   return cursor;
 }
 
 /** Working days between two dates — for ageing that should not count holidays. */
 export function workingDaysBetween(from, to, kind = 'office') {
-  const a = new Date(from);
-  const b = new Date(to);
+  const a = instant(from);
+  const b = instant(to);
   if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return null;
 
   const sign = b >= a ? 1 : -1;
   const [start, end] = sign > 0 ? [a, b] : [b, a];
-  const cursor = new Date(start);
-  cursor.setHours(0, 0, 0, 0);
-  const last = new Date(end);
-  last.setHours(0, 0, 0, 0);
+  const cursor = wall(start);
+  cursor.setUTCHours(0, 0, 0, 0);
+  const last = wall(end);
+  last.setUTCHours(0, 0, 0, 0);
 
   let n = 0;
   for (let guard = 0; cursor < last && guard < 4000; guard += 1) {
-    cursor.setDate(cursor.getDate() + 1);
-    if (isWorkingDay(cursor, kind)) n += 1;
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    if (isWorkingDay(unwall(cursor), kind)) n += 1;
   }
   return n * sign;
 }

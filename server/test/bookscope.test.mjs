@@ -162,7 +162,7 @@ const NOT_A_RECORD = {
   '/api/admin/calendars/:kind/check': 'Working-calendar lookup. Firm-wide configuration.',
   '/api/admin/campaigns/:id/audience': 'Campaign audience; campaigns are org-scoped at the list route.',
   '/api/admin/connectors/meta/campaigns/:id/insights': 'Meta ad campaign, not a CRM record. Superadmin only.',
-  '/api/admin/rules/:id/runs': 'Automation run history. Configuration, admin only.',
+  '/api/admin/rules/:id/runs': 'A rule\'s run history. Each run names its lead, so the rows are the reader\'s businesses\' only (N-12, 18 Nov) -- asserted in n12writes.test.mjs.',
   '/api/admin/access-log/user/:id': 'Access-log rows for a user. Admin only; the log is not a client record.',
   '/api/admin/versions/:kind/:logicalId': 'Version history of a configurable artefact — a rule, template, journey or SLA policy. Configuration, identical across both businesses, admin only.',
   '/api/approvals/:id': 'Guarded by inReach() on the record the approval is about.',

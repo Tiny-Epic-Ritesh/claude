@@ -9,6 +9,7 @@
 import { wonRefusal } from './policies.js';
 import { all, one, run, notify, audit, daysSince, ageBand, transact } from '../db.js';
 import { isWorkingTime } from './calendar.js';
+import { istNow } from './daterange.js';
 import { rebuild } from './metrics.js';
 import { send } from '../integrations.js';
 import { kycStatusSql, kycStatusFor } from './kycstatus.js';
@@ -583,7 +584,8 @@ export function scheduleOf(rule) {
 
 /** Why the rule may not act on this lead at this moment, or null when it may. */
 function holdFor(schedule, ruleId, leadId, now) {
-  if (schedule.skip_weekends && [0, 6].includes(now.getDay())) return 'it is the weekend';
+  // OPS-46: India's weekend, not the server's.
+  if (schedule.skip_weekends && [0, 6].includes(istNow(now).getUTCDay())) return 'it is the weekend';
   if (schedule.business_hours && !isWorkingTime(now, 'office')) return 'outside office hours';
   if (schedule.max_per_day) {
     const today = one(

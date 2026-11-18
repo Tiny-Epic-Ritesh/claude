@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, shortDate } from '../../api.js';
+import { api, shortDate, istInput } from '../../api.js';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Icon, useDropUp, announce } from '../../components/ui.jsx';
 
 /*
@@ -344,7 +344,7 @@ function CampaignEditor({ campaign, onClose, onSaved }) {
     channel: campaign?.channel ?? 'whatsapp',
     template_id: campaign?.template_id ?? '',
     list_id: campaign?.list_id ?? '',
-    scheduled_at: campaign?.scheduled_at?.slice(0, 16).replace(' ', 'T') ?? '',
+    scheduled_at: istInput(campaign?.scheduled_at),
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);

@@ -15,7 +15,7 @@ import { all, one, run, audit, SALES_ORGS } from '../db.js';
 import { requireUser, requirePermission, can, mayUseOrg, userCan } from '../auth.js';
 import { validate } from '../security.js';
 import {
-  libraries, itemsIn, mayRead, mayManage, mayTransition, setStatus, expiryFor, STATUSES, newVersion,
+  libraries, itemsIn, mayRead, mayManage, mayManageItem, mayTransition, setStatus, expiryFor, STATUSES, newVersion,
 } from '../engine/library.js';
 
 const router = Router();
@@ -154,6 +154,8 @@ router.post('/:id/items', (req, res) => {
 router.patch('/items/:itemId', (req, res) => {
   const item = one('SELECT * FROM content_items WHERE id = ?', [req.params.itemId]);
   if (!item) return res.status(404).json({ error: 'No such item' });
+  // N-12: the other business's item is not there to them, as a library they cannot read is not.
+  if (!mayManageItem(item, req.user)) return res.status(404).json({ error: 'No such item' });
   const lib = item.library_id ? loadLibrary(item.library_id) : null;
   if (lib && !mayManage(lib, req.user)) return res.status(403).json({ error: 'Only the owning role can change this' });
   if (!lib && !userCan(req.user, 'admin.content')) return res.status(403).json({ error: 'Managing unfiled content needs content permission' });
@@ -200,6 +202,8 @@ router.patch('/items/:itemId', (req, res) => {
 router.post('/items/:itemId/status', (req, res) => {
   const item = one('SELECT * FROM content_items WHERE id = ?', [req.params.itemId]);
   if (!item) return res.status(404).json({ error: 'No such item' });
+  // N-12: the other business's item is not there to them, as a library they cannot read is not.
+  if (!mayManageItem(item, req.user)) return res.status(404).json({ error: 'No such item' });
   const lib = item.library_id ? loadLibrary(item.library_id) : null;
   if (lib && !mayRead(lib, req.user)) return res.status(404).json({ error: 'No such item' });
 
@@ -227,6 +231,8 @@ router.post('/items/:itemId/status', (req, res) => {
 router.post('/items/:itemId/versions', (req, res) => {
   const item = one('SELECT * FROM content_items WHERE id = ?', [req.params.itemId]);
   if (!item) return res.status(404).json({ error: 'No such item' });
+  // N-12: the other business's item is not there to them, as a library they cannot read is not.
+  if (!mayManageItem(item, req.user)) return res.status(404).json({ error: 'No such item' });
   const lib = item.library_id ? loadLibrary(item.library_id) : null;
   if (lib && !mayRead(lib, req.user)) return res.status(404).json({ error: 'No such item' });
   if (lib && !mayManage(lib, req.user)) return res.status(403).json({ error: 'Only the owning role can add a version' });

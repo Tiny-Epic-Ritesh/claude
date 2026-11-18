@@ -12,7 +12,7 @@
 
 import { Router } from 'express';
 import { all, one, run } from '../db.js';
-import { requireUser, requirePermission, clientScope, leadScope, can, activeOrg, userCan } from '../auth.js';
+import { requireUser, requirePermission, clientScope, leadScope, can, activeOrg, userCan, mayUseOrg } from '../auth.js';
 import { resolveRange, inRange, RANGES, DEFAULT_RANGE } from '../engine/daterange.js';
 import { actualFor, scoreOf, applySlabs } from '../engine/kra.js';
 import { auditConfig } from '../engine/metadata.js';
@@ -266,6 +266,7 @@ export function validateSlabs(slabs) {
 router.patch('/config/metrics/:id', requirePermission('admin.rules'), (req, res) => {
   const row = one('SELECT * FROM kra_metrics WHERE id = ?', [req.params.id]);
   if (!row) return res.status(404).json({ error: 'Metric not found' });
+  if (row.sales_org && !mayUseOrg(req.user, row.sales_org)) return res.status(403).json({ error: 'This metric belongs to another business' }); // N-12
 
   const fields = ['label', 'description', 'source', 'unit', 'target', 'weight', 'direction', 'active', 'sort_order'];
   if ('unit' in req.body && !UNITS.includes(req.body.unit)) {
@@ -336,6 +337,7 @@ router.post('/config/metrics', requirePermission('admin.rules'), (req, res) => {
 router.delete('/config/metrics/:id', requirePermission('admin.rules'), (req, res) => {
   const row = one('SELECT * FROM kra_metrics WHERE id = ?', [req.params.id]);
   if (!row) return res.status(404).json({ error: 'Metric not found' });
+  if (row.sales_org && !mayUseOrg(req.user, row.sales_org)) return res.status(403).json({ error: 'This metric belongs to another business' }); // N-12
   run("UPDATE kra_metrics SET active = 0, edited_at = datetime('now'), edited_by = ? WHERE id = ?",
     [req.user.id, row.id]);
   auditConfig('kra', `${row.role_code}.${row.code}`, 'retired', row, { ...row, active: 0 }, req.user.id);
@@ -348,6 +350,7 @@ router.delete('/config/metrics/:id', requirePermission('admin.rules'), (req, res
 router.patch('/config/plans/:id', requirePermission('admin.rules'), (req, res) => {
   const plan = one('SELECT * FROM incentive_plans WHERE id = ?', [req.params.id]);
   if (!plan) return res.status(404).json({ error: 'Plan not found' });
+  if (plan.sales_org && !mayUseOrg(req.user, plan.sales_org)) return res.status(403).json({ error: 'This plan belongs to another business' }); // N-12
 
   const slabs = req.body.slabs;
   if (slabs !== undefined) {

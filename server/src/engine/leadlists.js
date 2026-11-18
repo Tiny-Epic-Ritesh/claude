@@ -299,6 +299,10 @@ export function mayReadList(list, user) {
   return shared.some((s) => s === user.role || s === user.id || String(s) === String(user.id));
 }
 
+/* N-12: the business first, as mayReadList asks it. Without it any Admin could
+   write any list -- an import into a Bonanza list by a Bigul Admin went
+   through, and so did copying members into one (bulk/membership's target). */
 export const mayWriteList = (list, user) =>
-  Boolean(list && user && (list.owner_id === user.id || list.created_by === user.id
-    || ['superadmin', 'admin'].includes(user.role)));
+  Boolean(list && user && (!list.sales_org || mayUseOrg(user, list.sales_org))
+    && (list.owner_id === user.id || list.created_by === user.id
+      || ['superadmin', 'admin'].includes(user.role)));

@@ -25,6 +25,72 @@ export const istNow = (now = new Date()) =>
 
 const iso = (d) => d.toISOString().slice(0, 10);
 
+/* --------------------------------------------- typed times and stored times
+ *
+ * OPS-46. Two conventions meet here, and nothing kept them apart:
+ *
+ *   stored   every timestamp in the database is UTC, 'YYYY-MM-DD HH:MM:SS',
+ *            with no zone written -- `datetime('now')`
+ *   typed    a person types India time; <input type="datetime-local"> sends
+ *            '2026-10-16T11:00', also with no zone written
+ *
+ * The task, follow-up, list-task and campaign routes stored the typed value as
+ * it came, so it was read back as UTC: a task typed for 11:00 was due 16:30.
+ * And the server parsed zone-less strings with `new Date()`, which reads them
+ * in whatever zone the machine is set to -- UTC in the container, India on a
+ * developer's laptop -- so the same code was right on one and wrong on the
+ * other, which is how it shipped.
+ *
+ * So: a time arriving from a person or a client goes through `typedToStored`
+ * once, at the route, and a stored time is read with `storedToDate`. Neither
+ * depends on the machine's zone. India has no daylight saving, so a fixed
+ * offset is exact.
+ */
+const ZONED = /([zZ]|[+-]\d{2}:?\d{2})$/;
+const DAY_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+const LOCAL_TIME = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
+
+/** A Date as the database writes one: UTC, 'YYYY-MM-DD HH:MM:SS'. */
+export const toStored = (d) => d.toISOString().slice(0, 19).replace('T', ' ');
+
+/**
+ * A stored timestamp (or a Date, or a zoned ISO string) as a Date. A zone-less
+ * value is UTC, because that is what the database holds.
+ */
+export function storedToDate(value) {
+  if (value instanceof Date) return new Date(value.getTime());
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'number') return new Date(value);
+  const raw = String(value).trim().replace(' ', 'T');
+  const d = new Date(ZONED.test(raw) || DAY_ONLY.test(raw) ? raw : `${raw}Z`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * A time a person typed, as the database stores it.
+ *
+ * A zone-less date and time is India time. One with a zone (an API caller
+ * sending '...Z' or '+05:30') means what it says. A bare day is left as the
+ * day. Returns null for anything that is not a time, so the route can refuse
+ * it rather than store text in a timestamp column.
+ */
+export function typedToStored(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : toStored(value);
+  const raw = String(value).trim();
+  if (DAY_ONLY.test(raw)) return raw;
+  if (LOCAL_TIME.test(raw)) {
+    const asUtc = new Date(`${raw.replace(' ', 'T')}Z`);
+    if (Number.isNaN(asUtc.getTime())) return null;
+    return toStored(new Date(asUtc.getTime() - IST_OFFSET_MIN * 60_000));
+  }
+  if (ZONED.test(raw)) {
+    const d = new Date(raw.replace(' ', 'T'));
+    return Number.isNaN(d.getTime()) ? null : toStored(d);
+  }
+  return null;
+}
+
 /** The financial year a date falls in. April to March, named by its start. */
 export function financialYearStart(d) {
   const y = d.getUTCFullYear();

@@ -25,8 +25,8 @@ import { request as requestApproval, BULK_THRESHOLD } from '../engine/approvals.
 import { metricsFor } from '../engine/metrics.js';
 import { kycStatusSql, kycStatusFor } from '../engine/kycstatus.js';
 import { nextAction, nextStepForLead, MOVE_NEEDS, STATE_LABEL } from '../engine/nextaction.js';
-import { dmyTime } from '../engine/daterange.js';
-import { loadInBook } from '../engine/bookscope.js';
+import { dmyTime, typedToStored } from '../engine/daterange.js';
+import { loadInBook, taskOutOfBook } from '../engine/bookscope.js';
 import { withCorrections, mayCorrect, addCorrection } from '../engine/corrections.js';
 import { cancelReminders } from '../engine/followups.js';
 import {
@@ -2076,6 +2076,9 @@ router.post('/tasks', (req, res) => {
   const { title, description, lead_id, card_id, ticket_id, partner_id, assignee_id, due_at, priority = 'Normal' } = req.body;
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' });
   if (!due_at) return res.status(400).json({ error: 'A due date is required — tasks without one cannot be created' });
+  /* OPS-46: typed as India time; stored as UTC like every other timestamp. */
+  const dueAt = typedToStored(due_at);
+  if (!dueAt) return res.status(400).json({ error: 'The due date is not a date and time', field: 'due_at' });
 
   /* Every link named in the body, checked like an id named in the path.
    *
@@ -2101,7 +2104,7 @@ router.post('/tasks', (req, res) => {
   const result = run(
     'INSERT INTO tasks (title, description, lead_id, card_id, ticket_id, partner_id, assignee_id, created_by, due_at, priority) VALUES (?,?,?,?,?,?,?,?,?,?)',
     [title, description || null, lead_id || null, card_id || null, ticket_id || null, partner_id || null,
-      assignee_id || req.user.id, req.user.id, due_at, priority],
+      assignee_id || req.user.id, req.user.id, dueAt, priority],
   );
   const taskId = Number(result.lastInsertRowid);
 
@@ -2153,6 +2156,11 @@ function taskFor(req) {
     [req.params.id, ...scope.params],
   );
   if (!task) return { status: 404, body: { error: 'Task not found' } };
+  /* N-12: the scope above judges a task by its lead, and let one with no lead
+     through -- a task linked only to a partner, case or card in the other
+     business. Each link is asked now. */
+  const outOfBook = taskOutOfBook(req, task);
+  if (outOfBook) return { status: outOfBook.status, body: { error: outOfBook.error } };
   if (task.assignee_id !== req.user.id && task.created_by !== req.user.id && !userCan(req.user, 'report.team')) {
     return { status: 403, body: { error: 'That task belongs to somebody else', required: 'report.team' } };
   }
@@ -2182,7 +2190,11 @@ router.patch('/tasks/:id', (req, res) => {
   }
   if (status) { sets.push('status = ?'); params.push(status); }
   if (assignee_id) { sets.push('assignee_id = ?'); params.push(assignee_id); }
-  if (due_at) { sets.push('due_at = ?'); params.push(due_at); }
+  if (due_at) {
+    const dueAt = typedToStored(due_at); // OPS-46
+    if (!dueAt) return res.status(400).json({ error: 'The due date is not a date and time', field: 'due_at' });
+    sets.push('due_at = ?'); params.push(dueAt);
+  }
   if (priority) { sets.push('priority = ?'); params.push(priority); }
   if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
 
@@ -2382,6 +2394,15 @@ router.post('/queues/claim/:leadId', requirePermission('lead.contact'), (req, re
 
 /** Put a lead into a queue — reassignment, so it is gated like one. */
 router.post('/queues/:id/place/:leadId', requirePermission('lead.reassign'), (req, res) => {
+  /* N-12: the lead must be in the reader's books, and so must the queue -- a
+     Bigul Admin put a Bonanza lead into a Bonanza queue by id. */
+  const found = loadInBook(req, 'lead', req.params.leadId);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const queue = one('SELECT id, sales_org FROM queues WHERE id = ?', [req.params.id]);
+  if (!queue) return res.status(404).json({ error: 'Queue not found' });
+  if (queue.sales_org && !mayUseOrg(req.user, queue.sales_org)) {
+    return res.status(403).json({ error: 'This queue belongs to another business' });
+  }
   const out = assignToQueue(Number(req.params.leadId), Number(req.params.id), { actorId: req.user.id });
   if (!out.ok) return res.status(400).json(out);
   audit(req.user.id, 'lead_placed_in_queue', 'lead', Number(req.params.leadId), { queue: out.queue });
@@ -2392,6 +2413,10 @@ router.post('/queues/:id/place/:leadId', requirePermission('lead.reassign'), (re
 router.put('/queues/:id/members', requirePermission('admin.users'), (req, res) => {
   const queue = one('SELECT * FROM queues WHERE id = ?', [req.params.id]);
   if (!queue) return res.status(404).json({ error: 'Queue not found' });
+  // N-12: a business's queue is that business's to staff.
+  if (queue.sales_org && !mayUseOrg(req.user, queue.sales_org)) {
+    return res.status(403).json({ error: 'This queue belongs to another business' });
+  }
 
   const n = setMembers(queue.id, req.body?.roles ?? []);
   audit(req.user.id, 'queue_members_set', 'queue', queue.id, { roles: req.body?.roles });
