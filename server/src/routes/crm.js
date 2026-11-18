@@ -1838,15 +1838,10 @@ router.get('/activities', (req, res) => {
   ), req.user, { caps: req.caps })));
 });
 
-router.post('/activities', (req, res) => {
-  const { lead_id, card_id, type = 'Note', direction = 'outbound', subject, body, outcome, duration_s } = req.body;
-  const result = run(
-    'INSERT INTO activities (lead_id, card_id, type, direction, subject, body, outcome, duration_s, user_id) VALUES (?,?,?,?,?,?,?,?,?)',
-    [lead_id || null, card_id || null, type, direction, subject || null, body || null, outcome || null, duration_s || null, req.user.id],
-  );
-  const delta = applyScore(lead_id, type);
-  res.status(201).json({ id: Number(result.lastInsertRowid), score_delta: delta });
-});
+/* A2d: a second POST /activities lived here -- no permission, no lead scope,
+   no business, and it moved the lead score. It never ran, because the
+   activities router, mounted at /api/activities before this one, answers that
+   path first; swapping two mount lines would have opened it. Removed. */
 
 /* ---------------------------------------------- telephony & messaging */
 
