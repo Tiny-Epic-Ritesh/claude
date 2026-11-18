@@ -317,7 +317,10 @@ router.post('/', (req, res) => {
 router.post('/:id/decide', (req, res) => {
   const { approve, reason } = req.body ?? {};
   const row = byId(Number(req.params.id));
-  if (!row) return res.status(404).json({ error: 'Approval not found' });
+  /* A2b: the business before anything about the request is said. The engine
+     asks it, but after the state -- so the other business's Admin was told
+     whether a Bonanza request was pending, approved or rejected, as a 409. */
+  if (!row || !inReach(row, req.user)) return res.status(404).json({ error: 'Approval not found' });
 
   const out = decide(Number(req.params.id), {
     approve: Boolean(approve),
@@ -333,6 +336,9 @@ router.post('/:id/decide', (req, res) => {
 });
 
 router.post('/:id/withdraw', (req, res) => {
+  // A2b: as decide -- the other business's request is not there to them.
+  const row = byId(Number(req.params.id));
+  if (!row || !inReach(row, req.user)) return res.status(404).json({ error: 'Approval not found' });
   const out = withdraw(Number(req.params.id), req.user);
   if (!out.ok) return res.status(409).json(out);
   return res.json(out);

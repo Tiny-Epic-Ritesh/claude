@@ -1160,16 +1160,44 @@ router.post('/integrations/trading-db/sync', requirePermission('admin.system'), 
  * "19Aug 2025V4-", and two live copies of the same thing.
  */
 
+/**
+ * Which business a versioned artefact is -- null when both businesses share
+ * it (a rule, an SLA policy, the call outcomes, or a kind not named here).
+ *
+ * A2c's restore asked this inline; A2b found the three reads never asked it
+ * at all: the recent list, an artefact's history and a diff gave any Admin
+ * who manages rules the other business's template text, KYC journey and KRA
+ * history. One answer for all four now.
+ */
+const VERSIONED_OWNER = {
+  template: 'SELECT sales_org FROM templates WHERE id = ?',
+  kyc_journey: 'SELECT sales_org FROM product_types WHERE id = ?',
+  kra_metric: 'SELECT sales_org FROM kra_metrics WHERE id = ?',
+  incentive_plan: 'SELECT sales_org FROM incentive_plans WHERE id = ?',
+};
+const versionedOrg = (kind, logicalId) => (VERSIONED_OWNER[kind]
+  ? one(VERSIONED_OWNER[kind], [logicalId])?.sales_org ?? null
+  : null);
+const mayReadVersioned = (req, kind, logicalId) => {
+  const org = versionedOrg(kind, logicalId);
+  return !org || mayUseOrg(req.user, org);
+};
+
 router.get('/versions', requirePermission('admin.rules'), (req, res) => {
   res.json({
     kinds: Object.entries(ARTEFACTS).map(([key, a]) => ({ key, label: a.label })),
-    recent: recentVersions({ kind: req.query.kind ?? null, limit: req.query.limit }),
+    recent: recentVersions({ kind: req.query.kind ?? null, limit: req.query.limit })
+      .filter((v) => mayReadVersioned(req, v.kind, v.logical_id)),
   });
 });
 
 router.get('/versions/:kind/:logicalId', requirePermission('admin.rules'), (req, res) => {
   if (!ARTEFACTS[req.params.kind]) {
     return res.status(404).json({ error: `Nothing called "${req.params.kind}" is versioned` });
+  }
+  // A2b: the other business's template, journey or KRA history is not there to them.
+  if (!mayReadVersioned(req, req.params.kind, req.params.logicalId)) {
+    return res.status(404).json({ error: 'No such history' });
   }
   const versions = versionsOf(req.params.kind, req.params.logicalId);
   return res.json({
@@ -1186,6 +1214,11 @@ router.get('/versions/diff', requirePermission('admin.rules'), (req, res) => {
   const a = Number(req.query.a);
   const b = Number(req.query.b);
   if (!a || !b) return res.status(400).json({ error: 'Give two version ids, a and b' });
+  // A2b: both sides must be readable, or the diff quotes the other business.
+  for (const id of [a, b]) {
+    const v = versionById(id);
+    if (v && !mayReadVersioned(req, v.kind, v.logical_id)) return res.status(404).json({ error: 'One of those versions does not exist' });
+  }
 
   const out = versionDiff(a, b);
   if (!out) return res.status(404).json({ error: 'One of those versions does not exist' });
@@ -1210,14 +1243,7 @@ router.post('/versions/:id/restore', requirePermission('admin.rules'), (req, res
      Superadmin's; a template, a KYC journey (its product's), a KRA metric or
      an incentive plan is its business's Admin's. A kind not named here is
      treated as shared rather than guessed at. */
-  const OWN_BUSINESS = {
-    template: 'SELECT sales_org FROM templates WHERE id = ?',
-    kyc_journey: 'SELECT sales_org FROM product_types WHERE id = ?',
-    kra_metric: 'SELECT sales_org FROM kra_metrics WHERE id = ?',
-    incentive_plan: 'SELECT sales_org FROM incentive_plans WHERE id = ?',
-  };
-  const ownerSql = OWN_BUSINESS[asked.kind];
-  const org = ownerSql ? one(ownerSql, [asked.logical_id])?.sales_org ?? null : null;
+  const org = versionedOrg(asked.kind, asked.logical_id);
   if (!org) {
     if (!mayChangeShared(req.user)) return res.status(403).json({ error: SHARED_SETTING, required: 'setup.shared' });
   } else if (!mayUseOrg(req.user, org)) {
