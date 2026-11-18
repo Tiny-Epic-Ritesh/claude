@@ -78,7 +78,7 @@ const findTime = (wantOpen) => {
   d.setMinutes(0, 0, 0);
   for (let h = 0; h < 24 * 21; h += 1) {
     const t = new Date(d.getTime() + h * 3_600_000);
-    const weekend = [0, 6].includes(t.getDay());
+    const weekend = [0, 6].includes(new Date(t.getTime() + 330 * 60_000).getUTCDay()); // India's weekend (OPS-46)
     if (wantOpen ? (isWorkingTime(t, 'office') && !weekend) : !isWorkingTime(t, 'office')) return t;
   }
   throw new Error(`no ${wantOpen ? 'open' : 'closed'} office hour in three weeks`);

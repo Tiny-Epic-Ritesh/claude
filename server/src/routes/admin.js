@@ -4,7 +4,7 @@
  */
 
 import express, { Router } from 'express';
-import { dmy } from '../engine/daterange.js';
+import { dmy, typedToStored } from '../engine/daterange.js';
 import { all, one, run, audit, ROLES, ROLE_LABELS } from '../db.js';
 import { requireUser, requirePermission, requireAnyPermission, permissionsFor, orgsFor, activeOrg, mayUseOrg, mayUnmask, PERMISSIONS } from '../auth.js';
 import { fill, maskedTokens } from '../engine/mergefields.js';
@@ -1589,8 +1589,11 @@ function approvedTemplate(templateId, channel, org) {
 }
 
 router.post('/campaigns', requirePermission('campaign.manage'), (req, res) => {
-  const { name, channel, template_id, list_id, scheduled_at } = req.body ?? {};
+  const { name, channel, template_id, list_id } = req.body ?? {};
   if (!name?.trim()) return res.status(400).json({ error: 'Give the campaign a name' });
+  /* OPS-46: a schedule is typed as India time and stored as UTC. */
+  const scheduled_at = req.body?.scheduled_at ? typedToStored(req.body.scheduled_at) : null;
+  if (req.body?.scheduled_at && !scheduled_at) return res.status(400).json({ error: 'The schedule is not a date and time', field: 'scheduled_at' });
   if (!channel) return res.status(400).json({ error: 'Choose a channel' });
   if (!list_id) return res.status(400).json({ error: 'Choose a list to send to' });
 
@@ -1668,8 +1671,13 @@ router.patch('/campaigns/:id', requirePermission('campaign.manage'), (req, res) 
   const params = [];
   for (const f of fields) {
     if (req.body?.[f] === undefined) continue;
+    let value = req.body[f] === '' ? null : req.body[f];
+    if (f === 'scheduled_at' && value !== null) {
+      value = typedToStored(value); // OPS-46
+      if (!value) return res.status(400).json({ error: 'The schedule is not a date and time', field: 'scheduled_at' });
+    }
     sets.push(`${f} = ?`);
-    params.push(req.body[f] === '' ? null : req.body[f]);
+    params.push(value);
   }
   if (!sets.length) return res.json(campaign);
 

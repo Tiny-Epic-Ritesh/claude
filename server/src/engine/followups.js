@@ -15,7 +15,7 @@
  */
 
 import { all, one, run, audit, notify } from '../db.js';
-import { dmyTime } from './daterange.js';
+import { dmyTime, storedToDate, toStored, istDayStartUtc, istNow } from './daterange.js';
 import { send } from '../integrations.js';
 import { nextWorkingTime } from './calendar.js';
 
@@ -25,7 +25,9 @@ import { nextWorkingTime } from './calendar.js';
 const OPEN_HOUR = 9;
 const CLOSE_HOUR = 19;
 
-const sql = (d) => new Date(d).toISOString().slice(0, 19).replace('T', ' ');
+/* OPS-46: a time handed in here is already stored-form (UTC), so it is read
+   as UTC, never in the machine's zone. */
+const sql = (d) => toStored(storedToDate(d));
 
 /**
  * Nudge a due time into working hours.
@@ -36,8 +38,8 @@ const sql = (d) => new Date(d).toISOString().slice(0, 19).replace('T', ' ');
  * stated preference beats our office convention.
  */
 export function withinBusinessHours(when) {
-  const d = new Date(when);
-  if (Number.isNaN(d.getTime())) return when;
+  const d = storedToDate(when);
+  if (!d) return when;
   // The office calendar, so a follow-up never lands on Diwali either. Holidays
   // cluster, which is why this walks the calendar rather than adding a day.
   return sql(nextWorkingTime(d, 'office'));
@@ -68,7 +70,7 @@ const CHANNELS = [
  * WhatsApp template arrives later.
  */
 export function scheduleReminders({ taskId, leadId, userId, dueAt, detail }) {
-  const base = new Date(dueAt).getTime();
+  const base = storedToDate(dueAt)?.getTime() ?? NaN;
   if (Number.isNaN(base)) return 0;
 
   let created = 0;
@@ -121,7 +123,7 @@ export function createFollowUp({
   const lead = one('SELECT id, name, owner_id, sales_org FROM leads WHERE id = ?', [leadId]);
   if (!lead) return null;
 
-  const when = respectHours ? withinBusinessHours(dueAt) : sql(new Date(dueAt));
+  const when = respectHours ? withinBusinessHours(dueAt) : sql(dueAt);
   const owner = userId ?? lead.owner_id;
   const title = `${KIND_TITLE[kind] ?? 'Follow up with'} ${lead.name}`;
 
@@ -253,11 +255,12 @@ export function followUpBoard(userId) {
   );
 
   const now = Date.now();
-  const endOfDay = new Date();
-  endOfDay.setHours(23, 59, 59, 999);
+  /* OPS-46: "today" ends at midnight in India, not at the server's midnight. */
+  const tomorrowIst = istNow(new Date(now + 86_400_000)).toISOString().slice(0, 10);
+  const endOfDay = new Date(storedToDate(istDayStartUtc(tomorrowIst)).getTime() - 1);
 
   const bucket = (t) => {
-    const due = new Date(`${String(t.due_at).replace(' ', 'T')}Z`).getTime();
+    const due = storedToDate(t.due_at)?.getTime() ?? NaN;
     if (due < now) return 'overdue';
     if (due <= endOfDay.getTime()) return 'today';
     return 'upcoming';

@@ -16,6 +16,7 @@
 import { exportHeldMasked, wonRefusal } from '../engine/policies.js';
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
+import { typedToStored } from '../engine/daterange.js';
 import {
   leadStages, stageRefusal, columnRefusal, picklistValues,
 } from '../engine/metadata.js';
@@ -1038,8 +1039,10 @@ router.post('/:id/bulk/task', (req, res) => {
   if (!title) return res.status(400).json({ error: 'Give the task a title' });
   // due_at is NOT NULL, and a bulk task with no date is a bulk task nobody
   // does. Default to tomorrow rather than rejecting the request.
-  const dueAt = req.body?.due_at
-    || new Date(Date.now() + 864e5).toISOString().slice(0, 19).replace('T', ' ');
+  /* OPS-46: a typed date is India time, stored as UTC. */
+  const typed = req.body?.due_at ? typedToStored(req.body.due_at) : null;
+  if (req.body?.due_at && !typed) return res.status(400).json({ error: 'The due date is not a date and time', field: 'due_at' });
+  const dueAt = typed || new Date(Date.now() + 864e5).toISOString().slice(0, 19).replace('T', ' ');
 
   const ids = memberIds(list, req);
   for (const id of ids) {

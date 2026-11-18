@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, shortDate, dateTime } from '../api.js';
+import { api, shortDate, dateTime, istInput, isPast } from '../api.js';
 import { useApi, Icon, Loading, ErrorBanner, Empty, Spinner, Tabs, Modal, announce } from '../components/ui.jsx';
 
 /* Rows per page. The route had no LIMIT, so this table used to render every
@@ -90,7 +90,7 @@ export function TaskLifecycle({ task, what, session, onClose, onDone }) {
   const team = session.permissions.includes('report.team');
   const [meta] = useApi(team ? '/meta' : null);
   const [title, setTitle] = useState(task.title);
-  const [due, setDue] = useState(String(task.due_at ?? '').replace(' ', 'T').slice(0, 16));
+  const [due, setDue] = useState(istInput(task.due_at));
   const [assignee, setAssignee] = useState(task.assignee_id ?? '');
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
@@ -339,7 +339,7 @@ export default function Tasks({ session }) {
             </thead>
             <tbody>
               {rows.map((t) => {
-                const late = t.status === 'Open' && new Date(t.due_at) < new Date();
+                const late = t.status === 'Open' && isPast(t.due_at);
                 return (
                   <tr key={t.id}>
                     <td>

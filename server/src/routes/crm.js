@@ -25,7 +25,7 @@ import { request as requestApproval, BULK_THRESHOLD } from '../engine/approvals.
 import { metricsFor } from '../engine/metrics.js';
 import { kycStatusSql, kycStatusFor } from '../engine/kycstatus.js';
 import { nextAction, nextStepForLead, MOVE_NEEDS, STATE_LABEL } from '../engine/nextaction.js';
-import { dmyTime } from '../engine/daterange.js';
+import { dmyTime, typedToStored } from '../engine/daterange.js';
 import { loadInBook } from '../engine/bookscope.js';
 import { withCorrections, mayCorrect, addCorrection } from '../engine/corrections.js';
 import { cancelReminders } from '../engine/followups.js';
@@ -2076,6 +2076,9 @@ router.post('/tasks', (req, res) => {
   const { title, description, lead_id, card_id, ticket_id, partner_id, assignee_id, due_at, priority = 'Normal' } = req.body;
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' });
   if (!due_at) return res.status(400).json({ error: 'A due date is required — tasks without one cannot be created' });
+  /* OPS-46: typed as India time; stored as UTC like every other timestamp. */
+  const dueAt = typedToStored(due_at);
+  if (!dueAt) return res.status(400).json({ error: 'The due date is not a date and time', field: 'due_at' });
 
   /* Every link named in the body, checked like an id named in the path.
    *
@@ -2101,7 +2104,7 @@ router.post('/tasks', (req, res) => {
   const result = run(
     'INSERT INTO tasks (title, description, lead_id, card_id, ticket_id, partner_id, assignee_id, created_by, due_at, priority) VALUES (?,?,?,?,?,?,?,?,?,?)',
     [title, description || null, lead_id || null, card_id || null, ticket_id || null, partner_id || null,
-      assignee_id || req.user.id, req.user.id, due_at, priority],
+      assignee_id || req.user.id, req.user.id, dueAt, priority],
   );
   const taskId = Number(result.lastInsertRowid);
 
@@ -2182,7 +2185,11 @@ router.patch('/tasks/:id', (req, res) => {
   }
   if (status) { sets.push('status = ?'); params.push(status); }
   if (assignee_id) { sets.push('assignee_id = ?'); params.push(assignee_id); }
-  if (due_at) { sets.push('due_at = ?'); params.push(due_at); }
+  if (due_at) {
+    const dueAt = typedToStored(due_at); // OPS-46
+    if (!dueAt) return res.status(400).json({ error: 'The due date is not a date and time', field: 'due_at' });
+    sets.push('due_at = ?'); params.push(dueAt);
+  }
   if (priority) { sets.push('priority = ?'); params.push(priority); }
   if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
 

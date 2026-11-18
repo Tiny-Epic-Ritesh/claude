@@ -27,7 +27,10 @@ const test = (name, fn) => {
 seedCalendars(2026);
 invalidate();
 
-const at = (iso, h = 10) => new Date(`${iso}T${String(h).padStart(2, '0')}:00:00`);
+/* OPS-46: office hours are India time, so the tests say so -- a zone-less time
+   here used to mean the machine's zone, which is UTC in the container. */
+const at = (iso, h = 10) => new Date(`${iso}T${String(h).padStart(2, '0')}:00:00+05:30`);
+const ist = (d) => new Date(d.getTime() + 330 * 60_000); // read with getUTC*
 const OWN = [];
 
 /* ------------------------------------------------------------ the seed */
@@ -85,27 +88,27 @@ test('a two-hour SLA raised before a holiday does not expire during it', () => {
   // Sunday 25 Jan at 18:00. Monday 26 Jan is Republic Day. Before the calendar
   // existed this landed Monday morning and reported a breach nobody could have
   // prevented.
-  const due = addBusinessMinutes('2026-01-25T18:00:00', 120);
+  const due = addBusinessMinutes('2026-01-25T18:00:00+05:30', 120);
 
   assert(isWorkingDay(due, 'office'), 'the SLA fell due on a non-working day');
-  eq2(due.getDate(), 27, `expected Tuesday the 27th, got the ${due.getDate()}`);
+  eq2(ist(due).getUTCDate(), 27, `expected Tuesday the 27th, got the ${ist(due).getUTCDate()}`);
 });
 
 test('a clock started mid-afternoon finishes the same day when it fits', () => {
-  const due = addBusinessMinutes('2026-01-27T14:00:00', 60);
-  eq2(due.getDate(), 27);
-  eq2(due.getHours(), 15);
+  const due = ist(addBusinessMinutes('2026-01-27T14:00:00+05:30', 60));
+  eq2(due.getUTCDate(), 27);
+  eq2(due.getUTCHours(), 15);
 });
 
 test('a clock started after hours begins at the next opening', () => {
-  const due = addBusinessMinutes('2026-01-27T22:00:00', 30);
-  eq2(due.getDate(), 28, 'did not roll to the next day');
-  eq2(due.getHours(), 9, 'did not start at opening');
-  eq2(due.getMinutes(), 30);
+  const due = ist(addBusinessMinutes('2026-01-27T22:00:00+05:30', 30));
+  eq2(due.getUTCDate(), 28, 'did not roll to the next day');
+  eq2(due.getUTCHours(), 9, 'did not start at opening');
+  eq2(due.getUTCMinutes(), 30);
 });
 
 test('a long SLA crossing several closures still lands on a working day', () => {
-  const due = addBusinessMinutes('2026-01-23T10:00:00', 4320);   // three office days
+  const due = addBusinessMinutes('2026-01-23T10:00:00+05:30', 4320);   // three office days
   assert(isWorkingDay(due, 'office'), 'a long SLA fell due on a closed day');
   assert(isWorkingTime(due, 'office'), 'a long SLA fell due outside working hours');
 });
@@ -114,7 +117,7 @@ test('the clock is fast enough for a sweep', () => {
   // The first version stepped in five-minute slices and re-walked the calendar
   // on each one. It hung the server on boot.
   const t0 = Date.now();
-  for (let i = 0; i < 200; i += 1) addBusinessMinutes('2026-01-05T10:00:00', 4320);
+  for (let i = 0; i < 200; i += 1) addBusinessMinutes('2026-01-05T10:00:00+05:30', 4320);
   const ms = Date.now() - t0;
   assert(ms < 3000, `200 SLA computations took ${ms}ms — too slow for a sweep`);
 });
@@ -133,7 +136,7 @@ test('three consecutive closed days are all skipped', () => {
   invalidate();
 
   const next = nextWorkingTime(at('2026-03-02', 10), 'office');
-  eq2(next.getDate(), 5, `expected the 5th, got the ${next.getDate()}`);
+  eq2(ist(next).getUTCDate(), 5, `expected the 5th, got the ${ist(next).getUTCDate()}`);
 });
 
 test('a half-day closes early but is still a working day', () => {

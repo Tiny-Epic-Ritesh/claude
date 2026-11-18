@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, money, rupees, shortDate, dateTime, mins, STATE_LABEL, ROLE_LABEL, appUrl, dmy } from '../api.js';
+import { api, money, rupees, shortDate, dateTime, mins, STATE_LABEL, ROLE_LABEL, appUrl, dmy, isPast } from '../api.js';
 import { checkField, checkAll, fieldErrorsFrom } from '../fieldRules.js';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, AgeBadge, PriorityBadge, Progress, CardDot, Icon, kycBadge, announce } from '../components/ui.jsx';
 import ActivityComposer from './ActivityComposer.jsx';
@@ -714,7 +714,7 @@ function TasksTab({ lead, session, reload }) {
                       {t.status === 'Cancelled' && ` · Cancelled${t.cancel_reason ? `: ${t.cancel_reason}` : ''}`}
                     </div>
                   </td>
-                  <td className="num"><span className={`badge ${new Date(t.due_at) < new Date() && t.status === 'Open' ? 'badge-red' : ''}`}>{shortDate(t.due_at)}</span></td>
+                  <td className="num"><span className={`badge ${isPast(t.due_at) && t.status === 'Open' ? 'badge-red' : ''}`}>{shortDate(t.due_at)}</span></td>
                   <td><TaskActions task={t} onPick={(what) => setEnding({ task: t, what })} /></td>
                 </tr>
               ))}

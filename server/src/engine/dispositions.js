@@ -20,6 +20,7 @@
  */
 
 import { all, one, run, audit } from '../db.js';
+import { storedToDate } from './daterange.js';
 
 /* --------------------------------------------------------------- matrix */
 
@@ -168,9 +169,9 @@ export function validateDisposition(code, body) {
 
     if (!when) {
       errors[field] = `"${d.label}" requires a date and time`;
-    } else if (Number.isNaN(Date.parse(when))) {
+    } else if (!storedToDate(when)) {
       errors[field] = 'Not a valid date and time';
-    } else if (new Date(when).getTime() < Date.now() - 60_000) {
+    } else if (storedToDate(when).getTime() < Date.now() - 60_000) { // OPS-46: stored form is UTC
       // A follow-up in the past is almost always a typo, and it would never
       // surface on a work list ordered by what is due next.
       errors[field] = 'That is in the past — pick a future date and time';
