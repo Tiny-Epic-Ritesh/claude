@@ -184,7 +184,7 @@ export function assignToQueue(leadId, queueId, { actorId = null } = {}) {
  */
 export function claimFromQueue(leadId, user) {
   const lead = one('SELECT * FROM leads WHERE id = ? AND deleted_at IS NULL', [leadId]);
-  if (!lead) return { ok: false, error: 'Lead not found' };
+  if (!lead) return { ok: false, status: 404, error: 'Lead not found' };
 
   /* The book, before anything that quotes the record.
    *
@@ -196,7 +196,7 @@ export function claimFromQueue(leadId, user) {
    *
    * Answered as "not found", so a lead in the other book and a lead that does
    * not exist are the same reply. */
-  if (!orgsFor(user).includes(lead.sales_org)) return { ok: false, error: 'Lead not found' };
+  if (!orgsFor(user).includes(lead.sales_org)) return { ok: false, status: 404, error: 'Lead not found' };
   if (!lead.owner_queue_id) {
     const owner = ownerOf(lead);
     return {

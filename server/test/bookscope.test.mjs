@@ -25,6 +25,8 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { one, all, run } from '../src/db.js';
 import { RECORD_KINDS, loadInBook, reachable } from '../src/engine/bookscope.js';
+import { routesWithParams, unmappedRouteFiles, ROUTES, MOUNTS } from './helpers/routemap.mjs';
+import { probeAdmin } from './helpers/probeadmin.mjs';
 
 /* Source read from disk, so line endings are whatever git checked out --
    CRLF on Windows. Every pattern below is written with \n, so normalise once
@@ -32,7 +34,6 @@ import { RECORD_KINDS, loadInBook, reachable } from '../src/engine/bookscope.js'
 const CRLF = /\r\n/g;
 
 const here = dirname(fileURLToPath(import.meta.url));
-const ROUTES = join(here, '..', 'src', 'routes');
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
 
 let passed = 0;
@@ -42,57 +43,10 @@ const test = async (name, fn) => {
   catch (err) { failed += 1; console.log(`  FAIL ${name}\n       ${err.message}`); }
 };
 
-/* --------------------------------------------------- route → mount point */
+/* ------------------------------------- route → mount point (shared helper) */
 
-const MOUNTS = {
-  'activities.js': { router: '/api/activities' },
-  'admin.js': { router: '/api/admin' },
-  'ai.js': { router: '/api/ai' },
-  'approvals.js': { router: '/api/approvals' },
-  'calendar.js': { router: '/api/calendar' },
-  'ccm.js': { router: '/api/ccm' },
-  'clients.js': { router: '/api/clients' },
-  'cockpit.js': { router: '/api/cockpit' },
-  'crm.js': { router: '/api' },
-  'dashboard.js': { router: '/api/dashboard' },
-  'dashboards.js': { router: '/api/dashboards' },
-  'library.js': { router: '/api/libraries' },
-  'email.js': { router: '/api/email' },
-  'kra.js': { router: '/api/kra' },
-  'kyc.js': { internal: '/api/kyc', dkyc: '/dkyc-api' },
-  'lists.js': { router: '/api/lists' },
-  'market.js': { router: '/api/market', publicIndices: '/public/market' },
-  'messages.js': { router: '/api/messages' },
-  'orgs.js': { router: '/api/orgs' },
-  'partners.js': { router: '/api/partners' },
-  'pipeline.js': { router: '/api/pipeline' },
-  'portal.js': { router: '/api/portal' },
-  'products.js': { router: '/api/products' },
-  'reports.js': { router: '/api/reports' },
-  'revenue.js': { router: '/api/revenue' },
-  'search-advanced.js': { router: '/api/search-advanced' },
-  'search.js': { router: '/api/search' },
-  'setup.js': { router: '/api/setup' },
-  'team.js': { router: '/api/team' },
-  'tickets.js': { router: '/api/tickets' },
-  'webhooks.js': { router: '/api/webhooks' },
-};
-
-/** Every GET route in the codebase that takes a path parameter. */
-function paramRoutes() {
-  const found = [];
-  for (const file of readdirSync(ROUTES)) {
-    const map = MOUNTS[file];
-    if (!map) continue;
-    const src = readFileSync(join(ROUTES, file), 'utf8').replace(CRLF, '\n');
-    for (const m of src.matchAll(/(\w+)\.get\(\s*'([^']*)'/g)) {
-      const [, variable, path] = m;
-      if (!(variable in map) || !path.includes(':')) continue;
-      found.push({ file, path: (map[variable] + path).replace(/\/$/, '') });
-    }
-  }
-  return found;
-}
+/** Every GET route taking a path parameter. Writes: bookscopewrites.test.mjs. */
+const paramRoutes = () => routesWithParams(['get']);
 
 /* --------------------------------------------------------- the two lists */
 
@@ -121,6 +75,15 @@ const RECORD = {
   '/api/cards/:id/audit': 'card',
   '/api/kyc/journeys/:id': 'journey',
   '/api/kyc/journeys/:id/coach': 'journey',
+  // Guarded by campaignInBook since OPS-37 (15 Oct); listed as NOT until A2b.
+  '/api/admin/campaigns/:id/audience': 'campaign',
+  /* A2b: automations.js was not in the map, so its reads were never probed. A
+     flow always belongs to a business. */
+  '/api/admin/automations/:id': 'flow',
+  '/api/admin/automations/:id/versions': 'flow',
+  '/api/admin/automations/:id/report': 'flow',
+  '/api/admin/automations/:id/runs': 'flow',
+  '/api/admin/automations/:id/runs/:runId': 'flow',
   /* A person's book: their leads, clients, tickets and reports, and the
      colleagues it could be handed to. Plainly book-sensitive.
 
@@ -160,11 +123,13 @@ const NOT_A_RECORD = {
   '/api/search-advanced/fields/:entity': 'Searchable field list. Configuration.',
   '/api/search-advanced/saved/:entity': 'Saved searches, scoped to the owner.',
   '/api/admin/calendars/:kind/check': 'Working-calendar lookup. Firm-wide configuration.',
-  '/api/admin/campaigns/:id/audience': 'Campaign audience; campaigns are org-scoped at the list route.',
   '/api/admin/connectors/meta/campaigns/:id/insights': 'Meta ad campaign, not a CRM record. Superadmin only.',
   '/api/admin/rules/:id/runs': 'A rule\'s run history. Each run names its lead, so the rows are the reader\'s businesses\' only (N-12, 18 Nov) -- asserted in n12writes.test.mjs.',
   '/api/admin/access-log/user/:id': 'Access-log rows for a user. Admin only; the log is not a client record.',
-  '/api/admin/versions/:kind/:logicalId': 'Version history of a configurable artefact — a rule, template, journey or SLA policy. Configuration, identical across both businesses, admin only.',
+  '/api/admin/versions/:kind/:logicalId': 'Version history. The first parameter is a kind, not a record id, so the generic '
+    + 'probe cannot reach it. A template, KYC journey, KRA metric or incentive plan is its business\'s, and its '
+    + 'history is refused to the other business (A2b; asserted in bookscopewrites.test.mjs); a rule, SLA '
+    + 'policy or call outcome is shared by both. This said "identical across both businesses" until A2b, which was not true.',
   '/api/approvals/:id': 'Guarded by inReach() on the record the approval is about.',
   '/api/approvals/history/:entity/:id': 'Guarded by orgOf() on the record asked about.',
   '/api/approvals/scopes/:scope/approvers': 'Who may decide a scope. Configuration.',
@@ -183,16 +148,21 @@ const NOT_A_RECORD = {
   '/api/messages/channels/:id/candidates': 'Colleagues a member could add to a channel. Anybody from the '
     + 'other business appears only where the grid opens messages both ways (refusalToEnter). '
     + 'Asserted in messaging.test.mjs.',
-  '/api/products/:id/brochure': 'The brochure for a product type. Marketing material written to be '
-    + 'handed to strangers, and the catalogue it hangs on is firm-wide — so there is no book to '
-    + 'cross. It is behind a session, which brochure.test.mjs asserts.',
-  '/api/products/:id': 'A product type. Firm-wide catalogue, the same in both businesses.',
+  '/api/products/:id/brochure': 'The brochure of a product. A product belongs to one business since QA-32, '
+    + 'but its brochure is marketing material written to be handed to clients, not client data; which '
+    + 'products a person is offered is decided by the product lists and the Business policies (QA-13). '
+    + 'It is behind a session, which brochure.test.mjs asserts.',
+  '/api/products/:id': 'A product. It belongs to one business since QA-32 (the text this replaced said firm-wide, '
+    + 'which stopped being true then), but its catalogue entry is marketing material, not client data; which '
+    + 'products a person is offered is decided by the product lists and the Business policies (QA-13).',
   '/api/queues/:id/work': 'Queue contents, scoped by the queue rules and by leadScope.',
   '/api/portal/clients/:leadId': 'Partner portal. Authenticates as a partner, not a CRM user.',
   '/api/portal/tickets/:id': 'Partner portal, as above.',
   '/api/portal/training/:module': 'Partner training content. Not a client record.',
   '/dkyc-api/resume/:token': 'Public KYC portal. The token is the credential; no CRM session.',
   '/dkyc-api/steps/:productId': 'Public KYC step list for a product. No client data.',
+  '/api/admin/automations/explorer/:trigger': 'A trigger name, not a record id. What runs on it is filtered to the reader\'s businesses\' flows (orgsFor), and rules are shared.',
+  '/api/admin/automations/migration/:ruleId': 'A rule, which both businesses share (A2c): what it would become as a flow. Quotes no client record.',
 };
 
 /* -------------------------------------------------------- list routes */
@@ -218,6 +188,8 @@ const LIST_ROUTES = {
   '/api/partners': { org: (r) => r.sales_org },
   // A task inherits its lead's book, and a task with no lead has none.
   '/api/tasks': { query: 'all=true', viaLead: (r) => r.lead_id },
+  // A2b: automations.js was unmapped, so this list was never probed. A flow is one business's.
+  '/api/admin/automations': { org: (r) => r.sales_org },
   /* Not a client record, and listed here anyway.
    *
    * A template is the firm's own words rather than a client's data, so on the
@@ -275,11 +247,26 @@ const bonanzaId = {
   card: () => one("SELECT pc.id FROM product_cards pc JOIN leads l ON l.id=pc.lead_id WHERE l.sales_org='BONANZA' ORDER BY pc.id LIMIT 1")?.id,
   journey: () => one("SELECT j.id FROM kyc_journeys j JOIN leads l ON l.id=j.lead_id WHERE l.sales_org='BONANZA' ORDER BY j.id LIMIT 1")?.id,
   user: () => one("SELECT id FROM users WHERE sales_org='BONANZA' AND active=1 ORDER BY id LIMIT 1")?.id,
+  campaign: () => one("SELECT id FROM campaigns WHERE sales_org='BONANZA' ORDER BY id LIMIT 1")?.id,
+  flow: () => FLOW,
 };
 
 /* ---------------------------------------------------------------- tests */
 
+const BIGUL_ADMIN = await probeAdmin('bookscope-bigul-admin', { role: 'admin', sales_org: 'BIGUL' });
+
+/* A Bonanza flow to probe the automations reads with; the seed has none. */
+const FLOW = Number(run(
+  "INSERT INTO automation (name, sales_org, trigger_type) VALUES ('Bookscope probe flow', 'BONANZA', 'lead.created')",
+).lastInsertRowid);
+
 console.log('\nBook scope conformance');
+
+await test('every route file is mapped, or says why it mounts nothing', () => {
+  // A2b: a file missing from the map was skipped in silence -- two were.
+  const missing = unmappedRouteFiles();
+  assert.equal(missing.length, 0, `these route files are not in test/helpers/routemap.mjs: ${missing.join(', ')}`);
+});
 
 await test('every route taking a parameter is classified', () => {
   const unclassified = paramRoutes()
@@ -305,7 +292,11 @@ await test('every classified record route still exists', () => {
 });
 
 await test('every record route refuses the other book', async () => {
-  const bigul = await login('rm.bookscope@bigul.test').catch(() => login('supervisor@bigul.test'));
+  /* A2b. This signed in as a Bigul RM, who is refused most of these for
+     lacking a permission -- so a refusal proved the route was closed, never
+     that the boundary closed it. A Bigul Admin holds what the routes ask, and
+     a refusal that names a missing permission (`required`) does not count. */
+  const bigul = BIGUL_ADMIN.token;
   const problems = [];
 
   for (const [pattern, kind] of Object.entries(RECORD)) {
@@ -315,10 +306,13 @@ await test('every record route refuses the other book', async () => {
     const path = pattern.replace(/:[A-Za-z]+/, String(id));
     // eslint-disable-next-line no-await-in-loop
     const res = await fetch(`${BASE}${path}`, { headers: { Authorization: `Bearer ${bigul}` } });
-    if (![403, 404].includes(res.status)) {
-      // eslint-disable-next-line no-await-in-loop
-      const body = (await res.text()).replace(/\s+/g, ' ').slice(0, 120);
-      problems.push(`${path} → HTTP ${res.status} (expected 403 or 404): ${body}`);
+    // eslint-disable-next-line no-await-in-loop
+    const text = await res.text();
+    let required = null;
+    try { required = JSON.parse(text)?.required ?? null; } catch { /* not JSON */ }
+    if (![403, 404].includes(res.status) || required) {
+      const body = text.replace(/\s+/g, ' ').slice(0, 120);
+      problems.push(`${path} → HTTP ${res.status}${required ? ` refused for want of ${required}, not by the boundary` : ' (expected 403 or 404)'}: ${body}`);
     }
   }
 
@@ -417,7 +411,11 @@ await test('every list route is classified', () => {
 });
 
 await test('no list route returns the other book', async () => {
-  const bigul = await login('supervisor@bigul.test');
+  /* A2b. This read as a Bigul supervisor alone and skipped a 403 as "not
+     entitled", so a list a supervisor may not open -- the template list,
+     automations -- was never checked at all. It reads as the supervisor and as
+     a Bigul Admin now, and a list neither may open is reported, not skipped. */
+  const readers = [await login('supervisor@bigul.test'), BIGUL_ADMIN.token];
   const problems = [];
 
   // Which leads are Bonanza's, for the routes that inherit their book.
@@ -427,10 +425,15 @@ await test('no list route returns the other book', async () => {
 
   for (const [route, spec] of Object.entries(LIST_ROUTES)) {
     const url = `${route}?limit=500${spec.query ? `&${spec.query}` : ''}`;
+    let checked = 0;
+    for (const bigul of readers) {
+    // eslint-disable-next-line no-await-in-loop
     const res = await fetch(`${BASE}${url}`, { headers: { Authorization: `Bearer ${bigul}` } });
-    if (res.status === 403) continue;             // not entitled at all: fine
+    if (res.status === 403) continue;             // this reader is not entitled; the other may be
     if (!res.ok) { problems.push(`${url} → HTTP ${res.status}`); continue; }
+    checked += 1;
 
+    // eslint-disable-next-line no-await-in-loop
     const body = await res.json();
     const rows = Array.isArray(body) ? body : (body.rows ?? body.items ?? []);
 
@@ -446,6 +449,8 @@ await test('no list route returns the other book', async () => {
         }
       }
     }
+    }
+    if (!checked) problems.push(`${url} was refused to every reader, so nothing was checked`);
   }
 
   assert.equal(problems.length, 0, `a list route crosses the book boundary:\n         ${problems.join('\n         ')}`);
@@ -621,6 +626,9 @@ await test('the duplicates screen lists no record from the other book', async ()
     clear();
   }
 });
+
+run('DELETE FROM automation WHERE id = ?', [FLOW]);
+BIGUL_ADMIN.cleanup();
 
 console.log(`\n${passed} passed, ${failed} failed`);
 

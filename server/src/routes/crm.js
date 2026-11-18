@@ -2364,7 +2364,8 @@ router.get('/queues/:id/work', (req, res) => {
 /** Take a lead out of a queue and own it. */
 router.post('/queues/claim/:leadId', requirePermission('lead.contact'), (req, res) => {
   const out = claimFromQueue(Number(req.params.leadId), req.user);
-  if (!out.ok) return res.status(409).json(out);
+  // Not found is 404 (A2b); a lead already owned, or a queue the role may not work, stays 409.
+  if (!out.ok) return res.status(out.status ?? 409).json(out);
   audit(req.user.id, 'lead_claimed_from_queue', 'lead', Number(req.params.leadId), { queue: out.queue });
   return res.json(out);
 });
