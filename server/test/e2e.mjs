@@ -1986,8 +1986,18 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
     });
     assert(proposal.compliance_flag !== 'None', `expected a compliance flag, got ${proposal.compliance_flag}`);
 
+    /* A4 (OPS-74): the draft is saved as the call itself, then what it adds --
+       here the compliance case -- is confirmed on that call. */
+    const { data: logged } = await req('/api/activities', {
+      method: 'POST', token: T.sales_rm, expect: 201,
+      body: { lead_id: REF.leadId, type: 'Call', disposition: 'CALL_LANGUAGE', body: proposal.summary, duration_s: 180 },
+    });
     const { data } = await req('/api/ai/disposition/confirm', {
-      method: 'POST', token: T.sales_rm, expect: 200, body: { ...proposal, lead_id: REF.leadId },
+      method: 'POST', token: T.sales_rm, expect: 200,
+      body: {
+        lead_id: REF.leadId, activity_id: logged.activity.id, summary: proposal.summary,
+        compliance_flag: proposal.compliance_flag, compliance_note: proposal.compliance_note,
+      },
     });
     assert(data.compliance_ticket_id, 'no compliance ticket raised');
     REF.complianceTicketId = data.compliance_ticket_id;
@@ -2003,14 +2013,22 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
   });
 
   await check('confirming refuses card changes the role may not make', async () => {
-    // A Caller confirming a proposed WARM transition must have that one change refused.
+    // A Caller confirming a proposed WARM move must have that one change refused,
+    // on a call of their own (A4: the call is saved first), on a lead they can see.
+    const { data: theirLeads } = await req('/api/leads?limit=1', { token: T.caller, expect: 200 });
+    const lead = need(theirLeads[0], 'a lead the caller can see');
+    const { data: full } = await req(`/api/leads/${lead.id}`, { token: T.caller, expect: 200 });
+    const card = need(full.cards.find((c) => c.state !== 'WARM'), 'a card that is not Warm');
+    const { data: logged } = await req('/api/activities', {
+      method: 'POST', token: T.caller, expect: 201,
+      body: { lead_id: lead.id, type: 'Call', disposition: 'CALL_LANGUAGE', body: 'e2e role check' },
+    });
     const { data } = await req('/api/ai/disposition/confirm', {
       method: 'POST', token: T.caller, expect: 200,
       body: {
-        lead_id: REF.leadId, outcome: 'Connected — Interested', summary: 'e2e role check',
-        card_changes: [{ product_code: 'MF', from_state: 'WARM', to_state: 'WARM', evidence: 'e2e' }],
-        next_action: 'No Action', next_action_due_hours: 4, follow_up_task: '',
-        compliance_flag: 'None', compliance_note: '', score_signal: 0,
+        lead_id: lead.id, activity_id: logged.activity.id, summary: 'e2e role check',
+        card_changes: [{ card_id: card.id, product_code: card.product_code, from_state: card.state, to_state: 'WARM', evidence: 'e2e' }],
+        compliance_flag: 'None',
       },
     });
     eq(data.cards_refused.length, 1, 'the Warm change should have been refused for a Caller');

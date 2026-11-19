@@ -8,6 +8,7 @@
 import { useState } from 'react';
 import { api } from '../api.js';
 import { Icon, Spinner } from '../components/ui.jsx';
+import { startCall } from './InCall.jsx';
 
 /* ------------------------------------------------------- lead actions */
 
@@ -21,7 +22,7 @@ import { Icon, Spinner } from '../components/ui.jsx';
  */
 export function useLeadActions({ session, reload, onError, onNotice }) {
   const [modal, setModal] = useState(null);   // { kind, lead }
-  const [dialling, setDialling] = useState(null);
+  const dialling = null;   // A4: the call panel dials now; kept for the buttons that show it
 
   /**
    * `productTypeId` decides which CUBE queue the call goes into. It is passed
@@ -30,48 +31,11 @@ export function useLeadActions({ session, reload, onError, onNotice }) {
    * inferred from the lead's most recent open card.
    */
   async function call(lead, productTypeId = null) {
-    setDialling(lead.id);
-    try {
-      const res = await api.post(`/leads/${lead.id}/call`, {
-        product_type_id: productTypeId ?? undefined,
-      });
-
-      /* Say what actually happened, and no more.
-       *
-       * The switch has been told to place the call; whether the client picks up
-       * is not known here and arrives later on the timeline. The previous
-       * wording claimed "Connecting you" and, worse, surfaced the vendor's own
-       * `message` field verbatim — which in a simulated environment reads
-       * "Simulated: no dialler configured" to an RM who only wanted to ring
-       * somebody. */
-      const parts = [`Dialling ${lead.name}.`];
-      if (res.simulated) {
-        parts.push('Simulated — no dialler is connected, so no call was placed.');
-      } else {
-        parts.push('Your handset will ring.');
-        // Worth saying once: an unattributed call is a reporting hole in Cube,
-        // and the person who can fix it is usually the person seeing this.
-        if (res.agent_mapped === false) {
-          parts.push('You have no CUBE agent id, so this call is not attributed to you.');
-        }
-      }
-      onNotice?.(parts.join(' '));
-
-      /* P3-13. The call form, opened by the call rather than by the RM
-         remembering to log one afterwards.
-
-         Opened for a simulated dial too, and the modal says so. The alternative
-         -- only opening it once a dialler is connected -- would make the whole
-         feature untestable until CUBE issues a tenant credential, which is
-         exactly the dependency this ticket was pulled out of. */
-      setModal({ kind: 'activity', lead, calling: true, simulated: Boolean(res.simulated) });
-    } catch (err) {
-      // A refusal here is usually consent or a dead number, and the message
-      // says which. It is the RM's problem to act on, not a server fault.
-      onError?.(err.message);
-    } finally {
-      setDialling(null);
-    }
+    /* A4 (QA-10): every call opens the one call panel, which dials -- through
+       the consent checks -- says what happened, and keeps the call until it is
+       saved with an outcome. This used to dial here and then open a different
+       form from the lead header's Start call. */
+    startCall({ leadId: lead.id, productTypeId });
   }
 
   /**

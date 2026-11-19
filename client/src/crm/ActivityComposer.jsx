@@ -19,7 +19,7 @@
  * enforces the same rules again, so a stale tab cannot slip past them.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { capture, describe as describeGeo, wants as wantsGeo } from '../location.js';
 import { Icon, Spinner, ErrorBanner } from '../components/ui.jsx';
@@ -141,11 +141,26 @@ function ConfiguredField({ field, value, invalid, onChange }) {
   );
 }
 
-export default function ActivityComposer({ lead, cards = [], onLogged, autoOpenFor = null }) {
+export default function ActivityComposer({
+  lead, cards = [], onLogged, autoOpenFor = null,
+  /* A4 (QA-10): the call panel's wrap-up is this form, so a call is logged the
+     same way whoever logs it. It arrives filled in -- the notes typed during
+     the call, its length, the product it was about, a callback booked on it,
+     or the AI's draft -- and is always a Call. Remount it (a new `key`) to
+     fill it in again. */
+  initial = null, lockType = false, title = 'Log an activity', subtitle = 'The outcome decides what happens next',
+  submitLabel = 'Log activity', aside = null,
+}) {
   const [meta, setMeta] = useState(null);
-  const [type, setType] = useState('Call');
-  const [code, setCode] = useState('');
-  const [form, setForm] = useState({});
+  const [type, setType] = useState(initial?.type ?? 'Call');
+  const [code, setCode] = useState(initial?.code ?? '');
+  const [form, setForm] = useState(() => (initial ? {
+    body: initial.body ?? '',
+    duration_s: initial.duration_min ?? '',
+    card_id: initial.card_id ?? '',
+    follow_up_at: initial.follow_up_at ?? undefined,
+    meeting_at: initial.meeting_at ?? undefined,
+  } : {}));
   /* The configured fields, kept apart from the built-in ones. Mixing them into
      `form` would mean a custom field called `body` or `reason` silently
      overwriting the real one -- and an administrator naming a field `reason`
@@ -162,10 +177,24 @@ export default function ActivityComposer({ lead, cards = [], onLogged, autoOpenF
 
   // Changing the type invalidates the outcome — the matrix is per type.
   const [outcome, setOutcome] = useState('');
-  useEffect(() => { setCode(''); setOutcome(''); setForm({}); setFieldErrors({}); }, [type]);
+  /* ...but arriving filled in is not a change of type, so the first run of the
+     reset below is skipped when there is something to keep. */
+  const keepInitial = useRef(Boolean(initial));
+  useEffect(() => {
+    if (keepInitial.current) { keepInitial.current = false; return; }
+    setCode(''); setOutcome(''); setForm({}); setFieldErrors({});
+  }, [type]);
 
   const groups = meta?.dispositions?.[type] ?? [];
   const activeGroup = groups.find((g) => g.outcome === outcome) ?? null;
+
+  /* An outcome it arrived with opens its own group. One Setup no longer offers
+     is dropped rather than shown chosen: the person picks one that exists. */
+  useEffect(() => {
+    if (!meta || !code || outcome) return;
+    const g = groups.find((x) => x.options.some((o) => o.code === code));
+    if (g) setOutcome(g.outcome); else setCode('');
+  }, [meta]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
    * Number keys pick the group, then the outcome.
@@ -275,13 +304,13 @@ export default function ActivityComposer({ lead, cards = [], onLogged, autoOpenF
   return (
     <section className="card">
       <div className="card-head">
-        <h2><Icon name="add_task" size={18} /> Log an activity</h2>
-        <span className="tiny muted">The outcome decides what happens next</span>
+        <h2><Icon name="add_task" size={18} /> {title}</h2>
+        <span className="tiny muted">{subtitle}</span>
       </div>
 
       <div className="card-body stack">
         {/* --- type --- */}
-        <div className="row wrap" style={{ gap: 6 }}>
+        {!lockType && <div className="row wrap" style={{ gap: 6 }}>
           {meta.types.map((t) => (
             <button
               key={t}
@@ -292,7 +321,7 @@ export default function ActivityComposer({ lead, cards = [], onLogged, autoOpenF
               {t}
             </button>
           ))}
-        </div>
+        </div>}
 
         {/* --- outcome, in two steps ---
             ENH-21a / ENH-21b.
@@ -476,7 +505,7 @@ export default function ActivityComposer({ lead, cards = [], onLogged, autoOpenF
               <label htmlFor="card">About which product?</label>
               <select id="card" value={form.card_id ?? ''} onChange={(e) => set('card_id', e.target.value)}>
                 <option value="">Not product-specific</option>
-                {cards.filter((c) => c.state !== 'INACTIVE').map((c) => (
+                {cards.filter((c) => c.state !== 'INACTIVE' || String(c.id) === String(form.card_id)).map((c) => (
                   <option key={c.id} value={c.id}>{c.product_name} · {c.state}</option>
                 ))}
               </select>
@@ -494,8 +523,9 @@ export default function ActivityComposer({ lead, cards = [], onLogged, autoOpenF
 
         <div className="row">
           <button className="btn-primary" disabled={!canSubmit} onClick={submit}>
-            {busy ? <Spinner /> : <Icon name="send" size={16} />} Log activity
+            {busy ? <Spinner /> : <Icon name="send" size={16} />} {submitLabel}
           </button>
+          {aside}
           {needsOutcome && !code && <span className="tiny muted">Pick an outcome to continue</span>}
         </div>
       </div>

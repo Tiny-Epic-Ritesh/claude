@@ -107,9 +107,13 @@ try {
 
   await test('OPS-18 a disposition on a lead in the caller\'s own business still saves', async () => {
     const lead = seedLead('BONANZA', 'own disposition');
-    const res = await adminCall('POST', '/ai/disposition/confirm', { lead_id: lead, outcome: 'Connected', summary: `${MARK} summary` });
+    /* A4 (OPS-74): the draft is saved as the call itself, then confirmed on it. */
+    const call = await adminCall('POST', '/activities', { lead_id: lead, type: 'Call', disposition: 'CALL_LANGUAGE', body: `${MARK} summary` });
+    assert.equal(call.status, 201, `the call answered ${call.status}: ${call.body?.error}`);
+    const res = await adminCall('POST', '/ai/disposition/confirm', { lead_id: lead, activity_id: call.body.activity.id, summary: `${MARK} summary` });
     assert.equal(res.status, 200, `answered ${res.status}: ${res.body?.error}`);
-    assert.equal(one("SELECT COUNT(*) n FROM activities WHERE lead_id = ? AND type = 'AI Call Summary'", [lead]).n, 1);
+    assert.equal(one("SELECT ai_generated FROM activities WHERE id = ?", [call.body.activity.id]).ai_generated, 1);
+    assert.equal(one("SELECT COUNT(*) n FROM activities WHERE lead_id = ? AND type = 'AI Call Summary'", [lead]).n, 0);
   });
 
   /* ============================================================ OPS-19 */

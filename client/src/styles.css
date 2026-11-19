@@ -7447,3 +7447,167 @@ a.msg-chip:hover { color: var(--ink); border-color: var(--accent); }
   gap: 6px;
   margin-top: 8px;
 }
+
+/* ======================================================= A4 · the call panel
+ *
+ * QA-10 and Part 4 item 9, from the preview approved on 19 Nov
+ * (docs/feedback/QA-10-CALL-PANEL-PREVIEW.html).
+ *
+ * A solid surface: it covers content, so nothing may show through it (the old
+ * panel used the translucent card glass). On a laptop it docks to the right
+ * and the page makes room for it, so the lead stays readable during the call;
+ * under 1100px it is a full-screen sheet. End call is a solid red with white
+ * text in both themes -- the old one took its colours from a token that does
+ * not exist, and rendered white on white.
+ *
+ * Stacking: above the page and its sticky top bar, below the copilot drawer
+ * (260) and below any dialog it opens (the backdrop is 300).
+ */
+.callp {
+  --callp-w: 440px;
+  --callp-end: #c4453a;
+  --callp-end-hover: #a93a31;
+  position: fixed;
+  z-index: 250;
+  top: var(--topbar-h);
+  right: 0;
+  bottom: 0;
+  width: var(--callp-w);
+  display: flex;
+  flex-direction: column;
+  background: var(--popover-solid);
+  color: var(--ink);
+  border-left: 1px solid var(--popover-border);
+  box-shadow: var(--lift-3);
+  animation: callp-in 0.18s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+@keyframes callp-in { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .callp { animation: none; } }
+body.has-call-panel .page { padding-right: calc(var(--callp-w, 440px) + 26px); }
+
+@media (max-width: 1099px) {
+  .callp { top: 0; left: 0; width: 100%; z-index: 290; border-left: 0; }
+  body.has-call-panel .page { padding-right: 26px; }
+}
+
+.callp-head { flex: none; padding: 14px 16px 12px; border-bottom: 1px solid var(--hairline); background: var(--popover-solid); }
+.callp-who { display: flex; align-items: center; gap: 10px; }
+.callp-avatar {
+  width: 40px; height: 40px; flex: none; border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent-dark); font-weight: 650; font-size: 14px;
+}
+:root[data-theme='dark'] .callp-avatar { color: var(--accent); }
+.callp-grow { flex: 1; min-width: 0; }
+.callp-name { font-size: 17px; font-weight: 650; line-height: 1.2; }
+.callp-sub { font-size: 12.5px; color: var(--ink-3); }
+.callp-row2 { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
+.callp-about { font-size: 12.5px; color: var(--ink-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.callp-about b { color: var(--ink); font-weight: 600; }
+
+.callp-state { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 650; border-radius: var(--r-pill); padding: 5px 10px; white-space: nowrap; }
+.callp-state .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.callp-state.is-live { background: var(--ok-soft); color: var(--ok); }
+.callp-state.is-live .dot { animation: callp-pulse 1.4s ease-in-out infinite; }
+.callp-state.is-ringing { background: var(--warn-soft); color: var(--warn); }
+.callp-state.is-ringing .dot { animation: callp-pulse 0.9s ease-in-out infinite; }
+.callp-state.is-ended { background: var(--hairline); color: var(--ink-2); }
+.callp-state.is-blocked { background: var(--danger-soft); color: var(--danger); }
+.callp-state.is-saved { background: var(--ok-soft); color: var(--ok); }
+@keyframes callp-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .callp-state .dot { animation: none !important; } }
+.callp-timer { font-variant-numeric: tabular-nums; }
+
+.btn.callp-end, .callp-end {
+  background: var(--callp-end); border-color: var(--callp-end); color: #fff; font-weight: 700; padding: 9px 18px;
+}
+.btn.callp-end:hover, .callp-end:hover { background: var(--callp-end-hover); border-color: var(--callp-end-hover); color: #fff; }
+.callp-end-wide { flex: 1; padding: 13px; font-size: 15px; justify-content: center; }
+
+.callp-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 14px 16px 18px; display: flex; flex-direction: column; gap: 14px; }
+.callp-foot {
+  flex: none; display: flex; gap: 8px; align-items: center; padding: 12px 16px;
+  border-top: 1px solid var(--hairline); background: var(--popover-solid);
+}
+@media (max-width: 1099px) { .callp-foot { padding-bottom: max(14px, env(safe-area-inset-bottom)); } }
+
+.callp-sec h3 {
+  margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--ink-3); font-weight: 650;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.callp-sec textarea { width: 100%; }
+.callp-box { border: 1px solid var(--hairline); border-radius: var(--r-sm); padding: 12px; background: var(--popover-solid); }
+.callp-box.is-warn { background: var(--warn-soft); border-color: transparent; }
+.callp-small { font-size: 12.5px; color: var(--ink-3); margin-top: 6px; }
+.callp-link { background: none; border: 0; padding: 0; color: var(--info); cursor: pointer; font-weight: 600; font-size: 12.5px; text-transform: none; letter-spacing: 0; }
+
+.callp-banner { display: flex; gap: 10px; border-radius: var(--r-sm); padding: 10px 12px; font-size: 13px; line-height: 1.45; color: var(--ink); }
+.callp-banner > .mi { flex: none; margin-top: 1px; }
+.callp-banner b { display: block; margin-bottom: 2px; }
+.callp-banner.is-info { background: var(--info-soft); } .callp-banner.is-info > .mi { color: var(--info); }
+.callp-banner.is-ok { background: var(--ok-soft); } .callp-banner.is-ok > .mi { color: var(--ok); }
+.callp-banner.is-warn { background: var(--warn-soft); } .callp-banner.is-warn > .mi { color: var(--warn); }
+.callp-banner.is-danger { background: var(--danger-soft); } .callp-banner.is-danger > .mi { color: var(--danger); }
+
+.callp-focus { font-weight: 650; font-size: 15px; }
+.callp-chip { display: inline-flex; align-items: center; border-radius: var(--r-pill); padding: 3px 9px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.callp-chip.k-ACTIVE { background: var(--ok-soft); color: var(--ok); }
+.callp-chip.k-PRODUCT_RM_ENGAGED, .callp-chip.k-KYC_IN_PROGRESS { background: var(--info-soft); color: var(--info); }
+.callp-chip.k-WARM { background: var(--warn-soft); color: var(--warn); }
+.callp-chip.k-EXPLORING { background: var(--accent-soft); color: var(--accent-dark); }
+:root[data-theme='dark'] .callp-chip.k-EXPLORING { color: var(--accent); }
+.callp-chip.k-INACTIVE, .callp-chip.k-ON_HOLD, .callp-chip.k-LOST { background: var(--hairline); color: var(--ink-3); }
+.callp-pitch { margin: 8px 0 0; padding-left: 18px; font-size: 13px; color: var(--ink-2); }
+.callp-pitch li { margin-bottom: 3px; }
+.callp-facts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.callp-facts span { font-size: 12px; border: 1px solid var(--hairline); border-radius: var(--r-pill); padding: 2px 8px; color: var(--ink-2); }
+.callp-others { margin-top: 10px; border-top: 1px dashed var(--hairline); padding-top: 8px; font-size: 12.5px; color: var(--ink-2); }
+.callp-olist { display: grid; gap: 4px; margin-top: 6px; }
+.callp-olist button {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px; text-align: left; background: transparent;
+  border: 1px solid var(--hairline-2); border-radius: var(--r-xs); padding: 6px 8px; cursor: pointer; font-size: 12.5px; color: var(--ink);
+}
+.callp-olist button:hover { border-color: var(--ink-4); }
+
+.callp-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.callp-act {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; border: 1px solid var(--hairline);
+  background: var(--glass-2); color: var(--ink); border-radius: var(--r-sm); padding: 9px 10px; cursor: pointer; min-height: 52px;
+}
+.callp-act:hover { border-color: var(--ink-4); }
+.callp-act .t { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 13px; }
+.callp-act .t .mi { color: var(--accent-dark); }
+:root[data-theme='dark'] .callp-act .t .mi { color: var(--accent); }
+.callp-act .why { font-size: 11.5px; color: var(--ink-3); line-height: 1.35; }
+.callp-act[aria-disabled='true'] { cursor: not-allowed; background: transparent; border-style: dashed; }
+.callp-act[aria-disabled='true'] .t, .callp-act[aria-disabled='true'] .t .mi { color: var(--ink-4); }
+.callp-act.is-open { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.callp-inline { margin-top: 8px; border: 1px solid var(--accent); border-radius: var(--r-sm); padding: 10px 12px; background: var(--popover-solid); }
+.callp-inline p { margin: 0 0 8px; font-size: 12.5px; color: var(--ink-2); }
+
+.callp-log { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.callp-log li { display: flex; gap: 8px; font-size: 12.5px; align-items: flex-start; }
+.callp-log time { color: var(--ink-4); font-variant-numeric: tabular-nums; flex: none; width: 38px; }
+.callp-log .mi, .callp-results .mi { color: var(--ok); flex: none; }
+.callp-results { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; font-size: 13px; }
+.callp-results li { display: flex; gap: 8px; align-items: flex-start; }
+.callp-results li.is-warn .mi { color: var(--warn); }
+
+.callp-glance summary { cursor: pointer; list-style: none; }
+.callp-glance summary::-webkit-details-marker { display: none; }
+.callp-glance summary h3 { margin: 0; }
+.callp-kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12.5px; margin-top: 8px; }
+.callp-kv span:nth-child(odd) { color: var(--ink-3); }
+
+.callp-center { text-align: center; padding: 22px 8px 8px; }
+.callp-big { font-weight: 650; font-size: 16px; }
+.callp-ring { width: 68px; height: 68px; border-radius: 50%; margin: 0 auto 12px; display: grid; place-items: center; background: var(--warn-soft); color: var(--warn); }
+.callp-done { width: 56px; height: 56px; border-radius: 50%; margin: 0 auto 10px; display: grid; place-items: center; background: var(--ok-soft); color: var(--ok); }
+.callp-check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin-top: 8px; cursor: pointer; }
+.callp-evidence { display: block; font-size: 12px; color: var(--ink-3); font-style: italic; margin-top: 2px; }
+.callp-demo summary { cursor: pointer; font-size: 12.5px; margin-top: 8px; color: var(--ink-2); }
+.callp-demo-tag { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; color: var(--info); border: 1px solid var(--info); border-radius: 6px; padding: 1px 5px; }
+/* The call form inside the panel sits on the panel's own surface. */
+.callp .card { background: var(--popover-solid); box-shadow: none; }
+/* With the panel docked, a page's header gets narrower; its controls wrap
+   under the title rather than sliding beneath the panel. */
+body.has-call-panel .page-head { flex-wrap: wrap; }

@@ -60,8 +60,12 @@ const bigulLead = lead('BIGUL');
 const tickets = [];
 
 const flagCall = async (leadId, flag) => {
+  // A4 (OPS-74): the call is saved first; the AI's compliance flag is confirmed on it.
+  const call = await as(SUPER)('POST', '/activities', {
+    lead_id: leadId, type: 'Call', disposition: 'CALL_LANGUAGE', body: `${MARK} call`,
+  });
   const res = await as(SUPER)('POST', '/ai/disposition/confirm', {
-    lead_id: leadId, outcome: 'Connected', summary: `${MARK} call`, compliance_flag: flag,
+    lead_id: leadId, activity_id: call.body?.activity?.id, summary: `${MARK} call`, compliance_flag: flag,
     compliance_note: `${MARK} note`, card_changes: [],
   });
   assert.equal(res.status, 200, `the disposition answered ${res.status}: ${res.body?.error}`);

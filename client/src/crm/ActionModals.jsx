@@ -21,7 +21,7 @@ const CHANNEL_LABEL = { whatsapp: 'WhatsApp', sms: 'SMS', email: 'Email' };
 
 export default function ActionModal({ state, session, onClose, onDone, onNotice }) {
   if (!state) return null;
-  const { kind, lead, channel, ids, calling, simulated, cardId } = state;
+  const { kind, lead, channel, ids, calling, simulated, cardId, brochureProductIds } = state;
 
   const common = { lead, session, onClose, onDone, onNotice };
   const bulk = { ids, onClose, onDone, onNotice };
@@ -37,6 +37,7 @@ export default function ActionModal({ state, session, onClose, onDone, onNotice 
     case 'email': return (
       <EmailComposer
         leadId={lead.id}
+        initialBrochureIds={brochureProductIds ?? []}
         onClose={onClose}
         onSent={(msg) => { onNotice?.(msg); onDone(); }}
         onError={onNotice}

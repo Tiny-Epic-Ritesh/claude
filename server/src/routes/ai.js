@@ -3,17 +3,19 @@
  */
 
 import { Router } from 'express';
-import { all, one, run, audit, notify } from '../db.js';
+import { all, one, run, audit, notify, CARD_STATES } from '../db.js';
 import { requireUser, requirePermission, can, leadScope, activeOrg, userCan } from '../auth.js';
 import { loadInBook } from '../engine/bookscope.js';
-import { applyScore } from '../engine/rules.js';
 import { openCase } from '../engine/cases.js';
 /* QA-28. The category and priority each compliance flag opens are now
    configuration, ruled 14 Oct and changeable in Setup: engine/compliance.js. */
 import { routeFor } from '../engine/compliance.js';
 import * as ai from '../ai/index.js';
 import { sendCsv } from '../engine/csv.js';
-import { tracked, sourceOf } from '../engine/history.js';
+import { sourceOf } from '../engine/history.js';
+import { dispositionByCode } from '../engine/dispositions.js';
+import { moveCard } from '../engine/cardmoves.js';
+import { MOVE_NEEDS } from '../engine/nextaction.js';
 
 const router = Router();
 router.use(requireUser);
@@ -141,6 +143,58 @@ router.get('/residency/log', (req, res) => {
   ).map(({ detail, ...r }) => ({ ...r, meta: detail ? JSON.parse(detail) : null })));
 });
 
+/*
+ * A4 (QA-10; ruled 19 Nov, OPS-74): a call drafted by the AI is saved like any
+ * other call -- through POST /activities, with one of Setup's call outcomes --
+ * so it counts as a call everywhere a call is counted, and Setup's rules for
+ * that outcome (a follow-up, a retry, a date it needs) apply to it. Before,
+ * the confirm wrote an "AI Call Summary" that no call count, scorecard or
+ * last-contacted date reads, with an outcome from the AI's own list of seven.
+ *
+ * The providers still answer in that coarse vocabulary. It is turned into
+ * Setup's outcome here, by the outcome's API name (fixed; only its label can
+ * be renamed). When Setup has retired that outcome, none is drafted and the
+ * person chooses one: the call cannot be saved without it.
+ */
+const OUTCOME_TO_DISPOSITION = {
+  'Connected — Interested': 'CALL_PITCH_DONE',
+  'Connected — Not Interested': 'CALL_NOT_INTERESTED',
+  'Connected — Callback Requested': 'CALL_CALLBACK',
+  'Not Reachable': 'CALL_NO_ANSWER',
+  'Wrong Number': 'CALL_WRONG_NUMBER',
+  'Busy — Call Later': 'CALL_BUSY',
+  'Do Not Call': 'CALL_DND',
+};
+/* An interested client, and a next step that says more exactly what happened. */
+const NEXT_TO_DISPOSITION = {
+  'Schedule Meeting': 'CALL_MEETING_FIXED',
+  'Send Brochure': 'CALL_NEEDS_INFO',
+};
+
+/** India time, `hours` from now, on the next half hour, as a datetime-local value. */
+const istLocalIn = (hours) => {
+  const t = new Date(Date.now() + hours * 3600_000 + 330 * 60_000);
+  t.setUTCSeconds(0, 0);
+  const m = t.getUTCMinutes();
+  t.setUTCMinutes(m === 0 ? 0 : m <= 30 ? 30 : 60);
+  return t.toISOString().slice(0, 16);
+};
+
+/** The draft's outcome as one of Setup's call outcomes, with the date it needs, if any. */
+function asSetupOutcome(proposal) {
+  const interested = proposal.outcome === 'Connected — Interested';
+  const code = (interested && NEXT_TO_DISPOSITION[proposal.next_action]) || OUTCOME_TO_DISPOSITION[proposal.outcome];
+  const d = dispositionByCode(code);
+  if (!d || d.activity_type !== 'Call') return { disposition: null, disposition_label: null };
+  const when = d.requires_datetime ? istLocalIn(Number(proposal.next_action_due_hours) || 24) : null;
+  return {
+    disposition: d.code,
+    disposition_label: d.label,
+    disposition_group: d.outcome,
+    ...(when ? { [d.next_step === 'meeting' ? 'meeting_at' : 'follow_up_at']: when } : {}),
+  };
+}
+
 /**
  * Post-call disposition. Returns a proposal — nothing is applied until the
  * caller confirms, which is the human-in-the-loop control the BRD risk
@@ -165,6 +219,16 @@ router.post('/disposition', async (req, res, next) => {
 
     res.json({
       ...proposal,
+      ...asSetupOutcome(proposal),
+      /* Each proposed change names the card it is about, so the confirm moves
+         that card and no other; a change to a product the lead has no card
+         for, or to the stage it is already in, is not offered. */
+      card_changes: (proposal.card_changes ?? []).map((c) => {
+        const card = ctx.cards.find((k) => k.product_code === c.product_code);
+        return card && card.state !== c.to_state
+          ? { ...c, card_id: card.id, from_state: card.state, product_name: card.product_name }
+          : null;
+      }).filter(Boolean),
       latency_ms: Date.now() - started,
       provider: ai.providerName,
       // The UI shows current state alongside each proposed change.
@@ -173,73 +237,69 @@ router.post('/disposition', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-/** Apply a confirmed (and possibly edited) disposition. */
+/**
+ * What the AI drafted beyond the call itself, applied once the call is saved.
+ *
+ * A4 (QA-10; ruled 19 Nov, OPS-74). The call is saved first, by POST
+ * /activities, like any other: its outcome, note, follow-up and score are
+ * Setup's. This then marks that call as drafted by the AI, moves the product
+ * cards the person kept from the draft -- through the same move as the card
+ * panel's, so each says what it did -- and opens the compliance case a flag
+ * calls for. It no longer writes a call of its own, a task outside the
+ * follow-up rules (so with no reminders), or the lead's callback time.
+ */
 router.post('/disposition/confirm', (req, res) => {
-  const { lead_id, outcome, summary, card_changes = [], next_action, next_action_due_hours = 4,
-    follow_up_task, compliance_flag, compliance_note, score_signal = 0, duration_s } = req.body;
+  const { lead_id, activity_id, card_changes = [], compliance_flag, compliance_note, summary } = req.body;
 
   /* OPS-18. The preview above checks the book; this is the half that writes
-     -- card states, the score, a task, a compliance case -- and it did not, so
-     any user could apply a disposition to a lead in the other business. */
+     -- card states, a compliance case -- and it did not, so any user could
+     apply a disposition to a lead in the other business. */
   const inBook = loadInBook(req, 'lead', lead_id);
   if (inBook.error) return res.status(inBook.status).json({ error: inBook.error });
 
   const lead = one('SELECT * FROM leads WHERE id = ?', [lead_id]);
   if (!lead) return res.status(404).json({ error: 'Lead not found' });
 
-  // 1. The call summary becomes an activity.
-  run(
-    `INSERT INTO activities (lead_id, type, direction, subject, body, outcome, duration_s, ai_generated, score_delta, user_id)
-     VALUES (?,?,?,?,?,?,?,1,?,?)`,
-    [lead_id, 'AI Call Summary', 'outbound', `Call — ${outcome}`, summary, outcome, duration_s || 0, score_signal, req.user.id],
-  );
-  applyScore(lead_id, 'AI Call Summary', score_signal);
+  /* The call this draft belongs to: this person's own, on this lead, saved as a call. */
+  const call = activity_id
+    ? one("SELECT * FROM activities WHERE id = ? AND lead_id = ? AND user_id = ? AND type = 'Call'", [activity_id, lead.id, req.user.id])
+    : null;
+  if (!call) {
+    return res.status(400).json({
+      error: 'Save the call first. An AI draft is saved as the call itself, then confirmed here.',
+      field: 'activity_id',
+    });
+  }
+  run('UPDATE activities SET ai_generated = 1 WHERE id = ?', [call.id]);
 
-  // 2. Card state changes, each still role-gated.
+  // Card moves, each still role-gated, through the card panel's own move.
   const applied = [];
   const refused = [];
   for (const change of card_changes) {
     const card = one(
-      `SELECT pc.*, pt.name AS product_name FROM product_cards pc JOIN product_types pt ON pt.id = pc.product_type_id
-       WHERE pc.lead_id = ? AND pt.code = ?`,
-      [lead_id, change.product_code],
+      `SELECT pc.*, pt.name AS product_name, pt.code AS product_code FROM product_cards pc JOIN product_types pt ON pt.id = pc.product_type_id
+       WHERE pc.lead_id = ? AND (pc.id = ? OR pt.code = ?)`,
+      [lead.id, Number(change.card_id) || -1, change.product_code ?? ''],
     );
     if (!card) continue;
-
-    const permission = change.to_state === 'WARM' ? 'card.mark.warm' : 'card.mark.exploring';
-    if (!userCan(req.user, permission)) {
-      refused.push({ ...change, reason: `Your role cannot set ${change.to_state}` });
+    if (!CARD_STATES.includes(change.to_state)) {
+      refused.push({ ...change, card_id: card.id, reason: `${change.to_state} is not a stage` });
       continue;
     }
-
-    tracked('product_interest', card.id, { actorId: req.user.id, source: sourceOf(req) },
-      () => run("UPDATE product_cards SET state = ?, last_state_at = datetime('now') WHERE id = ?", [change.to_state, card.id]));
-    run('INSERT INTO card_audit (card_id, from_state, to_state, user_id, note) VALUES (?,?,?,?,?)', [
-      card.id, card.state, change.to_state, req.user.id, `AI disposition: ${change.evidence || ''}`,
-    ]);
-    applied.push({ ...change, card_id: card.id });
-
-    if (change.to_state === 'WARM') {
-      for (const rm of all("SELECT id FROM users WHERE role = 'product_rm' AND product_type_id = ? AND active = 1", [card.product_type_id])) {
-        notify(rm.id, `Warm card — ${card.product_name}`, `${lead.name} marked Warm from an AI-confirmed call.`, `/leads/${lead_id}`);
-      }
+    if (!userCan(req.user, MOVE_NEEDS[change.to_state])) {
+      refused.push({ ...change, card_id: card.id, reason: `Your role cannot set a card to ${change.to_state}` });
+      continue;
     }
+    if (card.state === change.to_state) continue;
+    const moved = moveCard({
+      card, state: change.to_state, user: req.user,
+      note: `From the call: ${change.evidence || 'AI draft, confirmed'}`, source: sourceOf(req),
+    });
+    if (moved.refused) refused.push({ ...change, card_id: card.id, reason: moved.refused });
+    else applied.push({ ...change, card_id: card.id, effects: moved.effects });
   }
 
-  // 3. Follow-up task.
-  if (follow_up_task) {
-    run("INSERT INTO tasks (title, lead_id, assignee_id, created_by, due_at, priority) VALUES (?,?,?,?,datetime('now', ?),?)", [
-      follow_up_task, lead_id, req.user.id, req.user.id, `+${Number(next_action_due_hours) || 4} hours`,
-      compliance_flag && compliance_flag !== 'None' ? 'High' : 'Normal',
-    ]);
-  }
-
-  // 4. Callback scheduling.
-  if (next_action === 'Callback') {
-    run("UPDATE leads SET callback_at = datetime('now', ?) WHERE id = ?", [`+${Number(next_action_due_hours) || 24} hours`, lead_id]);
-  }
-
-  // 5. A compliance flag raises a ticket — it is never left in a note.
+  // A compliance flag raises a ticket — it is never left in a note.
   let ticketId = null;
   if (compliance_flag && compliance_flag !== 'None') {
     /* QA-28. The same case every other door opens: the lead's book, a category
@@ -250,10 +310,10 @@ router.post('/disposition/confirm', (req, res) => {
     const route = routeFor(compliance_flag);
     const opened = openCase({
       subject: `Compliance flag: ${compliance_flag}`,
-      description: `${compliance_note || ''}\n\nFrom call summary: ${summary}`,
+      description: `${compliance_note || ''}\n\nFrom the call: ${summary || call.body || ''}`,
       priority: route.priority,
       categoryId: route.categoryId,
-      leadId: lead_id, channel: 'CRM', createdBy: req.user.id, org: lead.sales_org,
+      leadId: lead.id, channel: 'CRM', createdBy: req.user.id, org: lead.sales_org,
     });
     ticketId = opened.id;
     if (opened.assignee) {
@@ -261,10 +321,11 @@ router.post('/disposition/confirm', (req, res) => {
     }
   }
 
-  run("UPDATE leads SET updated_at = datetime('now') WHERE id = ?", [lead_id]);
-  audit(req.user.id, 'ai_disposition_confirmed', 'lead', Number(lead_id), { outcome, applied: applied.length, refused: refused.length });
+  audit(req.user.id, 'ai_disposition_confirmed', 'lead', lead.id, {
+    activity_id: call.id, applied: applied.length, refused: refused.length, compliance_flag: compliance_flag || 'None',
+  });
 
-  res.json({ ok: true, cards_updated: applied, cards_refused: refused, compliance_ticket_id: ticketId });
+  res.json({ ok: true, activity_id: call.id, cards_updated: applied, cards_refused: refused, compliance_ticket_id: ticketId });
 });
 
 router.get('/leads/:id/next-action', async (req, res, next) => {
