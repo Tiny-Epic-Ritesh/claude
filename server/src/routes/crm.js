@@ -1581,6 +1581,9 @@ router.post('/cards/:id/state', (req, res) => {
  * other business's client -- a task, a notification and an SMS each, carrying
  * the client's name -- and was told the RMs' names. Ruled 16 Oct: fixed here.
  */
+/** The task a Product RM request gives each Product RM -- and how an open request is recognised (OPS-68). */
+const RM_TASK_TITLE = 'Product RM intervention requested on ';
+
 function rmRequestContext(req) {
   const inBook = loadInBook(req, 'card', req.params.id);
   if (inBook.error) return { status: inBook.status, error: inBook.error };
@@ -1679,6 +1682,22 @@ router.post('/cards/:id/request-product-rm', requirePermission('card.request.pro
     return res.status(409).json({ error: `No active Product RM is set up for ${card.product_name}, so nobody can be asked. An Admin sets one up in Setup → Users.` });
   }
 
+  /* OPS-68. Asking again while the first request was still open made a second
+     high-priority task, bell and SMS for every Product RM. A request is open
+     while its tasks are; the second ask is told who has it. */
+  const pending = one(
+    `SELECT MIN(t.created_at) AS asked_at, GROUP_CONCAT(u.name, ', ') AS who
+       FROM tasks t JOIN users u ON u.id = t.assignee_id
+      WHERE t.card_id = ? AND t.status = 'Open' AND t.title LIKE ?`,
+    [card.id, `${RM_TASK_TITLE}%`],
+  );
+  if (pending?.who) {
+    return res.status(409).json({
+      error: `A Product RM has already been asked about ${card.product_name}: ${pending.who} still ${pending.who.includes(',') ? 'have' : 'has'} it open.`,
+      asked_at: pending.asked_at,
+    });
+  }
+
   const requestId = Number(run(
     `INSERT INTO product_rm_requests (card_id, lead_id, sales_org, requested_by, asked, status_summary, conversations, needs_to_know)
      VALUES (?,?,?,?,?,?,?,?)`,
@@ -1715,7 +1734,7 @@ router.post('/cards/:id/request-product-rm', requirePermission('card.request.pro
     }
 
     run("INSERT INTO tasks (title, description, lead_id, card_id, assignee_id, created_by, due_at, priority) VALUES (?,?,?,?,?,?,datetime('now','+4 hours'),'High')", [
-      `Product RM intervention requested on ${lead?.name} (${card.product_name})`, taskBody, card.lead_id, card.id, rm.id, req.user.id,
+      `${RM_TASK_TITLE}${lead?.name} (${card.product_name})`, taskBody, card.lead_id, card.id, rm.id, req.user.id,
     ]);
   }
   const due = one("SELECT due_at FROM tasks WHERE card_id = ? AND created_by = ? ORDER BY id DESC LIMIT 1", [card.id, req.user.id])?.due_at ?? null;

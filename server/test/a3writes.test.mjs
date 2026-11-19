@@ -167,6 +167,22 @@ try {
     assert.equal(second.status, 409, `the second start: HTTP ${second.status}`);
   });
 
+  await test('asking for a Product RM twice on one card does not ask twice', async () => {
+    const product = one("SELECT pt.id FROM product_types pt JOIN users u ON u.product_type_id = pt.id AND u.role = 'product_rm' AND u.active = 1 WHERE pt.sales_org = 'BONANZA' ORDER BY pt.id LIMIT 1").id;
+    const owner = lead({ owner_id: ADMIN.id });
+    const card = make('product_cards', { lead_id: owner, product_type_id: product, state: 'EXPLORING' });
+    const ask = () => call(ADMIN, 'POST', `/api/cards/${card}/request-product-rm`, { handover: { needs_to_know: 'A3 probe' } });
+    const first = await ask();
+    assert.equal(first.status, 200, `first: HTTP ${first.status} ${JSON.stringify(first.body).slice(0, 120)}`);
+    const tasksAfterFirst = one('SELECT COUNT(*) n FROM tasks WHERE card_id = ?', [card]).n;
+    const second = await ask();
+    const tasksAfterSecond = one('SELECT COUNT(*) n FROM tasks WHERE card_id = ?', [card]).n;
+    run('DELETE FROM tasks WHERE card_id = ?', [card]);
+    run('DELETE FROM product_rm_requests WHERE card_id = ?', [card]);
+    assert.equal(second.status, 409, `the second ask: HTTP ${second.status}`);
+    assert.equal(tasksAfterSecond, tasksAfterFirst, `the second ask made ${tasksAfterSecond - tasksAfterFirst} more task(s)`);
+  });
+
 } finally {
   for (const [table, id] of [...made].reverse()) {
     try { run(`DELETE FROM ${table} WHERE id = ?`, [id]); } catch { /* removed with its parent */ }
