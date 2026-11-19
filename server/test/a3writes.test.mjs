@@ -142,6 +142,18 @@ try {
     assert.ok(one('SELECT deleted_at FROM leads WHERE id = ?', [old]).deleted_at, 'it came back anyway: two live leads, one mobile');
   });
 
+  await test('a lead restored after its owner has left goes to a queue, not to nobody', async () => {
+    const leaver = make('users', { name: 'A3 leaver', email: `probe-a3-leaver-${stamp}@bonanza.test`, password: 'x', role: 'sales_rm', sales_org: 'BONANZA', active: 1 });
+    const gone = lead({ owner_id: leaver });
+    run("UPDATE leads SET deleted_at = datetime('now') WHERE id = ?", [gone]);
+    run('UPDATE users SET active = 0 WHERE id = ?', [leaver]);
+    const out = await call(ADMIN, 'POST', `/api/leads/${gone}/restore`);
+    assert.equal(out.status, 200, `HTTP ${out.status}`);
+    const back = one('SELECT owner_id, owner_queue_id FROM leads WHERE id = ?', [gone]);
+    assert.ok(back.owner_id !== leaver, 'it went back to somebody who has left, on nobody\'s worklist');
+    assert.ok(back.owner_queue_id || back.owner_id, 'it is owned by nobody');
+  });
+
 } finally {
   for (const [table, id] of [...made].reverse()) {
     try { run(`DELETE FROM ${table} WHERE id = ?`, [id]); } catch { /* removed with its parent */ }

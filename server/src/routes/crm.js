@@ -1266,8 +1266,34 @@ router.post('/leads/:id/restore', requirePermission('lead.delete'), (req, res) =
   }
 
   run('UPDATE leads SET deleted_at = NULL WHERE id = ?', [gone.id]);
-  audit(req.user.id, 'lead_restored', 'lead', gone.id, {});
-  res.json({ restored: true });
+
+  /* OPS-54. It went back to its owner even when they had left, and sat on
+     nobody's worklist -- a handover moves a leaver's live leads, not the
+     ones in the bin. Owned by nobody who is here, it waits in its business's
+     lead queue, as a lead no rule could route does (assignLead); with no
+     queue, it comes to whoever restored it. */
+  const owner = gone.owner_id ? one('SELECT id, name, active FROM users WHERE id = ?', [gone.owner_id]) : null;
+  let queue = null;
+  if (!gone.owner_queue_id && !owner?.active) {
+    const desk = one(
+      "SELECT id, name FROM queues WHERE entity = 'lead' AND (sales_org = ? OR sales_org IS NULL) AND active = 1 ORDER BY sales_org IS NULL LIMIT 1",
+      [gone.sales_org],
+    );
+    if (desk && assignToQueue(gone.id, desk.id, { actorId: req.user.id, source: sourceOf(req) }).ok) {
+      queue = desk.name;
+    } else {
+      tracked('lead', gone.id, { actorId: req.user.id, source: sourceOf(req) },
+        () => run('UPDATE leads SET owner_id = ?, owner_queue_id = NULL WHERE id = ?', [req.user.id, gone.id]));
+    }
+  }
+  audit(req.user.id, 'lead_restored', 'lead', gone.id, { ...(queue ? { queue } : {}), ...(owner && !owner.active ? { owner_left: owner.id } : {}) });
+  const now = one('SELECT owner_id FROM leads WHERE id = ?', [gone.id]);
+  res.json({
+    restored: true,
+    owner: now.owner_id ? one('SELECT name FROM users WHERE id = ?', [now.owner_id])?.name ?? null : null,
+    queue,
+    owner_left: owner && !owner.active ? owner.name : null,
+  });
 });
 
 /* QA-37 (accepted 13 Oct), with the retention ruled 14 Oct. What in the
