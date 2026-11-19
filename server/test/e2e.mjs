@@ -1141,7 +1141,11 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
     const { data: theirLeads } = await req('/api/leads?limit=1', { token: T.caller, expect: 200 });
     const lead = need(theirLeads[0], 'a lead the caller can see');
 
-    const { data: me } = await req('/api/auth/me', { token: T.sales_rm, expect: 200 });
+    /* Given to the Admin, who can open the lead. It used to go to a Sales RM
+       who could not -- a task its own assignee never saw, which OPS-52 (19
+       Nov) now refuses. The caller still sees the lead and is neither the
+       task's assignee nor its creator, so the ownership check is reached. */
+    const { data: me } = await req('/api/auth/me', { token: T.admin, expect: 200 });
 
     const { data: made } = await req('/api/tasks', {
       method: 'POST', token: T.admin, expect: 201,
@@ -1160,10 +1164,7 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
     });
     assert(/somebody else/i.test(refused.error), `unexpected refusal: ${refused.error}`);
 
-    /* The other half of the rule. Not the assignee here on purpose: this task
-       sits on a lead its assignee cannot see, so the lead scope refuses them
-       too — and the Tasks list would hide it from them for the same reason.
-       report.team is what reaches across that. */
+    /* The other half of the rule: the person it belongs to may change it. */
     await req(`/api/tasks/${made.id}`, {
       method: 'PATCH', token: T.admin, expect: 200, body: { priority: 'Low' },
     });
