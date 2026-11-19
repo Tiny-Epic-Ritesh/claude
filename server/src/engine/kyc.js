@@ -614,7 +614,11 @@ function computeElapsed(journey) {
 
 /** Is the active step past its timer, and by how long? */
 function stallState(journey, steps) {
-  const active = steps.find((s) => s.status === 'active');
+  /* The step the applicant is on, stalled or not (OPS-75). The sweep marks
+     a step 'stalled' when it stalls the journey, and this read only 'active'
+     ones -- so on every sweep after the first a stalled journey had no step,
+     no stall and no hour to count, and was never abandoned. */
+  const active = steps.find((s) => s.status === 'active' || s.status === 'stalled');
   if (!active || !active.entered_at || journey.status === 'Complete') return null;
 
   /* A waiting step has no clock and cannot stall. Timed like the sixteen
@@ -674,7 +678,17 @@ export function submitStep(journeyId, stepCode, payload) {
   );
 
   const idx = steps.findIndex((s) => s.code === stepCode);
+  return advance(journeyId, steps, idx, form);
+}
 
+/**
+ * Move a journey on from the step at `idx`, just finished: to the next step
+ * that applies and is not done -- which starts, with its own timer -- or, when
+ * there is none, to completion. Shared by the applicant's own submission and a
+ * Product Supervisor's override, so a forced step moves the journey exactly as
+ * a finished one does (OPS-76: it used to stop there, with no step active).
+ */
+function advance(journeyId, steps, idx, form) {
   /* The next step that applies AND is not already finished.
    *
    * "Not already finished" is what makes a resubmission work. An objection
@@ -707,6 +721,97 @@ export function submitStep(journeyId, stepCode, payload) {
   }
 
   return { done: true, journey: completeJourney(journeyId, form) };
+}
+
+/**
+ * A Product Supervisor's override (BRD gate P3; OPS-76): force one step
+ * complete, or send the applicant back to one. Always with a reason, always
+ * audited.
+ *
+ * Until A5 it took no reason, so the audit said what was forced and never why;
+ * accepted a step the application does not have; and, forcing a step
+ * complete, stopped there -- the next step never started, so its timer never
+ * ran and the journey sat with nothing active. It could also force Bonanza's
+ * own verification, and act on an application already abandoned.
+ *
+ * Refused, and why:
+ *   - verification (a step that waits on Bonanza) is decided by recording its
+ *     outcome, never by forcing it: that is the one step that exists to be
+ *     somebody else's decision
+ *   - an abandoned application is taken over first (assisted completion), so
+ *     somebody owns what happens next; a complete one is finished
+ */
+export const OVERRIDE_ACTIONS = ['complete', 'reset'];
+export function overrideStep(journeyId, { stepCode, action = 'complete', reason, userId }) {
+  const journey = one('SELECT * FROM kyc_journeys WHERE id = ?', [journeyId]);
+  if (!journey) return { status: 404, error: 'Journey not found' };
+  const why = String(reason ?? '').trim();
+  if (why.length < 10) return { status: 400, error: 'Say why you are overriding this step', field: 'reason' };
+  if (!OVERRIDE_ACTIONS.includes(action)) {
+    return { status: 400, error: 'An override completes a step, or sends the applicant back to one', field: 'action' };
+  }
+  if (journey.status === 'Complete') return { status: 409, error: 'This application is already complete.' };
+  if (journey.status === 'Abandoned') {
+    return { status: 409, error: 'This application was abandoned. Take it over first (assisted completion), then override a step if you still need to.' };
+  }
+
+  const steps = journeyStepsFor(journey.product_type_id, journey.journey_version_id);
+  const form = readForm(journey);
+  const idx = steps.findIndex((st) => st.code === stepCode);
+  const step = steps[idx];
+  if (!step || !stepApplies(step, form)) {
+    return { status: 400, error: `"${stepCode}" is not a step of this application`, field: 'step_code' };
+  }
+  if (step.waits) {
+    return { status: 409, error: `"${step.label}" is Bonanza's own verification: record its outcome instead of forcing it.` };
+  }
+  const progress = one('SELECT * FROM kyc_journey_progress WHERE journey_id = ? AND step_code = ?', [journeyId, stepCode]);
+  if (action === 'complete' && progress?.status === 'done') {
+    return { status: 409, error: `"${step.label}" is already complete.` };
+  }
+
+  if (action === 'complete') {
+    const onStepS = progress?.entered_at
+      ? Math.max(0, Math.round((Date.now() - new Date(`${progress.entered_at.replace(' ', 'T')}Z`).getTime()) / 1000))
+      : 0;
+    run(
+      `UPDATE kyc_journey_progress SET status = 'done', completed_at = datetime('now'), seconds_on_step = ?
+       WHERE journey_id = ? AND step_code = ?`,
+      [onStepS, journeyId, stepCode],
+    );
+    /* A step forced ahead of the one the applicant is on leaves that one
+       where it is; forcing the one they are on moves them on. */
+    const onIt = ['active', 'stalled'].includes(progress?.status);
+    if (onIt) advance(journeyId, steps, idx, form);
+  } else {
+    // Back to this step: whatever was current goes back to waiting.
+    run("UPDATE kyc_journey_progress SET status = 'pending', entered_at = NULL WHERE journey_id = ? AND status IN ('active','stalled')", [journeyId]);
+    run(
+      "UPDATE kyc_journey_progress SET status = 'active', entered_at = datetime('now'), completed_at = NULL WHERE journey_id = ? AND step_code = ?",
+      [journeyId, stepCode],
+    );
+    run("UPDATE kyc_journeys SET current_step = ?, status = 'In Progress' WHERE id = ?", [stepCode, journeyId]);
+  }
+
+  audit(userId, 'kyc_override', 'kyc_journey', journeyId, {
+    step_code: stepCode, step_label: step.label, action, reason: why, from_status: journey.status,
+  });
+  return { journey: getJourney(journeyId) };
+}
+
+/** Every override on one application, newest first, with who made it and why. */
+export function overridesOf(journeyId) {
+  return all(
+    `SELECT a.created_at AS at, a.detail, u.name AS by_name
+       FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
+      WHERE a.action = 'kyc_override' AND a.entity = 'kyc_journey' AND a.entity_id = ?
+      ORDER BY a.id DESC`,
+    [journeyId],
+  ).map((r) => {
+    let d = {};
+    try { d = JSON.parse(r.detail ?? '{}'); } catch { /* an old row */ }
+    return { at: r.at, by: r.by_name, step_code: d.step_code, step_label: d.step_label ?? d.step_code, action: d.action, reason: d.reason ?? null };
+  });
 }
 
 /**
@@ -1090,7 +1195,7 @@ export function kycHealth(productTypeId = null, books = null, scope = null) {
 
   return rows.map((r) => {
     const full = getJourney(r.id);
-    const active = full?.steps?.find((s) => s.status === 'active');
+    const active = full?.steps?.find((s) => s.status === 'active' || s.status === 'stalled');
     const outcome = verificationOutcome(r.verification_outcome);
     return {
       ...r,
