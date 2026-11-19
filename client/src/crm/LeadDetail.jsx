@@ -4,7 +4,7 @@ import { api, money, rupees, shortDate, dateTime, mins, STATE_LABEL, ROLE_LABEL,
 import { checkField, checkAll, fieldErrorsFrom } from '../fieldRules.js';
 import { useApi, Loading, ErrorBanner, Empty, Modal, Spinner, Tabs, AgeBadge, PriorityBadge, Progress, CardDot, Icon, kycBadge, announce } from '../components/ui.jsx';
 import ActivityComposer from './ActivityComposer.jsx';
-import InCall from './InCall.jsx';
+import { startCall, useCallOpen, LEAD_CHANGED_EVENT } from './InCall.jsx';
 import ProductCard from '../components/ProductCard.jsx';
 import ProductPanel from './ProductPanel.jsx';
 import EmailComposer from './EmailComposer.jsx';
@@ -28,7 +28,9 @@ export default function LeadDetail({ session }) {
      the not-yet-engaged list, and it cannot reach state that lives inside the
      tab it is opening. */
   const [showAllProducts, setShowAllProducts] = useState(false);
-  const [inCall, setInCall] = useState(false);
+  /* A4: one call panel for the whole CRM (see InCall.jsx), so the lead page
+     only starts a call, and knows when one is open. */
+  const callOpen = useCallOpen();
   const [editing, setEditing] = useState(false);
   const [notice, setNotice] = useState(null);
   const navigate = useNavigate();
@@ -43,6 +45,14 @@ export default function LeadDetail({ session }) {
   const actions = useLeadActions({
     session, reload, onError: setActionError, onNotice: setNotice,
   });
+
+  /* What a call saved -- its outcome, a follow-up, a product moved -- shows
+     here once the panel says so. */
+  useEffect(() => {
+    const on = (e) => { if (Number(e.detail?.leadId) === Number(id)) reload(); };
+    window.addEventListener(LEAD_CHANGED_EVENT, on);
+    return () => window.removeEventListener(LEAD_CHANGED_EVENT, on);
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) return <Loading />;
   if (error) return <ErrorBanner error={error} />;
@@ -153,8 +163,9 @@ export default function LeadDetail({ session }) {
         <div className="record-toolbar">
           {readOnly && <span className="badge badge-amber">Read-only for {ROLE_LABEL[session.role]}</span>}
           {can('lead.contact') && (
-            <button className="btn btn-accent" onClick={() => setInCall(true)}>
-              <Icon name="call" /> Start call
+            <button className="btn btn-accent" onClick={() => startCall({ leadId: lead.id })} disabled={callOpen}
+              title={callOpen ? 'A call is open: finish and save it first' : `Call ${lead.name} through the dialler`}>
+              <Icon name="call" /> {callOpen ? 'Call open' : 'Start call'}
             </button>
           )}
           <button className="btn" onClick={askNextAction} disabled={nbaBusy}>
@@ -275,8 +286,6 @@ export default function LeadDetail({ session }) {
       {tab === 'tasks' && <TasksTab lead={lead} session={session} reload={reload} />}
       {tab === 'tickets' && <TicketsTab lead={lead} reload={reload} readOnly={readOnly} />}
       {tab === 'kyc' && <KycTab lead={lead} session={session} reload={reload} onError={setActionError} />}
-
-      {inCall && <InCall lead={lead} session={session} onClose={() => { setInCall(false); reload(); }} />}
 
       {emailing && (
         <EmailComposer

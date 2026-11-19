@@ -35,12 +35,13 @@ const readFile = (file) => new Promise((resolve, reject) => {
   fr.readAsDataURL(file);
 });
 
-export default function EmailComposer({ leadId, onClose, onSent, onError }) {
+export default function EmailComposer({ leadId, onClose, onSent, onError, initialBrochureIds = [] }) {
   const [d, { loading, error }] = useApi(leadId ? `/email/compose/${leadId}` : null, [leadId]);
   const [form, setForm] = useState({ subject: '', body: '', template_id: '', intent: 'service' });
   const [contentIds, setContentIds] = useState([]);
   /* Product brochures the RM chose to send (P3-15). */
-  const [brochureIds, setBrochureIds] = useState([]);
+  /* A4: "Send brochure" on a call opens this with the product's brochure already chosen. */
+  const [brochureIds, setBrochureIds] = useState(initialBrochureIds);
   const [brochures] = useApi('/products/brochures');
   const [saving, setSaving] = useState(null);      // null | 'ask' | 'busy'
   const [tplName, setTplName] = useState('');

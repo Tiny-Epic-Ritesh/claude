@@ -346,11 +346,17 @@ try {
 
   /* ============================================================ QA-28 */
 
-  const confirm = (leadId, flag) => superCall('POST', '/ai/disposition/confirm', {
-    lead_id: leadId, outcome: 'Connected — Interested', summary: `${MARK} call`, card_changes: [],
-    next_action: 'No Action', next_action_due_hours: 4, follow_up_task: '',
-    compliance_flag: flag, compliance_note: `${MARK} note`, score_signal: 0,
-  });
+  /* A4 (OPS-74): an AI draft is saved as the call itself, and what it adds --
+     here, the compliance case -- is confirmed on that call. */
+  const confirm = async (leadId, flag) => {
+    const call = await superCall('POST', '/activities', {
+      lead_id: leadId, type: 'Call', disposition: 'CALL_LANGUAGE', body: `${MARK} call`,
+    });
+    return superCall('POST', '/ai/disposition/confirm', {
+      lead_id: leadId, activity_id: call.body?.activity?.id, summary: `${MARK} call`, card_changes: [],
+      compliance_flag: flag, compliance_note: `${MARK} note`,
+    });
+  };
 
   await test('QA-28 a Complaint on a Bigul lead opens a Bigul Complaint case with deadlines', async () => {
     const lead = seedLead('BIGUL', 'complainant');
