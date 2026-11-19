@@ -6,7 +6,7 @@ import { exportHeldMasked, wonRefusal, policy } from '../engine/policies.js';
 import { purgeableLeads, purgeLeads } from '../engine/retention.js';
 import { Router } from 'express';
 import { all, one, run, audit, notify, daysSince, ageBand, AGE_BANDS, CARD_COLOUR, CARD_STATES } from '../db.js';
-import { can, requireUser, requirePermission, reqScope, isReadOnlyOnLeads, unmaskRequested, maskFor, orgsFor, activeOrg, mayUseOrg, userCan, mayChangeShared, SHARED_SETTING } from '../auth.js';
+import { can, requireUser, requirePermission, reqScope, isReadOnlyOnLeads, unmaskRequested, maskFor, orgsFor, activeOrg, mayUseOrg, userCan, mayChangeShared, SHARED_SETTING, leadScope, partnerScope } from '../auth.js';
 import { owdGrant } from '../engine/owd.js';
 import { encryptField, decryptField, maskRecord, maskRecords, validate, blindIndex } from '../security.js';
 import { sendCsv } from '../engine/csv.js';
@@ -2253,11 +2253,36 @@ router.post('/notes', (req, res) => {
     }
   }
 
+  /* OPS-50. Mentioning someone sends them the note's first words and a link,
+     so only someone who may open the lead or partner can be mentioned. Any
+     id was taken: someone in the other business, or who could not open the
+     record, was sent a note about a client they may not see. */
+  const named = [...new Set((Array.isArray(mentions) ? mentions : []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  const unreachable = [];
+  for (const uid of named) {
+    const person = one('SELECT * FROM users WHERE id = ? AND active = 1', [uid]);
+    let opens = null;
+    if (person && lead_id) {
+      const scope = leadScope(person, 'l');
+      opens = one(`SELECT 1 v FROM leads l WHERE l.id = ? AND l.deleted_at IS NULL AND ${scope.sql}`, [Number(lead_id), ...scope.params]);
+    } else if (person && partner_id) {
+      const scope = partnerScope(person, 'p');
+      opens = one(`SELECT 1 v FROM partners p WHERE p.id = ? AND ${scope.sql}`, [Number(partner_id), ...scope.params]);
+    }
+    if (!opens) unreachable.push(person?.name ?? `user #${uid}`);
+  }
+  if (unreachable.length) {
+    return res.status(400).json({
+      error: `${unreachable.join(', ')} cannot open this ${lead_id ? 'lead' : 'partner'}, so cannot be mentioned`,
+      field: 'mentions',
+    });
+  }
+
   const result = run('INSERT INTO notes (lead_id, partner_id, parent_id, body, mentions, user_id) VALUES (?,?,?,?,?,?)', [
-    lead_id || null, partner_id || null, parent_id || null, body, JSON.stringify(mentions), req.user.id,
+    lead_id || null, partner_id || null, parent_id || null, body, JSON.stringify(named), req.user.id,
   ]);
 
-  for (const uid of mentions) {
+  for (const uid of named) {
     notify(uid, `${req.user.name} mentioned you`, body.slice(0, 140), lead_id ? `/leads/${lead_id}` : `/partners/${partner_id}`);
   }
   res.status(201).json(one('SELECT n.*, u.name AS user_name, u.role AS user_role FROM notes n LEFT JOIN users u ON u.id = n.user_id WHERE n.id = ?', [Number(result.lastInsertRowid)]));

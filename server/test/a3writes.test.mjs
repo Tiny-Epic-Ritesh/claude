@@ -103,6 +103,14 @@ try {
     assert.equal(left, 0, `${left} reminder(s) still waiting to go out`);
   });
 
+  await test('a note mentions only people who may open its lead', async () => {
+    const a = lead({ owner_id: ADMIN.id });
+    const out = await call(ADMIN, 'POST', '/api/notes', { lead_id: a, body: 'A3 private note about the client', mentions: [BIGUL_RM.id] });
+    if (out.status === 201) made.push(['notes', out.body.id]);
+    const told = one("SELECT COUNT(*) n FROM notifications WHERE user_id = ? AND body LIKE 'A3 private note%'", [BIGUL_RM.id]).n;
+    assert.equal(told, 0, 'someone in the other business was sent the note');
+  });
+
 } finally {
   for (const [table, id] of [...made].reverse()) {
     try { run(`DELETE FROM ${table} WHERE id = ?`, [id]); } catch { /* removed with its parent */ }
