@@ -3,7 +3,7 @@
  */
 
 import { exportHeldMasked, wonRefusal, policy } from '../engine/policies.js';
-import { purgeableLeads, purgeLeads } from '../engine/retention.js';
+import { purgeableLeads, keptForCases, purgeLeads } from '../engine/retention.js';
 import { Router } from 'express';
 import { all, one, run, audit, notify, daysSince, ageBand, AGE_BANDS, CARD_COLOUR, CARD_STATES } from '../db.js';
 import { can, requireUser, requirePermission, reqScope, isReadOnlyOnLeads, unmaskRequested, maskFor, orgsFor, activeOrg, mayUseOrg, userCan, mayChangeShared, SHARED_SETTING, leadScope, partnerScope } from '../auth.js';
@@ -1306,8 +1306,13 @@ router.post('/leads/:id/restore', requirePermission('lead.delete'), (req, res) =
    switcher -- and the erasing, which an Admin does with a reason. */
 
 router.get('/recycle-bin/purgeable', requirePermission('lead.delete'), (req, res) => {
-  const leads = purgeableLeads(purgeBooks(req));
-  res.json({ years: policy('retention.lead_years'), count: leads.length, leads });
+  const books = purgeBooks(req);
+  const leads = purgeableLeads(books);
+  /* B23 (ruled 19 Nov): a lead a case names is kept, however long it has been
+     untouched, and the bin says which and why rather than leaving an Admin to
+     wonder where it went. */
+  const kept = keptForCases(books);
+  res.json({ years: policy('retention.lead_years'), count: leads.length, leads, kept });
 });
 
 router.post('/recycle-bin/purge', requirePermission('lead.delete'), (req, res) => {

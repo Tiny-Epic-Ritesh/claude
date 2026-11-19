@@ -333,9 +333,9 @@ function RecycleBin() {
 /**
  * Erase the leads whose retention has run out (QA-37, with the period ruled 14 Oct).
  *
- * Only what is in the bin, never became an account, and has had nothing on it
- * for the whole retention period. It cannot be undone, so it asks for a reason
- * and for the word PURGE.
+ * Only what is in the bin, never became an account, has had nothing on it for
+ * the whole retention period, and no case names (B23, ruled 19 Nov). It cannot
+ * be undone, so it asks for a reason and for the word PURGE.
  */
 function Purge({ onDone }) {
   const [data, { reload }] = useApi('/recycle-bin/purgeable');
@@ -382,7 +382,8 @@ function Purge({ onDone }) {
         <div className="stack" style={{ gap: 8 }}>
           <ErrorBanner error={error} onDismiss={() => setError(null)} />
           <span className="small">
-            This erases {data.count} lead{data.count === 1 ? '' : 's'} permanently, with their cards and activity. It cannot be undone.
+            This erases {data.count} lead{data.count === 1 ? '' : 's'} permanently, with their cards, activity and tasks, and the
+            custom fields and history of each. It cannot be undone.
           </span>
           <div className="field">
             <label htmlFor="purge-reason">Why</label>
@@ -400,6 +401,26 @@ function Purge({ onDone }) {
           </div>
         </div>
       )}
+      <KeptForCases kept={data.kept} />
+    </div>
+  );
+}
+
+/**
+ * B23 (ruled 19 Nov): a lead a case names is not erased, however long it has
+ * been untouched. A case is never deleted, and kept without its lead it would
+ * no longer say whose complaint it was. Said here, so nobody wonders where
+ * the lead went.
+ */
+function KeptForCases({ kept }) {
+  if (!kept?.length) return null;
+  const n = kept.length;
+  const refs = kept.flatMap((l) => l.cases);
+  return (
+    <div className="small muted" style={{ marginTop: 6 }}>
+      Kept: {n} lead{n === 1 ? '' : 's'} past {n === 1 ? 'its' : 'their'} retention, because a case names {n === 1 ? 'it' : 'them'}{' '}
+      ({refs.slice(0, 6).join(', ')}{refs.length > 6 ? `, and ${refs.length - 6} more` : ''}). A case is never erased, so neither is
+      the lead it is about.
     </div>
   );
 }
