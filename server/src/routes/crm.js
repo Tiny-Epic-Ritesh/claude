@@ -886,11 +886,20 @@ router.get('/leads/:id', (req, res) => {
 });
 
 router.post('/leads', requirePermission('lead.create'), (req, res) => {
+  /* OPS-69. The business the lead is created in, settled first, so that its
+     owner and its values are checked in that business. The owner and the
+     picklists were checked against the caller's chosen business while the
+     lead was created in the one the request named -- a Bigul lead could be
+     owned by a Bonanza RM who cannot see it. */
+  const org = req.body.sales_org || activeOrg(req) || req.user.sales_org || 'BONANZA';
+  if (!mayUseOrg(req.user, org)) {
+    return res.status(403).json({ error: `You cannot create leads in ${org}.` });
+  }
+
   /* An owner in the other business would put the two books together in the
      data, the same shape as attributing a lead to a partner across them: the
      record is ours and the person holding it cannot see it. */
   if (req.body?.owner_id) {
-    const org = activeOrg(req) || req.user.sales_org;
     const owner = one('SELECT id, sales_org FROM users WHERE id = ? AND active = 1', [Number(req.body.owner_id) || -1]);
     if (!owner) return res.status(400).json({ error: 'Choose an active user' });
     if (owner.sales_org !== org) {
@@ -918,7 +927,7 @@ router.post('/leads', requirePermission('lead.create'), (req, res) => {
      not here: a new lead starts at the column default. */
   for (const column of LEAD_PICKLIST_COLUMNS) {
     if (column === 'stage' || req.body[column] === undefined) continue;
-    const refusal = columnRefusal('lead', column, req.body[column], activeOrg(req) || req.user.sales_org);
+    const refusal = columnRefusal('lead', column, req.body[column], org);
     if (refusal) return res.status(400).json({ error: refusal, field: column });
   }
 
@@ -935,10 +944,6 @@ router.post('/leads', requirePermission('lead.create'), (req, res) => {
   // The lead belongs to a business. A caller may nominate one when they work in
   // both, but only from their own entitlement — never an org they cannot see.
   // Settled before the duplicate check, because that check is asked of this book.
-  const org = req.body.sales_org || activeOrg(req) || req.user.sales_org || 'BONANZA';
-  if (!mayUseOrg(req.user, org)) {
-    return res.status(403).json({ error: `You cannot create leads in ${org}.` });
-  }
 
   /* Duplicate guard on mobile — the single most common import defect.
 

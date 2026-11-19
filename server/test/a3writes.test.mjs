@@ -183,6 +183,14 @@ try {
     assert.equal(tasksAfterSecond, tasksAfterFirst, `the second ask made ${tasksAfterSecond - tasksAfterFirst} more task(s)`);
   });
 
+  await test('a lead named for one business is owned, and its values checked, in that business', async () => {
+    const out = await call(BOTH, 'POST', '/api/leads', {
+      name: 'A3 probe', mobile: mobile(), sales_org: 'BIGUL', owner_id: RM.id, route: false,
+    });
+    if (out.status === 201) made.push(['leads', out.body.id]);
+    assert.equal(out.status, 400, `a Bigul lead was created with a Bonanza owner: HTTP ${out.status} ${JSON.stringify(out.body).slice(0, 120)}`);
+  });
+
 } finally {
   for (const [table, id] of [...made].reverse()) {
     try { run(`DELETE FROM ${table} WHERE id = ?`, [id]); } catch { /* removed with its parent */ }
