@@ -76,6 +76,12 @@ data, with a reason, and never deletes them.
   retention -- deleted, never an account, untouched for the period -- and an
   Admin erases it with a reason and the word PURGE. The audit keeps the ids,
   the reason and the period, never a name. Clients are not purged.
+  **Ruled 19 Nov (B23, built as A17):** nor is a lead that a case names,
+  directly or through one of its product interests, since a case is never
+  deleted and kept without its lead it would no longer say whose complaint it
+  was. The bin lists those leads, with the cases that keep them. A purge takes
+  the lead's product interests, activities and tasks, and erases in the same
+  step the field history and custom field values of all of them.
 - **Lists (batch 1, 14 Oct):** the owner or an Admin renames and describes a
   list, and removes a member without touching the lead. *Archive* asks why;
   an archived list leaves Lead Lists for its own view, stays readable,
