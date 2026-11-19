@@ -31,7 +31,7 @@ import { send } from '../integrations.js';
 import { checkConsent } from './consent.js';
 import { bookName } from './policies.js';
 import { nextWorkingTime } from './calendar.js';
-import { IST_OFFSET_MIN, toStored } from './daterange.js';
+import { IST_OFFSET_MIN, toStored, inRange } from './daterange.js';
 import { escalationTarget } from './cases.js';
 
 /** Days an answer counts for, after asking: SEBI SCORES' feedback window. */
@@ -241,3 +241,46 @@ export function csatFor(ticketId) {
   const waiting = rows.find((r) => r.status === 'Sent' && r.expires_at > toStored(new Date())) ?? null;
   return { standing, waiting, history: rows };
 }
+
+/* ------------------------------------------------- one figure, everywhere */
+
+/** Answers below which a CSAT figure is not scored (B21, ruled 19 Nov). */
+export const CSAT_MIN_ANSWERS = 10;
+
+/**
+ * CSAT as one figure wherever it is shown -- the scorecard, the Customer Care
+ * home and the case report (B21, ruled 19 Nov): the share of customers'
+ * answers in the period that are a 4 or a 5, credited to whoever resolved the
+ * case. It was an average of whatever was in the column, by whoever held the
+ * case now, over all time.
+ *
+ * @param people  user ids it is credited to, or null for everyone in `orgs`
+ * @param orgs    the businesses it is counted in
+ * @param range   a resolved date range (engine/daterange.js), or null for all time
+ * @returns { pct, answers, good } -- pct is null below CSAT_MIN_ANSWERS answers
+ */
+export function csatFigure({ people = null, orgs, range = null }) {
+  const where = ["s.status = 'Answered'", `s.sales_org IN (${orgs.map(() => '?').join(',') || "''"})`];
+  const params = [...orgs];
+  if (people) {
+    where.push(`s.resolved_by IN (${people.map(() => '?').join(',') || 'NULL'})`);
+    params.push(...people);
+  }
+  if (range) {
+    const r = inRange('s.answered_at', range);
+    where.push(r.sql);
+    params.push(...r.params);
+  }
+  const row = one(
+    `SELECT COUNT(*) n, COALESCE(SUM(CASE WHEN s.score >= 4 THEN 1 ELSE 0 END), 0) good
+       FROM csat_surveys s WHERE ${where.join(' AND ')}`,
+    params,
+  );
+  const answers = Number(row?.n ?? 0);
+  const good = Number(row?.good ?? 0);
+  return { answers, good, pct: answers >= CSAT_MIN_ANSWERS ? Math.round((100 * good) / answers) : null };
+}
+
+/** What a CSAT figure that is not scored yet says instead. */
+export const notEnoughAnswers = (answers) =>
+  `${answers} answer${answers === 1 ? '' : 's'} so far; scored from ${CSAT_MIN_ANSWERS}`;

@@ -12,7 +12,9 @@
 
 import { Router } from 'express';
 import { breachedSql } from '../engine/sla.js';
-import { istNow } from '../engine/daterange.js';
+import { istNow, resolveRange, DEFAULT_RANGE } from '../engine/daterange.js';
+import { csatFigure, notEnoughAnswers } from '../engine/csat.js';
+import { reportsOf } from '../engine/sharing.js';
 import { all, one, daysSince, ageBand, CARD_COLOUR } from '../db.js';
 import { requireUser, leadScope, unmaskRequested, maskFor, activeOrg, orgScope, orgsFor, journeyScope } from '../auth.js';
 import { maskRecords, withoutPortalSecret } from '../security.js';
@@ -40,6 +42,25 @@ const metric = (label, value, sub, tone, to) => ({
   label, value, sub: sub ?? null, tone: tone ?? null, to: to ?? null,
 });
 const money = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
+
+/**
+ * A16 (B21, ruled 19 Nov): CSAT on the Customer Care home, the same figure as
+ * the scorecard's for the month to date, credited to the person and anyone
+ * reporting to them. Opens the Cases page on exactly the answers it counts.
+ */
+function csatTile(user) {
+  const team = [user.id, ...reportsOf(user.id)];
+  const month = resolveRange(DEFAULT_RANGE);
+  const fig = csatFigure({ people: team, orgs: orgsFor(user), range: month });
+  const whose = team.length > 1 ? 'you and your team' : 'you';
+  return metric(
+    'CSAT (month to date)',
+    fig.pct === null ? '—' : `${fig.pct}%`,
+    fig.pct === null ? notEnoughAnswers(fig.answers) : `4s and 5s, of ${fig.answers} answers on cases ${whose} resolved`,
+    null,
+    `/tickets?view=all&csat_by=me&csat_from=${month.sqlFrom}`,
+  );
+}
 
 /* --------------------------------------------------------------- shared */
 
@@ -601,11 +622,15 @@ const COCKPITS = {
           `/tickets?view=all&mine=true&resolved_from=${today}&resolved_to=${today}`),
         metric('Waiting on client', mine("t.status = 'Waiting on Client'"), 'Yours, paused', null,
           `/tickets?view=mine&status=${encodeURIComponent('Waiting on Client')}`),
-        metric('CSAT (rolling)', one('SELECT ROUND(AVG(csat),2) v FROM tickets WHERE assignee_id = ? AND csat IS NOT NULL', [user.id]).v ?? '—',
-          'Your rated cases', null, '/tickets?view=all&mine=true&rated=true'),
+        /* A16 (B21): the same CSAT as the scorecard -- the share of answers
+           this month that were 4 or 5, on cases you (and anyone reporting to
+           you) resolved, scored from 10 answers -- opening on exactly those
+           cases. It averaged every rated case still assigned to you. */
+        csatTile(user),
       ],
       worklist: { type: 'tickets', title: 'Ticket queue', rows: queue },
-      actions: ['Open ticket', 'Reply', 'Reassign', 'Escalate', 'Mark resolved', 'Waiting on client', 'Merge', 'Send CSAT'],
+      // No "Send CSAT": the customer is asked when the case is done, once (A15).
+      actions: ['Open ticket', 'Reply', 'Reassign', 'Escalate', 'Mark resolved', 'Waiting on client', 'Merge'],
     };
   },
 
@@ -800,7 +825,6 @@ const ACTION = {
   'Mark resolved': { icon: 'task_alt', kind: 'pick', to: '/tickets', hint: 'Choose the case', needs: 'ticket.reply' },
   'Waiting on client': { icon: 'hourglass_empty', kind: 'pick', to: '/tickets', hint: 'Choose the case', needs: 'ticket.reply' },
   Merge: { icon: 'merge', kind: 'pick', to: '/tickets', hint: 'Choose the case', needs: 'ticket.merge' },
-  'Send CSAT': { icon: 'sentiment_satisfied', kind: 'pick', to: '/tickets', hint: 'Choose the case', needs: 'ticket.reply' },
 
   /* QA-19. Lead Lists was built for BUG-25; this still said it was not. */
   'Create list': { icon: 'format_list_bulleted', kind: 'go', to: '/lists', needs: 'list.create' },

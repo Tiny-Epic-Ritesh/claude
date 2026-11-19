@@ -512,8 +512,16 @@ try {
        records were never countable and this proves nothing. */
     const SOURCES = ['cases_resolved', 'sla_breaches', 'csat', 'partners_active', 'partner_leads', 'onboarding_stalled', 'kyc_stalled'];
     const ROLES_MEASURED = ['customer_care', 'partner_rm', 'sales_supervisor'];
+    /* Since B21 (A16) Customer Care's three are credited to who did the work,
+       with the desk's figure beside each -- and the desk is where the other
+       business would show. CSAT is read as the number of answers behind it,
+       which one answer moves; a scored CSAT needs ten. */
     const card = async (who) => Object.fromEntries(((await call(who, 'GET', '/api/kra')).body?.metrics ?? [])
-      .filter((m) => SOURCES.includes(m.source)).map((m) => [m.source, m.actual]));
+      .filter((m) => SOURCES.includes(m.source))
+      .flatMap((m) => [
+        [m.source, m.source === 'csat' ? m.answers : m.actual],
+        ...(m.desk !== undefined && m.desk !== null && m.source !== 'csat' ? [[`${m.source} (desk)`, m.desk]] : []),
+      ]));
     const before = {};
     for (const role of ROLES_MEASURED) for (const org of BOOKS) {
       // eslint-disable-next-line no-await-in-loop
@@ -522,7 +530,8 @@ try {
 
     const rm = reader('partner_rm', 'BONANZA').probe.id;
     const sup = reader('sales_supervisor', 'BONANZA').probe.id;
-    const made = { tickets: [], partners: [], leads: [], kyc_journeys: [] };
+    const care = reader('customer_care', 'BONANZA').probe.id;
+    const made = { tickets: [], partners: [], leads: [], kyc_journeys: [], csat_surveys: [] };
     const make = (table, cols) => {
       const keys = Object.keys(cols);
       const id = Number(run(`INSERT INTO ${table} (${keys.join(',')}) VALUES (${keys.map(() => '?').join(',')})`, Object.values(cols)).lastInsertRowid);
@@ -531,8 +540,11 @@ try {
     };
     const stamp = String(Date.now()).slice(-6);
     try {
-      make('tickets', { subject: 'Matrix scorecard probe', sales_org: 'BONANZA', status: 'Resolved', resolved_at: one("SELECT datetime('now') t").t, csat: 1 });
-      make('tickets', { subject: 'Matrix scorecard probe', sales_org: 'BONANZA', status: 'Open', breached: 1 });
+      // Resolved by Bonanza's Customer Care reader, and answered 1 by its customer.
+      const resolved = make('tickets', { subject: 'Matrix scorecard probe', sales_org: 'BONANZA', status: 'Resolved', resolved_at: one("SELECT datetime('now') t").t, resolved_by: care, assignee_id: care });
+      make('csat_surveys', { ticket_id: resolved, sales_org: 'BONANZA', channel: 'whatsapp', resolved_by: care, status: 'Answered', score: 1, answered_at: one("SELECT datetime('now') t").t });
+      // Breached a few minutes ago while it was theirs.
+      make('tickets', { subject: 'Matrix scorecard probe', sales_org: 'BONANZA', status: 'Open', breached: 1, breached_at: one("SELECT datetime('now', '-5 minutes') t").t, assignee_id: care });
       const partner = make('partners', { name: 'Matrix scorecard probe', sales_org: 'BONANZA', state_code: 'ACTIVE', owner_id: rm });
       make('partners', { name: 'Matrix scorecard probe', sales_org: 'BONANZA', state_code: 'ONBOARDING', owner_id: rm });
       make('leads', { name: 'Matrix scorecard probe', mobile: `7${stamp}001`, source: 'Referral', stage: 'New', sales_org: 'BONANZA', owner_id: sup, partner_id: partner });
@@ -555,7 +567,7 @@ try {
       assert.ok(looked >= SOURCES.length * 2, `only ${looked} figures were looked at`);
       assert.equal(problems.length, 0, problems.join('\n         '));
     } finally {
-      for (const table of ['kyc_journeys', 'leads', 'partners', 'tickets']) {
+      for (const table of ['csat_surveys', 'kyc_journeys', 'leads', 'partners', 'tickets']) {
         if (made[table].length) run(`DELETE FROM ${table} WHERE id IN (${made[table].map(() => '?').join(',')})`, made[table]);
       }
     }

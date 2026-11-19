@@ -119,6 +119,12 @@ for (const t of [
    * A decision waiting on a record that has been rebuilt is not a decision
    * anybody can make. */
   'approvals',
+  /* Field history with the records it belongs to (A16). The records below are
+     rebuilt and their ids handed out again, and history left behind attached
+     itself to whichever new lead, case or task took a number: a case could
+     show -- and be counted by -- assignee changes that happened to another
+     case in an earlier run. CSAT answers go with their cases by cascade. */
+  'field_history',
   'lead_list_members', 'lead_lists',
   /* Automations are configuration, like the rules beside them, and a seed that
      left them behind would accumulate them the way the roles table accumulated
@@ -1307,18 +1313,24 @@ TICKETS.forEach(([subject, description, priority, category, leadIdx, productCode
   const owner = bigulAgent ?? assignee;
   const raiser = bigulAgent ?? U.care;
 
+  /* A breached case went past its resolution time, and says when, as the SLA
+     sweep stamps it: a Customer Care scorecard counts a breach by when it
+     happened and who held the case then (A16). Seeded as breached with no
+     time, these two counted on nobody's scorecard. */
+  const resolutionDue = ahead(0, priority === 'Critical' || breached ? -1 : 20);
+
   const result = run(
     `INSERT INTO tickets (ref, subject, description, priority, category_id, status, channel, lead_id, card_id, partner_id, assignee_id, created_by,
-       ai_summary, response_due, resolution_due, first_response_at, resolved_at, breached, created_at, updated_at, sales_org)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       ai_summary, response_due, resolution_due, first_response_at, resolved_at, breached, breached_at, created_at, updated_at, sales_org)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [ref, subject, description, priority, catIds[category], status,
       pick(['CRM', 'WhatsApp', 'Email', 'Phone', 'Chat'], i),
       leadId, card?.id ?? null, leadIdx === null ? partnerIds[0] : null, owner, raiser,
       null,
-      ahead(0, priority === 'Critical' ? -2 : 4), ahead(0, priority === 'Critical' ? -1 : 20),
+      ahead(0, priority === 'Critical' ? -2 : 4), resolutionDue,
       status !== 'Open' ? ago(ageDays, -2) : null,
       status === 'Resolved' ? ago(1) : null,
-      breached ? 1 : 0, ago(ageDays), ago(Math.max(0, ageDays - 1)), org],
+      breached ? 1 : 0, breached ? resolutionDue : null, ago(ageDays), ago(Math.max(0, ageDays - 1)), org],
   );
   const tid = Number(result.lastInsertRowid);
 

@@ -7,7 +7,10 @@ scored once there are 10 answers. The two Partner RM descriptions stay open
 (B22, since decided). Building them is A15 and A16 in the checklist; A15,
 B20's build, was done on 19 Nov, with the two further rulings of that day:
 scores staff had entered are kept as history and not counted, and a reply is
-a score when it starts with a number from 1 to 5 and carries no other number.
+a score when it starts with a number from 1 to 5 and carries no other number. A16, B21's build, was done on 19 Nov too, with that day's two
+further rulings: a breach counts for whoever held the case when it breached,
+in the period it breached; and the home screen and the case report show the
+scorecard's CSAT, so there is one figure.
 
 Both questions were found on 18 Nov while building A2d (`OPS-63`). They are
 linked: B20 decides where a score comes from, B21 whose score it is.

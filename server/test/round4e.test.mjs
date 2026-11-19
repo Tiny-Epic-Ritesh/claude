@@ -67,7 +67,7 @@ const makeTicket = (cols) => {
 };
 
 /* What the Cases page asks the API for, given a link (client/src/crm/Tickets.jsx). */
-const LINKED = ['mine', 'breached', 'status', 'due_today', 'rated', 'resolved_from', 'resolved_to', 'created_from', 'created_to'];
+const LINKED = ['mine', 'breached', 'status', 'due_today', 'rated', 'resolved_from', 'resolved_to', 'created_from', 'created_to', 'csat_by', 'csat_from'];
 function listQueryFor(to, role) {
   const u = new URL(to, 'http://x');
   const view = u.searchParams.get('view') ?? (role === 'customer_care' ? 'mine' : 'open');
@@ -90,7 +90,8 @@ try {
     makeTicket({ status: 'Resolved', resolved: ist(-5), breached: 1 }); // resolved after breaching: not "breached" now
 
     const cockpit = (await call(CARE, 'GET', '/cockpit')).body;
-    const figures = cockpit.metrics.filter((m) => m.label !== 'CSAT (rolling)');
+    // CSAT is a share, not a count of cases (A16): it is checked below.
+    const figures = cockpit.metrics.filter((m) => !/^CSAT/.test(m.label));
     assert.equal(figures.length, 5);
     for (const m of figures) {
       assert(m.to?.startsWith('/tickets?'), `"${m.label}" does not link to its cases`);
@@ -98,8 +99,11 @@ try {
       const list = await call(CARE, 'GET', listQueryFor(m.to, 'customer_care'));
       assert.equal(list.total, m.value, `"${m.label}" says ${m.value}, its list holds ${list.total}`);
     }
-    const csat = cockpit.metrics.find((m) => m.label === 'CSAT (rolling)');
-    assert(csat.to?.includes('rated=true'), 'CSAT does not link to the rated cases');
+    /* A16 (B21, ruled 19 Nov): CSAT is the scorecard's -- this month's
+       answers on cases this person resolved -- and opens on exactly those
+       answers' cases; scorecard.test.mjs checks the count. */
+    const csat = cockpit.metrics.find((m) => /^CSAT/.test(m.label));
+    assert(csat.to?.includes('csat_by=me') && csat.to.includes('csat_from='), 'CSAT does not link to the answers it counts');
   });
 
   await test('QA-05: Home\'s case tiles name their view, and "breached" means one thing', async () => {
