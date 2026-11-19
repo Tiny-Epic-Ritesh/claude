@@ -17,6 +17,7 @@ import { LMS_MODULES } from './partners.js';
 import { generateCards } from './crm.js';
 import { leastLoadedRm } from '../engine/assignment.js';
 import { kycStatusSql } from '../engine/kycstatus.js';
+import { tracked, SOURCE } from '../engine/history.js';
 import { referrableBooks, bookName, referralCommissionBasis } from '../engine/policies.js';
 
 const router = Router();
@@ -173,7 +174,8 @@ router.post('/referrals', (req, res) => {
   if (product_type_id) {
     const card = one('SELECT * FROM product_cards WHERE lead_id = ? AND product_type_id = ?', [leadId, product_type_id]);
     if (card) {
-      run("UPDATE product_cards SET state = 'EXPLORING', last_state_at = datetime('now') WHERE id = ?", [card.id]);
+      tracked('product_interest', card.id, { source: SOURCE.portal },
+        () => run("UPDATE product_cards SET state = 'EXPLORING', last_state_at = datetime('now') WHERE id = ?", [card.id]));
       run('INSERT INTO card_audit (card_id, from_state, to_state, note) VALUES (?,?,?,?)', [
         card.id, 'INACTIVE', 'EXPLORING', `Product interest flagged by partner ${req.partner.name}`,
       ]);
@@ -243,7 +245,8 @@ router.post('/tickets/:id/replies', (req, res) => {
 
   // A partner reply reopens a resolved ticket (BRD §7.10 re-open logic).
   if (['Resolved', 'Closed'].includes(ticket.status)) {
-    run("UPDATE tickets SET status = 'Open', resolved_at = NULL, closed_at = NULL WHERE id = ?", [req.params.id]);
+    tracked('case', ticket.id, { source: SOURCE.portal },
+      () => run("UPDATE tickets SET status = 'Open', resolved_at = NULL, closed_at = NULL WHERE id = ?", [req.params.id]));
   }
   if (ticket.assignee_id) notify(ticket.assignee_id, `Partner replied — ${ticket.ref}`, req.body.body.slice(0, 120), `/tickets/${ticket.id}`);
   res.status(201).json({ ok: true });
@@ -422,7 +425,9 @@ router.patch('/profile', (req, res) => {
   for (const f of fields) if (req.body[f] !== undefined) { sets.push(`${f} = ?`); params.push(req.body[f]); }
   if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
 
-  run(`UPDATE partners SET ${sets.join(', ')} WHERE id = ?`, [...params, req.partner.id]);
+  // A partner's own edit; whatever Setup tracks among these is recorded (D9).
+  tracked('partner', req.partner.id, { source: SOURCE.portal },
+    () => run(`UPDATE partners SET ${sets.join(', ')} WHERE id = ?`, [...params, req.partner.id]));
   audit(null, 'partner_profile_updated', 'partner', req.partner.id, req.body);
   res.json({ ok: true });
 });

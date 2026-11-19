@@ -28,6 +28,7 @@ import { nextAction, nextStepForLead, MOVE_NEEDS, STATE_LABEL } from '../engine/
 import { dmyTime, typedToStored } from '../engine/daterange.js';
 import { loadInBook } from '../engine/bookscope.js';
 import { taskFor } from '../engine/taskaccess.js';
+import { tracked, sourceOf, historyAsSeenBy } from '../engine/history.js';
 import { withCorrections, mayCorrect, addCorrection } from '../engine/corrections.js';
 import { cancelReminders } from '../engine/followups.js';
 import {
@@ -36,7 +37,7 @@ import {
 } from '../engine/queues.js';
 import {
   applyFieldSecurity, entityDef, fieldsOf, picklistValues, customValues,
-  setCustomValues, recordChange, historyFor, FIELD_TYPES,
+  setCustomValues, recordChange, FIELD_TYPES,
   leadStages, columnPicklist, columnRefusal, LEAD_PICKLIST_COLUMNS,
 } from '../engine/metadata.js';
 
@@ -778,7 +779,8 @@ router.post('/leads/bulk/field', requirePermission('lead.edit'), (req, res) => {
        put a change on its history and move its last-modified for a change that
        did not happen. */
     if (String(t.current ?? '') === String(written ?? '')) { unchanged += 1; continue; }
-    run(`UPDATE leads SET ${field} = ?${leavesQueue ? ', owner_queue_id = NULL' : ''} WHERE id = ?`, [written, t.id]);
+    tracked('lead', t.id, { actorId: req.user.id, source: sourceOf(req) },
+      () => run(`UPDATE leads SET ${field} = ?${leavesQueue ? ', owner_queue_id = NULL' : ''} WHERE id = ?`, [written, t.id]));
     audit(req.user.id, 'lead.bulk.field', 'lead', t.id, { field, from: t.current, to: written, mode });
     changed += 1;
   }
@@ -870,7 +872,8 @@ router.get('/leads/:id', (req, res) => {
     derived: derivedValues('lead', lead),
     // Field history is first-class, so "who changed the stage, and when?" is a
     // query rather than an archaeology exercise across the audit log.
-    field_history: historyFor('lead', Number(id), 40),
+    // As this reader may see it: field security and masking apply (OPS-66).
+    field_history: historyAsSeenBy('lead', Number(id), req.user, { ownerId: lead.owner_id, caps: req.caps, limit: 40 }),
     activities: withCorrections('activity', applyFieldSecurity('interaction',
       all('SELECT a.*, u.name AS user_name FROM activities a LEFT JOIN users u ON u.id = a.user_id WHERE a.lead_id = ? ORDER BY a.created_at DESC LIMIT 100', [id]),
       req.user, { caps: req.caps })),
@@ -1469,10 +1472,10 @@ router.post('/cards/:id/state', (req, res) => {
      pipeline showed one only where the seed had put it. A Product RM taking a
      card on is now its Product RM. */
   const takesOn = state === 'PRODUCT_RM_ENGAGED' && req.user.role === 'product_rm';
-  run(
+  tracked('product_interest', card.id, { actorId: req.user.id, source: sourceOf(req) }, () => run(
     'UPDATE product_cards SET state = ?, contact_flag = COALESCE(?, contact_flag), lost_reason = ?, last_state_at = datetime(\'now\'), product_rm_id = CASE WHEN ? THEN ? ELSE product_rm_id END WHERE id = ?',
     [state, contact_flag || null, lost_reason || null, takesOn ? 1 : 0, req.user.id, req.params.id],
-  );
+  ));
   /* Part 4, item 8.4: what the move did, said back to whoever made it. */
   const effects = [
     `${card.product_name} moved from ${STATE_LABEL[from] ?? from} to ${STATE_LABEL[state] ?? state}.`,
@@ -2170,7 +2173,8 @@ router.patch('/tasks/:id', (req, res) => {
   if (priority) { sets.push('priority = ?'); params.push(priority); }
   if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
 
-  run(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`, [...params, req.params.id]);
+  tracked('task', Number(req.params.id), { actorId: req.user.id, source: sourceOf(req) },
+    () => run(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`, [...params, req.params.id]));
   res.json(one('SELECT * FROM tasks WHERE id = ?', [req.params.id]));
 });
 
@@ -2183,10 +2187,10 @@ router.post('/tasks/:id/cancel', (req, res) => {
   const reason = String(req.body?.reason ?? '').trim();
   if (reason.length < 5) return res.status(400).json({ error: 'Say why it is being cancelled, in a few words', field: 'reason' });
 
-  run(
+  tracked('task', task.id, { actorId: req.user.id, source: sourceOf(req) }, () => run(
     "UPDATE tasks SET status = 'Cancelled', cancelled_at = datetime('now'), cancel_reason = ?, updated_at = datetime('now') WHERE id = ?",
     [reason, task.id],
-  );
+  ));
   cancelReminders(task.id, 'task cancelled');
   audit(req.user.id, 'task_cancelled', 'task', task.id, { reason });
   return res.json(one('SELECT * FROM tasks WHERE id = ?', [task.id]));

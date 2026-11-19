@@ -12,6 +12,7 @@ import { all, one, run, audit, notify } from '../db.js';
 import { mayUseOrg } from '../auth.js';
 import { hashPasswordSync, temporaryPassword } from '../security.js';
 import { send } from '../integrations.js';
+import { tracked, SOURCE } from '../engine/history.js';
 
 /* The partner's business decides its code prefix and the name it is welcomed
    by. A partner with no business recorded predates OPS-17 and is Bonanza's by
@@ -42,12 +43,12 @@ export const stepsOutstanding = (partnerId) =>
  * person who activates the partner is not always there to receive a password:
  * an approval is granted on the approvals screen, which has nowhere to show one.
  */
-export function activatePartner(partner, userId = null) {
+export function activatePartner(partner, userId = null, source = userId ? SOURCE.ui : SOURCE.automation) {
   const code = newPartnerCode(partner);
-  run(
+  tracked('partner', partner.id, { actorId: userId, source }, () => run(
     "UPDATE partners SET state_code = 'ACTIVE', partner_code = ?, onboarded_at = datetime('now') WHERE id = ?",
     [code, partner.id],
-  );
+  ));
   run(
     'INSERT INTO activities (partner_id, type, direction, subject, body, user_id) VALUES (?,?,?,?,?,?)',
     [partner.id, 'Partner Activity', 'system', 'Elevated to Partner entity', `Partner code ${code} issued.`, userId],
@@ -205,13 +206,13 @@ export function closureRefusal(partner, to) {
  * not hand it back, because a password is issued from the partner's page,
  * once, to whoever is there to pass it on.
  */
-export function applyClosure(partner, to, reason, userId) {
+export function applyClosure(partner, to, reason, userId, source = SOURCE.approval) {
   const refusal = closureRefusal(partner, to);
   if (refusal) throw new Error(refusal);
-  run(
+  tracked('partner', partner.id, { actorId: userId ?? null, source }, () => run(
     "UPDATE partners SET state_code = ?, state_reason = ?, state_changed_at = datetime('now'), state_changed_by = ? WHERE id = ?",
     [to, reason, userId, partner.id],
-  );
+  ));
   run(
     'INSERT INTO activities (partner_id, type, direction, subject, body, user_id) VALUES (?,?,?,?,?,?)',
     [partner.id, 'Partner Activity', 'system', CLOSURE_WORD[to], reason, userId],

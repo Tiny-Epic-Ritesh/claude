@@ -13,6 +13,7 @@ import { openCase } from '../engine/cases.js';
 import { routeFor } from '../engine/compliance.js';
 import * as ai from '../ai/index.js';
 import { sendCsv } from '../engine/csv.js';
+import { tracked, sourceOf } from '../engine/history.js';
 
 const router = Router();
 router.use(requireUser);
@@ -211,7 +212,8 @@ router.post('/disposition/confirm', (req, res) => {
       continue;
     }
 
-    run("UPDATE product_cards SET state = ?, last_state_at = datetime('now') WHERE id = ?", [change.to_state, card.id]);
+    tracked('product_interest', card.id, { actorId: req.user.id, source: sourceOf(req) },
+      () => run("UPDATE product_cards SET state = ?, last_state_at = datetime('now') WHERE id = ?", [change.to_state, card.id]));
     run('INSERT INTO card_audit (card_id, from_state, to_state, user_id, note) VALUES (?,?,?,?,?)', [
       card.id, card.state, change.to_state, req.user.id, `AI disposition: ${change.evidence || ''}`,
     ]);

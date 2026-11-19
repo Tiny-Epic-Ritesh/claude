@@ -27,6 +27,7 @@
 
 import { all, one, run, audit } from '../db.js';
 import { columnRefusal, columnPicklist, LEAD_PICKLIST_COLUMNS } from './metadata.js';
+import { tracked, SOURCE } from './history.js';
 
 /**
  * The picklist columns an import can write.
@@ -205,6 +206,9 @@ export const importChoices = (salesOrg) => Object.fromEntries(
 export function runImport({
   header, rows, mapping, mode = 'create', salesOrg, ownerId, listId = null,
   commit = false, generateCards, valueMap = null,
+  /* Who ran it, for the history of every lead it changes (D9). The person
+     importing is also the default owner, so this defaults to that. */
+  actorId = ownerId ?? null,
 }) {
   const report = {
     total: rows.length,
@@ -287,10 +291,10 @@ export function runImport({
       if (commit) {
         const sets = Object.keys(record).filter((k) => k !== 'mobile');
         if (sets.length) {
-          run(
+          tracked('lead', existing.id, { actorId, source: SOURCE.import }, () => run(
             `UPDATE leads SET ${sets.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`,
             [...sets.map((k) => record[k]), existing.id],
-          );
+          ));
         }
         touched.push(existing.id);
       }

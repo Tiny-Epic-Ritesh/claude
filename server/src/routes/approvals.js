@@ -10,6 +10,7 @@
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
 import { recordChange } from '../engine/metadata.js';
+import { tracked, SOURCE } from '../engine/history.js';
 import { requireUser, requirePermission, mayUseOrg } from '../auth.js';
 import { stepsOutstanding, activatePartner, applyClosure, closureRefusal } from './partners-support.js';
 import { applyJourneySteps, journeyRefusal } from '../engine/journeyconfig.js';
@@ -57,7 +58,7 @@ const APPLY = {
 
     /* No portal password here (OPS-15): the approvals screen has nowhere to show
        one, so the one this issued reached nobody. The partner's page issues it. */
-    const code = activatePartner(partner, decidedBy?.id ?? null);
+    const code = activatePartner(partner, decidedBy?.id ?? null, SOURCE.approval);
     return { partner_code: code, portal_login: null, next_step: "Issue a portal password from the partner's page" };
   },
 
@@ -114,7 +115,7 @@ const APPLY = {
   /* Accounts. Shaped like bulk_reassign next door but kept separate rather than
      parameterised: the two write different tables, and folding them into one
      handler with a switch is how a lead update ends up pointed at clients. */
-  bulk_client_reassign: (req) => {
+  bulk_client_reassign: (req, decidedBy) => {
     const ids = req.payload?.client_ids ?? [];
     const owner = Number(req.payload?.owner_id);
     if (!ids.length || !owner) throw new Error('Nothing to move, or nobody to move it to');
@@ -130,10 +131,10 @@ const APPLY = {
          it moved. */
       const c = one('SELECT id, sales_org FROM clients WHERE id = ?', [id]);
       if (!c || c.sales_org !== to.sales_org) continue;
-      const r = run(
+      const r = tracked('client', id, { actorId: decidedBy?.id ?? null, source: SOURCE.approval }, () => run(
         "UPDATE clients SET owner_id = ?, updated_at = datetime('now') WHERE id = ?",
         [owner, id],
-      );
+      ));
       moved += r.changes;
     }
     return { moved, requested: ids.length, skipped: ids.length - moved };
@@ -158,10 +159,10 @@ const APPLY = {
       if (!lead || lead.sales_org !== to.sales_org) continue;
       // owner_queue_id is cleared too: a lead cannot be owned by a person and a
       // queue at once.
-      const r = run(
+      const r = tracked('lead', id, { actorId: decidedBy?.id ?? null, source: SOURCE.approval }, () => run(
         "UPDATE leads SET owner_id = ?, owner_queue_id = NULL, updated_at = datetime('now') WHERE id = ?",
         [owner, id],
-      );
+      ));
       // One row per lead, as the routes that move them alone write: who was
       // moved, and by whose decision, stays answerable.
       if (r.changes) {

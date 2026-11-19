@@ -35,6 +35,7 @@
  */
 
 import { all, one, run } from '../db.js';
+import { tracked, entityOfTable, SOURCE } from './history.js';
 
 /**
  * Everything a person can own, and what counts as still live.
@@ -192,7 +193,7 @@ export function runHandover(plan, { runBy, reason, salesOrg }) {
        recorded as it actually was so undo puts it back where it actually was. */
     const current = one(`SELECT ${o.column} AS owner FROM ${o.table} WHERE id = ?`, [m.row_id])?.owner ?? null;
 
-    run(`UPDATE ${o.table} SET ${o.column} = ? WHERE id = ?`, [m.to_user_id, m.row_id]);
+    moveOwner(o, m.row_id, m.to_user_id, runBy);
     run(
       `INSERT INTO handover_move (batch_id, object_key, row_id, from_user_id, to_user_id)
        VALUES (?,?,?,?,?)`,
@@ -210,6 +211,18 @@ export function runHandover(plan, { runBy, reason, salesOrg }) {
   }
 
   return { batch_id: batchId, moved: plan.moves.length };
+}
+
+/**
+ * One row to its new owner, with the record's history (D9): an account's or a
+ * lead's owner and a case's assignee are tracked fields, and a handover is the
+ * largest single change of owners the firm makes. A table with no tracked
+ * fields (users, for one) is written as before.
+ */
+function moveOwner(o, rowId, toUserId, actorId) {
+  const write = () => run(`UPDATE ${o.table} SET ${o.column} = ? WHERE id = ?`, [toUserId, rowId]);
+  const entity = entityOfTable(o.table);
+  return entity ? tracked(entity, rowId, { actorId: actorId ?? null, source: SOURCE.handover }, write) : write();
 }
 
 /**
@@ -238,7 +251,7 @@ export function undoHandover(batchId, userId) {
       continue;
     }
 
-    run(`UPDATE ${o.table} SET ${o.column} = ? WHERE id = ?`, [m.from_user_id, m.row_id]);
+    moveOwner(o, m.row_id, m.from_user_id, userId);
     restored += 1;
   }
 
