@@ -1239,10 +1239,30 @@ router.post('/leads/:id/restore', requirePermission('lead.delete'), (req, res) =
   /* Not `loadInBook` here: its lead query ends `AND deleted_at IS NULL`, so it
      cannot see the one record this route exists to bring back. The book check
      is the same, made directly against a row that is allowed to be deleted. */
-  const gone = one('SELECT id, sales_org FROM leads WHERE id = ?', [Number(req.params.id) || -1]);
+  const gone = one('SELECT id, sales_org, mobile, owner_id, owner_queue_id FROM leads WHERE id = ?', [Number(req.params.id) || -1]);
   if (!gone) return res.status(404).json({ error: 'Lead not found' });
   if (!mayUseOrg(req.user, gone.sales_org)) {
     return res.status(403).json({ error: 'This lead belongs to another book' });
+  }
+
+  /* OPS-53. While it was in the bin a new lead may have taken its mobile, and
+     bringing it back made two live leads with one mobile -- the duplicate that
+     creating or importing a lead refuses. The other is named only to someone
+     who may open it, as creating a lead names it. */
+  if (gone.mobile) {
+    const live = one(
+      'SELECT id, name FROM leads WHERE mobile = ? AND sales_org = ? AND deleted_at IS NULL AND id != ?',
+      [gone.mobile, gone.sales_org, gone.id],
+    );
+    if (live) {
+      const scope = reqScope(req, 'l');
+      const opens = one(`SELECT 1 v FROM leads l WHERE l.id = ? AND ${scope.sql}`, [live.id, ...scope.params]);
+      return res.status(409).json({
+        error: `A live lead in this business already has this mobile${opens ? ` (#${live.id}, ${live.name})` : ''}, so restoring this one would make two.`,
+        fix: 'Keep the live lead, or retire it first and then restore this one.',
+        ...(opens ? { duplicate_id: live.id } : {}),
+      });
+    }
   }
 
   run('UPDATE leads SET deleted_at = NULL WHERE id = ?', [gone.id]);

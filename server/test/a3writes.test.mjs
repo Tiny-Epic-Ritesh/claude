@@ -132,6 +132,16 @@ try {
     assert.equal(moved.status, 400, `moved to someone in the other business: HTTP ${moved.status}`);
   });
 
+  await test('a lead restored from the bin is refused while a live lead in its business holds its mobile', async () => {
+    const number = mobile();
+    const old = lead({ mobile: number, owner_id: ADMIN.id });
+    run("UPDATE leads SET deleted_at = datetime('now') WHERE id = ?", [old]);
+    lead({ mobile: number, owner_id: ADMIN.id });
+    const out = await call(ADMIN, 'POST', `/api/leads/${old}/restore`);
+    assert.equal(out.status, 409, `HTTP ${out.status} ${JSON.stringify(out.body).slice(0, 120)}`);
+    assert.ok(one('SELECT deleted_at FROM leads WHERE id = ?', [old]).deleted_at, 'it came back anyway: two live leads, one mobile');
+  });
+
 } finally {
   for (const [table, id] of [...made].reverse()) {
     try { run(`DELETE FROM ${table} WHERE id = ?`, [id]); } catch { /* removed with its parent */ }
