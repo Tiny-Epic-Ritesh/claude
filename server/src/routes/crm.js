@@ -1905,6 +1905,19 @@ router.post('/leads/:id/message', requirePermission('lead.contact'), (req, res) 
 
   const { channel = 'whatsapp', body, subject, template_id, intent = 'marketing' } = req.body;
 
+  /* OPS-47. Each channel to its own address. This sent every channel to
+     `mobile || email`, so an email went to the mobile number whenever the lead
+     had one -- while the dialog showed the email address it was going to --
+     and a WhatsApp or an SMS to the email address when it had no mobile. A
+     lead list's bulk message always addressed them this way. */
+  if (!['whatsapp', 'sms', 'email'].includes(channel)) {
+    return res.status(400).json({ error: 'Send by WhatsApp, SMS or email', field: 'channel' });
+  }
+  const to = channel === 'email' ? lead.email : lead.mobile;
+  if (!to) {
+    return res.status(400).json({ error: `${lead.name} has no ${channel === 'email' ? 'email address' : 'mobile number'}`, field: 'channel' });
+  }
+
   // Enforced here rather than in the form, because the form is not where volume
   // sends come from — imports, rules and bulk actions all land on this route.
   const consent = checkConsent(lead, channel, intent === 'service' ? 'service' : 'marketing');
@@ -1923,7 +1936,7 @@ router.post('/leads/:id/message', requirePermission('lead.contact'), (req, res) 
   /* QA-39. send() writes the timeline entry and names its author from
      userId; this never passed one, so a message a person typed read "system". */
   const entry = send(channel, {
-    to: lead.mobile || lead.email, body: text, subject: subject || template?.subject,
+    to, body: text, subject: subject || template?.subject,
     leadId: lead.id, templateId: template_id, userId: req.user.id,
   });
   applyScore(lead.id, channel === 'email' ? 'Email' : channel === 'sms' ? 'SMS' : 'WhatsApp');
