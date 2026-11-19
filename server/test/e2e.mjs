@@ -1008,8 +1008,10 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
     await req(`/api/tickets/${target.id}`, {
       method: 'PATCH', token: T.dealer, expect: 403, body: { priority: 'Low' },
     });
-    await req(`/api/tickets/${target.id}/csat`, {
-      method: 'POST', token: T.dealer, expect: 403, body: { score: 1 },
+    /* A15: staff no longer set a score; the one CSAT write staff have is
+       voiding the customer's, and that holds to the case's business too. */
+    await req(`/api/tickets/${target.id}/csat/void`, {
+      method: 'POST', token: T.admin, expect: 403, body: { reason: 'Probe from the other business' },
     });
 
     // Untouched, and still reachable by the people it belongs to.
@@ -1395,14 +1397,17 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
     assert(target.merged.length >= 1, 'merged ticket not linked to target');
   });
 
-  await check('CSAT outside 1–5 is rejected', async () => {
-    await req(`/api/tickets/${REF.ticketId}/csat`, { method: 'POST', token: T.customer_care, expect: 400, body: { score: 9 } });
+  /* A15 (B20, ruled 19 Nov 2026): a case's CSAT is its customer's answer,
+     never staff's. How it is asked, answered, voided and credited is
+     csat.test.mjs; here, that the old way in is gone and the case says what
+     it holds. */
+  await check('staff cannot set a case\'s CSAT: it is the customer\'s', async () => {
+    await req(`/api/tickets/${REF.ticketId}/csat`, { method: 'POST', token: T.customer_care, expect: 404, body: { score: 5 } });
   });
 
-  await check('CSAT within range is stored', async () => {
-    await req(`/api/tickets/${REF.ticketId}/csat`, { method: 'POST', token: T.customer_care, expect: 200, body: { score: 5 } });
+  await check('a case carries its customer\'s CSAT record', async () => {
     const { data } = await req(`/api/tickets/${REF.ticketId}`, { token: T.customer_care, expect: 200 });
-    eq(data.csat, 5, 'csat');
+    assert(data.csat_detail && Array.isArray(data.csat_detail.history), 'no CSAT record on the case');
   });
 
   await check('the SLA sweep runs and reports', async () => {

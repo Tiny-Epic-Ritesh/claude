@@ -1334,7 +1334,18 @@ TICKETS.forEach(([subject, description, priority, category, leadIdx, productCode
     run("INSERT INTO ticket_replies (ticket_id, body, author_type, user_id, created_at) VALUES (?,?,?,?,?)", [
       tid, 'Corrected contract note has been emailed. Apologies for the error.', 'agent', owner, ago(1),
     ]);
-    run('UPDATE tickets SET csat = ? WHERE id = ?', [4, tid]);
+    /* A15: the demo's score is a customer's answer, as every score now is --
+       asked by WhatsApp when the case was resolved, answered "4". */
+    run('UPDATE tickets SET resolved_by = ? WHERE id = ?', [owner, tid]);
+    if (leadId) {
+      const asked = one('SELECT mobile FROM leads WHERE id = ?', [leadId])?.mobile;
+      run(
+        `INSERT INTO csat_surveys (ticket_id, lead_id, sales_org, channel, sent_to, resolved_by, sent_at, expires_at, status, score, answered_at)
+         VALUES (?,?,?,'whatsapp',?,?,?,datetime(?, '+15 days'),'Answered',4,?)`,
+        [tid, leadId, org, String(asked ?? '').replace(/\D/g, '').slice(-10), owner, ago(1), ago(1), ago(1, -1)],
+      );
+      run('UPDATE tickets SET csat = 4 WHERE id = ?', [tid]);
+    }
   }
   if (leadId) {
     run('INSERT INTO activities (lead_id, type, direction, subject, body, user_id, created_at) VALUES (?,?,?,?,?,?,?)', [

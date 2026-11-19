@@ -31,6 +31,7 @@ import { kycStatusSql, kycStatusFor } from '../engine/kycstatus.js';
 import * as kyc from '../engine/kyc.js';
 import { columnRefusal } from '../engine/metadata.js';
 import { resolveLead } from '../engine/callmatch.js';
+import * as csat from '../engine/csat.js';
 
 const router = Router();
 
@@ -191,6 +192,13 @@ router.post('/smartping/whatsapp', guard('smartping', aisensy.verifyWebhook), (r
   }
 
   if (seen(event.message_id)) return res.json({ ok: true, duplicate: true });
+
+  /* A15: a number from 1 to 5, from a number asked to rate a case in the last
+     15 days, is that customer's score -- matched to the question by the
+     number it went to, not by whichever lead holds the mobile, which in both
+     businesses could be two. Anything else is an ordinary reply, below. */
+  const rated = csat.answerFromWhatsApp(event.mobile, event.text, event.message_id);
+  if (rated) return res.json({ ok: true, matched: true, csat: rated.score, ticket_id: rated.ticket_id });
 
   const lead = findLead({ mobile: event.mobile });
   if (!lead) {

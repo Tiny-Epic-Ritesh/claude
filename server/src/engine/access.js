@@ -78,6 +78,7 @@ export const CAPABILITY_CATALOGUE = [
   ['ticket.reassign', 'Reassign cases', 'Cases', null, 0],
   ['ticket.escalate', 'Escalate cases', 'Cases', null, 0],
   ['ticket.merge', 'Merge cases', 'Cases', null, 0],
+  ['csat.void', 'Void a customer\'s CSAT score', 'Cases', 'Strike out a wrong score, with a reason. Scores come only from customers; nobody sets one.', 1],
 
   // Partners
   ['partner.view', 'View partners', 'Partners', null, 0],

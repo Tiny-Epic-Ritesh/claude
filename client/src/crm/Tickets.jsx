@@ -675,7 +675,7 @@ function TicketDetail({ id, session }) {
                 <button type="button" className="btn btn-primary btn-sm" onClick={() => setAsking('changing')} disabled={busy}>Save</button>
               </div>
             )}
-            {ticket.csat && <div className="notice">CSAT received: {ticket.csat}/5</div>}
+            <CaseCsat ticket={ticket} can={can} onChanged={reload} />
             {ticket.merged?.length > 0 && (
               <div className="notice">{ticket.merged.length} ticket(s) merged into this one: {ticket.merged.map((m) => m.ref).join(', ')}</div>
             )}
@@ -707,6 +707,74 @@ function TicketDetail({ id, session }) {
 }
 
 /* One entry in the conversation: the original description, or a reply. */
+/**
+ * A15 (B20, ruled 19 Nov 2026): the customer's score, which only the customer
+ * gives -- what stands and who it is credited to, a question still waiting,
+ * what was voided and why, and a score staff entered before the rule, kept
+ * but not counted. Voiding needs csat.void and a reason; nobody sets a score.
+ */
+function CaseCsat({ ticket, can, onChanged }) {
+  const d = ticket.csat_detail;
+  const [voiding, setVoiding] = useState(false);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  if (!d) return null;
+  const legacy = d.history.find((h) => h.status === 'Legacy');
+  const voided = d.history.filter((h) => h.status === 'Voided');
+  const notAsked = !d.standing && !d.waiting ? d.history.find((h) => h.status === 'NotSent') : null;
+  if (!d.standing && !d.waiting && !legacy && !voided.length && !notAsked) return null;
+  const via = (s) => (s.channel === 'portal' ? 'on the partner portal' : 'by WhatsApp');
+
+  async function strike(e) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.post(`/tickets/${ticket.id}/csat/void`, { reason });
+      setVoiding(false);
+      setReason('');
+      announce('Score voided', [`The ${r.voided}/5 no longer counts. The reason is on the case and in the audit log.`]);
+      onChanged();
+    } catch (err) { setError(err); } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="notice">
+      {d.standing && (
+        <div>
+          <strong>CSAT {d.standing.score}/5</strong>, the customer’s answer {via(d.standing)}, {dateTime(d.standing.answered_at)}
+          {d.standing.resolved_by_name ? `. Credited to ${d.standing.resolved_by_name}, who resolved it.` : '.'}
+        </div>
+      )}
+      {!d.standing && d.waiting && (
+        <div>Asked {via(d.waiting)} on {dateTime(d.waiting.sent_at)}; no answer yet. It counts if they answer by {dateTime(d.waiting.expires_at)}.</div>
+      )}
+      {notAsked && <div>The customer was not asked: {notAsked.note}.</div>}
+      {voided.map((v) => (
+        <div key={v.id} className="tiny muted">A {v.score}/5 was voided{v.voided_by_name ? ` by ${v.voided_by_name}` : ''}: {v.void_reason}</div>
+      ))}
+      {legacy && <div className="tiny muted">{legacy.score}/5 was entered by staff before 19 Nov 2026. Kept as history, not counted.</div>}
+      {d.standing && can('csat.void') && (voiding ? (
+        <form onSubmit={strike} style={{ marginTop: 8 }}>
+          <input
+            value={reason} onChange={(e) => setReason(e.target.value)} autoFocus
+            placeholder="Why does this score not stand? (a mistyped digit, a reply to another question)"
+            style={{ width: '100%' }}
+          />
+          <div className="row" style={{ marginTop: 6 }}>
+            <button type="submit" className="btn btn-sm" disabled={busy || reason.trim().length < 5}>{busy ? <Spinner /> : 'Void the score'}</button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setVoiding(false); setError(null); }}>Keep it</button>
+          </div>
+          <ErrorBanner error={error} onDismiss={() => setError(null)} />
+        </form>
+      ) : (
+        <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => setVoiding(true)}>Void this score</button>
+      ))}
+    </div>
+  );
+}
+
 function ThreadEntry({ original, ticket, entry, ticketId, session, onDone }) {
   if (original) {
     return (

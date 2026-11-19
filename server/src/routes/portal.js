@@ -18,6 +18,7 @@ import { generateCards } from './crm.js';
 import { leastLoadedRm } from '../engine/assignment.js';
 import { kycStatusSql } from '../engine/kycstatus.js';
 import { tracked, SOURCE } from '../engine/history.js';
+import * as csat from '../engine/csat.js';
 import { referrableBooks, bookName, referralCommissionBasis } from '../engine/policies.js';
 
 const router = Router();
@@ -76,7 +77,15 @@ router.get('/dashboard', (req, res) => {
     onboarding: all('SELECT code, label, status, completed_at FROM partner_steps WHERE partner_id = ? ORDER BY sort_order', [id]),
     lms: all('SELECT module, status, score, completed_at FROM partner_lms WHERE partner_id = ?', [id]),
     commissions: all('SELECT c.*, pt.name AS product_name FROM commissions c LEFT JOIN product_types pt ON pt.id = c.product_type_id WHERE c.partner_id = ? ORDER BY c.period DESC LIMIT 12', [id]),
-    tickets: all('SELECT id, ref, subject, status, priority, ai_summary, created_at FROM tickets WHERE partner_id = ? ORDER BY created_at DESC LIMIT 20', [id]),
+    /* A15: whether each case is waiting for the partner's rating, and the
+       rating it was given. */
+    tickets: all(
+      `SELECT t.id, t.ref, t.subject, t.status, t.priority, t.ai_summary, t.created_at, t.csat,
+              EXISTS (SELECT 1 FROM csat_surveys s WHERE s.ticket_id = t.id AND s.channel = 'portal'
+                        AND s.status = 'Sent' AND s.expires_at > datetime('now')) AS csat_open
+         FROM tickets t WHERE t.partner_id = ? ORDER BY t.created_at DESC LIMIT 20`,
+      [id],
+    ),
     rm: req.partner.owner_id ? one('SELECT name, email, phone FROM users WHERE id = ?', [req.partner.owner_id]) : null,
     // Enough to render a product as a card rather than a line: what it is,
     // what it costs to start, what it is good for. `pitch_points` is already
@@ -236,6 +245,15 @@ router.post('/tickets', (req, res) => {
   res.status(201).json(one('SELECT id, ref, subject, status FROM tickets WHERE id = ?', [id]));
 });
 
+/* A15: a partner rates their own case, once it is done, within 15 days. */
+router.post('/tickets/:id/csat', (req, res) => {
+  const ticket = one('SELECT id FROM tickets WHERE id = ? AND partner_id = ?', [req.params.id, req.partner.id]);
+  if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+  const out = csat.answerFromPortal(req.partner.id, ticket.id, Number(req.body?.score));
+  if (out.error) return res.status(out.status).json({ error: out.error });
+  return res.status(201).json({ ok: true, score: out.score });
+});
+
 router.post('/tickets/:id/replies', (req, res) => {
   const ticket = one('SELECT * FROM tickets WHERE id = ? AND partner_id = ?', [req.params.id, req.partner.id]);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
@@ -246,7 +264,9 @@ router.post('/tickets/:id/replies', (req, res) => {
   // A partner reply reopens a resolved ticket (BRD §7.10 re-open logic).
   if (['Resolved', 'Closed'].includes(ticket.status)) {
     tracked('case', ticket.id, { source: SOURCE.portal },
-      () => run("UPDATE tickets SET status = 'Open', resolved_at = NULL, closed_at = NULL WHERE id = ?", [req.params.id]));
+      () => run("UPDATE tickets SET status = 'Open', resolved_at = NULL, closed_at = NULL, resolved_by = NULL WHERE id = ?", [req.params.id]));
+    // A15: a reopened case's score no longer stands.
+    csat.onReopen(ticket.id);
   }
   if (ticket.assignee_id) notify(ticket.assignee_id, `Partner replied — ${ticket.ref}`, req.body.body.slice(0, 120), `/tickets/${ticket.id}`);
   res.status(201).json({ ok: true });

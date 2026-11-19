@@ -4,7 +4,10 @@
 B20 option C, the customer alone, with the seven rules in §3; B21 options 3
 and 6 together, with the desk figure shown and CSAT as the share of 4s and 5s,
 scored once there are 10 answers. The two Partner RM descriptions stay open
-(B22). Building them is A15 and A16 in the checklist.
+(B22, since decided). Building them is A15 and A16 in the checklist; A15,
+B20's build, was done on 19 Nov, with the two further rulings of that day:
+scores staff had entered are kept as history and not counted, and a reply is
+a score when it starts with a number from 1 to 5 and carries no other number.
 
 Both questions were found on 18 Nov while building A2d (`OPS-63`). They are
 linked: B20 decides where a score comes from, B21 whose score it is.

@@ -1830,6 +1830,9 @@ const COLUMNS = [
    * watching "breached and recently updated" fires again every time somebody
    * reassigns a breached ticket. A breach happens once. */
   ['tickets', 'breached_at', 'TEXT'],
+  /* A15 (B20, B21): who resolved the case, stamped when it is done -- the
+     person its customer's score is credited to, whoever holds it later. */
+  ['tickets', 'resolved_by', 'INTEGER'],
   /* P3-21. A lead transfer is asked of one named person -- the lead's owner,
      or somebody who can reassign it -- rather than broadcast to every holder
      of a capability. Here for databases that already have the table; inline
@@ -1939,6 +1942,71 @@ for (const [table, column, type] of COLUMNS) {
   const exists = db.prepare(`SELECT COUNT(*) n FROM pragma_table_info(?) WHERE name = ?`).get(table, column);
   if (!exists.n) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }
+
+/**
+ * A15 (B20, ruled 19 Nov 2026): a case's CSAT is its customer's alone.
+ *
+ * One row per time the customer is asked -- by WhatsApp when the case is
+ * done, or on the portal for a partner's case -- and what they answered. The
+ * case's `csat` is worked out from these rows by engine/csat.js and written
+ * nowhere else (non-negotiable 3); the answer itself is a `Survey` interaction
+ * on the timeline (non-negotiable 1).
+ *
+ *   Sent       asked, waiting; it counts if answered before expires_at
+ *   Answered   the customer's score
+ *   Voided     a score struck out, with who and why (csat.void), or because
+ *              the case was reopened
+ *   Cancelled  asked, then the case reopened before an answer
+ *   NotSent    could not be asked (no mobile, no consent); the reason in note
+ *   Legacy     a score staff entered before 19 Nov: kept, never counted
+ */
+db.exec(`
+CREATE TABLE IF NOT EXISTS csat_surveys (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticket_id    INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  lead_id      INTEGER REFERENCES leads(id) ON DELETE SET NULL,
+  partner_id   INTEGER REFERENCES partners(id) ON DELETE SET NULL,
+  sales_org    TEXT NOT NULL,
+  channel      TEXT NOT NULL,              -- whatsapp | portal | staff
+  sent_to      TEXT,                       -- the mobile asked, last ten digits
+  resolved_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  sent_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at   TEXT,
+  status       TEXT NOT NULL DEFAULT 'Sent',
+  score        INTEGER,
+  answered_at  TEXT,
+  activity_id  INTEGER REFERENCES activities(id) ON DELETE SET NULL,
+  note         TEXT,
+  voided_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  voided_at    TEXT,
+  void_reason  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_csat_ticket ON csat_surveys(ticket_id, status);
+CREATE INDEX IF NOT EXISTS idx_csat_open ON csat_surveys(status, sent_to);
+
+`);
+
+/**
+ * Ruled 19 Nov: a score staff entered before the customer was asked is kept
+ * as history, marked so, and never counted. Run on every boot, and changes
+ * nothing the second time: a case's score stands only if a customer's answer
+ * is behind it.
+ */
+export function settleLegacyCsat() {
+  db.exec(`
+INSERT INTO csat_surveys (ticket_id, lead_id, partner_id, sales_org, channel, status, score, note, sent_at, answered_at)
+  SELECT t.id, t.lead_id, t.partner_id, t.sales_org, 'staff', 'Legacy', t.csat,
+         'Entered by staff before 19 Nov 2026. Kept as history, not counted.',
+         COALESCE(t.resolved_at, t.updated_at), COALESCE(t.resolved_at, t.updated_at)
+    FROM tickets t
+   WHERE t.csat IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM csat_surveys s WHERE s.ticket_id = t.id AND s.status = 'Answered');
+UPDATE tickets SET csat = NULL
+ WHERE csat IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM csat_surveys s WHERE s.ticket_id = tickets.id AND s.status = 'Answered');
+`);
+}
+settleLegacyCsat();
 
 db.exec(`
 CREATE INDEX IF NOT EXISTS idx_activities_external ON activities(external_id);
