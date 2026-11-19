@@ -30,7 +30,7 @@ import { loadInBook } from '../engine/bookscope.js';
 import { taskFor } from '../engine/taskaccess.js';
 import { tracked, sourceOf, historyAsSeenBy } from '../engine/history.js';
 import { withCorrections, mayCorrect, addCorrection } from '../engine/corrections.js';
-import { cancelReminders } from '../engine/followups.js';
+import { cancelReminders, scheduleReminders } from '../engine/followups.js';
 import {
   listQueues, membersOf, mayTakeFrom, workIn, claimFromQueue, assignToQueue,
   setMembers, ownerOf,
@@ -2188,7 +2188,33 @@ router.patch('/tasks/:id', (req, res) => {
 
   tracked('task', Number(req.params.id), { actorId: req.user.id, source: sourceOf(req) },
     () => run(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`, [...params, req.params.id]));
-  res.json(one('SELECT * FROM tasks WHERE id = ?', [req.params.id]));
+
+  /* OPS-48. A follow-up edited here -- a new time, a new person, done or
+     reopened -- kept its reminders as they were: the old time, the old person,
+     ringing for work already done; and the lead's next follow-up stayed where
+     it was. Its own Reschedule and Complete moved both, so this does what
+     they do. A task that never had reminders is not given any. */
+  const task = found.task;
+  const now = one('SELECT * FROM tasks WHERE id = ?', [task.id]);
+  if (one('SELECT 1 v FROM reminders WHERE task_id = ?', [task.id])) {
+    if (now.status !== 'Open') {
+      cancelReminders(task.id, 'task closed');
+    } else if (now.due_at !== task.due_at || Number(now.assignee_id) !== Number(task.assignee_id) || task.status !== 'Open') {
+      cancelReminders(task.id, 'rescheduled');
+      scheduleReminders({
+        taskId: task.id, leadId: now.lead_id, userId: now.assignee_id, dueAt: now.due_at, detail: `${now.title} (rescheduled)`,
+      });
+    }
+  }
+  if (now.lead_id) {
+    run(
+      `UPDATE leads SET next_follow_up_at = (
+         SELECT MIN(due_at) FROM tasks WHERE lead_id = ? AND status = 'Open'
+       ) WHERE id = ?`,
+      [now.lead_id, now.lead_id],
+    );
+  }
+  res.json(now);
 });
 
 /* QA-37: a task is never deleted. It is cancelled, with a reason, by the

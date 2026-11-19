@@ -71,6 +71,24 @@ try {
     assert.notEqual(sms.body?.to, `a3b-${stamp}@example.in`, 'an SMS was addressed to an email address');
   });
 
+  await test('editing a follow-up\'s time or person moves its reminders and the lead\'s next follow-up', async () => {
+    const a = lead({ owner_id: ADMIN.id });
+    const task = createFollowUp({ leadId: a, userId: ADMIN.id, kind: 'follow_up', dueAt: inAnHour(), note: 'A3 probe', respectHours: false });
+    made.push(['tasks', task.id]);
+    const out = await call(ADMIN, 'PATCH', `/api/tasks/${task.id}`, { due_at: '2026-12-02 15:00', assignee_id: ADMIN2().id });
+    assert.equal(out.status, 200, `HTTP ${out.status} ${JSON.stringify(out.body).slice(0, 120)}`);
+    const now = one('SELECT due_at FROM tasks WHERE id = ?', [task.id]).due_at;
+    const pending = all("SELECT user_id, due_at FROM reminders WHERE task_id = ? AND status = 'Pending'", [task.id]);
+    assert.ok(pending.length, 'no reminders are waiting for the new time');
+    const earliest = pending.map((r) => r.due_at).sort()[0];
+    assert.ok(pending.every((r) => r.due_at > inAnHour()) && earliest <= now,
+      `reminders still at the old time: ${pending.map((r) => r.due_at).join(', ')} for a task due ${now}`);
+    assert.ok(pending.every((r) => r.user_id === ADMIN2().id), 'reminders still go to the person it was taken from');
+    assert.equal(one('SELECT next_follow_up_at FROM leads WHERE id = ?', [a]).next_follow_up_at, now, 'the lead\'s next follow-up is still the old time');
+    await call(ADMIN, 'PATCH', `/api/tasks/${task.id}`, { status: 'Done' });
+    assert.equal(one('SELECT next_follow_up_at FROM leads WHERE id = ?', [a]).next_follow_up_at, null, 'a done follow-up is still the lead\'s next one');
+  });
+
 } finally {
   for (const [table, id] of [...made].reverse()) {
     try { run(`DELETE FROM ${table} WHERE id = ?`, [id]); } catch { /* removed with its parent */ }
