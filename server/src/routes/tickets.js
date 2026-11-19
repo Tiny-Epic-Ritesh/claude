@@ -10,7 +10,7 @@ import { can, requireUser, requirePermission, requireAnyPermission, mayUseOrg, a
 import { maskRecord } from '../security.js';
 import { loadInBook } from '../engine/bookscope.js';
 import { assertValid } from '../engine/validation.js';
-import { recordChange } from '../engine/metadata.js';
+import { tracked, sourceOf } from '../engine/history.js';
 import { withCorrections, mayCorrect, addCorrection } from '../engine/corrections.js';
 import { applySla, sweepSla, closeResolved, deadlinesFor, repriceSla, handleStatusChange, slaRemaining, businessMinutesBetween, DEFAULT_SLA, breachedSql } from '../engine/sla.js';
 import { openCase } from '../engine/cases.js';
@@ -452,21 +452,16 @@ router.patch('/:id', async (req, res) => {
   if (category_id !== undefined) { sets.push('category_id = ?'); params.push(category_id); }
   if (!sets.length) return res.json(decorate(ticket));
 
-  run(`UPDATE tickets SET ${sets.join(', ')}, updated_at = datetime('now') WHERE id = ?`, [...params, req.params.id]);
-
   /* What changed, recorded like every other field change in the product.
    *
-   * Non-negotiable #4 asks for field-change history to be first-class, and a
-   * case was the last object without it. It also makes `ticket.changed` a
-   * trigger that can exist: without this, the only way to notice a ticket had
-   * moved would be `updated_at`, which moves on every reply — and a trigger
-   * that fires on every reply is the 8.5-million-execution shape. */
-  if (status && status !== ticket.status) {
-    recordChange('case', ticket.id, 'status', ticket.status, status, { actorId: req.user.id });
-  }
-  if (category_id !== undefined && Number(category_id) !== ticket.category_id) {
-    recordChange('case', ticket.id, 'category_id', ticket.category_id, category_id, { actorId: req.user.id });
-  }
+   * Non-negotiable #4 asks for field-change history to be first-class. It also
+   * makes `ticket.changed` a trigger that can exist: without it, the only way
+   * to notice a ticket had moved would be `updated_at`, which moves on every
+   * reply — and a trigger that fires on every reply is the 8.5-million-
+   * execution shape. Every tracked field, as Setup has them: the assignee was
+   * not recorded at all until D9, and status only here. */
+  tracked('case', ticket.id, { actorId: req.user.id, source: sourceOf(req) },
+    () => run(`UPDATE tickets SET ${sets.join(', ')}, updated_at = datetime('now') WHERE id = ?`, [...params, req.params.id]));
 
   audit(req.user.id, 'ticket_updated', 'ticket', Number(req.params.id), req.body);
   if (reopening) {
@@ -749,8 +744,9 @@ router.post('/:id/escalate', requirePermission('ticket.escalate'), (req, res) =>
   const manager = target.user;
   const priority = raised(ticket.priority);
 
-  run('UPDATE tickets SET assignee_id = ?, priority = ?, updated_at = datetime(\'now\') WHERE id = ?',
-    [manager.id, priority, req.params.id]);
+  tracked('case', ticket.id, { actorId: req.user.id, source: sourceOf(req) },
+    () => run('UPDATE tickets SET assignee_id = ?, priority = ?, updated_at = datetime(\'now\') WHERE id = ?',
+      [manager.id, priority, req.params.id]));
   run('INSERT INTO ticket_replies (ticket_id, body, author_type, user_id, internal) VALUES (?,?,?,?,1)', [
     req.params.id, `Escalated by ${req.user.name}. ${req.body.reason || ''}`, 'system', req.user.id,
   ]);
@@ -796,7 +792,8 @@ router.post('/:id/merge', requirePermission('ticket.merge'), (req, res) => {
   if (source.id === target.id) return res.status(400).json({ error: 'Cannot merge a ticket into itself' });
 
   run('UPDATE ticket_replies SET ticket_id = ? WHERE ticket_id = ?', [into_id, req.params.id]);
-  run("UPDATE tickets SET merged_into = ?, status = 'Closed', closed_at = datetime('now') WHERE id = ?", [into_id, req.params.id]);
+  tracked('case', source.id, { actorId: req.user.id, source: sourceOf(req) },
+    () => run("UPDATE tickets SET merged_into = ?, status = 'Closed', closed_at = datetime('now') WHERE id = ?", [into_id, req.params.id]));
   run('INSERT INTO ticket_replies (ticket_id, body, author_type, user_id, internal) VALUES (?,?,?,?,1)', [
     into_id, `${source.ref} merged into this ticket by ${req.user.name}.`, 'system', req.user.id,
   ]);

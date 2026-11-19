@@ -21,6 +21,7 @@ import { isSnapshot } from './leadlists.js';
 import { assignLead, leastLoadedForRole } from './assignment.js';
 import { columnRefusal } from './metadata.js';
 import { mayUseOrg } from '../auth.js';
+import { tracked, SOURCE } from './history.js';
 
 /* -------------------------------------------------------------- scoring */
 
@@ -341,7 +342,8 @@ export function runAction(action, facts, { dryRun, firingId = null }) {
       const refusal = columnRefusal('lead', action.params.field, action.params.value, lead.sales_org)
         ?? (action.params.field === 'stage' ? wonRefusal(action.params.value, [lead.id]) : null);   // QA-24
       if (refusal) return { ...describe, skipped: refusal };
-      run(`UPDATE leads SET ${action.params.field} = ? WHERE id = ?`, [action.params.value, lead.id]);
+      tracked('lead', lead.id, { source: SOURCE.automation },
+        () => run(`UPDATE leads SET ${action.params.field} = ? WHERE id = ?`, [action.params.value, lead.id]));
       break;
     }
     case 'update_card': {
@@ -349,7 +351,8 @@ export function runAction(action, facts, { dryRun, firingId = null }) {
       const card = facts._cards.find((c) => c.product_code === action.params.product_code);
       if (!card) return { ...describe, skipped: `${lead.name} has no ${action.params.product_code} card` };
       {
-        run("UPDATE product_cards SET state = ?, last_state_at = datetime('now') WHERE id = ?", [action.params.state, card.id]);
+        tracked('product_interest', card.id, { source: SOURCE.automation },
+          () => run("UPDATE product_cards SET state = ?, last_state_at = datetime('now') WHERE id = ?", [action.params.state, card.id]));
         run('INSERT INTO card_audit (card_id, from_state, to_state, note) VALUES (?,?,?,?)', [
           card.id, card.state, action.params.state, 'Set by automation rule',
         ]);
@@ -382,7 +385,8 @@ export function runAction(action, facts, { dryRun, firingId = null }) {
          queue's worklist and in its new owner's book at once -- where anyone the
          queue admits can claim it back off them. assigned_at is not stamped
          here; it stays the routing engine's mark, and nothing reads it. */
-      run('UPDATE leads SET owner_id = ?, owner_queue_id = NULL WHERE id = ?', [candidateId, lead.id]);
+      tracked('lead', lead.id, { source: SOURCE.automation },
+        () => run('UPDATE leads SET owner_id = ?, owner_queue_id = NULL WHERE id = ?', [candidateId, lead.id]));
       break;
     }
     /* One shared timeline, so an automation writes an activity the same way a

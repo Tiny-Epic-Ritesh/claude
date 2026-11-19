@@ -32,6 +32,7 @@ import {
 import * as geolocation from '../engine/geolocation.js';
 import { withCorrections, mayCorrect, addCorrection } from '../engine/corrections.js';
 import { taskFor } from '../engine/taskaccess.js';
+import { tracked, sourceOf } from '../engine/history.js';
 
 const router = Router();
 router.use(requireUser);
@@ -314,7 +315,7 @@ router.post('/', requirePermission('lead.contact'), (req, res) => {
 
   const effects = disposition
     ? applyEffects({
-      disposition, leadId: lead.id, cardId: card_id, userId: req.user.id, reason,
+      disposition, leadId: lead.id, cardId: card_id, userId: req.user.id, reason, source: sourceOf(req),
     })
     : [];
 
@@ -425,7 +426,8 @@ router.post('/follow-ups/:taskId/complete', requirePermission('lead.contact'), (
   if (!found.task) return res.status(found.status).json(found.body);
   const { task } = found;
 
-  run("UPDATE tasks SET status = 'Done', updated_at = datetime('now') WHERE id = ?", [task.id]);
+  tracked('task', task.id, { actorId: req.user.id, source: sourceOf(req) },
+    () => run("UPDATE tasks SET status = 'Done', updated_at = datetime('now') WHERE id = ?", [task.id]));
   cancelReminders(task.id, 'completed');
 
   run(

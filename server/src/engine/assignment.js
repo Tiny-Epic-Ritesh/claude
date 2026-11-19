@@ -26,6 +26,7 @@
 import { all, one, run, audit, notify } from '../db.js';
 import { orgsFor } from '../auth.js';
 import { evaluate, fromLegacy } from './conditions.js';
+import { tracked, SOURCE } from './history.js';
 
 /* ------------------------------------------------------------ matching */
 
@@ -283,10 +284,10 @@ export function assignLead(lead, { fallbackUserId = null } = {}) {
       ['lead', lead.sales_org],
     );
     if (queue) {
-      run(
+      tracked('lead', lead.id, { source: SOURCE.automation }, () => run(
         "UPDATE leads SET owner_queue_id = ?, owner_id = NULL, assigned_at = datetime('now') WHERE id = ?",
         [queue.id, lead.id],
-      );
+      ));
       run(
         'INSERT INTO activities (lead_id, type, direction, subject, body) VALUES (?,?,?,?,?)',
         [lead.id, 'Assignment', 'system', `Placed in ${queue.name}`,
@@ -298,12 +299,12 @@ export function assignLead(lead, { fallbackUserId = null } = {}) {
     return { ...decision, assigned: false };
   }
 
-  run(
+  tracked('lead', lead.id, { source: SOURCE.automation }, () => run(
     // owner_queue_id is cleared in the same statement: a lead owned by both a
     // person and a queue appears on two worklists.
     "UPDATE leads SET owner_id = ?, owner_queue_id = NULL, assigned_at = datetime('now'), assigned_by_rule = ? WHERE id = ?",
     [ownerId, decision.rule_id, lead.id],
-  );
+  ));
 
   audit(null, 'lead_assigned', 'lead', lead.id, {
     owner_id: ownerId,

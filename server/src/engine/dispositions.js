@@ -21,6 +21,7 @@
 
 import { all, one, run, audit } from '../db.js';
 import { storedToDate } from './daterange.js';
+import { tracked, SOURCE } from './history.js';
 
 /* --------------------------------------------------------------- matrix */
 
@@ -205,7 +206,7 @@ export function nextStepAt(disposition, body) {
  * closure. Anything broader belongs in the automation rules, where it is
  * visible and editable rather than buried in a switch statement.
  */
-export function applyEffects({ disposition, leadId, cardId, userId, reason }) {
+export function applyEffects({ disposition, leadId, cardId, userId, reason, source = SOURCE.ui }) {
   const effects = [];
 
   if (disposition.flags_mobile_invalid) {
@@ -221,10 +222,10 @@ export function applyEffects({ disposition, leadId, cardId, userId, reason }) {
   if (disposition.sets_card_state && cardId) {
     const card = one('SELECT state FROM product_cards WHERE id = ?', [cardId]);
     if (card && card.state !== disposition.sets_card_state) {
-      run(
+      tracked('product_interest', cardId, { actorId: userId ?? null, source }, () => run(
         "UPDATE product_cards SET state = ?, last_state_at = datetime('now') WHERE id = ?",
         [disposition.sets_card_state, cardId],
-      );
+      ));
       run(
         'INSERT INTO card_audit (card_id, from_state, to_state, user_id, note) VALUES (?,?,?,?,?)',
         [cardId, card.state, disposition.sets_card_state, userId, reason || disposition.label],

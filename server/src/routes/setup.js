@@ -29,7 +29,10 @@ import { MANUAL_TYPES as MANUAL_ACTIVITY_TYPES } from './activities.js';
 import {
   requireUser, requirePermission, orgsFor, mayUseOrg, can, permissionsFor, activeOrg,
   userCan, requireShared, mayChangeShared, SHARED_SETTING, grantGap, outranks,
+  reqScope, reqTicketScope, reqClientScope, reqPartnerScope,
 } from '../auth.js';
+import { historyAsSeenBy } from '../engine/history.js';
+import { taskFor } from '../engine/taskaccess.js';
 import { hashPassword, validate, newSessionToken, STRATEGY_LABEL } from '../security.js';
 import { assertValid, requiredFields, setRequired } from '../engine/validation.js';
 import {
@@ -70,7 +73,7 @@ import {
 } from '../engine/apikeys.js';
 import { explainVisibility } from '../engine/sharing.js';
 import {
-  entities, entityDef, fieldsOf, fieldDef, picklistValues, valueUsage, historyFor,
+  entities, entityDef, fieldsOf, fieldDef, picklistValues, valueUsage,
   stageDurations, auditConfig, typeOf, FIELD_TYPES, LEAD_PICKLIST_COLUMNS, mergeValue,
 } from '../engine/metadata.js';
 import {
@@ -2647,13 +2650,63 @@ router.put('/objects/:entity/fields/:apiName/values', requirePermission('admin.o
   return res.json(after);
 });
 
-/** The change history of one record — first-class, not reconstructed. */
+/**
+ * Who may open each kind of record, and who owns it -- the same scope the
+ * record's own page reads it through. Answers the record's owner (for field
+ * security), or null when the reader may not open it.
+ */
+const HISTORY_READ = {
+  lead: (req, id) => {
+    const s = reqScope(req, 'l');
+    return one(`SELECT l.owner_id FROM leads l WHERE l.id = ? AND l.deleted_at IS NULL AND ${s.sql}`, [id, ...s.params]);
+  },
+  case: (req, id) => {
+    const s = reqTicketScope(req, 't');
+    return one(`SELECT t.assignee_id AS owner_id FROM tickets t WHERE t.id = ? AND ${s.sql}`, [id, ...s.params]);
+  },
+  client: (req, id) => {
+    const s = reqClientScope(req, 'c');
+    return one(`SELECT c.owner_id FROM clients c WHERE c.id = ? AND c.deleted_at IS NULL AND ${s.sql}`, [id, ...s.params]);
+  },
+  partner: (req, id) => {
+    const s = reqPartnerScope(req, 'p');
+    return one(`SELECT p.owner_id FROM partners p WHERE p.id = ? AND ${s.sql}`, [id, ...s.params]);
+  },
+  // A product card is its lead's, and read through the lead.
+  product_interest: (req, id) => {
+    const s = reqScope(req, 'l');
+    return one(
+      `SELECT l.owner_id FROM product_cards pc JOIN leads l ON l.id = pc.lead_id
+        WHERE pc.id = ? AND l.deleted_at IS NULL AND ${s.sql}`,
+      [id, ...s.params],
+    );
+  },
+  task: (req, id) => {
+    const found = taskFor(req, id);
+    return found.task ? { owner_id: found.task.assignee_id } : null;
+  },
+};
+
+/**
+ * The change history of one record — first-class, not reconstructed.
+ *
+ * OPS-66: this answered for any record, any kind, to anyone signed in, in
+ * either business -- an Admin of one business could read the other's owner
+ * changes, and a Sales RM a colleague's lead's. It is read as the record is:
+ * only by someone who may open it, and only the fields they may read, masked
+ * as they see them masked. Unopenable and nonexistent are the same answer.
+ */
 router.get('/history/:entity/:id', (req, res) => {
+  const read = HISTORY_READ[req.params.entity];
+  const id = Number(req.params.id);
+  if (!read || !Number.isInteger(id) || id <= 0) return res.status(404).json({ error: 'No such record' });
+  const record = read(req, id);
+  if (!record) return res.status(404).json({ error: 'No such record' });
   res.json({
-    changes: historyFor(req.params.entity, Number(req.params.id)),
+    changes: historyAsSeenBy(req.params.entity, id, req.user, { ownerId: record.owner_id ?? null, caps: req.caps }),
     // Derived from the same history rather than stamped into date fields by
     // automation, which is what six of the legacy jobs exist to do.
-    stages: stageDurations(req.params.entity, Number(req.params.id),
+    stages: stageDurations(req.params.entity, id,
       req.params.entity === 'product_interest' ? 'state' : 'stage'),
   });
 });

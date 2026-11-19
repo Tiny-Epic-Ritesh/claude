@@ -15,6 +15,7 @@
 import { randomUUID } from 'node:crypto';
 import { all, one, run, notify, audit, daysSince } from '../db.js';
 import { encryptField, decryptField } from '../security.js';
+import { tracked, SOURCE } from './history.js';
 
 /**
  * The KYC form payload carries address, income band, nominee, bank details and
@@ -502,7 +503,11 @@ export function stepApplies(step, form) {
   return true;
 }
 
-export function createJourney({ leadId = null, cardId = null, productTypeId, mobile = null, email = null }) {
+export function createJourney({
+  leadId = null, cardId = null, productTypeId, mobile = null, email = null,
+  // Who started it, for the card's history (D9): a person in the CRM, or the applicant on the public journey.
+  actorId = null, source = actorId ? SOURCE.ui : SOURCE.portal,
+}) {
   const token = randomUUID();
   const steps = journeyStepsFor(productTypeId);
 
@@ -531,7 +536,8 @@ export function createJourney({ leadId = null, cardId = null, productTypeId, mob
   });
 
   if (cardId) {
-    run("UPDATE product_cards SET state = 'KYC_IN_PROGRESS', last_state_at = datetime('now') WHERE id = ?", [cardId]);
+    tracked('product_interest', cardId, { actorId, source },
+      () => run("UPDATE product_cards SET state = 'KYC_IN_PROGRESS', last_state_at = datetime('now') WHERE id = ?", [cardId]));
   }
   if (leadId) {
     // The lead's KYC status is derived from this journey — see
@@ -945,10 +951,10 @@ export function recordVerification(journeyId, outcome, userId = null) {
   audit(userId, 'kyc_verification', 'kyc_journey', journeyId, { from: was, to: known.code });
 
   if (!finished) return { journey: getJourney(journeyId) };
-  return { completed: true, journey: completeJourney(journeyId, null) };
+  return { completed: true, journey: completeJourney(journeyId, null, { actorId: userId, source: userId ? SOURCE.ui : SOURCE.vendor }) };
 }
 
-export function completeJourney(journeyId, form) {
+export function completeJourney(journeyId, form, { actorId = null, source = SOURCE.portal } = {}) {
   const journey = one('SELECT * FROM kyc_journeys WHERE id = ?', [journeyId]);
   run(
     `UPDATE kyc_journeys SET status = 'Complete', completed_at = datetime('now'), current_step = NULL, form_data = ?, elapsed_s = ?
@@ -959,7 +965,8 @@ export function completeJourney(journeyId, form) {
   // KYC complete flips the product card to ACTIVE (BRD §2.3).
   if (journey.card_id) {
     const card = one('SELECT * FROM product_cards WHERE id = ?', [journey.card_id]);
-    run("UPDATE product_cards SET state = 'ACTIVE', last_state_at = datetime('now') WHERE id = ?", [journey.card_id]);
+    tracked('product_interest', journey.card_id, { actorId, source },
+      () => run("UPDATE product_cards SET state = 'ACTIVE', last_state_at = datetime('now') WHERE id = ?", [journey.card_id]));
     run('INSERT INTO card_audit (card_id, from_state, to_state, note) VALUES (?,?,?,?)', [
       journey.card_id, card?.state, 'ACTIVE', 'KYC completed via DKYC portal',
     ]);

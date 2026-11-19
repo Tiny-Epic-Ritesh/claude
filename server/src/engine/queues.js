@@ -31,6 +31,7 @@
 
 import { all, one, run, transact } from '../db.js';
 import { orgsFor } from '../auth.js';
+import { tracked, SOURCE } from './history.js';
 
 /* ------------------------------------------------------------- queues */
 
@@ -152,7 +153,7 @@ export function ownerOf(record) {
  * is briefly owned by both is a record that appears on two worklists, and the
  * window is exactly when a sweep is most likely to read it.
  */
-export function assignToQueue(leadId, queueId, { actorId = null } = {}) {
+export function assignToQueue(leadId, queueId, { actorId = null, source = actorId ? SOURCE.ui : SOURCE.automation } = {}) {
   const queue = one('SELECT * FROM queues WHERE id = ?', [queueId]);
   if (!queue) return { ok: false, error: 'No such queue' };
   /* N-12: never into the other business's queue, whoever asks -- a lead there
@@ -163,10 +164,10 @@ export function assignToQueue(leadId, queueId, { actorId = null } = {}) {
     return { ok: false, error: `${queue.name} is the other business's queue` };
   }
 
-  run(
+  tracked('lead', leadId, { actorId, source }, () => run(
     "UPDATE leads SET owner_queue_id = ?, owner_id = NULL, updated_at = datetime('now') WHERE id = ?",
     [queueId, leadId],
-  );
+  ));
   run(
     `INSERT INTO activities (lead_id, type, direction, subject, body, user_id)
      VALUES (?, 'Note', 'system', ?, ?, ?)`,
@@ -182,7 +183,7 @@ export function assignToQueue(leadId, queueId, { actorId = null } = {}) {
  * work must be entitled to it. Returns a reason rather than a boolean so the
  * refusal can be shown.
  */
-export function claimFromQueue(leadId, user) {
+export function claimFromQueue(leadId, user, { source = SOURCE.ui } = {}) {
   const lead = one('SELECT * FROM leads WHERE id = ? AND deleted_at IS NULL', [leadId]);
   if (!lead) return { ok: false, status: 404, error: 'Lead not found' };
 
@@ -210,10 +211,10 @@ export function claimFromQueue(leadId, user) {
     return { ok: false, error: `Your role cannot take work out of ${queue.name}` };
   }
 
-  run(
+  tracked('lead', leadId, { actorId: user.id, source }, () => run(
     "UPDATE leads SET owner_id = ?, owner_queue_id = NULL, updated_at = datetime('now') WHERE id = ?",
     [user.id, leadId],
-  );
+  ));
   run(
     `INSERT INTO activities (lead_id, type, direction, subject, body, user_id)
      VALUES (?, 'Note', 'system', ?, ?, ?)`,

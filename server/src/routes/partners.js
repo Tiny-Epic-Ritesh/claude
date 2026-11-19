@@ -25,6 +25,7 @@ import * as ai from '../ai/index.js';
 import { applyFieldSecurity } from '../engine/metadata.js';
 import { withCorrections } from '../engine/corrections.js';
 import { lockRefusal } from '../engine/approvals.js';
+import { tracked, sourceOf } from '../engine/history.js';
 
 const router = Router();
 router.use(requireUser);
@@ -449,7 +450,9 @@ router.patch('/:id', requirePermission('partner.create'), (req, res) => {
   }
   if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
 
-  run(`UPDATE partners SET ${sets.join(', ')} WHERE id = ?`, [...params, req.params.id]);
+  // Whatever Setup tracks among the fields edited here is recorded (D9).
+  tracked('partner', Number(req.params.id), { actorId: req.user.id, source: sourceOf(req) },
+    () => run(`UPDATE partners SET ${sets.join(', ')} WHERE id = ?`, [...params, req.params.id]));
   audit(req.user.id, 'partner_updated', 'partner', Number(req.params.id), req.body);
   res.json(decorate(one('SELECT * FROM partners WHERE id = ?', [req.params.id])));
 });
@@ -467,8 +470,10 @@ router.post('/:id/steps/:code', requirePermission('partner.create'), (req, res) 
   if (next) run("UPDATE partner_steps SET status = 'active' WHERE id = ?", [next.id]);
 
   // Progress the partner state as onboarding advances.
-  if (partner.state_code === 'PROSPECT') run("UPDATE partners SET state_code = 'QUALIFYING' WHERE id = ?", [req.params.id]);
-  if (req.params.code === 'AGREEMENT') run("UPDATE partners SET state_code = 'ONBOARDING' WHERE id = ?", [req.params.id]);
+  tracked('partner', partner.id, { actorId: req.user.id, source: sourceOf(req) }, () => {
+    if (partner.state_code === 'PROSPECT') run("UPDATE partners SET state_code = 'QUALIFYING' WHERE id = ?", [req.params.id]);
+    if (req.params.code === 'AGREEMENT') run("UPDATE partners SET state_code = 'ONBOARDING' WHERE id = ?", [req.params.id]);
+  });
 
   run('INSERT INTO activities (partner_id, type, direction, subject, user_id) VALUES (?,?,?,?,?)', [
     req.params.id, 'Partner Activity', 'system', `Onboarding step complete: ${req.params.code}`, req.user.id,

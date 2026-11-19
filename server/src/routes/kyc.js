@@ -17,6 +17,7 @@ import { leastLoadedRm } from '../engine/assignment.js';
 import * as ai from '../ai/index.js';
 import { kycStatusSql, kycStatusFor } from '../engine/kycstatus.js';
 import { recordNomination } from '../engine/nominations.js';
+import { tracked, SOURCE, sourceOf } from '../engine/history.js';
 
 /* ============================== internal =============================== */
 
@@ -113,6 +114,8 @@ internal.post('/journeys', requirePermission('kyc.manage'), (req, res) => {
   }
 
   const journey = kyc.createJourney({
+    actorId: req.user.id,
+    source: sourceOf(req),
     leadId: lead_id || null,
     cardId: card_id || null,
     productTypeId: productId,
@@ -471,7 +474,8 @@ function ensureLead(journey) {
   const card = one('SELECT * FROM product_cards WHERE lead_id = ? AND product_type_id = ?', [leadId, journey.product_type_id]);
   run('UPDATE kyc_journeys SET lead_id = ?, card_id = ? WHERE id = ?', [leadId, card?.id ?? null, journey.id]);
   if (card) {
-    run("UPDATE product_cards SET state = 'ACTIVE', last_state_at = datetime('now') WHERE id = ?", [card.id]);
+    tracked('product_interest', card.id, { source: SOURCE.portal },
+      () => run("UPDATE product_cards SET state = 'ACTIVE', last_state_at = datetime('now') WHERE id = ?", [card.id]));
   }
   // Completion is a fact about the journey; the lead's status follows from it.
   run('INSERT INTO activities (lead_id, card_id, type, direction, subject, body) VALUES (?,?,?,?,?,?)', [

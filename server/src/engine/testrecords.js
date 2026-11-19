@@ -23,6 +23,7 @@
 import { all, one, run, audit } from '../db.js';
 import { withdrawPortalAccess } from '../routes/partners-support.js';
 import { cancelReminders } from './followups.js';
+import { tracked, SOURCE } from './history.js';
 
 const now = "datetime('now')";
 
@@ -47,7 +48,8 @@ export const TEST_KINDS = {
     load: (id) => one("SELECT id, COALESCE(ref || ' ', '') || subject AS label, sales_org AS book, status FROM tickets WHERE id = ?", [id]),
     plan: (r) => (r.status === 'Closed' ? { done: 'Already closed' } : { will: 'Closed, with the reason as an internal note' }),
     retire: (r, why, userId) => {
-      run(`UPDATE tickets SET status = 'Closed', closed_at = ${now}, updated_at = ${now} WHERE id = ?`, [r.id]);
+      tracked('case', r.id, { actorId: userId ?? null, source: SOURCE.ui },
+        () => run(`UPDATE tickets SET status = 'Closed', closed_at = ${now}, updated_at = ${now} WHERE id = ?`, [r.id]));
       run("INSERT INTO ticket_replies (ticket_id, body, author_type, user_id, internal) VALUES (?, ?, 'system', ?, 1)",
         [r.id, `Closed as a test record: ${why}`, userId]);
       audit(userId, 'ticket_updated', 'ticket', r.id, { status: 'Closed', test_record: true, reason: why });
@@ -144,8 +146,9 @@ export const TEST_KINDS = {
     ),
     plan: (r) => (r.status === 'Cancelled' ? { done: 'Already cancelled' } : { will: 'Cancelled, with the reason; its reminders stop' }),
     retire: (r, why, userId) => {
-      run(`UPDATE tasks SET status = 'Cancelled', cancelled_at = ${now}, cancel_reason = ?, updated_at = ${now} WHERE id = ?`,
-        [`Test record: ${why}`, r.id]);
+      tracked('task', r.id, { actorId: userId ?? null, source: SOURCE.ui },
+        () => run(`UPDATE tasks SET status = 'Cancelled', cancelled_at = ${now}, cancel_reason = ?, updated_at = ${now} WHERE id = ?`,
+          [`Test record: ${why}`, r.id]));
       cancelReminders(r.id, 'task cancelled');
       audit(userId, 'task_cancelled', 'task', r.id, { test_record: true, reason: why });
       return 'Cancelled';

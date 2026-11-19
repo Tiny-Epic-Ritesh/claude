@@ -17,6 +17,7 @@ import { exportHeldMasked, wonRefusal } from '../engine/policies.js';
 import { Router } from 'express';
 import { all, one, run, audit, notify } from '../db.js';
 import { typedToStored } from '../engine/daterange.js';
+import { tracked, sourceOf } from '../engine/history.js';
 import {
   leadStages, stageRefusal, columnRefusal, picklistValues,
 } from '../engine/metadata.js';
@@ -890,7 +891,8 @@ router.post('/:id/bulk/field', requirePermission('lead.edit'), (req, res) => {
     const before = one(`SELECT ${field} AS v FROM leads WHERE id = ?`, [id]);
     if (!before) continue;
     if (String(before.v ?? '') === String(value ?? '')) { unchanged += 1; continue; }
-    run(`UPDATE leads SET ${field} = ?, updated_at = datetime('now') WHERE id = ?`, [value, id]);
+    tracked('lead', id, { actorId: req.user.id, source: sourceOf(req) },
+      () => run(`UPDATE leads SET ${field} = ?, updated_at = datetime('now') WHERE id = ?`, [value, id]));
     // One row per record: "what did this used to be" is the question asked
     // after a bulk edit goes wrong.
     audit(req.user.id, 'lead.bulk.field', 'lead', id, { field, from: before.v, to: value, via_list: list.id });
@@ -993,10 +995,10 @@ router.post('/:id/bulk/reassign', requirePermission('lead.reassign'), (req, res)
     if (!lead || lead.sales_org !== owner.sales_org) continue;
     // Out of any queue in the same statement, as the approved path does
     // (OPS-10): a lead is owned by a person or a queue, never both.
-    run(
+    tracked('lead', id, { actorId: req.user.id, source: sourceOf(req) }, () => run(
       "UPDATE leads SET owner_id = ?, owner_queue_id = NULL, updated_at = datetime('now') WHERE id = ?",
       [ownerId, id],
-    );
+    ));
     // One row per record: "who was moved, and by whom" must stay answerable.
     audit(req.user.id, 'lead.reassign', 'lead', id, { from: lead.owner_id, to: ownerId, via_list: list.id });
     moved += 1;
@@ -1024,7 +1026,8 @@ router.post('/:id/bulk/stage', requirePermission('lead.stage.change'), (req, res
   for (const id of ids) {
     const before = one('SELECT stage FROM leads WHERE id = ?', [id]);
     if (!before || before.stage === stage) continue;
-    run("UPDATE leads SET stage = ?, updated_at = datetime('now') WHERE id = ?", [stage, id]);
+    tracked('lead', id, { actorId: req.user.id, source: sourceOf(req) },
+      () => run("UPDATE leads SET stage = ?, updated_at = datetime('now') WHERE id = ?", [stage, id]));
     audit(req.user.id, 'lead.stage.change', 'lead', id, { from: before.stage, to: stage, via_list: list.id });
   }
   res.json({ ok: true, applied: ids.length, stage });

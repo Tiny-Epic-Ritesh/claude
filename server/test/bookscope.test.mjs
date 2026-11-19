@@ -114,7 +114,10 @@ const NOT_A_RECORD = {
   '/api/setup/objects/:entity/fields/:apiName/value-usage':
     'Record counts per picklist value. Both parameters are configuration api_names, not record ids. '
     + 'The counts themselves ARE scoped to the administrator\'s books inside valueUsage().',
-  '/api/setup/history/:entity/:id': 'Field-change history; the underlying record is scoped where it is read.',
+  '/api/setup/history/:entity/:id': 'Field-change history. The first parameter is a kind of record, not an id, so the '
+    + 'generic probe cannot reach it. Until 19 Nov this reason said the record was scoped where it is read, and it was '
+    + 'not (OPS-66): any record, either business. It is now read as its record is, and masked as the reader sees it -- '
+    + 'asserted for every kind, as the other business and as a colleague, in fieldhistory.test.mjs.',
   '/api/leads/import/runs/:id': 'One lead import, not a lead. It names a business and quotes the rows it failed on, '
     + 'so readRun() refuses a run outside the reader entitlement — asserted in importwizard.test.mjs '
     + '(see "an import from another book cannot be read").',

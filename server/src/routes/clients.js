@@ -25,6 +25,7 @@ import {
   recordNomination, nominationStatus, statementLineSql, historyFor as nominationHistory,
 } from '../engine/nominations.js';
 import { stepByCode, validateNominees } from '../engine/kyc.js';
+import { tracked, sourceOf } from '../engine/history.js';
 
 const router = Router();
 router.use(requireUser);
@@ -404,7 +405,8 @@ router.post('/bulk/reassign', requirePermission('client.reassign'), (req, res) =
 
   let moved = 0;
   for (const c of movable) {
-    run("UPDATE clients SET owner_id = ?, updated_at = datetime('now') WHERE id = ?", [ownerId, c.id]);
+    tracked('client', c.id, { actorId: req.user.id, source: sourceOf(req) },
+      () => run("UPDATE clients SET owner_id = ?, updated_at = datetime('now') WHERE id = ?", [ownerId, c.id]));
     // One row per account: "who was moved, by whom, from whom" must stay answerable.
     audit(req.user.id, 'client.reassign', 'client', c.id, { from: c.owner_id, to: ownerId, bulk: true });
     moved += 1;
@@ -598,7 +600,8 @@ router.patch('/:id', requirePermission('client.edit'), (req, res) => {
       sets.push("closed_at = datetime('now')");
     }
     sets.push("updated_at = datetime('now')");
-    run(`UPDATE clients SET ${sets.join(', ')} WHERE id = ?`, [...params, client.id]);
+    tracked('client', client.id, { actorId: req.user.id, source: sourceOf(req) },
+      () => run(`UPDATE clients SET ${sets.join(', ')} WHERE id = ?`, [...params, client.id]));
   }
 
   audit(req.user.id, 'client.update', 'client', client.id, {
@@ -669,7 +672,8 @@ router.post('/:id/reassign', requirePermission('client.reassign'), (req, res) =>
     return res.status(400).json({ error: `${owner.name} does not work in ${client.sales_org}` });
   }
 
-  run("UPDATE clients SET owner_id = ?, updated_at = datetime('now') WHERE id = ?", [ownerId, client.id]);
+  tracked('client', client.id, { actorId: req.user.id, source: sourceOf(req) },
+    () => run("UPDATE clients SET owner_id = ?, updated_at = datetime('now') WHERE id = ?", [ownerId, client.id]));
   audit(req.user.id, 'client.reassign', 'client', client.id, { from: client.owner_id, to: ownerId });
   res.json({ ok: true, client: load(req) });
 });
