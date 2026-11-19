@@ -113,6 +113,27 @@ internal.post('/journeys', requirePermission('kyc.manage'), (req, res) => {
     });
   }
 
+  /* OPS-67. Starting it again opened a second journey for the same
+     application, with its own resume link: two forms half filled, and the
+     stall sweep and the lead's KYC status reading both. The open one is
+     answered instead, with its link. */
+  const open = card_id
+    ? one("SELECT id, resume_token FROM kyc_journeys WHERE card_id = ? AND status NOT IN ('Complete','Abandoned')", [card_id])
+    : lead_id
+      ? one(
+        "SELECT id, resume_token FROM kyc_journeys WHERE lead_id = ? AND product_type_id = ? AND status NOT IN ('Complete','Abandoned')",
+        [lead_id, Number(productId)],
+      )
+      : null;
+  if (open) {
+    return res.status(409).json({
+      error: `A KYC application for ${product.name} is already open`,
+      fix: 'Send the applicant the link to it, or take it over from the KYC console.',
+      journey_id: open.id,
+      applicant_url: `/dkyc/resume/${open.resume_token}`,
+    });
+  }
+
   const journey = kyc.createJourney({
     actorId: req.user.id,
     source: sourceOf(req),

@@ -154,6 +154,19 @@ try {
     assert.ok(back.owner_queue_id || back.owner_id, 'it is owned by nobody');
   });
 
+  await test('starting KYC on a card with a journey already open does not open a second', async () => {
+    const product = one("SELECT id FROM product_types WHERE sales_org = 'BONANZA' AND active = 1 ORDER BY id LIMIT 1").id;
+    const a = lead({ owner_id: ADMIN.id });
+    const card = make('product_cards', { lead_id: a, product_type_id: product, state: 'WARM' });
+    const start = () => call(ADMIN, 'POST', '/api/kyc/journeys', { lead_id: a, card_id: card });
+    const first = await start();
+    assert.equal(first.status, 201, `first: HTTP ${first.status} ${JSON.stringify(first.body).slice(0, 120)}`);
+    const second = await start();
+    const open = one("SELECT COUNT(*) n FROM kyc_journeys WHERE card_id = ? AND status NOT IN ('Complete','Abandoned')", [card]).n;
+    assert.equal(open, 1, `${open} journeys are open for one card`);
+    assert.equal(second.status, 409, `the second start: HTTP ${second.status}`);
+  });
+
 } finally {
   for (const [table, id] of [...made].reverse()) {
     try { run(`DELETE FROM ${table} WHERE id = ?`, [id]); } catch { /* removed with its parent */ }
