@@ -57,10 +57,14 @@ export const SHIPPED_KRA = {
     ['product_conversion', 'Product conversion', 'conversion_pct', 'percent', 30, 40, 'higher', 'Engaged to active.'],
     ['stalled_cards', 'Cards stalled over 14 days', 'stalled_cards', 'count', 8, 20, 'lower', 'Not moved in a fortnight.'],
   ],
+  /* B22 (ruled 19 Nov): each description says what is counted. They promised
+     "partners who sourced something this month" and "stuck part-way through",
+     and counted partners with Active status and every partner onboarding. A
+     metric an Admin has edited keeps its own words (seedKra below). */
   partner_rm: [
-    ['partners_active', 'Active partners', 'partners_active', 'count', 12, 35, 'higher', 'Partners who sourced something this month.'],
+    ['partners_active', 'Active partners', 'partners_active', 'count', 12, 35, 'higher', 'Partners with Active status.'],
     ['partner_leads', 'Partner-sourced leads', 'partner_leads', 'count', 60, 35, 'higher', 'Referrals received.'],
-    ['onboarding_stalled', 'Onboarding stalled', 'onboarding_stalled', 'count', 3, 30, 'lower', 'Partners stuck part-way through.'],
+    ['onboarding_stalled', 'Onboarding stalled', 'onboarding_stalled', 'count', 3, 30, 'lower', 'Partners still onboarding.'],
   ],
   customer_care: [
     ['resolved', 'Cases resolved', 'cases_resolved', 'count', 180, 35, 'higher', 'Closed within the month.'],

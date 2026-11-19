@@ -628,6 +628,20 @@ try {
     assert.equal(problems.length, 0, problems.join('\n         '));
   });
 
+  await test('a Partner RM\'s scorecard says what it counts, in both businesses (B22)', async () => {
+    const SAYS = { partners_active: 'Partners with Active status.', onboarding_stalled: 'Partners still onboarding.' };
+    for (const org of BOOKS) {
+      // eslint-disable-next-line no-await-in-loop
+      const metrics = (await call(reader('partner_rm', org), 'GET', '/api/kra')).body?.metrics ?? [];
+      for (const [source, words] of Object.entries(SAYS)) {
+        const m = metrics.find((x) => x.source === source);
+        assert.ok(m, `partner_rm@${org} has no ${source} metric`);
+        if (m.edited_at) continue;   // an Admin's own words stand
+        assert.equal(m.description, words, `partner_rm@${org} ${source} says "${m.description}"`);
+      }
+    }
+  });
+
   await test('every role in both businesses sees a lead\'s mobile and email masked exactly as its masking says', async () => {
     const problems = [];
     let looked = 0;
