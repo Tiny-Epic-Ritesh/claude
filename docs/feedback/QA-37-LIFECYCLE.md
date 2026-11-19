@@ -81,7 +81,12 @@ data, with a reason, and never deletes them.
   deleted and kept without its lead it would no longer say whose complaint it
   was. The bin lists those leads, with the cases that keep them. A purge takes
   the lead's product interests, activities and tasks, and erases in the same
-  step the field history and custom field values of all of them.
+  step the field history and custom field values of all of them. **Ruled 19
+  Nov (B24, built as A18):** it also erases the bell notifications that link
+  to the lead and the person's Facebook and Instagram messages. It blanks
+  outbound webhook deliveries and cancels any still queued, and takes the
+  lead's name out of transfer approvals. Calendar events and internal
+  messages are kept, without the link.
 - **Lists (batch 1, 14 Oct):** the owner or an Admin renames and describes a
   list, and removes a member without touching the lead. *Archive* asks why;
   an archived list leaves Lead Lists for its own view, stays readable,

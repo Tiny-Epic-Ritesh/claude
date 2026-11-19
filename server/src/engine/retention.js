@@ -24,8 +24,9 @@
  * their field history go in the same step (OPS-70, OPS-72): both name a record
  * by type and number rather than by a link, so the cascade never reached them,
  * and a tracked mobile or a custom field outlived the purge meant to erase it.
- * The audit records how many, which ids, why and under what period -- never a
- * name.
+ * Copies of the lead's details kept elsewhere are dealt with in the same step
+ * too (B24, ruled 19 Nov; OPS-73): see `eraseCopies`. The audit records how
+ * many, which ids, why and under what period -- never a name.
  *
  * Until 19 Nov this note said "a case or a task that named it keeps going
  * without the link". The schema has always cascaded both, so a purge erased
@@ -108,6 +109,57 @@ function eraseValuesAndHistory(leadId) {
   }
 }
 
+/*
+ * B24 (ruled 19 Nov; OPS-73): copies of the lead's details kept outside it.
+ * Run before the lead is deleted: the cascade cuts the links that find them.
+ *
+ *   bell notifications   that link to the lead's page name the person and open
+ *                        nothing once it is gone: erased
+ *   webhook deliveries   the lead's fields as sent to an integration: blanked
+ *                        to the event, the delivery itself kept (where, when,
+ *                        what came back). One still queued is cancelled, so
+ *                        nothing about the person is sent after the purge
+ *   Facebook and         the person's own messages: erased. They never became
+ *   Instagram messages   a client
+ *   lead transfers       the decision is kept, and the lead's name taken out
+ *                        of it. One still pending can no longer be decided by
+ *                        anybody (whoever may decide reads the lead), so it is
+ *                        withdrawn, saying why
+ *
+ * Kept, as ruled: calendar events, which copy a person's own Outlook or Google
+ * calendar and would come back with the next sync, and internal messages,
+ * which are staff conversations. The schema cuts their link to the lead. The
+ * audit log stays (B23). A lead-ad delivery's record holds the form's
+ * questions and what became of it, not the answers, so there is nothing of
+ * the person's in it to erase.
+ */
+function eraseCopies(leadId) {
+  const page = `/leads/${leadId}`;
+  run('DELETE FROM notifications WHERE link = ? OR link LIKE ? OR link LIKE ?', [page, `${page}/%`, `${page}?%`]);
+  run(
+    `UPDATE webhook_delivery
+        SET payload = CASE WHEN json_valid(payload)
+                           THEN json_object('event', json_extract(payload, '$.event'), 'erased', 'the lead was purged')
+                           ELSE NULL END,
+            error   = CASE WHEN status = 'queued' THEN 'The lead was purged before this was sent' ELSE error END,
+            status  = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END
+      WHERE lead_id = ?`,
+    [leadId],
+  );
+  run('DELETE FROM meta_message WHERE lead_id = ?', [leadId]);
+  run(
+    `UPDATE approvals
+        SET payload = CASE WHEN json_valid(payload) THEN json_remove(payload, '$.lead_name') ELSE NULL END,
+            decision_reason = CASE WHEN status = 'Pending'
+                                   THEN 'The lead was purged at the end of its retention period, so this can no longer be decided.'
+                                   ELSE decision_reason END,
+            decided_at = CASE WHEN status = 'Pending' THEN datetime('now') ELSE decided_at END,
+            status = CASE WHEN status = 'Pending' THEN 'Withdrawn' ELSE status END
+      WHERE entity = 'lead' AND entity_id = ? AND scope = 'lead_transfer'`,
+    [leadId],
+  );
+}
+
 /**
  * Purge what is purgeable in these books. `ids`, when given, narrows it; an
  * id that is not purgeable is left alone and reported, never purged.
@@ -122,6 +174,7 @@ export function purgeLeads({ books, ids = null, user, reason }) {
   transact(() => {
     for (const id of purge) {
       eraseValuesAndHistory(id);
+      eraseCopies(id);
       run('DELETE FROM leads WHERE id = ?', [id]);
     }
   });
