@@ -89,6 +89,20 @@ try {
     assert.equal(one('SELECT next_follow_up_at FROM leads WHERE id = ?', [a]).next_follow_up_at, null, 'a done follow-up is still the lead\'s next one');
   });
 
+  await test('reminders for a task on a lead in the recycle bin do not go out', () => {
+    const binned = lead({ owner_id: ADMIN.id });
+    const task = createFollowUp({ leadId: binned, userId: ADMIN.id, kind: 'follow_up', dueAt: one("SELECT datetime('now', '-1 hour') t").t, note: 'A3 probe', respectHours: false });
+    made.push(['tasks', task.id]);
+    run("UPDATE reminders SET due_at = datetime('now', '-1 minute') WHERE task_id = ?", [task.id]);
+    run("UPDATE leads SET deleted_at = datetime('now') WHERE id = ?", [binned]);
+    const before = one('SELECT COUNT(*) n FROM notifications WHERE user_id = ? AND link = ?', [ADMIN.id, `/leads/${binned}`]).n;
+    sweepReminders();
+    const after = one('SELECT COUNT(*) n FROM notifications WHERE user_id = ? AND link = ?', [ADMIN.id, `/leads/${binned}`]).n;
+    assert.equal(after, before, 'a reminder rang for a follow-up on a lead in the bin');
+    const left = one("SELECT COUNT(*) n FROM reminders WHERE task_id = ? AND status = 'Pending'", [task.id]).n;
+    assert.equal(left, 0, `${left} reminder(s) still waiting to go out`);
+  });
+
 } finally {
   for (const [table, id] of [...made].reverse()) {
     try { run(`DELETE FROM ${table} WHERE id = ?`, [id]); } catch { /* removed with its parent */ }
