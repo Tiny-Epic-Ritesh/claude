@@ -128,6 +128,8 @@ export default function Kra() {
                     {m.measurable
                       ? fmt(m.actual, m.unit)
                       : <span className="muted" title={m.reason}>—</span>}
+                    {/* A16 (B21): the desk's figure, for context -- never scored. */}
+                    {m.desk != null && <div className="tiny muted">Desk: {fmt(m.desk, m.unit)}</div>}
                   </td>
                   <td className="num">{m.weight}</td>
                   <td>

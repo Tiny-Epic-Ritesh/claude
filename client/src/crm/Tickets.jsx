@@ -56,7 +56,7 @@ function Th({ label, col, className, sort, dir, onSort }) {
 /* QA-05. The filters a figure links here with, beyond its tab, and how each
    reads as a chip. Every one is a filter the list API applies, so the count
    on the figure and the count here are the same query. */
-const LINKED = ['mine', 'breached', 'status', 'due_today', 'rated', 'resolved_from', 'resolved_to', 'created_from', 'created_to'];
+const LINKED = ['mine', 'breached', 'status', 'due_today', 'rated', 'resolved_from', 'resolved_to', 'created_from', 'created_to', 'csat_by', 'csat_from'];
 const VIEWS = ['mine', 'open', 'breached', 'all'];
 const dmyOf = (iso) => (iso ? dmy(iso) : '…');
 function chipsFor(linked) {
@@ -66,6 +66,13 @@ function chipsFor(linked) {
   if (linked.get('status')) out.push({ keys: ['status'], label: `Status: ${linked.get('status')}` });
   if (linked.get('due_today') === 'true') out.push({ keys: ['due_today'], label: 'Due today' });
   if (linked.get('rated') === 'true') out.push({ keys: ['rated'], label: 'Rated by the client' });
+  // A16: the cases behind a CSAT figure -- the customers' answers since a day, on cases you resolved.
+  if (linked.get('csat_by') === 'me' || linked.get('csat_from')) {
+    out.push({
+      keys: ['csat_by', 'csat_from'],
+      label: `Rated by the customer${linked.get('csat_from') ? ` since ${dmyOf(linked.get('csat_from'))}` : ''}${linked.get('csat_by') === 'me' ? ', resolved by you or your team' : ''}`,
+    });
+  }
   if (linked.get('resolved_from') || linked.get('resolved_to')) {
     out.push({ keys: ['resolved_from', 'resolved_to'], label: `Resolved ${dmyOf(linked.get('resolved_from'))} – ${dmyOf(linked.get('resolved_to'))}` });
   }
@@ -162,7 +169,15 @@ function TicketQueue({ session }) {
           <Stat label="Breached" value={report.totals.breached} sub="Open and past the resolution time" tone="danger" to="/tickets?view=breached" />
           <Stat label="Resolved today" value={report.totals.resolved_today} sub="In your books" tone="good"
             to={`/tickets?view=all&resolved_from=${report.today}&resolved_to=${report.today}`} />
-          <Stat label="Avg CSAT" value={report.totals.avg_csat ?? '—'} sub="Rated cases, in your books" to="/tickets?view=all&rated=true" />
+          {/* A16 (B21): one CSAT -- 4s and 5s this month, scored from 10 answers. */}
+          <Stat
+            label="CSAT (month to date)"
+            value={report.totals.csat_pct == null ? '—' : `${report.totals.csat_pct}%`}
+            sub={report.totals.csat_pct == null
+              ? `${report.totals.csat_answers} answers so far; scored from ${report.csat_period?.min_answers ?? 10}`
+              : `4s and 5s, of ${report.totals.csat_answers} answers, in your books`}
+            to={`/tickets?view=all&csat_from=${report.csat_period?.from ?? ''}`}
+          />
         </div>
       )}
 
@@ -313,7 +328,10 @@ function TicketQueue({ session }) {
                 {report.by_agent.map((a) => (
                   <tr key={a.agent}>
                     <td>{a.agent}</td><td className="num">{a.n}</td><td className="num">{a.open}</td>
-                    <td className="num">{a.breached}</td><td className="num">{a.avg_csat ? a.avg_csat.toFixed(1) : '—'}</td>
+                    <td className="num">{a.breached}</td>
+                    <td className="num" title={`${a.csat_answers} answers this month, on cases ${a.agent} resolved`}>
+                      {a.csat_pct == null ? '—' : `${a.csat_pct}%`}
+                    </td>
                   </tr>
                 ))}
               </tbody>

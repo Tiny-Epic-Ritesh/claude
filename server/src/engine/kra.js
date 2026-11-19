@@ -11,7 +11,9 @@
  */
 
 import { all, one, run, SALES_ORGS } from '../db.js';
-import { leadScope, clientScope, ticketScope, partnerScope, can, userCan } from '../auth.js';
+import { leadScope, clientScope, partnerScope, can, userCan, orgsFor } from '../auth.js';
+import { reportsOf } from './sharing.js';
+import { csatFigure, notEnoughAnswers } from './csat.js';
 import { resolveRange, inRange } from './daterange.js';
 
 /* ------------------------------------------------------------ shipped KRA */
@@ -66,10 +68,12 @@ export const SHIPPED_KRA = {
     ['partner_leads', 'Partner-sourced leads', 'partner_leads', 'count', 60, 35, 'higher', 'Referrals received.'],
     ['onboarding_stalled', 'Onboarding stalled', 'onboarding_stalled', 'count', 3, 30, 'lower', 'Partners still onboarding.'],
   ],
+  /* B21 (ruled 19 Nov): who did the work -- the person, and anyone reporting
+     to them -- with the desk's figure beside each, not scored. */
   customer_care: [
-    ['resolved', 'Cases resolved', 'cases_resolved', 'count', 180, 35, 'higher', 'Closed within the month.'],
-    ['sla_breaches', 'SLA breaches', 'sla_breaches', 'count', 5, 35, 'lower', 'Past the promised response time.'],
-    ['csat', 'CSAT', 'csat', 'percent', 85, 30, 'higher', 'Average satisfaction on rated cases.'],
+    ['resolved', 'Cases resolved', 'cases_resolved', 'count', 180, 35, 'higher', 'Cases you resolved in the period.'],
+    ['sla_breaches', 'SLA breaches', 'sla_breaches', 'count', 5, 35, 'lower', 'Cases that went past their deadline while they were yours.'],
+    ['csat', 'CSAT', 'csat', 'percent', 85, 30, 'higher', 'Share of customers\' answers that were 4 or 5, on cases you resolved. Scored from 10 answers.'],
   ],
 };
 
@@ -204,6 +208,73 @@ export function seedIncentives() {
  * bad performance, the other is a missing feed, and showing a red zero for the
  * second is how a scorecard loses its audience.
  */
+/* --------------------------------------- Customer Care: who did the work */
+
+/** The person and everyone reporting to them, at any depth: a manager's scorecard is the team's. */
+const creditedTo = (user) => [user.id, ...reportsOf(user.id)];
+
+/**
+ * Who held a case when it breached: its assignee at breached_at, read from
+ * the case's history (D9), or its assignee now when nothing has moved since.
+ */
+const HELD_AT_BREACH = `CAST(COALESCE(
+  (SELECT h.new_value FROM field_history h
+    WHERE h.entity = 'case' AND h.record_id = t.id AND h.field = 'assignee_id' AND h.changed_at <= t.breached_at
+    ORDER BY h.changed_at DESC, h.id DESC LIMIT 1),
+  (SELECT h.old_value FROM field_history h
+    WHERE h.entity = 'case' AND h.record_id = t.id AND h.field = 'assignee_id' AND h.changed_at > t.breached_at
+    ORDER BY h.changed_at ASC, h.id ASC LIMIT 1),
+  t.assignee_id) AS INTEGER)`;
+
+/**
+ * Cases resolved, SLA breaches and CSAT, credited to `people` -- or to
+ * everybody in the reader's businesses (the desk) when `people` is null.
+ *
+ *   resolved   cases resolved in the period by them (resolved_by, stamped
+ *              since A15; before it, whoever held the case)
+ *   breaches   cases that breached in the period while they held them
+ *   csat       the share of answers in the period that are 4 or 5, on cases
+ *              they resolved, scored from CSAT_MIN_ANSWERS answers
+ */
+function caseFigure(source, user, range, people) {
+  const orgs = orgsFor(user);
+  const inBooks = { sql: `t.sales_org IN (${orgs.map(() => '?').join(',') || "''"})`, params: orgs };
+  const who = (expr) => (people
+    ? { sql: `${expr} IN (${people.map(() => '?').join(',')})`, params: people }
+    : { sql: '1=1', params: [] });
+  const count = (sql, params) => one(sql, params)?.n ?? null;
+
+  if (source === 'cases_resolved') {
+    const r = inRange('t.resolved_at', range);
+    const w = who('COALESCE(t.resolved_by, t.assignee_id)');
+    return count(
+      `SELECT COUNT(*) n FROM tickets t WHERE t.resolved_at IS NOT NULL AND ${r.sql} AND ${w.sql} AND ${inBooks.sql}`,
+      [...r.params, ...w.params, ...inBooks.params],
+    );
+  }
+  if (source === 'sla_breaches') {
+    const r = inRange('t.breached_at', range);
+    const w = who(HELD_AT_BREACH);
+    return count(
+      `SELECT COUNT(*) n FROM tickets t WHERE t.breached_at IS NOT NULL AND ${r.sql} AND ${w.sql} AND ${inBooks.sql}`,
+      [...r.params, ...w.params, ...inBooks.params],
+    );
+  }
+  return csatFigure({ people, orgs, range }).pct;
+}
+
+/**
+ * What a figure carries beside its number: the desk's figure, for the three
+ * counted by who did the work, and why a CSAT is not scored yet.
+ */
+export function detailFor(source, user, range) {
+  if (!['cases_resolved', 'sla_breaches', 'csat'].includes(source)) return null;
+  const desk = caseFigure(source, user, range, null);
+  if (source !== 'csat') return { desk };
+  const own = csatFigure({ people: creditedTo(user), orgs: orgsFor(user), range });
+  return { desk, answers: own.answers, note: own.pct === null ? notEnoughAnswers(own.answers) : null };
+}
+
 export function actualFor(source, user, range) {
   const lScope = leadScope(user, 'l');
   const maySeeClients = userCan(user, 'client.view.all') || userCan(user, 'client.view.own');
@@ -212,10 +283,10 @@ export function actualFor(source, user, range) {
   /* A2d. Cases, partners and KYC applications were counted across the whole
      firm -- both businesses, and everybody's -- so a Bigul scorecard carried
      Bonanza's figures, and a Partner RM's "Active partners" was every active
-     partner there is. Each is now counted through the reader's own scope, as
-     the lead and account figures above always were: no figure on a scorecard
-     is made of records its reader may not see. */
-  const tScope = ticketScope(user, 't');
+     partner there is. Partners and KYC applications are counted through the
+     reader's own scope, as the lead and account figures above always were;
+     cases, since B21, by who did the work, in the reader's businesses
+     (caseFigure, above). */
   const pScope = partnerScope(user, 'p');
 
   const num = (sql, params) => {
@@ -325,21 +396,13 @@ export function actualFor(source, user, range) {
     case 'onboarding_stalled':
       return num(`SELECT COUNT(*) n FROM partners p WHERE p.state_code = 'ONBOARDING' AND ${pScope.sql}`, pScope.params);
 
-    case 'cases_resolved': {
-      const r = inRange('t.resolved_at', range);
-      return num(`SELECT COUNT(*) n FROM tickets t WHERE t.resolved_at IS NOT NULL AND ${r.sql} AND ${tScope.sql}`,
-        [...r.params, ...tScope.params]);
-    }
-
+    /* B21 (ruled 19 Nov): Customer Care's three count who did the work --
+       the person, and anyone reporting to them -- not every case the reader
+       can see. The desk's figure is beside each (detailFor), not scored. */
+    case 'cases_resolved':
     case 'sla_breaches':
-      return num(
-        `SELECT COUNT(*) n FROM tickets t WHERE t.status NOT IN ('Resolved','Closed')
-           AND (t.breached = 1 OR (t.resolution_due IS NOT NULL AND t.resolution_due < datetime('now')))
-           AND ${tScope.sql}`, tScope.params);
-
     case 'csat':
-      return num(`SELECT CAST(AVG(t.csat) * 20 AS INTEGER) n FROM tickets t WHERE t.csat IS NOT NULL AND ${tScope.sql}`,
-        tScope.params);
+      return caseFigure(source, user, range, creditedTo(user));
 
     case 'followups_kept':
       // No completion timestamp on reminders yet, so this is honestly unknown

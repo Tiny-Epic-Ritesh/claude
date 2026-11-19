@@ -3,7 +3,7 @@
  */
 
 import { exportHeldMasked } from '../engine/policies.js';
-import { istNow, dmyTime } from '../engine/daterange.js';
+import { istNow, dmyTime, resolveRange, DEFAULT_RANGE } from '../engine/daterange.js';
 import { Router } from 'express';
 import { all, one, run, audit, notify, ROLE_LABELS } from '../db.js';
 import { can, requireUser, requirePermission, requireAnyPermission, mayUseOrg, activeOrg, orgsFor, reqTicketScope, maskFor, orgScope, userCan } from '../auth.js';
@@ -15,6 +15,7 @@ import { withCorrections, mayCorrect, addCorrection } from '../engine/correction
 import { applySla, sweepSla, closeResolved, deadlinesFor, repriceSla, handleStatusChange, slaRemaining, businessMinutesBetween, DEFAULT_SLA, breachedSql } from '../engine/sla.js';
 import { openCase, escalationTarget } from '../engine/cases.js';
 import * as csat from '../engine/csat.js';
+import { reportsOf } from '../engine/sharing.js';
 import * as ai from '../ai/index.js';
 
 const router = Router();
@@ -142,6 +143,19 @@ function ticketFilter(req) {
     where.push("t.status NOT IN ('Resolved','Closed') AND date(t.resolution_due, '+330 minutes') = date('now', '+330 minutes')");
   }
   if (qs.rated === 'true') where.push('t.csat IS NOT NULL');
+  /* A16 (B21): the cases behind a CSAT figure -- answered by their customer
+     since a day, and credited to the reader and anyone reporting to them --
+     so the figure opens on exactly what it counts (QA-05). */
+  if (qs.csat_by === 'me' || qs.csat_from) {
+    const conds = ['s.ticket_id = t.id', "s.status = 'Answered'"];
+    if (qs.csat_by === 'me') {
+      const people = [req.user.id, ...reportsOf(req.user.id)];
+      conds.push(`s.resolved_by IN (${people.map(() => '?').join(',')})`);
+      params.push(...people);
+    }
+    if (qs.csat_from) { conds.push("s.answered_at >= datetime(date(?), '-330 minutes')"); params.push(qs.csat_from); }
+    where.push(`EXISTS (SELECT 1 FROM csat_surveys s WHERE ${conds.join(' AND ')})`);
+  }
   if (qs.resolved_from) { where.push("date(t.resolved_at, '+330 minutes') >= date(?)"); params.push(qs.resolved_from); }
   if (qs.resolved_to) { where.push("date(t.resolved_at, '+330 minutes') <= date(?)"); params.push(qs.resolved_to); }
   if (qs.created_from) { where.push("date(t.created_at, '+330 minutes') >= date(?)"); params.push(qs.created_from); }
@@ -165,7 +179,7 @@ function ticketFilter(req) {
 /** Which filters are in play, for an audit row. */
 const appliedTicketFilters = (req) => Object.fromEntries(
   ['q', 'status', 'priority', 'mine', 'breached', 'open', 'lead_id', 'category_id',
-    'created_from', 'created_to', 'resolved_from', 'resolved_to', 'due_today', 'rated']
+    'created_from', 'created_to', 'resolved_from', 'resolved_to', 'due_today', 'rated', 'csat_by', 'csat_from']
     .filter((k) => req.query[k])
     .map((k) => [k, req.query[k]]),
 );
@@ -941,14 +955,23 @@ router.get('/reports/summary', requirePermission('report.team'), (req, res) => {
     WHERE ${book.sql}
     GROUP BY category ORDER BY n DESC`, book.params);
 
+  /* A16 (B21, ruled 19 Nov): CSAT here is the scorecard's and the home's --
+     the share of answers this month that were 4 or 5, credited to whoever
+     resolved the case, scored from 10 answers. It averaged every rated case
+     by whoever held it now, over all time. */
+  const books = activeOrg(req) ? [activeOrg(req)] : orgsFor(req.user);
+  const month = resolveRange(DEFAULT_RANGE);
   const byAgent = all(`
-    SELECT u.name AS agent, COUNT(*) n,
+    SELECT u.id AS agent_id, u.name AS agent, COUNT(*) n,
            SUM(CASE WHEN t.status NOT IN ('Resolved','Closed') THEN 1 ELSE 0 END) open,
-           SUM(CASE WHEN ${breachedSql('t')} THEN 1 ELSE 0 END) breached,
-           AVG(t.csat) avg_csat
+           SUM(CASE WHEN ${breachedSql('t')} THEN 1 ELSE 0 END) breached
     FROM tickets t JOIN users u ON u.id = t.assignee_id
     WHERE ${book.sql}
-    GROUP BY u.id ORDER BY n DESC`, book.params);
+    GROUP BY u.id ORDER BY n DESC`, book.params).map((a) => {
+    const fig = csat.csatFigure({ people: [a.agent_id], orgs: books, range: month });
+    return { ...a, csat_pct: fig.pct, csat_answers: fig.answers };
+  });
+  const desk = csat.csatFigure({ orgs: books, range: month });
 
   res.json({
     // QA-05: the India day the "Resolved today" figure counts, for its link.
@@ -957,8 +980,10 @@ router.get('/reports/summary', requirePermission('report.team'), (req, res) => {
       open: one(`SELECT COUNT(*) n FROM tickets t WHERE status NOT IN ('Resolved','Closed') AND ${book.sql}`, book.params).n,
       breached: one(`SELECT COUNT(*) n FROM tickets t WHERE ${breachedSql('t')} AND ${book.sql}`, book.params).n,
       resolved_today: one(`SELECT COUNT(*) n FROM tickets t WHERE date(resolved_at, '+330 minutes') = date('now', '+330 minutes') AND ${book.sql}`, book.params).n,
-      avg_csat: one(`SELECT ROUND(AVG(csat), 2) v FROM tickets t WHERE csat IS NOT NULL AND ${book.sql}`, book.params).v,
+      csat_pct: desk.pct,
+      csat_answers: desk.answers,
     },
+    csat_period: { from: month.sqlFrom, label: month.label, min_answers: csat.CSAT_MIN_ANSWERS },
     by_category: byCategory,
     by_agent: byAgent,
     sla_defaults: DEFAULT_SLA,

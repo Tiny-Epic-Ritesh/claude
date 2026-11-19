@@ -14,7 +14,7 @@ import { Router } from 'express';
 import { all, one, run } from '../db.js';
 import { requireUser, requirePermission, clientScope, leadScope, can, activeOrg, userCan, mayUseOrg } from '../auth.js';
 import { resolveRange, inRange, RANGES, DEFAULT_RANGE } from '../engine/daterange.js';
-import { actualFor, scoreOf, applySlabs } from '../engine/kra.js';
+import { actualFor, scoreOf, applySlabs, detailFor } from '../engine/kra.js';
 import { auditConfig } from '../engine/metadata.js';
 import { snapshot } from '../engine/versioning.js';
 
@@ -38,16 +38,21 @@ router.get('/', (req, res) => {
   const rows = metrics.map((m) => {
     const actual = actualFor(m.source, req.user, range);
     const score = scoreOf(m, actual);
+    /* B21: beside the figures counted by who did the work, the desk's -- for
+       context, never scored -- and why a CSAT is not scored yet. */
+    const detail = detailFor(m.source, req.user, range);
     return {
       ...m,
       actual,
       score,
+      desk: detail?.desk ?? null,
+      answers: detail?.answers ?? null,
       // Separated from `actual == null` deliberately: a metric with no source
       // is a configuration gap, one with a source that returned nothing is a
       // data gap, and they are fixed by different people.
       measurable: Boolean(m.source) && actual !== null,
       reason: !m.source ? 'No source configured for this metric'
-        : actual === null ? 'Nothing to measure it from yet'
+        : actual === null ? (detail?.note ?? 'Nothing to measure it from yet')
           : null,
     };
   });
