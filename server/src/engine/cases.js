@@ -106,3 +106,25 @@ export function openCase({
 
   return { id, ref, assignee, category };
 }
+
+const orgName = (code) => one('SELECT name FROM sales_orgs WHERE code = ?', [code])?.name ?? code;
+
+/**
+ * Where a case goes when it goes up: the assignee's manager, or else a Sales
+ * Supervisor in the case's business (OPS-44). The Escalate button uses it,
+ * and so does a low CSAT score's call-back (A15), which goes to the next
+ * level up from whoever resolved the case.
+ */
+export function escalationTarget(ticket) {
+  const assignee = ticket.assignee_id ? one('SELECT * FROM users WHERE id = ?', [ticket.assignee_id]) : null;
+  const manager = assignee?.manager_id ? one('SELECT * FROM users WHERE id = ? AND active = 1', [assignee.manager_id]) : null;
+  if (manager && mayUseOrg(manager, ticket.sales_org)) return { user: manager, how: 'manager', assignee };
+  const supervisor = all("SELECT * FROM users WHERE role = 'sales_supervisor' AND active = 1 AND id != ? ORDER BY id", [ticket.assignee_id ?? -1])
+    .find((u) => mayUseOrg(u, ticket.sales_org));
+  if (supervisor) return { user: supervisor, how: 'supervisor', assignee };
+  return {
+    user: null,
+    assignee,
+    refusal: `Nobody to escalate ${ticket.ref} to: ${assignee ? `${assignee.name} has no manager` : 'it has no assignee and so no manager'} in ${orgName(ticket.sales_org)}, and ${orgName(ticket.sales_org)} has no active Sales Supervisor. An Admin can set a manager in Setup.`,
+  };
+}

@@ -13,8 +13,8 @@ import { assertValid } from '../engine/validation.js';
 import { tracked, sourceOf } from '../engine/history.js';
 import { withCorrections, mayCorrect, addCorrection } from '../engine/corrections.js';
 import { applySla, sweepSla, closeResolved, deadlinesFor, repriceSla, handleStatusChange, slaRemaining, businessMinutesBetween, DEFAULT_SLA, breachedSql } from '../engine/sla.js';
-import { openCase } from '../engine/cases.js';
-import { send } from '../integrations.js';
+import { openCase, escalationTarget } from '../engine/cases.js';
+import * as csat from '../engine/csat.js';
 import * as ai from '../ai/index.js';
 
 const router = Router();
@@ -256,6 +256,8 @@ router.get('/:id', (req, res) => {
     ...maskRecord(decorate(ticket), maskFor(req, 'ticket', ticket.id)),   // QA-06: lead_mobile
     replies: withCorrections('reply', all('SELECT r.*, u.name AS user_name FROM ticket_replies r LEFT JOIN users u ON u.id = r.user_id WHERE r.ticket_id = ? ORDER BY r.created_at', [req.params.id])),
     merged: all('SELECT id, ref, subject FROM tickets WHERE merged_into = ?', [req.params.id]),
+    // A15: the customer's score that stands, a question still waiting, and what came before.
+    csat_detail: csat.csatFor(ticket.id),
   });
 });
 
@@ -456,11 +458,16 @@ router.patch('/:id', async (req, res) => {
 
   const sets = [];
   const params = [];
+  /* A15: the moment a case is done -- resolved, or closed without being
+     resolved first -- is when its customer is asked, once, and who did it is
+     who the answer is credited to. Closing a resolved case asks nothing. */
+  const becomesDone = Boolean(status) && DONE.includes(status) && !DONE.includes(ticket.status);
   if (status) {
     sets.push('status = ?'); params.push(status);
     if (status === 'Resolved') sets.push("resolved_at = datetime('now')");
     if (status === 'Closed') sets.push("closed_at = datetime('now')");
-    if (reopening) sets.push('resolved_at = NULL', 'closed_at = NULL');
+    if (becomesDone) { sets.push('resolved_by = ?'); params.push(req.user.id); }
+    if (reopening) sets.push('resolved_at = NULL', 'closed_at = NULL', 'resolved_by = NULL');
   }
   if (priority) { sets.push('priority = ?'); params.push(priority); }
   if (assignee_id !== undefined) { sets.push('assignee_id = ?'); params.push(assignee_id); }
@@ -487,17 +494,12 @@ router.patch('/:id', async (req, res) => {
     audit(req.user.id, 'ticket_reopened', 'ticket', ticket.id, { from: ticket.status, to: status, reason });
   }
 
-  // CSAT goes out on close (BRD §7.10).
-  if (status === 'Closed' || status === 'Resolved') {
-    const lead = ticket.lead_id ? one('SELECT * FROM leads WHERE id = ?', [ticket.lead_id]) : null;
-    if (lead) {
-      send('whatsapp', {
-        to: lead.mobile,
-        body: `Hi ${lead.name}, your Bonanza request ${ticket.ref} has been resolved. How did we do? Reply 1–5 (5 = excellent).`,
-        leadId: lead.id,
-      });
-    }
-  }
+  /* CSAT goes out when the case is done (BRD §7.10), once, in the case's own
+     business's name -- A15. It said "Bonanza" on every case and went again
+     when a resolved case was closed (OPS-65). A reopened case's score no
+     longer stands. */
+  if (reopening) csat.onReopen(ticket.id, req.user.id);
+  if (becomesDone) csat.ask(one('SELECT * FROM tickets WHERE id = ?', [ticket.id]), req.user.id);
   if (assignee_id) notify(assignee_id, `Ticket assigned to you — ${ticket.ref}`, ticket.subject, `/tickets/${ticket.id}`);
 
   /* Part 4, ruled 16 Oct: a new priority redoes the deadlines, from when the
@@ -530,19 +532,6 @@ const person = (u) => (u ? { id: u.id, name: u.name, role: u.role, role_label: R
  * either business, so a Bigul case could land with Bonanza's supervisor -- and
  * a manager who had left was handed cases too.
  */
-function escalationTarget(ticket) {
-  const assignee = ticket.assignee_id ? one('SELECT * FROM users WHERE id = ?', [ticket.assignee_id]) : null;
-  const manager = assignee?.manager_id ? one('SELECT * FROM users WHERE id = ? AND active = 1', [assignee.manager_id]) : null;
-  if (manager && mayUseOrg(manager, ticket.sales_org)) return { user: manager, how: 'manager', assignee };
-  const supervisor = all("SELECT * FROM users WHERE role = 'sales_supervisor' AND active = 1 AND id != ? ORDER BY id", [ticket.assignee_id ?? -1])
-    .find((u) => mayUseOrg(u, ticket.sales_org));
-  if (supervisor) return { user: supervisor, how: 'supervisor', assignee };
-  return {
-    user: null,
-    assignee,
-    refusal: `Nobody to escalate ${ticket.ref} to: ${assignee ? `${assignee.name} has no manager` : 'it has no assignee and so no manager'} in ${bookName(ticket.sales_org)}, and ${bookName(ticket.sales_org)} has no active Sales Supervisor. An Admin can set a manager in Setup.`,
-  };
-}
 
 /* The case, loaded within the reader's book and scope -- as the detail is. */
 function visibleCase(req) {
@@ -816,17 +805,17 @@ router.post('/:id/merge', requirePermission('ticket.merge'), (req, res) => {
   res.json({ merged: true, into: target.ref });
 });
 
-router.post('/:id/csat', (req, res) => {
-  /* Same book check as the rest. A satisfaction score is small, but it is the
-     desk's own performance record and it was writable across the book by
-     anybody signed in. */
-  const found = loadInBook(req, 'ticket', req.params.id);
+/* A15 (B20, ruled 19 Nov): a score is the customer's. Staff set it here,
+   with no record, the case's own agent included; it is now taken only from
+   the customer's answer (engine/csat.js). What staff may do is strike out a
+   wrong one -- a mistyped digit, a reply to the wrong question -- with a
+   reason, holding csat.void. */
+router.post('/:id/csat/void', requirePermission('csat.void'), (req, res) => {
+  const found = visibleCase(req);
   if (found.error) return res.status(found.status).json({ error: found.error });
-
-  const score = Number(req.body.score);
-  if (!(score >= 1 && score <= 5)) return res.status(400).json({ error: 'CSAT must be 1–5' });
-  run('UPDATE tickets SET csat = ? WHERE id = ?', [score, found.row.id]);
-  res.json({ ok: true });
+  const out = csat.voidScore(found.row.id, { userId: req.user.id, reason: req.body?.reason });
+  if (out.error) return res.status(out.status).json({ error: out.error, field: out.field });
+  return res.json({ ...out, csat_detail: csat.csatFor(found.row.id) });
 });
 
 /* --------------------------------------------------------- maintenance */

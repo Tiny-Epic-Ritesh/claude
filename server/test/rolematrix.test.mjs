@@ -146,7 +146,6 @@ const SEARCH_EXPORT = 'Export through advanced search: scoped as the search, and
 const DKYC = 'Public KYC: the resume token is the credential; there is no CRM session.';
 const PORTAL = 'Partner portal: signs in as a partner, and each route matches that partner\'s own records.';
 const WEBHOOK = 'An inbound vendor webhook, authenticated by the vendor\'s signature (guard and verifyWebhook), not a CRM session.';
-const CSAT = 'A case\'s satisfaction score, held to the case\'s business (loadInBook). Who may record one is open: B20 in ROUND-4-CHECKLIST.md.';
 
 /** Every write route without a capability guard, and why that is right. */
 const OPEN_WRITES = {
@@ -210,6 +209,7 @@ const OPEN_WRITES = {
   'POST /api/portal/referrals': PORTAL,
   'POST /api/portal/tickets': PORTAL,
   'POST /api/portal/tickets/:id/replies': PORTAL,
+  'POST /api/portal/tickets/:id/csat': PORTAL,
   'POST /api/portal/training/:module/complete': PORTAL,
   'POST /api/search-advanced/:entity': SEARCH,
   'POST /api/search-advanced/:entity/count': SEARCH,
@@ -227,7 +227,6 @@ const OPEN_WRITES = {
   'POST /dkyc-api/resume/:token/otp': DKYC,
   'POST /dkyc-api/resume/:token/step': DKYC,
   'POST /dkyc-api/start': DKYC,
-  'POST /api/tickets/:id/csat': CSAT,
   'POST /api/webhooks/bonanza-kyc/status': WEBHOOK,
   'POST /api/webhooks/meta': WEBHOOK,
   'POST /api/webhooks/quickcall/call': WEBHOOK,

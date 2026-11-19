@@ -112,6 +112,10 @@ export const PERMISSIONS = {
   'ticket.reassign':      ['superadmin', 'admin', 'customer_care', 'sales_supervisor', 'compliance'],
   'ticket.escalate':      ['superadmin', 'admin', 'customer_care', 'sales_supervisor', 'compliance'],
   'ticket.merge':         ['superadmin', 'admin', 'customer_care'],
+  /* A15 (B20, ruled 19 Nov): a customer's CSAT score is struck out only with
+     a reason, by an Admin -- or by whoever is given this in a permission set,
+     meant for the Head of Customer Care. Nobody sets a score. */
+  'csat.void':            ['superadmin', 'admin'],
 
   // Partners
   /* compliance added for QA-28, with partner.view.all: an assured-return claim

@@ -193,7 +193,7 @@ function Dashboard({ partner, onSignOut }) {
         {tab === 'earnings' && <Earnings data={data} />}
         {tab === 'products' && <ProductCatalogue data={data} onRefer={() => setRefer(true)} />}
         {tab === 'onboarding' && <Onboarding data={data} onOpenModule={setOpenModule} />}
-        {tab === 'support' && <Support data={data} onRaise={() => setRaise(true)} />}
+        {tab === 'support' && <Support data={data} onRaise={() => setRaise(true)} onRated={load} />}
       </div>
 
       {refer && <ReferModal products={data.products} onClose={() => setRefer(false)} onDone={() => { setRefer(false); load(); }} />}
@@ -724,8 +724,20 @@ function Onboarding({ data, onOpenModule }) {
 
 /* ------------------------------------------------------------- support */
 
-function Support({ data, onRaise }) {
+function Support({ data, onRaise, onRated }) {
   const rows = data.tickets ?? [];
+  const [rating, setRating] = useState(null);
+  const [rateError, setRateError] = useState(null);
+
+  /* A15: a finished request is rated by the partner, once, within 15 days. */
+  async function rate(ticket, score) {
+    setRating(ticket.id);
+    setRateError(null);
+    try {
+      await api.post(`/portal/tickets/${ticket.id}/csat`, { score }, 'partner');
+      onRated?.();
+    } catch (err) { setRateError(err.message); } finally { setRating(null); }
+  }
   const open = rows.filter((t) => !['Resolved', 'Closed'].includes(t.status));
 
   return (
@@ -762,6 +774,19 @@ function Support({ data, onRaise }) {
                   <div className="product-fact"><dt>Priority</dt><dd style={{ fontSize: 12.5 }}>{t.priority}</dd></div>
                   <div className="product-fact"><dt>Raised</dt><dd style={{ fontSize: 12.5 }}>{shortDate(t.created_at)}</dd></div>
                 </div>
+                {t.csat_open ? (
+                  <div style={{ marginTop: 10 }}>
+                    <div className="tiny muted">How did we do? 5 is excellent.</div>
+                    <div className="row" style={{ gap: 6, marginTop: 4 }}>
+                      {[1, 2, 3, 4, 5].map((n) => (
+                        <button key={n} type="button" className="btn btn-sm" disabled={rating === t.id} onClick={() => rate(t, n)}>{n}</button>
+                      ))}
+                    </div>
+                    {rateError && rating === null && <div className="tiny" role="alert">{rateError}</div>}
+                  </div>
+                ) : t.csat ? (
+                  <div className="tiny muted" style={{ marginTop: 8 }}>You rated it {t.csat}/5. Thank you.</div>
+                ) : null}
               </article>
             );
           })}
