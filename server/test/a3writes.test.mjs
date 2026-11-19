@@ -111,6 +111,13 @@ try {
     assert.equal(told, 0, 'someone in the other business was sent the note');
   });
 
+  await test('a case links only records from its own business', async () => {
+    const a = lead({ owner_id: ADMIN.id });
+    const partner = make('partners', { name: 'A3 Bigul partner', sales_org: 'BIGUL', state_code: 'ACTIVE' });
+    const out = await call(ADMIN, 'POST', '/api/tickets', { subject: 'A3 probe', lead_id: a, partner_id: partner });
+    if (out.status === 201) made.push(['tickets', out.body.id]);
+    assert.ok([400, 403, 404].includes(out.status), `a Bonanza case was linked to a Bigul partner: HTTP ${out.status}`);
+  });
 } finally {
   for (const [table, id] of [...made].reverse()) {
     try { run(`DELETE FROM ${table} WHERE id = ?`, [id]); } catch { /* removed with its parent */ }
