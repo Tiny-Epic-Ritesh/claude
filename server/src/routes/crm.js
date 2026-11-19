@@ -6,7 +6,7 @@ import { exportHeldMasked, wonRefusal, policy } from '../engine/policies.js';
 import { purgeableLeads, purgeLeads } from '../engine/retention.js';
 import { Router } from 'express';
 import { all, one, run, audit, notify, daysSince, ageBand, AGE_BANDS, CARD_COLOUR, CARD_STATES } from '../db.js';
-import { can, requireUser, requirePermission, reqScope, isReadOnlyOnLeads, unmaskRequested, maskFor, orgsFor, activeOrg, mayUseOrg, userCan, mayChangeShared, SHARED_SETTING } from '../auth.js';
+import { can, requireUser, requirePermission, reqScope, isReadOnlyOnLeads, unmaskRequested, maskFor, orgsFor, activeOrg, mayUseOrg, userCan, mayChangeShared, SHARED_SETTING, leadScope, partnerScope } from '../auth.js';
 import { owdGrant } from '../engine/owd.js';
 import { encryptField, decryptField, maskRecord, maskRecords, validate, blindIndex } from '../security.js';
 import { sendCsv } from '../engine/csv.js';
@@ -30,7 +30,7 @@ import { loadInBook } from '../engine/bookscope.js';
 import { taskFor } from '../engine/taskaccess.js';
 import { tracked, sourceOf, historyAsSeenBy } from '../engine/history.js';
 import { withCorrections, mayCorrect, addCorrection } from '../engine/corrections.js';
-import { cancelReminders } from '../engine/followups.js';
+import { cancelReminders, scheduleReminders } from '../engine/followups.js';
 import {
   listQueues, membersOf, mayTakeFrom, workIn, claimFromQueue, assignToQueue,
   setMembers, ownerOf,
@@ -886,11 +886,20 @@ router.get('/leads/:id', (req, res) => {
 });
 
 router.post('/leads', requirePermission('lead.create'), (req, res) => {
+  /* OPS-69. The business the lead is created in, settled first, so that its
+     owner and its values are checked in that business. The owner and the
+     picklists were checked against the caller's chosen business while the
+     lead was created in the one the request named -- a Bigul lead could be
+     owned by a Bonanza RM who cannot see it. */
+  const org = req.body.sales_org || activeOrg(req) || req.user.sales_org || 'BONANZA';
+  if (!mayUseOrg(req.user, org)) {
+    return res.status(403).json({ error: `You cannot create leads in ${org}.` });
+  }
+
   /* An owner in the other business would put the two books together in the
      data, the same shape as attributing a lead to a partner across them: the
      record is ours and the person holding it cannot see it. */
   if (req.body?.owner_id) {
-    const org = activeOrg(req) || req.user.sales_org;
     const owner = one('SELECT id, sales_org FROM users WHERE id = ? AND active = 1', [Number(req.body.owner_id) || -1]);
     if (!owner) return res.status(400).json({ error: 'Choose an active user' });
     if (owner.sales_org !== org) {
@@ -918,7 +927,7 @@ router.post('/leads', requirePermission('lead.create'), (req, res) => {
      not here: a new lead starts at the column default. */
   for (const column of LEAD_PICKLIST_COLUMNS) {
     if (column === 'stage' || req.body[column] === undefined) continue;
-    const refusal = columnRefusal('lead', column, req.body[column], activeOrg(req) || req.user.sales_org);
+    const refusal = columnRefusal('lead', column, req.body[column], org);
     if (refusal) return res.status(400).json({ error: refusal, field: column });
   }
 
@@ -935,10 +944,6 @@ router.post('/leads', requirePermission('lead.create'), (req, res) => {
   // The lead belongs to a business. A caller may nominate one when they work in
   // both, but only from their own entitlement — never an org they cannot see.
   // Settled before the duplicate check, because that check is asked of this book.
-  const org = req.body.sales_org || activeOrg(req) || req.user.sales_org || 'BONANZA';
-  if (!mayUseOrg(req.user, org)) {
-    return res.status(403).json({ error: `You cannot create leads in ${org}.` });
-  }
 
   /* Duplicate guard on mobile — the single most common import defect.
 
@@ -1239,15 +1244,61 @@ router.post('/leads/:id/restore', requirePermission('lead.delete'), (req, res) =
   /* Not `loadInBook` here: its lead query ends `AND deleted_at IS NULL`, so it
      cannot see the one record this route exists to bring back. The book check
      is the same, made directly against a row that is allowed to be deleted. */
-  const gone = one('SELECT id, sales_org FROM leads WHERE id = ?', [Number(req.params.id) || -1]);
+  const gone = one('SELECT id, sales_org, mobile, owner_id, owner_queue_id FROM leads WHERE id = ?', [Number(req.params.id) || -1]);
   if (!gone) return res.status(404).json({ error: 'Lead not found' });
   if (!mayUseOrg(req.user, gone.sales_org)) {
     return res.status(403).json({ error: 'This lead belongs to another book' });
   }
 
+  /* OPS-53. While it was in the bin a new lead may have taken its mobile, and
+     bringing it back made two live leads with one mobile -- the duplicate that
+     creating or importing a lead refuses. The other is named only to someone
+     who may open it, as creating a lead names it. */
+  if (gone.mobile) {
+    const live = one(
+      'SELECT id, name FROM leads WHERE mobile = ? AND sales_org = ? AND deleted_at IS NULL AND id != ?',
+      [gone.mobile, gone.sales_org, gone.id],
+    );
+    if (live) {
+      const scope = reqScope(req, 'l');
+      const opens = one(`SELECT 1 v FROM leads l WHERE l.id = ? AND ${scope.sql}`, [live.id, ...scope.params]);
+      return res.status(409).json({
+        error: `A live lead in this business already has this mobile${opens ? ` (#${live.id}, ${live.name})` : ''}, so restoring this one would make two.`,
+        fix: 'Keep the live lead, or retire it first and then restore this one.',
+        ...(opens ? { duplicate_id: live.id } : {}),
+      });
+    }
+  }
+
   run('UPDATE leads SET deleted_at = NULL WHERE id = ?', [gone.id]);
-  audit(req.user.id, 'lead_restored', 'lead', gone.id, {});
-  res.json({ restored: true });
+
+  /* OPS-54. It went back to its owner even when they had left, and sat on
+     nobody's worklist -- a handover moves a leaver's live leads, not the
+     ones in the bin. Owned by nobody who is here, it waits in its business's
+     lead queue, as a lead no rule could route does (assignLead); with no
+     queue, it comes to whoever restored it. */
+  const owner = gone.owner_id ? one('SELECT id, name, active FROM users WHERE id = ?', [gone.owner_id]) : null;
+  let queue = null;
+  if (!gone.owner_queue_id && !owner?.active) {
+    const desk = one(
+      "SELECT id, name FROM queues WHERE entity = 'lead' AND (sales_org = ? OR sales_org IS NULL) AND active = 1 ORDER BY sales_org IS NULL LIMIT 1",
+      [gone.sales_org],
+    );
+    if (desk && assignToQueue(gone.id, desk.id, { actorId: req.user.id, source: sourceOf(req) }).ok) {
+      queue = desk.name;
+    } else {
+      tracked('lead', gone.id, { actorId: req.user.id, source: sourceOf(req) },
+        () => run('UPDATE leads SET owner_id = ?, owner_queue_id = NULL WHERE id = ?', [req.user.id, gone.id]));
+    }
+  }
+  audit(req.user.id, 'lead_restored', 'lead', gone.id, { ...(queue ? { queue } : {}), ...(owner && !owner.active ? { owner_left: owner.id } : {}) });
+  const now = one('SELECT owner_id FROM leads WHERE id = ?', [gone.id]);
+  res.json({
+    restored: true,
+    owner: now.owner_id ? one('SELECT name FROM users WHERE id = ?', [now.owner_id])?.name ?? null : null,
+    queue,
+    owner_left: owner && !owner.active ? owner.name : null,
+  });
 });
 
 /* QA-37 (accepted 13 Oct), with the retention ruled 14 Oct. What in the
@@ -1535,6 +1586,9 @@ router.post('/cards/:id/state', (req, res) => {
  * other business's client -- a task, a notification and an SMS each, carrying
  * the client's name -- and was told the RMs' names. Ruled 16 Oct: fixed here.
  */
+/** The task a Product RM request gives each Product RM -- and how an open request is recognised (OPS-68). */
+const RM_TASK_TITLE = 'Product RM intervention requested on ';
+
 function rmRequestContext(req) {
   const inBook = loadInBook(req, 'card', req.params.id);
   if (inBook.error) return { status: inBook.status, error: inBook.error };
@@ -1633,6 +1687,22 @@ router.post('/cards/:id/request-product-rm', requirePermission('card.request.pro
     return res.status(409).json({ error: `No active Product RM is set up for ${card.product_name}, so nobody can be asked. An Admin sets one up in Setup → Users.` });
   }
 
+  /* OPS-68. Asking again while the first request was still open made a second
+     high-priority task, bell and SMS for every Product RM. A request is open
+     while its tasks are; the second ask is told who has it. */
+  const pending = one(
+    `SELECT MIN(t.created_at) AS asked_at, GROUP_CONCAT(u.name, ', ') AS who
+       FROM tasks t JOIN users u ON u.id = t.assignee_id
+      WHERE t.card_id = ? AND t.status = 'Open' AND t.title LIKE ?`,
+    [card.id, `${RM_TASK_TITLE}%`],
+  );
+  if (pending?.who) {
+    return res.status(409).json({
+      error: `A Product RM has already been asked about ${card.product_name}: ${pending.who} still ${pending.who.includes(',') ? 'have' : 'has'} it open.`,
+      asked_at: pending.asked_at,
+    });
+  }
+
   const requestId = Number(run(
     `INSERT INTO product_rm_requests (card_id, lead_id, sales_org, requested_by, asked, status_summary, conversations, needs_to_know)
      VALUES (?,?,?,?,?,?,?,?)`,
@@ -1669,7 +1739,7 @@ router.post('/cards/:id/request-product-rm', requirePermission('card.request.pro
     }
 
     run("INSERT INTO tasks (title, description, lead_id, card_id, assignee_id, created_by, due_at, priority) VALUES (?,?,?,?,?,?,datetime('now','+4 hours'),'High')", [
-      `Product RM intervention requested on ${lead?.name} (${card.product_name})`, taskBody, card.lead_id, card.id, rm.id, req.user.id,
+      `${RM_TASK_TITLE}${lead?.name} (${card.product_name})`, taskBody, card.lead_id, card.id, rm.id, req.user.id,
     ]);
   }
   const due = one("SELECT due_at FROM tasks WHERE card_id = ? AND created_by = ? ORDER BY id DESC LIMIT 1", [card.id, req.user.id])?.due_at ?? null;
@@ -1905,6 +1975,19 @@ router.post('/leads/:id/message', requirePermission('lead.contact'), (req, res) 
 
   const { channel = 'whatsapp', body, subject, template_id, intent = 'marketing' } = req.body;
 
+  /* OPS-47. Each channel to its own address. This sent every channel to
+     `mobile || email`, so an email went to the mobile number whenever the lead
+     had one -- while the dialog showed the email address it was going to --
+     and a WhatsApp or an SMS to the email address when it had no mobile. A
+     lead list's bulk message always addressed them this way. */
+  if (!['whatsapp', 'sms', 'email'].includes(channel)) {
+    return res.status(400).json({ error: 'Send by WhatsApp, SMS or email', field: 'channel' });
+  }
+  const to = channel === 'email' ? lead.email : lead.mobile;
+  if (!to) {
+    return res.status(400).json({ error: `${lead.name} has no ${channel === 'email' ? 'email address' : 'mobile number'}`, field: 'channel' });
+  }
+
   // Enforced here rather than in the form, because the form is not where volume
   // sends come from — imports, rules and bulk actions all land on this route.
   const consent = checkConsent(lead, channel, intent === 'service' ? 'service' : 'marketing');
@@ -1923,7 +2006,7 @@ router.post('/leads/:id/message', requirePermission('lead.contact'), (req, res) 
   /* QA-39. send() writes the timeline entry and names its author from
      userId; this never passed one, so a message a person typed read "system". */
   const entry = send(channel, {
-    to: lead.mobile || lead.email, body: text, subject: subject || template?.subject,
+    to, body: text, subject: subject || template?.subject,
     leadId: lead.id, templateId: template_id, userId: req.user.id,
   });
   applyScore(lead.id, channel === 'email' ? 'Email' : channel === 'sms' ? 'SMS' : 'WhatsApp');
@@ -2071,6 +2154,38 @@ router.get('/tasks', (req, res) => {
   ));
 });
 
+/**
+ * OPS-52. Who a task may be given to.
+ *
+ * Any id was taken: someone in the other business, someone who has left, or
+ * no one at all -- and the task then sat on nobody's list, since a person's
+ * list shows a task only if they can open its lead (taskBase, above). The
+ * person must be active, work in the business of what the task is about, and
+ * be able to open its lead when it has one. Answers why not, or null.
+ */
+function assigneeRefusal(assigneeId, { leadId = null, org = null }) {
+  const person = one('SELECT * FROM users WHERE id = ? AND active = 1', [Number(assigneeId) || -1]);
+  if (!person) return 'Choose an active person to give the task to';
+  if (org && !mayUseOrg(person, org)) return `${person.name} does not work in this business, so the task would not reach them`;
+  if (leadId) {
+    const scope = leadScope(person, 'l');
+    const opens = one(`SELECT 1 v FROM leads l WHERE l.id = ? AND l.deleted_at IS NULL AND ${scope.sql}`, [Number(leadId), ...scope.params]);
+    if (!opens) return `${person.name} cannot open this lead, so the task would not show on their list`;
+  }
+  return null;
+}
+
+/** The business and the lead of what a task is about. */
+function taskSubject(task) {
+  const viaCard = task.card_id ? one('SELECT pc.lead_id, l.sales_org FROM product_cards pc JOIN leads l ON l.id = pc.lead_id WHERE pc.id = ?', [task.card_id]) : null;
+  const leadId = task.lead_id ?? viaCard?.lead_id ?? null;
+  const org = (leadId && one('SELECT sales_org FROM leads WHERE id = ?', [leadId])?.sales_org)
+    || (task.ticket_id && one('SELECT sales_org FROM tickets WHERE id = ?', [task.ticket_id])?.sales_org)
+    || (task.partner_id && one('SELECT sales_org FROM partners WHERE id = ?', [task.partner_id])?.sales_org)
+    || null;
+  return { leadId, org };
+}
+
 router.post('/tasks', (req, res) => {
   const { title, description, lead_id, card_id, ticket_id, partner_id, assignee_id, due_at, priority = 'Normal' } = req.body;
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' });
@@ -2098,6 +2213,10 @@ router.post('/tasks', (req, res) => {
   for (const [kind, id] of links) {
     const inBook = loadInBook(req, kind, id);
     if (inBook.error) return res.status(inBook.status).json({ error: inBook.error });
+  }
+  if (assignee_id) {
+    const refusal = assigneeRefusal(assignee_id, taskSubject({ lead_id, card_id, ticket_id, partner_id }));
+    if (refusal) return res.status(400).json({ error: refusal, field: 'assignee_id' });
   }
 
   const result = run(
@@ -2164,7 +2283,11 @@ router.patch('/tasks/:id', (req, res) => {
     sets.push('title = ?'); params.push(title);
   }
   if (status) { sets.push('status = ?'); params.push(status); }
-  if (assignee_id) { sets.push('assignee_id = ?'); params.push(assignee_id); }
+  if (assignee_id) {
+    const refusal = assigneeRefusal(assignee_id, taskSubject(found.task));
+    if (refusal) return res.status(400).json({ error: refusal, field: 'assignee_id' });
+    sets.push('assignee_id = ?'); params.push(assignee_id);
+  }
   if (due_at) {
     const dueAt = typedToStored(due_at); // OPS-46
     if (!dueAt) return res.status(400).json({ error: 'The due date is not a date and time', field: 'due_at' });
@@ -2175,7 +2298,33 @@ router.patch('/tasks/:id', (req, res) => {
 
   tracked('task', Number(req.params.id), { actorId: req.user.id, source: sourceOf(req) },
     () => run(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`, [...params, req.params.id]));
-  res.json(one('SELECT * FROM tasks WHERE id = ?', [req.params.id]));
+
+  /* OPS-48. A follow-up edited here -- a new time, a new person, done or
+     reopened -- kept its reminders as they were: the old time, the old person,
+     ringing for work already done; and the lead's next follow-up stayed where
+     it was. Its own Reschedule and Complete moved both, so this does what
+     they do. A task that never had reminders is not given any. */
+  const task = found.task;
+  const now = one('SELECT * FROM tasks WHERE id = ?', [task.id]);
+  if (one('SELECT 1 v FROM reminders WHERE task_id = ?', [task.id])) {
+    if (now.status !== 'Open') {
+      cancelReminders(task.id, 'task closed');
+    } else if (now.due_at !== task.due_at || Number(now.assignee_id) !== Number(task.assignee_id) || task.status !== 'Open') {
+      cancelReminders(task.id, 'rescheduled');
+      scheduleReminders({
+        taskId: task.id, leadId: now.lead_id, userId: now.assignee_id, dueAt: now.due_at, detail: `${now.title} (rescheduled)`,
+      });
+    }
+  }
+  if (now.lead_id) {
+    run(
+      `UPDATE leads SET next_follow_up_at = (
+         SELECT MIN(due_at) FROM tasks WHERE lead_id = ? AND status = 'Open'
+       ) WHERE id = ?`,
+      [now.lead_id, now.lead_id],
+    );
+  }
+  res.json(now);
 });
 
 /* QA-37: a task is never deleted. It is cancelled, with a reason, by the
@@ -2214,11 +2363,36 @@ router.post('/notes', (req, res) => {
     }
   }
 
+  /* OPS-50. Mentioning someone sends them the note's first words and a link,
+     so only someone who may open the lead or partner can be mentioned. Any
+     id was taken: someone in the other business, or who could not open the
+     record, was sent a note about a client they may not see. */
+  const named = [...new Set((Array.isArray(mentions) ? mentions : []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  const unreachable = [];
+  for (const uid of named) {
+    const person = one('SELECT * FROM users WHERE id = ? AND active = 1', [uid]);
+    let opens = null;
+    if (person && lead_id) {
+      const scope = leadScope(person, 'l');
+      opens = one(`SELECT 1 v FROM leads l WHERE l.id = ? AND l.deleted_at IS NULL AND ${scope.sql}`, [Number(lead_id), ...scope.params]);
+    } else if (person && partner_id) {
+      const scope = partnerScope(person, 'p');
+      opens = one(`SELECT 1 v FROM partners p WHERE p.id = ? AND ${scope.sql}`, [Number(partner_id), ...scope.params]);
+    }
+    if (!opens) unreachable.push(person?.name ?? `user #${uid}`);
+  }
+  if (unreachable.length) {
+    return res.status(400).json({
+      error: `${unreachable.join(', ')} cannot open this ${lead_id ? 'lead' : 'partner'}, so cannot be mentioned`,
+      field: 'mentions',
+    });
+  }
+
   const result = run('INSERT INTO notes (lead_id, partner_id, parent_id, body, mentions, user_id) VALUES (?,?,?,?,?,?)', [
-    lead_id || null, partner_id || null, parent_id || null, body, JSON.stringify(mentions), req.user.id,
+    lead_id || null, partner_id || null, parent_id || null, body, JSON.stringify(named), req.user.id,
   ]);
 
-  for (const uid of mentions) {
+  for (const uid of named) {
     notify(uid, `${req.user.name} mentioned you`, body.slice(0, 140), lead_id ? `/leads/${lead_id}` : `/partners/${partner_id}`);
   }
   res.status(201).json(one('SELECT n.*, u.name AS user_name, u.role AS user_role FROM notes n LEFT JOIN users u ON u.id = n.user_id WHERE n.id = ?', [Number(result.lastInsertRowid)]));

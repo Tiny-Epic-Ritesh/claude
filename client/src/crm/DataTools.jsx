@@ -281,9 +281,17 @@ function RecycleBin() {
   const restore = async (id) => {
     setBusy(id);
     try {
-      await api.post(`/leads/${id}/restore`);
+      const r = await api.post(`/leads/${id}/restore`);
       // Part 4, item 8.4.
-      announce('Lead restored', ['It is out of the recycle bin and back in the lead list, with its owner and history.']);
+      /* OPS-54: where it went, as the server says -- its owner may have left. */
+      announce('Lead restored', [
+        'It is out of the recycle bin and back in the lead list, with its history.',
+        r?.queue
+          ? `${r.owner_left ?? 'Its owner'} has left, so it is waiting in ${r.queue} for someone to take.`
+          : r?.owner_left
+            ? `${r.owner_left} has left, so it is now yours.`
+            : `It is with ${r?.owner ?? 'its owner'}.`,
+      ]);
       reload();
     } catch (err) { announce('Not restored', [err.message], 'warn'); } finally { setBusy(null); }
   };

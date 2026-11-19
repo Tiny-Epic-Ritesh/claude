@@ -294,6 +294,21 @@ router.post('/', requirePermission('ticket.create'), async (req, res) => {
     return res.status(403).json({ error: 'That record belongs to another book' });
   }
 
+  /* OPS-51. A case belongs to one business, and so does everything it names.
+     Its business was taken from the lead and the card and the partner were
+     never looked at, so a Bonanza case could carry a Bigul partner -- who then
+     saw it on their portal. Each record is read in the asker's books, and all
+     of them in the case's own. */
+  for (const [kind, id] of [['lead', lead_id], ['card', card_id], ['partner', partner_id]]) {
+    if (id === undefined || id === null || id === '') continue;
+    const inBook = loadInBook(req, kind, id);
+    if (inBook.error) return res.status(inBook.status).json({ error: inBook.error });
+    if (inBook.org !== org) return res.status(400).json({ error: 'A case belongs to one business, and these records are in two' });
+  }
+  if (lead_id && cardLead && Number(cardLead.lead_id) !== Number(lead_id)) {
+    return res.status(400).json({ error: 'That product card is on another lead', field: 'card_id' });
+  }
+
   /* Auto-assignment by category, by current open load (BRD 7.10), within the
      case's own book; the reference and the SLA clock. The same for every door
      a case comes in by, so they are decided in one place -- engine/cases.js,

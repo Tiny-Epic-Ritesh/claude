@@ -168,7 +168,7 @@ export function createFollowUp({
 export function sweepReminders() {
   const due = all(
     `SELECT r.*, t.title, t.due_at AS task_due, t.status AS task_status,
-            l.name AS lead_name, u.name AS user_name, u.email AS user_email,
+            l.name AS lead_name, l.deleted_at AS lead_deleted_at, u.name AS user_name, u.email AS user_email,
             u.whatsapp, u.manager_id
      FROM reminders r
      LEFT JOIN tasks t ON t.id = r.task_id
@@ -181,6 +181,15 @@ export function sweepReminders() {
   const stats = { sent: 0, cancelled: 0, failed: 0 };
 
   for (const r of due) {
+    /* OPS-49. Its lead is in the recycle bin: the Tasks list no longer shows
+       the task, so neither does a bell, a WhatsApp or the manager's
+       escalation. Restoring the lead brings the task back to the list. */
+    if (r.lead_deleted_at) {
+      run("UPDATE reminders SET status = 'Cancelled', detail = 'lead in the recycle bin' WHERE id = ?", [r.id]);
+      stats.cancelled += 1;
+      continue;
+    }
+
     // The task was completed before the reminder came round. Nothing to say.
     if (r.task_status && r.task_status !== 'Open') {
       run("UPDATE reminders SET status = 'Cancelled', detail = 'task already closed' WHERE id = ?", [r.id]);
