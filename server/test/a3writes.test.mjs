@@ -118,6 +118,20 @@ try {
     if (out.status === 201) made.push(['tickets', out.body.id]);
     assert.ok([400, 403, 404].includes(out.status), `a Bonanza case was linked to a Bigul partner: HTTP ${out.status}`);
   });
+  await test('a task is given only to an active person who works in its lead\'s business', async () => {
+    const a = lead({ owner_id: ADMIN.id });
+    const other = await call(ADMIN, 'POST', '/api/tasks', { title: 'A3 probe', due_at: '2026-12-01 11:00', lead_id: a, assignee_id: BIGUL_RM.id });
+    if (other.status === 201) made.push(['tasks', other.body.id]);
+    assert.equal(other.status, 400, `given to someone in the other business: HTTP ${other.status}`);
+    const nobody = await call(ADMIN, 'POST', '/api/tasks', { title: 'A3 probe', due_at: '2026-12-01 11:00', lead_id: a, assignee_id: 999999 });
+    if (nobody.status === 201) made.push(['tasks', nobody.body.id]);
+    assert.equal(nobody.status, 400, `given to a user who does not exist: HTTP ${nobody.status}`);
+    const mine = await call(ADMIN, 'POST', '/api/tasks', { title: 'A3 probe', due_at: '2026-12-01 11:00', lead_id: a });
+    made.push(['tasks', mine.body.id]);
+    const moved = await call(ADMIN, 'PATCH', `/api/tasks/${mine.body.id}`, { assignee_id: BIGUL_RM.id });
+    assert.equal(moved.status, 400, `moved to someone in the other business: HTTP ${moved.status}`);
+  });
+
 } finally {
   for (const [table, id] of [...made].reverse()) {
     try { run(`DELETE FROM ${table} WHERE id = ?`, [id]); } catch { /* removed with its parent */ }

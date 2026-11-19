@@ -2084,6 +2084,38 @@ router.get('/tasks', (req, res) => {
   ));
 });
 
+/**
+ * OPS-52. Who a task may be given to.
+ *
+ * Any id was taken: someone in the other business, someone who has left, or
+ * no one at all -- and the task then sat on nobody's list, since a person's
+ * list shows a task only if they can open its lead (taskBase, above). The
+ * person must be active, work in the business of what the task is about, and
+ * be able to open its lead when it has one. Answers why not, or null.
+ */
+function assigneeRefusal(assigneeId, { leadId = null, org = null }) {
+  const person = one('SELECT * FROM users WHERE id = ? AND active = 1', [Number(assigneeId) || -1]);
+  if (!person) return 'Choose an active person to give the task to';
+  if (org && !mayUseOrg(person, org)) return `${person.name} does not work in this business, so the task would not reach them`;
+  if (leadId) {
+    const scope = leadScope(person, 'l');
+    const opens = one(`SELECT 1 v FROM leads l WHERE l.id = ? AND l.deleted_at IS NULL AND ${scope.sql}`, [Number(leadId), ...scope.params]);
+    if (!opens) return `${person.name} cannot open this lead, so the task would not show on their list`;
+  }
+  return null;
+}
+
+/** The business and the lead of what a task is about. */
+function taskSubject(task) {
+  const viaCard = task.card_id ? one('SELECT pc.lead_id, l.sales_org FROM product_cards pc JOIN leads l ON l.id = pc.lead_id WHERE pc.id = ?', [task.card_id]) : null;
+  const leadId = task.lead_id ?? viaCard?.lead_id ?? null;
+  const org = (leadId && one('SELECT sales_org FROM leads WHERE id = ?', [leadId])?.sales_org)
+    || (task.ticket_id && one('SELECT sales_org FROM tickets WHERE id = ?', [task.ticket_id])?.sales_org)
+    || (task.partner_id && one('SELECT sales_org FROM partners WHERE id = ?', [task.partner_id])?.sales_org)
+    || null;
+  return { leadId, org };
+}
+
 router.post('/tasks', (req, res) => {
   const { title, description, lead_id, card_id, ticket_id, partner_id, assignee_id, due_at, priority = 'Normal' } = req.body;
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' });
@@ -2111,6 +2143,10 @@ router.post('/tasks', (req, res) => {
   for (const [kind, id] of links) {
     const inBook = loadInBook(req, kind, id);
     if (inBook.error) return res.status(inBook.status).json({ error: inBook.error });
+  }
+  if (assignee_id) {
+    const refusal = assigneeRefusal(assignee_id, taskSubject({ lead_id, card_id, ticket_id, partner_id }));
+    if (refusal) return res.status(400).json({ error: refusal, field: 'assignee_id' });
   }
 
   const result = run(
@@ -2177,7 +2213,11 @@ router.patch('/tasks/:id', (req, res) => {
     sets.push('title = ?'); params.push(title);
   }
   if (status) { sets.push('status = ?'); params.push(status); }
-  if (assignee_id) { sets.push('assignee_id = ?'); params.push(assignee_id); }
+  if (assignee_id) {
+    const refusal = assigneeRefusal(assignee_id, taskSubject(found.task));
+    if (refusal) return res.status(400).json({ error: refusal, field: 'assignee_id' });
+    sets.push('assignee_id = ?'); params.push(assignee_id);
+  }
   if (due_at) {
     const dueAt = typedToStored(due_at); // OPS-46
     if (!dueAt) return res.status(400).json({ error: 'The due date is not a date and time', field: 'due_at' });
