@@ -577,7 +577,8 @@ function BulkAction({ list, action, onClose, onDone, onError }) {
     try {
       if (action.code === 'reassign') {
         const r = await api.post(`/lists/${list.id}/bulk/reassign`, { owner_id: Number(form.owner_id) });
-        onDone(`Moved ${r.moved} lead${r.moved === 1 ? '' : 's'}.${r.skipped ? ` ${r.skipped} skipped — different sales org.` : ''}`);
+        onDone(`Moved ${r.moved} lead${r.moved === 1 ? '' : 's'}.${r.skipped ? ` ${r.skipped} skipped — different sales org.` : ''}${
+          r.tasks_moved ? ` ${r.tasks_moved} open task${r.tasks_moved === 1 ? '' : 's'} of the previous owners went with them.` : ''}`);
       } else if (action.code === 'stage') {
         const r = await api.post(`/lists/${list.id}/bulk/stage`, { stage: form.stage });
         onDone(`${r.applied} lead${r.applied === 1 ? '' : 's'} moved to ${r.stage}.`);

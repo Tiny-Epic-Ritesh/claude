@@ -35,6 +35,7 @@ import {
 import { request as requestApproval, BULK_THRESHOLD } from '../engine/approvals.js';
 import { checkConsent } from '../engine/consent.js';
 import { send, pushToAutodialler } from '../integrations.js';
+import { moveOpenTasks, openTasks } from '../engine/ownertasks.js';
 
 const router = Router();
 router.use(requireUser);
@@ -989,6 +990,7 @@ router.post('/:id/bulk/reassign', requirePermission('lead.reassign'), (req, res)
   }
 
   let moved = 0;
+  let tasksMoved = 0;
   for (const id of ids) {
     const lead = one('SELECT id, owner_id, sales_org FROM leads WHERE id = ?', [id]);
     // Never move a lead into a business its new owner does not work in.
@@ -1001,11 +1003,13 @@ router.post('/:id/bulk/reassign', requirePermission('lead.reassign'), (req, res)
     ));
     // One row per record: "who was moved, and by whom" must stay answerable.
     audit(req.user.id, 'lead.reassign', 'lead', id, { from: lead.owner_id, to: ownerId, via_list: list.id });
+    // B27 (ruled 20 Nov): the previous owner's open tasks on it go with it.
+    tasksMoved += moveOpenTasks(id, lead.owner_id, ownerId, { actorId: req.user.id, source: sourceOf(req) }).length;
     moved += 1;
   }
 
-  notify(ownerId, 'Leads assigned to you', `${moved} leads from "${list.name}"`, '/leads');
-  res.json({ ok: true, requested: ids.length, moved, skipped: ids.length - moved });
+  notify(ownerId, 'Leads assigned to you', `${moved} leads from "${list.name}"${tasksMoved ? `, with ${openTasks(tasksMoved)} on them` : ''}`, '/leads');
+  res.json({ ok: true, requested: ids.length, moved, skipped: ids.length - moved, tasks_moved: tasksMoved });
 });
 
 /** Move every member to one stage. */

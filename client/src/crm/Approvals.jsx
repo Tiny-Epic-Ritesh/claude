@@ -157,8 +157,12 @@ function DecideModal({ request: r, onClose, onDone }) {
     setBusy(true);
     setError(null);
     try {
-      await api.post(`/approvals/${r.id}/decide`, { approve: r.approve, reason });
-      onDone(r.approve ? 'Approved, and the change has been applied.' : 'Rejected.');
+      const out = await api.post(`/approvals/${r.id}/decide`, { approve: r.approve, reason });
+      // B27: a change of owner takes the previous owner's open tasks with it.
+      const moved = out?.applied?.tasks_moved ?? 0;
+      onDone(r.approve
+        ? `Approved, and the change has been applied.${moved ? ` ${moved} open task${moved === 1 ? '' : 's'} of the previous owner went with the lead${out?.applied?.moved > 1 ? 's' : ''}.` : ''}`
+        : 'Rejected.');
     } catch (err) { setError(err.message); setBusy(false); }
   }
 
