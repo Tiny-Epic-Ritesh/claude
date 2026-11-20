@@ -1936,8 +1936,17 @@ REFUSING TO RUN — ${live.join(', ')} ${live.length === 1 ? 'is' : 'are'} confi
     await req(`/api/kyc/journeys/${need(REF.abandonedJourney, 'the abandoned KYC journey').id}/override`, {
       method: 'POST', token: T.product_rm, expect: 403, body: { step_code: 'PAN', action: 'complete' },
     });
-    await req(`/api/kyc/journeys/${need(REF.abandonedJourney, 'the abandoned KYC journey').id}/override`, {
-      method: 'POST', token: T.product_supervisor, expect: 200, body: { step_code: 'PAN', action: 'complete' },
+    /* A5 (OPS-76): the step the applicant is on, and always with a reason --
+       an override without one is refused. */
+    const id = need(REF.abandonedJourney, 'the abandoned KYC journey').id;
+    const { data: j } = await req(`/api/kyc/journeys/${id}`, { token: T.product_supervisor, expect: 200 });
+    const step = need(j.steps.find((st) => ['active', 'stalled'].includes(st.status) && !st.waits), 'a step the applicant is on');
+    await req(`/api/kyc/journeys/${id}/override`, {
+      method: 'POST', token: T.product_supervisor, expect: 400, body: { step_code: step.code, action: 'complete' },
+    });
+    await req(`/api/kyc/journeys/${id}/override`, {
+      method: 'POST', token: T.product_supervisor, expect: 200,
+      body: { step_code: step.code, action: 'complete', reason: 'e2e: confirmed with the applicant on a recorded call' },
     });
   });
 
