@@ -12,6 +12,8 @@
  *            override written with a reason and audited
  *   A5c  P4  the SLA sweep, a reopen by a portal reply, CSAT submission,
  *            and a case with more than 50 messages
+ *   A5d  P1  a Caller's and a Dealer's call disposition and its effects
+ *            (the hand-over to a Sales RM is asked as B26: there is none)
  */
 
 import { strict as assert } from 'node:assert';
@@ -370,6 +372,76 @@ try {
     }
     for (const id of [...tickets].reverse()) run('DELETE FROM tickets WHERE id = ?', [id]);
     run('DELETE FROM partners WHERE id = ?', [partner]);
+  }
+
+  /* ================================================================ A5d
+   * P1. A Caller and a Dealer each log a call with one of Setup's outcomes:
+   * it counts as their call, moves the lead's score by the outcome's weight,
+   * and sets the follow-up the outcome promises. A Caller may mark a product
+   * Exploring and not Warm; a Dealer may mark it Warm (QA-42, ruled 13 Oct).
+   * A complaint on a Caller's call opens a compliance case. How either then
+   * hands the lead to a Sales RM has no feature to test: asked as B26. */
+  {
+    const tomorrow11 = one("SELECT strftime('%Y-%m-%d', datetime('now', '+330 minutes', '+1 day')) || ' 11:00' t").t;
+    for (const role of ['caller', 'dealer']) {
+      const ME = await probe(`${role}-p1`, role);
+      const lead = newLead(ME, `${role} call`);
+      const card = Number(run(
+        "INSERT INTO product_cards (lead_id, product_type_id, state, last_state_at) VALUES (?,?, 'INACTIVE', datetime('now', '-2 days'))",
+        [lead, productId('MF')],
+      ).lastInsertRowid);
+
+      await test(`A5d a ${role}'s call is logged with Setup's outcome, scores, and sets its follow-up`, async () => {
+        // The score is computed from the timeline (non-negotiable 3), into lead_metrics.
+        const scoreOf = () => one('SELECT score FROM lead_metrics WHERE lead_id = ?', [lead])?.score ?? 0;
+        const scoreBefore = scoreOf();
+        const res = await as(ME)('POST', '/activities', {
+          lead_id: lead, type: 'Call', disposition: 'CALL_CALLBACK', follow_up_at: tomorrow11, duration_s: 180, card_id: card,
+          body: `${MARK}: interested in a SIP, asked to be called back tomorrow`,
+        });
+        assert.equal(res.status, 201, `HTTP ${res.status}: ${res.body?.error}`);
+        assert.equal(res.body.activity.type, 'Call');
+        assert.equal(res.body.activity.user_id, ME.id, 'the call is not theirs');
+        assert.ok(res.body.follow_up?.due_at, 'the callback set no follow-up');
+        assert.ok(one("SELECT id FROM tasks WHERE lead_id = ? AND assignee_id = ? AND status NOT IN ('Done','Completed','Cancelled')", [lead, ME.id]),
+          'the follow-up is not on their list');
+        const scoreAfter = scoreOf();
+        assert.ok(scoreAfter > scoreBefore, `the score did not move (${scoreBefore} → ${scoreAfter})`);
+        const card2 = (await as(ME)('GET', '/kra')).body?.metrics?.find((m) => m.source === 'calls_logged');
+        if (card2) assert.ok(card2.actual >= 1, 'the call does not count on their scorecard');
+      });
+
+      await test(`A5d a ${role} may mark the product Exploring${role === 'dealer' ? ' and Warm' : ', and not Warm'}`, async () => {
+        const exploring = await as(ME)('POST', `/cards/${card}/state`, { state: 'EXPLORING', note: `${MARK} discussed` });
+        assert.equal(exploring.status, 200, `Exploring answered ${exploring.status}: ${exploring.body?.error}`);
+        const warm = await as(ME)('POST', `/cards/${card}/state`, { state: 'WARM', note: `${MARK} go-ahead` });
+        if (role === 'caller') {
+          assert.equal(warm.status, 403, `a Caller marked Warm (HTTP ${warm.status})`);
+          assert.equal(warm.body.required, 'card.mark.warm');
+        } else {
+          assert.equal(warm.status, 200, `a Dealer could not mark Warm (HTTP ${warm.status}): ${warm.body?.error}`);
+        }
+      });
+
+      if (role === 'caller') {
+        await test('A5d a complaint on a Caller\'s call opens a compliance case, on the call saved like any other', async () => {
+          const draft = (await as(ME)('POST', '/ai/disposition', {
+            lead_id: lead, duration_s: 200, transcript: 'He says the payout is late again and he will complain to SEBI if it is not credited today.',
+          })).body;
+          assert.ok(draft.compliance_flag && draft.compliance_flag !== 'None', `no flag drafted: ${draft.compliance_flag}`);
+          const saved = await as(ME)('POST', '/activities', { lead_id: lead, type: 'Call', disposition: 'CALL_LANGUAGE', body: draft.summary, duration_s: 200 });
+          assert.equal(saved.status, 201, `HTTP ${saved.status}: ${saved.body?.error}`);
+          const confirmed = await as(ME)('POST', '/ai/disposition/confirm', {
+            lead_id: lead, activity_id: saved.body.activity.id, summary: draft.summary,
+            compliance_flag: draft.compliance_flag, compliance_note: draft.compliance_note,
+          });
+          assert.equal(confirmed.status, 200, `HTTP ${confirmed.status}: ${confirmed.body?.error}`);
+          const t = one('SELECT * FROM tickets WHERE id = ?', [confirmed.body.compliance_ticket_id]);
+          assert.ok(t && t.response_due && t.resolution_due && t.assignee_id, 'the compliance case has no deadlines or no agent');
+          run('DELETE FROM tickets WHERE id = ?', [t.id]);
+        });
+      }
+    }
   }
 } finally {
   for (const id of leads) {
