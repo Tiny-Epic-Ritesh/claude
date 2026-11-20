@@ -11,7 +11,7 @@
  */
 
 import { Router } from 'express';
-import { breachedSql } from '../engine/sla.js';
+import { breachedSql, everBreachedSql } from '../engine/sla.js';
 import { istNow, resolveRange, DEFAULT_RANGE } from '../engine/daterange.js';
 import { csatFigure, notEnoughAnswers } from '../engine/csat.js';
 import { reportsOf } from '../engine/sharing.js';
@@ -307,7 +307,9 @@ const COCKPITS = {
          reached through an aggregate instead of a record. */
       metric('Calls today', callsToday(user, active)),
       metric('Tickets opened today', orgCount(user, active, 'tickets', "date(created_at, '+330 minutes') = date('now', '+330 minutes')"), null, null, '/tickets'),
-      metric('SLA breaches', orgCount(user, active, 'tickets', 'breached = 1'), 'open + closed', 'danger', '/tickets?breached=1'),
+      /* B25: every case that breached in any round. A reopen clears the
+         flag for the new round; the breach stays on the case's record. */
+      metric('SLA breaches', orgCount(user, active, 'tickets', everBreachedSql('tickets')), 'open + closed', 'danger', '/tickets?breached=1'),
       metric('Active users', orgCount(user, active, 'users', 'active = 1'), null, null, '/admin?tab=users'),
       metric('Products configured', orgCount(user, active, 'product_types', 'active = 1'), null, null, '/admin?tab=products'),
 

@@ -596,6 +596,7 @@ function TicketDetail({ id, session }) {
         <div className="card stat"><div className="stat-label">SLA remaining</div><div className="stat-value" style={{ fontSize: 15 }}>{ticket.breached ? 'Breached' : ticket.sla_remaining_mins != null ? `${Math.round(ticket.sla_remaining_mins / 60)}h` : '—'}</div></div>
         <div className="card stat"><div className="stat-label">Assignee</div><div className="stat-value" style={{ fontSize: 15 }}>{ticket.assignee_name || 'Unassigned'}</div></div>
       </div>
+      <RoundNote ticket={ticket} />
 
       <div className="grid grid-2">
         <section className="card">
@@ -714,10 +715,13 @@ function TicketDetail({ id, session }) {
         </Modal>
       )}
       {reopening && (
-        <Reopen ticket={ticket} onClose={() => setReopening(false)} onDone={() => {
+        <Reopen ticket={ticket} onClose={() => setReopening(false)} onDone={(res) => {
           setReopening(false); reload();
-          // Part 4, item 8.4.
-          announce(`${ticket.ref} reopened`, ['It is Open again; its resolved and closed times are cleared, and your reason is an internal note on the case.']);
+          // Part 4, item 8.4; B25 for the new deadlines.
+          announce(`${ticket.ref} reopened`, [
+            'It is Open again; its resolved and closed times are cleared, and your reason is an internal note on the case.',
+            ...(res?.reopened?.said ?? []),
+          ]);
         }} />
       )}
     </>
@@ -1033,6 +1037,25 @@ function ChangeCase({ ticket, changed, onCancel, onDone }) {
 }
 
 /**
+ * Which round of its SLA a reopened case is in, and the breaches that stay on
+ * its record (B25, ruled 20 Nov). Nothing for a case never reopened and never
+ * breached before its current round.
+ */
+function RoundNote({ ticket }) {
+  const round = ticket.sla_round ?? 1;
+  const earlier = (ticket.sla_breaches ?? []).filter((b) => b.round < round);
+  if (round < 2 && !earlier.length) return null;
+  return (
+    <p className="small muted sla-round" style={{ margin: '-4px 0 14px' }}>
+      {round > 1 && <>Round {round}: reopened {dateTime(ticket.sla_started_at)}, and its deadlines count from then.</>}
+      {earlier.map((b) => (
+        <span key={b.round}>{' '}Breached in round {b.round}{b.breached_at ? ` on ${dateTime(b.breached_at)}` : ''}; that stays on its record.</span>
+      ))}
+    </p>
+  );
+}
+
+/**
  * Reopen a resolved or closed case (QA-37).
  *
  * The client was told it was done, so reopening says why; the reason is put
@@ -1042,12 +1065,15 @@ function Reopen({ ticket, onClose, onDone }) {
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  /* B25, ruled 20 Nov: a reopen starts a new round with fresh deadlines,
+     counted from the reopening. Said before anybody presses Reopen. */
+  const [next] = useApi(`/tickets/${ticket.id}/reopen-preview`);
 
   async function submit(e) {
     e.preventDefault();
     setBusy(true);
     setError(null);
-    try { await api.patch(`/tickets/${ticket.id}`, { status: 'Open', reason }); onDone(); }
+    try { onDone(await api.patch(`/tickets/${ticket.id}`, { status: 'Open', reason })); }
     catch (err) { setError(err.message); setBusy(false); }
   }
 
@@ -1056,6 +1082,11 @@ function Reopen({ ticket, onClose, onDone }) {
       <form onSubmit={submit} className="stack" style={{ gap: 12 }}>
         <ErrorBanner error={error} />
         <p className="small">It goes back to Open, and its resolved and closed times are cleared.</p>
+        {next?.said && (
+          <ul className="small reopen-round" style={{ margin: 0, paddingLeft: 18 }}>
+            {next.said.map((line) => <li key={line}>{line}</li>)}
+          </ul>
+        )}
         <div className="field">
           <label htmlFor="reopen-reason">Why</label>
           <input id="reopen-reason" value={reason} onChange={(e) => setReason(e.target.value)}

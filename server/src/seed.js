@@ -133,7 +133,7 @@ for (const t of [
      foreign key staying declared the way it is today. */
   'automation_run_step', 'automation_run', 'automation_step', 'automation',
   'kyc_journey_progress', 'kyc_journeys', 'kyc_journey_steps', 'kyc_steps_master',
-  'commissions', 'partner_lms', 'partner_steps', 'ticket_replies', 'tickets',
+  'commissions', 'partner_lms', 'partner_steps', 'sla_breaches', 'ticket_replies', 'tickets',
   // Clients before leads: converted_from_lead_id is ON DELETE SET NULL, so
   // clearing leads first would silently orphan every account instead of
   // removing it — and the next convert would then find the orphan, treat it as

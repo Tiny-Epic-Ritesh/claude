@@ -19,6 +19,7 @@ import { leastLoadedRm } from '../engine/assignment.js';
 import { kycStatusSql } from '../engine/kycstatus.js';
 import { tracked, SOURCE } from '../engine/history.js';
 import * as csat from '../engine/csat.js';
+import { startRound, roundWords } from '../engine/sla.js';
 import { referrableBooks, bookName, referralCommissionBasis } from '../engine/policies.js';
 
 const router = Router();
@@ -267,6 +268,17 @@ router.post('/tickets/:id/replies', (req, res) => {
       () => run("UPDATE tickets SET status = 'Open', resolved_at = NULL, closed_at = NULL, resolved_by = NULL WHERE id = ?", [req.params.id]));
     // A15: a reopened case's score no longer stands.
     csat.onReopen(ticket.id);
+    /* B25, ruled 20 Nov: fresh deadlines from now, as an agent's Reopen gives.
+       Said on the case, for the agent; the note is internal, so the partner
+       does not see it. */
+    const round = startRound(ticket.id);
+    run('INSERT INTO ticket_replies (ticket_id, body, author_type, internal) VALUES (?,?,?,1)', [
+      ticket.id, `Reopened by the partner's reply (was ${ticket.status}).\n${roundWords(round).join(' ')}`, 'system',
+    ]);
+    audit(null, 'ticket_reopened', 'ticket', ticket.id, {
+      from: ticket.status, to: 'Open', by_partner: req.partner.id,
+      round: round.round, response_due: round.response_due, resolution_due: round.resolution_due,
+    });
   }
   if (ticket.assignee_id) notify(ticket.assignee_id, `Partner replied — ${ticket.ref}`, req.body.body.slice(0, 120), `/tickets/${ticket.id}`);
   res.status(201).json({ ok: true });
