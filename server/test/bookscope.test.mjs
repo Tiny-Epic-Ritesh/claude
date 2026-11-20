@@ -66,6 +66,7 @@ const RECORD = {
   '/api/tickets/:id/escalation': 'ticket',
   '/api/tickets/:id/resolution-check': 'ticket',
   '/api/tickets/:id/change-preview': 'ticket',
+  '/api/tickets/:id/reopen-preview': 'ticket',
   '/api/lists/:id': 'list',
   '/api/partners/:id': 'partner',
   '/api/partners/:id/insight': 'partner',
