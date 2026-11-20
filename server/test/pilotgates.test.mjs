@@ -10,6 +10,11 @@
  *                                   OPS-81)
  *   G2  session expiry, revocation  absolute and idle expiry, sign-out, and
  *                                   what ends a session early (OPS-82)
+ *   G3  server-side authorisation   every route refuses a caller with no
+ *                                   session but the public ones, each said
+ *                                   why (OPS-83); roles and businesses
+ *   G4  partner isolation           a partner reaches only the portal, and
+ *                                   only their own records there
  *
  * Production behaviour is checked in a child process with production's
  * environment, not in this one: the suite runs with the password cost lowered
@@ -18,6 +23,7 @@
 
 import { strict as assert } from 'node:assert';
 import { execFileSync } from 'node:child_process';
+import { readFileSync, readdirSync } from 'node:fs';
 import { createHmac } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,6 +34,7 @@ import { issue as issueKey, revoke as revokeKey } from '../src/engine/apikeys.js
 import { sweepWebhooks } from '../src/engine/webhookdelivery.js';
 import { applyClosure } from '../src/routes/partners-support.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
+import { MOUNTS, ROUTES } from './helpers/routemap.mjs';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
 const SERVER = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -73,6 +80,46 @@ const probe = async (slug, role, org = 'BONANZA') => {
   probes.push(p);
   return p;
 };
+
+/**
+ * G3: the only routes a caller with no session gets past, and why each is
+ * meant to be open. Everything else answers 401. A new route answering
+ * anything else without a session fails the sweep until it is listed here,
+ * with its reason.
+ */
+const PUBLIC = {
+  'GET /dkyc-api/products': 'The public KYC journey: the products an applicant may apply for. Rate-limited.',
+  'GET /dkyc-api/business': 'The public KYC journey: which business the page is for.',
+  'GET /dkyc-api/steps/:productId': 'The public KYC journey: the steps of a product\'s application.',
+  'POST /dkyc-api/start': 'The public KYC journey: an applicant starts their own application. Rate-limited.',
+  'GET /dkyc-api/resume/:token': 'The resume link is the credential: random, kept hashed (OPS-80).',
+  'POST /dkyc-api/resume/:token/otp': 'As above: the applicant\'s own link.',
+  'POST /dkyc-api/resume/:token/step': 'As above: the applicant\'s own link.',
+  'GET /public/market/indices': 'Delayed public market indices for the sign-in page; no client data.',
+  'GET /api/webhooks/meta': 'Meta\'s subscription handshake: answered only to the configured verify token, refused otherwise.',
+  'POST /api/webhooks/meta': 'Signed by Meta (X-Hub-Signature-256). Unsigned, refused in production (OPS-83); accepted only by the development simulator.',
+  'GET /api/auth/reset/:token': 'The reset link is the credential: random, one hour, single use, kept hashed (OPS-80).',
+  'POST /api/auth/reset/:token': 'As above.',
+  'POST /api/auth/logout': 'Ends the caller\'s own session, if there is one; with none it does nothing.',
+  'GET /api/health': 'Liveness for the load balancer: no data.',
+  'GET /{*splat}': 'The app\'s own files. Every piece of data behind them comes through the API, which asks for a session.',
+};
+
+/** Every route there is: each route file as it is mounted, and the server's own. */
+function everyRoute() {
+  const out = [];
+  for (const file of readdirSync(ROUTES)) {
+    const map = MOUNTS[file];
+    if (!map) continue;
+    const src = readFileSync(path.join(ROUTES, file), 'utf8');
+    for (const m of src.matchAll(/(\w+)\.(get|post|put|patch|delete)\(\s*'([^']*)'/g)) {
+      if (m[1] in map) out.push({ method: m[2].toUpperCase(), path: (map[m[1]] + m[3]).replace(/\/$/, '') || '/' });
+    }
+  }
+  const index = readFileSync(path.join(SERVER, 'src', 'index.js'), 'utf8');
+  for (const m of index.matchAll(/app\.(get|post|put|patch|delete)\(\s*'([^']*)'/g)) out.push({ method: m[1].toUpperCase(), path: m[2] });
+  return out;
+}
 
 console.log('\nA6: the pilot gates');
 
@@ -283,6 +330,98 @@ try {
     assert.equal(one('SELECT COUNT(*) n FROM sessions WHERE partner_id = ?', [partner]).n, 0, 'a session survived the suspension');
     assert.equal(await portal(token), 401);
     assert.equal(one('SELECT portal_password FROM partners WHERE id = ?', [partner]).portal_password, null, 'the portal password survived');
+  });
+
+  /* ================================================================== G3
+   * Server-side authorisation. The screen is convenience; the API decides,
+   * every time: a session first, then the role's capability, then the
+   * business and the reader's scope on the record itself. */
+  console.log('\nG3 server-side authorisation');
+
+  await test('G3 every route refuses a caller with no session, except the public ones, each with its reason', async () => {
+    const routes = everyRoute();
+    assert.ok(routes.length > 400, `only ${routes.length} routes found: the sweep is not reading the code`);
+    const answered = [];
+    for (const r of routes) {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await fetch(`${BASE}${r.path.replace(/:(\w+)/g, '1')}`, {
+        method: r.method, headers: { 'Content-Type': 'application/json' }, body: ['GET', 'DELETE'].includes(r.method) ? undefined : '{}',
+      });
+      const key = `${r.method} ${r.path}`;
+      if (res.status !== 401 && !(key in PUBLIC)) answered.push(`${res.status} ${key}`);
+    }
+    assert.deepEqual(answered, [], `these answered with no session:\n         ${answered.join('\n         ')}`);
+    const live = new Set(routes.map((r) => `${r.method} ${r.path}`));
+    const stale = Object.keys(PUBLIC).filter((k) => !live.has(k));
+    assert.deepEqual(stale, [], 'listed as public, but no such route');
+  });
+
+  await test('G3 OPS-83 in production, an unconnected Meta refuses an unsigned delivery', () => {
+    const code = "import('./src/vendors/meta.js').then((m) => console.log(JSON.stringify(m.verifyWebhook({ get: () => undefined, rawBody: Buffer.from('{}') }))))";
+    const prod = fresh(code, { NODE_ENV: 'production', CRM_MASTER_KEY: 'a'.repeat(64) });
+    assert.ok(prod.ok, prod.out);
+    const verdict = JSON.parse(prod.out.trim().split('\n').pop());
+    assert.equal(verdict.ok, false, 'an unsigned delivery is accepted in production');
+  });
+
+  await test('G3 a role is refused what its capabilities do not allow, and the refusal names the permission', async () => {
+    const caller = await probe('cap-caller', 'caller');
+    const res = await call(caller.headers, 'GET', '/admin/users');
+    assert.equal(res.status, 403);
+    assert.equal(res.body?.required, 'admin.users');
+  });
+
+  await test('G3 a record of the other business is refused by the boundary itself, even to an Admin', async () => {
+    const bigulAdmin = await probe('book-admin', 'admin', 'BIGUL');
+    const bonanzaLead = one("SELECT id FROM leads WHERE sales_org = 'BONANZA' AND deleted_at IS NULL ORDER BY id LIMIT 1").id;
+    const res = await call(bigulAdmin.headers, 'GET', `/leads/${bonanzaLead}`);
+    assert.ok([403, 404].includes(res.status), `a Bigul Admin opened a Bonanza lead: HTTP ${res.status}`);
+    assert.equal(res.body?.required, undefined, 'refused for want of a permission, not by the boundary');
+  });
+
+  /* ================================================================== G4
+   * Partner isolation. A partner signs in to the portal only, and sees only
+   * their own referrals, cases and commissions there. */
+  console.log('\nG4 partner isolation');
+
+  const twoPartners = [];
+  for (const n of [1, 2]) {
+    const id = Number(run("INSERT INTO partners (name, sales_org, state_code) VALUES (?, 'BONANZA', 'ACTIVE')", [`${MARK} partner ${n}`]).lastInsertRowid);
+    const lead = Number(run("INSERT INTO leads (sales_org, name, mobile, source, stage, partner_id) VALUES ('BONANZA', ?, ?, 'Partner', 'New', ?)",
+      [`${MARK} referral ${n}`, `89${stamp}${n}`.slice(0, 10), id]).lastInsertRowid);
+    const ticket = Number(run("INSERT INTO tickets (ref, subject, description, sales_org, status, priority, partner_id) VALUES (?, ?, 'x', 'BONANZA', 'Open', 'Low', ?)",
+      [`BNZ-PG${stamp}${n}`, `${MARK} case ${n}`, id]).lastInsertRowid);
+    const token = `gate-iso-${stamp}-${n}`;
+    run("INSERT INTO sessions (token, partner_id, kind, expires_at, last_seen_at) VALUES (?, ?, 'partner', datetime('now', '+1 hour'), datetime('now'))", [tokenKey(token), id]);
+    twoPartners.push({ id, lead, ticket, token });
+    cleanups.push(() => {
+      run('DELETE FROM sessions WHERE partner_id = ?', [id]);
+      run('DELETE FROM tickets WHERE id = ?', [ticket]);
+      run('DELETE FROM leads WHERE id = ?', [lead]);
+      run('DELETE FROM partners WHERE id = ?', [id]);
+    });
+  }
+  const [P1, P2] = twoPartners;
+
+  await test('G4 a partner\'s session reaches no CRM route', async () => {
+    for (const url of ['/leads', `/leads/${P1.lead}`, '/tickets', '/cockpit', '/admin/users']) {
+      // eslint-disable-next-line no-await-in-loop
+      assert.equal((await call(bearer(P1.token), 'GET', url)).status, 401, `a partner reached ${url}`);
+    }
+  });
+
+  await test('G4 a staff session reaches no portal route', async () => {
+    const staff = await probe('iso-staff', 'admin');
+    assert.equal((await call(staff.headers, 'GET', '/portal/dashboard')).status, 401);
+  });
+
+  await test('G4 a partner sees their own referral and case, and never another partner\'s', async () => {
+    const own = await call(bearer(P1.token), 'GET', `/portal/tickets/${P1.ticket}`);
+    assert.equal(own.status, 200, `their own case: HTTP ${own.status}`);
+    assert.equal((await call(bearer(P1.token), 'GET', `/portal/tickets/${P2.ticket}`)).status, 404, 'another partner\'s case opened');
+    assert.equal((await call(bearer(P1.token), 'GET', `/portal/clients/${P2.lead}`)).status, 404, 'another partner\'s referral opened');
+    const list = JSON.stringify((await call(bearer(P1.token), 'GET', '/portal/dashboard')).body ?? {});
+    assert.ok(!list.includes(`${MARK} referral 2`) && !list.includes(`${MARK} case 2`), 'another partner\'s records are listed');
   });
 } finally {
   for (const fn of cleanups.reverse()) { try { fn(); } catch { /* best effort */ } }
