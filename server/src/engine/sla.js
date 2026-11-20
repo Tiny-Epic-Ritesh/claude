@@ -8,6 +8,8 @@
 import { all, one, run, notify, audit } from '../db.js';
 import { isWorkingTime, addWorkingMinutes } from './calendar.js';
 import { recordChange } from './metadata.js';
+// A cycle (cases.js imports applySla from here), safe: both are used only when a sweep runs.
+import { escalationTarget } from './cases.js';
 
 /* Default 09:00–19:00, Mon–Sat (BRD risk register: "KYC timer fires out of hours"). */
 export const BUSINESS = { startHour: 9, endHour: 19, days: [1, 2, 3, 4, 5, 6] };
@@ -204,12 +206,21 @@ function flagBreach(t, now = new Date()) {
 
   run('UPDATE tickets SET breached = 1, breached_at = datetime(\'now\'), updated_at = datetime(\'now\') WHERE id = ?', [t.id]);
 
-  // Escalation: notify the assignee and their manager (BRD §7.10 escalation automation).
-  notify(t.assignee_id, `SLA breached — ${t.ref}`, t.subject, `/tickets/${t.id}`);
-  if (t.manager_id) {
-    notify(t.manager_id, `Team SLA breach — ${t.ref}`, `${t.assignee_name || 'Unassigned'}: ${t.subject}`, `/tickets/${t.id}`);
+  /* Escalation (BRD §7.10): the agent, and the next level up -- the agent's
+     manager, or else a Supervisor in the case's business. The rule a manual
+     escalation and a low-CSAT call-back already use (engine/cases.js).
+     OPS-77: it used to be the agent's manager or nobody, so an agent with no
+     manager breached with nobody above them told, and a case with no agent
+     breached in silence altogether. */
+  if (t.assignee_id) notify(t.assignee_id, `SLA breached — ${t.ref}`, t.subject, `/tickets/${t.id}`);
+  const up = escalationTarget(t);
+  if (up.user && up.user.id !== t.assignee_id) {
+    notify(up.user.id, `Team SLA breach — ${t.ref}`, `${t.assignee_name || 'Unassigned'}: ${t.subject}`, `/tickets/${t.id}`);
   }
-  audit(null, 'sla_breach', 'ticket', t.id, { ref: t.ref, priority: t.priority });
+  audit(null, 'sla_breach', 'ticket', t.id, {
+    ref: t.ref, priority: t.priority, told: [t.assignee_id, up.user?.id].filter(Boolean),
+    ...(up.user ? {} : { nobody_above: up.refusal }),
+  });
   return true;
 }
 

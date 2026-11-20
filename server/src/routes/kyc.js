@@ -59,7 +59,8 @@ internal.get('/journeys/:id', (req, res) => {
      mobile, email, PAN, account number -- under the reader's masking, and
      unmasked on the same audited ask as a lead. */
   const masking = maskFor(req, 'kyc_journey', journey.id);
-  res.json({ ...maskRecord(journey, masking), form: maskForm(journey.form, masking) });
+  /* A5: who overrode a step, and why -- here only, never on the applicant's own link. */
+  res.json({ ...maskRecord(journey, masking), form: maskForm(journey.form, masking), overrides: kyc.overridesOf(journey.id) });
 });
 
 /* The nominees sit one level down in the form, and maskRecord reads only the
@@ -229,15 +230,12 @@ internal.post('/journeys/:id/override', requirePermission('kyc.override'), (req,
   // N-12's named case: forcing a step on the other business's application.
   if (!kyc.getJourney(Number(req.params.id))) return res.status(404).json({ error: 'Journey not found' });
   if (!journeyVisible(req, req.params.id)) return res.status(403).json({ error: 'This journey is outside your visibility scope' });
-  const { step_code, action = 'complete' } = req.body;
-  if (action === 'complete') {
-    run("UPDATE kyc_journey_progress SET status = 'done', completed_at = datetime('now') WHERE journey_id = ? AND step_code = ?", [req.params.id, step_code]);
-  } else {
-    run("UPDATE kyc_journey_progress SET status = 'active', entered_at = datetime('now'), completed_at = NULL WHERE journey_id = ? AND step_code = ?", [req.params.id, step_code]);
-    run('UPDATE kyc_journeys SET current_step = ? WHERE id = ?', [step_code, req.params.id]);
-  }
-  audit(req.user.id, 'kyc_override', 'kyc_journey', Number(req.params.id), { step_code, action });
-  res.json(kyc.getJourney(Number(req.params.id)));
+  /* A5 (BRD gate P3; OPS-76): with a reason, audited, and moving the journey
+     on as a finished step would. See overrideStep. */
+  const { step_code, action = 'complete', reason } = req.body ?? {};
+  const out = kyc.overrideStep(Number(req.params.id), { stepCode: step_code, action, reason, userId: req.user.id });
+  if (out.error) return res.status(out.status).json({ error: out.error, field: out.field });
+  res.json({ ...out.journey, overrides: kyc.overridesOf(Number(req.params.id)) });
 });
 
 internal.get('/journeys/:id/coach', async (req, res, next) => {

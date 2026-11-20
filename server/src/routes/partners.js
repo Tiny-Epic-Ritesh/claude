@@ -463,6 +463,11 @@ router.post('/:id/steps/:code', requirePermission('partner.create'), (req, res) 
   const found = loadPartner(req);
   if (found.error) return res.status(found.status).json({ error: found.error });
   const { partner } = found;
+  /* A5 (BRD gate P2; OPS-78). A step this partner's onboarding does not have
+     was "completed": the update matched nothing, and the partner's record and
+     the audit said it was done anyway. */
+  const step = one('SELECT * FROM partner_steps WHERE partner_id = ? AND code = ?', [partner.id, req.params.code]);
+  if (!step) return res.status(400).json({ error: `"${req.params.code}" is not one of ${partner.name}'s onboarding steps` });
 
   run("UPDATE partner_steps SET status = 'done', completed_at = datetime('now') WHERE partner_id = ? AND code = ?", [partner.id, req.params.code]);
 
@@ -508,7 +513,12 @@ router.post('/:id/request-elevation', requirePermission('partner.elevate.request
   const pending = stepsOutstanding(partner.id);
   if (pending > 0) return res.status(400).json({ error: `${pending} onboarding step(s) still incomplete`, pending });
 
-  for (const admin of all("SELECT id FROM users WHERE role IN ('admin','superadmin') AND active = 1")) {
+  /* A5 (OPS-78): the Admins who can grant it -- those who work in the
+     partner's business. It told every Admin in both, so the other business's
+     Admins were sent this partner's name, with a link they could not open. */
+  const deciders = all("SELECT * FROM users WHERE role IN ('admin','superadmin') AND active = 1")
+    .filter((u) => mayUseOrg(u, partner.sales_org));
+  for (const admin of deciders) {
     notify(admin.id, 'Partner elevation requested', `${req.user.name} has requested elevation for ${partner.name}.`, `/partners/${partner.id}`);
   }
   audit(req.user.id, 'partner_elevation_requested', 'partner', partner.id, {});

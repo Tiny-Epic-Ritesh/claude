@@ -321,7 +321,9 @@ try {
 
   await test('a partner: onboarding, activation and an approved suspension record its status', async () => {
     const a = make('partners', { name: 'History partner', sales_org: 'BONANZA', state_code: 'PROSPECT', owner_id: ADMIN.id });
-    const out = await call(ADMIN, 'POST', `/api/partners/${a}/steps/KYC`);
+    // A real step: since A5 (OPS-78) a step the partner's onboarding does not have is refused.
+    make('partner_steps', { partner_id: a, code: 'PROFILE', label: 'Business profile captured', status: 'active', sort_order: 0 });
+    const out = await call(ADMIN, 'POST', `/api/partners/${a}/steps/PROFILE`);
     assert.equal(out.status, 200, `step: HTTP ${out.status} ${JSON.stringify(out.body)}`);
     expectRow('partner', a, 'state_code', { to: 'QUALIFYING', actor: ADMIN.id, source: 'ui' });
     activatePartner(one('SELECT * FROM partners WHERE id = ?', [a]), ADMIN2.id, 'approval');

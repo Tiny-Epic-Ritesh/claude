@@ -134,6 +134,11 @@ function JourneyModal({ journey, session, onClose, onChanged, onError }) {
   const [full, { reload, error: loadError }] = useApi(`/kyc/journeys/${journey.id}`);
   const [coach, setCoach] = useState(null);
   const [busy, setBusy] = useState(false);
+  /* A5 (BRD gate P3, OPS-76): an override is asked for with a reason, which
+     goes into the audit and is shown on the journey. It used to be one click. */
+  const [forcing, setForcing] = useState(null);
+  const [reason, setReason] = useState('');
+  const [forceError, setForceError] = useState(null);
 
   const canManage = session.permissions.includes('kyc.manage');
   const canOverride = session.permissions.includes('kyc.override');
@@ -213,11 +218,11 @@ function JourneyModal({ journey, session, onClose, onChanged, onError }) {
                   <td className="num small">{s.seconds_on_step ? mins(s.seconds_on_step) : '—'}</td>
                   <td className="num tiny muted">{mins(s.timer_s || s.timer)}</td>
                   <td className="num">
-                    {canOverride && s.status !== 'done' && (
-                      <button className="btn-sm" disabled={busy} onClick={() => act(async () => {
-                        await api.post(`/kyc/journeys/${journey.id}/override`, { step_code: s.code, action: 'complete' });
-                        announce('Step forced complete', [`"${s.label}" is marked complete by override, and the override is in the audit.`], 'warn');
-                      })}>
+                    {/* Not on verification, which is recorded rather than forced,
+                        and not on an application abandoned (take it over first)
+                        or complete: the server refuses those too. */}
+                    {canOverride && s.status !== 'done' && !s.waits && !['Abandoned', 'Complete'].includes(full.status) && (
+                      <button className="btn-sm" disabled={busy} onClick={() => { setForcing(s); setReason(''); setForceError(null); }}>
                         Force complete
                       </button>
                     )}
@@ -226,6 +231,49 @@ function JourneyModal({ journey, session, onClose, onChanged, onError }) {
               ))}
             </tbody>
           </table>
+
+          {forcing && (
+            <div className="warnbox" style={{ marginTop: 12 }}>
+              <div><strong>Force “{forcing.label}” complete</strong></div>
+              <div className="tiny" style={{ marginTop: 2 }}>
+                The application moves on to its next step, as if the applicant had finished this one. Your reason is recorded in the audit
+                and shown here.
+              </div>
+              <textarea rows={2} style={{ marginTop: 8 }} value={reason} onChange={(e) => setReason(e.target.value)}
+                placeholder="Why? For example: OTP confirmed on a recorded call" aria-label="Reason for the override" />
+              {forceError && <ErrorBanner error={forceError} onDismiss={() => setForceError(null)} />}
+              <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+                <button className="btn-sm" disabled={busy} onClick={() => setForcing(null)}>Cancel</button>
+                <button className="btn-sm btn-danger" disabled={busy || reason.trim().length < 10} onClick={async () => {
+                  setBusy(true); setForceError(null);
+                  try {
+                    await api.post(`/kyc/journeys/${journey.id}/override`, { step_code: forcing.code, action: 'complete', reason: reason.trim() });
+                    announce('Step forced complete', [`"${forcing.label}" is complete by override. The application has moved on, and your reason is in the audit.`], 'warn');
+                    setForcing(null);
+                    reload();
+                  } catch (err) { setForceError(err.message); }
+                  finally { setBusy(false); }
+                }}>
+                  Force complete
+                </button>
+              </div>
+            </div>
+          )}
+
+          {full.overrides?.length > 0 && (
+            <>
+              <h3 style={{ marginTop: 16 }}>Overrides</h3>
+              <ul className="small" style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+                {full.overrides.map((o, i) => (
+                  <li key={i} style={{ marginBottom: 4 }}>
+                    <span className="muted">{shortDate(o.at)} · {o.by ?? 'Someone'}</span>{' '}
+                    {o.action === 'reset' ? 'sent the applicant back to' : 'forced'} “{o.step_label}”{o.action === 'reset' ? '' : ' complete'}
+                    {o.reason ? <>: <em>{o.reason}</em></> : null}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
 
           {Object.keys(full.form || {}).length > 0 && (
             <>
