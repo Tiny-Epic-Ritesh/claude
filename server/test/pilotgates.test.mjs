@@ -15,6 +15,12 @@
  *                                   why (OPS-83); roles and businesses
  *   G4  partner isolation           a partner reaches only the portal, and
  *                                   only their own records there
+ *   G5  KYC documents, retention    the application encrypted at rest; no
+ *                                   document file held by the CRM; retention
+ *   G6  consent and DND             every channel's opt-outs enforced at the
+ *                                   API, service kept apart from marketing
+ *   G7  India residency             raw client data never leaves India; what
+ *                                   leaves is de-identified first (OPS-84)
  *
  * Production behaviour is checked in a child process with production's
  * environment, not in this one: the suite runs with the password cost lowered
@@ -24,6 +30,7 @@
 import { strict as assert } from 'node:assert';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
+import http from 'node:http';
 import { createHmac } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,6 +40,7 @@ import { tokenKey, decryptField, encryptField, hashPassword } from '../src/secur
 import { issue as issueKey, revoke as revokeKey } from '../src/engine/apikeys.js';
 import { sweepWebhooks } from '../src/engine/webhookdelivery.js';
 import { applyClosure } from '../src/routes/partners-support.js';
+import { checkConsent } from '../src/engine/consent.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
 import { MOUNTS, ROUTES } from './helpers/routemap.mjs';
 
@@ -422,6 +430,144 @@ try {
     assert.equal((await call(bearer(P1.token), 'GET', `/portal/clients/${P2.lead}`)).status, 404, 'another partner\'s referral opened');
     const list = JSON.stringify((await call(bearer(P1.token), 'GET', '/portal/dashboard')).body ?? {});
     assert.ok(!list.includes(`${MARK} referral 2`) && !list.includes(`${MARK} case 2`), 'another partner\'s records are listed');
+  });
+
+  /* ================================================================== G5
+   * KYC documents and retention. Ruled 20 Nov: the pilot's documents live in
+   * Bonanza's eKYC portal (handoff mode); the CRM holds no document file. What
+   * the CRM does hold of an application is encrypted at rest. Retention as
+   * now, written up for Compliance to confirm. */
+  console.log('\nG5 KYC documents and retention');
+
+  await test('G5 an application\'s answers are encrypted at rest: no PAN, account number or address readable in the table', async () => {
+    const product = one("SELECT id FROM product_types WHERE code = 'EQD' AND sales_org = 'BONANZA'").id;
+    const started = await pub('POST', '/start', { product_type_id: product, mobile: `88${stamp}7`.slice(0, 10) });
+    assert.equal(started.status, 201, `the start answered ${started.status}`);
+    const row = one('SELECT id, form_data FROM kyc_journeys WHERE resume_key = ?', [tokenKey(started.body.resume_token)]);
+    cleanups.push(() => run('DELETE FROM kyc_journeys WHERE id = ?', [row.id]));
+    run('UPDATE kyc_journeys SET form_data = ? WHERE id = ?', [encryptField(JSON.stringify({ pan: 'ABCPE1234F', account_number: '000123456789', address: '12 Marine Drive' })), row.id]);
+    const stored = one('SELECT * FROM kyc_journeys WHERE id = ?', [row.id]);
+    const text = JSON.stringify(stored);
+    for (const secret of ['ABCPE1234F', '000123456789', 'Marine Drive']) assert.ok(!text.includes(secret), `${secret} is readable in the row`);
+    assert.match(stored.form_data, /^v1:/);
+  });
+
+  await test('G5 the CRM\'s own journey takes no document file: an upload field carries a name, never the file', () => {
+    const portal = readFileSync(path.join(SERVER, '..', 'client', 'src', 'dkyc', 'DkycPortal.jsx'), 'utf8');
+    assert.ok(!/FileReader|readAsDataURL|new FormData/.test(portal), 'the KYC page reads or sends a file');
+    const steps = readFileSync(path.join(SERVER, 'src', 'engine', 'kyc.js'), 'utf8');
+    assert.ok(!/writeFileSync|createWriteStream/.test(steps), 'the KYC engine writes a file');
+  });
+
+  /* ================================================================== G6
+   * Consent and DND. Each client's own withdrawals, per channel, enforced at
+   * the API for every sender; marketing kept apart from service. The national
+   * DND register is screened by the carriers (ruled 20 Nov): the DLT platform
+   * for promotional SMS, and the dialler. */
+  console.log('\nG6 consent and DND');
+
+  const consentLead = Number(run(
+    "INSERT INTO leads (sales_org, name, mobile, email, source, stage, marketing_opt_out, no_call) VALUES ('BONANZA', ?, ?, ?, 'Website', 'New', 1, 1)",
+    [`${MARK} opted out`, `87${stamp}3`.slice(0, 10), `optout-${stamp}@example.com`],
+  ).lastInsertRowid);
+  cleanups.push(() => { run('DELETE FROM activities WHERE lead_id = ?', [consentLead]); run('DELETE FROM leads WHERE id = ?', [consentLead]); });
+
+  await test('G6 a client who opted out of marketing gets no marketing on any channel, and still gets service messages', () => {
+    const lead = one('SELECT * FROM leads WHERE id = ?', [consentLead]);
+    for (const channel of ['sms', 'whatsapp', 'email']) {
+      assert.equal(checkConsent(lead, channel, 'marketing').allowed, false, `marketing by ${channel} allowed`);
+      assert.equal(checkConsent(lead, channel, 'service').allowed, true, `service by ${channel} refused`);
+    }
+  });
+
+  await test('G6 a client who asked not to be called is not called, not even for service', () => {
+    const lead = one('SELECT * FROM leads WHERE id = ?', [consentLead]);
+    assert.equal(checkConsent(lead, 'call', 'service').allowed, false);
+    assert.equal(checkConsent(lead, 'ivr', 'service').allowed, false);
+  });
+
+  await test('G6 the API refuses a marketing send to them, whoever asks', async () => {
+    const admin = await probe('consent-admin', 'admin');
+    const res = await call(admin.headers, 'POST', `/leads/${consentLead}/message`, { channel: 'whatsapp', intent: 'marketing', body: `${MARK} offer` });
+    assert.ok(res.status >= 400 && res.status < 500, `a marketing WhatsApp to an opted-out client answered ${res.status}`);
+    assert.equal(one("SELECT COUNT(*) n FROM activities WHERE lead_id = ? AND type = 'WhatsApp'", [consentLead]).n, 0, 'the message was logged as sent');
+  });
+
+  await test('G6 a call logged as Do Not Disturb suppresses the client from every campaign', async () => {
+    const rm = await probe('dnd-rm', 'sales_rm');
+    const lead = Number(run(
+      "INSERT INTO leads (sales_org, name, mobile, source, stage, owner_id) VALUES ('BONANZA', ?, ?, 'Website', 'Contacted', ?)",
+      [`${MARK} DND`, `85${stamp}1`.slice(0, 10), rm.id],
+    ).lastInsertRowid);
+    cleanups.push(() => { run('DELETE FROM activities WHERE lead_id = ?', [lead]); run('DELETE FROM leads WHERE id = ?', [lead]); });
+    const res = await call(rm.headers, 'POST', '/activities', { lead_id: lead, type: 'Call', disposition: 'CALL_DND', duration_s: 20, reason: 'Asked to be put on Do Not Disturb', body: `${MARK}: asked for no more calls` });
+    assert.equal(res.status, 201, `the call answered ${res.status}: ${res.body?.error}`);
+    const after = one('SELECT * FROM leads WHERE id = ?', [lead]);
+    assert.equal(after.marketing_opt_out, 1, 'the client is not suppressed from campaigns');
+    assert.equal(checkConsent(after, 'sms', 'marketing').allowed, false, 'a marketing SMS is still allowed');
+  });
+
+  /* ================================================================== G7
+   * India residency. Raw client data is processed only in India; what goes
+   * abroad is de-identified first, and checked before it leaves. OPS-84: the
+   * policy was named for every call and obeyed by none. Proved here with a
+   * frontier provider configured and pointed at a recorder on this machine. */
+  console.log('\nG7 India residency');
+
+  await test('G7 OPS-84 with a frontier provider configured, raw client data never reaches it; de-identified work does, without identifiers', async () => {
+    const seen = [];
+    const recorder = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => { seen.push(body); res.writeHead(400, { 'Content-Type': 'application/json' }); res.end('{"type":"error","error":{"type":"invalid_request_error","message":"recorder"}}'); });
+    });
+    await new Promise((resolve) => recorder.listen(0, '127.0.0.1', resolve));
+    const port = recorder.address().port;
+    const lead = Number(run(
+      "INSERT INTO leads (sales_org, name, mobile, email, source, stage) VALUES ('BONANZA', ?, ?, ?, 'Website', 'Contacted')",
+      [`Residency Probe ${stamp}`, `86${stamp}5`.slice(0, 10), `residency-${stamp}@example.com`],
+    ).lastInsertRowid);
+    cleanups.push(() => run('DELETE FROM leads WHERE id = ?', [lead]));
+    try {
+      const code = `
+        const ai = await import('./src/ai/index.js');
+        const out = {};
+        const attempt = async (k, fn) => { try { await fn(); out[k] = 'answered'; } catch (e) { out[k] = 'failed: ' + e.message.slice(0, 80); } };
+        await attempt('disposition', () => ai.disposition(ai.dispositionContext(${lead}, 'I am Residency Probe ${stamp}, my number is ${`86${stamp}5`.slice(0, 10)}, call me about a SIP', 120)));
+        await attempt('kycCoach', () => ai.kycCoach({ id: 1, lead_name: 'Residency Probe ${stamp}', applicant_mobile: '${`86${stamp}5`.slice(0, 10)}', status: 'Stalled', current_step: 'PAN' }));
+        await attempt('nextAction', () => ai.nextAction(ai.nextActionContext(${lead})));
+        out.report = ai.residency().capabilities.map((c) => [c.capability, c.routed_to, c.served_by]);
+        console.log(JSON.stringify(out));`;
+      const r = await new Promise((resolve) => {
+        const env = { ...process.env, ANTHROPIC_API_KEY: 'sk-ant-recorder', ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`, CRM_AI_RESIDENCY: 'hybrid' };
+        delete env.NODE_ENV;
+        import('node:child_process').then(({ execFile }) => execFile(process.execPath, ['--input-type=module', '-e', code], { cwd: SERVER, env }, (err, stdout, stderr) => resolve({ err, out: `${stdout}${stderr}` })));
+      });
+      const line = r.out.trim().split('\n').reverse().find((l) => l.startsWith('{'));
+      assert.ok(line, `the AI layer did not report: ${r.out.slice(-300)}`);
+      const out = JSON.parse(line);
+      const sent = seen.join('\n');
+      assert.ok(!sent.includes(`Residency Probe ${stamp}`), 'a client\'s name reached the frontier provider');
+      assert.ok(!sent.includes(`86${stamp}5`.slice(0, 10)), 'a client\'s mobile reached the frontier provider');
+      assert.ok(!sent.includes('call me about a SIP'), 'a call transcript reached the frontier provider');
+      assert.ok(seen.length >= 1, `the de-identified next-action call never went to the frontier (${JSON.stringify(out)})`);
+      const served = Object.fromEntries(out.report.map(([k, , by]) => [k, by]));
+      assert.equal(served.disposition, 'offline stub', `disposition is served by ${served.disposition}`);
+      assert.equal(served.kycCoach, 'offline stub', `KYC coaching is served by ${served.kycCoach}`);
+      assert.match(served.nextAction, /^Claude/, `next action is served by ${served.nextAction}`);
+    } finally {
+      await new Promise((resolve) => recorder.close(resolve));
+    }
+  });
+
+  await test('G7 in the strict modes nothing reaches the frontier, whatever is configured', () => {
+    for (const mode of ['in_india_only', 'offline']) {
+      const r = fresh("import('./src/ai/index.js').then((ai) => console.log(JSON.stringify(ai.residency().capabilities.map((c) => c.served_by))))",
+        { CRM_AI_RESIDENCY: mode, ANTHROPIC_API_KEY: 'sk-ant-recorder', ANTHROPIC_BASE_URL: 'http://127.0.0.1:9' });
+      assert.ok(r.ok, r.out);
+      const by = JSON.parse(r.out.trim().split('\n').pop());
+      assert.ok(by.every((b) => b === 'offline stub'), `${mode}: served by ${by}`);
+    }
   });
 } finally {
   for (const fn of cleanups.reverse()) { try { fn(); } catch { /* best effort */ } }
