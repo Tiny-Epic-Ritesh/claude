@@ -209,7 +209,7 @@ try {
   });
 
   /* ------------------------------------------------- routing chooses */
-  const team = Number(run("INSERT INTO teams (name, strategy, sales_org, rr_cursor, handover_cursor) VALUES (?, 'round_robin', 'BONANZA', 0, 0)", [`${MARK} desk`]).lastInsertRowid);
+  const team = Number(run("INSERT INTO teams (name, strategy, sales_org, rr_cursor) VALUES (?, 'round_robin', 'BONANZA', 0)", [`${MARK} desk`]).lastInsertRowid);
   made.push(['teams', team]);
   // A Caller first in the rota, as on the Digital Desk.
   [[CALLER2, 0], [RM2, 1], [RM3, 2]].forEach(([p, i]) => run('INSERT INTO team_members (team_id, user_id, sort_order) VALUES (?,?,?)', [team, p.id, i]));
@@ -236,10 +236,11 @@ try {
 
   await test('asking first moves no rotation, and hand-overs do not move the one new leads are dealt from', async () => {
     const c = leadOf(CALLER, { source });
-    const before = one('SELECT rr_cursor, handover_cursor FROM teams WHERE id = ?', [team]);
+    const cursors = () => ({ ...one('SELECT * FROM teams WHERE id = ?', [team]) });
+    const before = cursors();
     await as(CALLER)('GET', `/leads/${c}/handover`);
     await as(CALLER)('GET', `/leads/${c}/handover`);
-    assert.deepEqual({ ...one('SELECT rr_cursor, handover_cursor FROM teams WHERE id = ?', [team]) }, { ...before }, 'the preview moved a rotation');
+    assert.deepEqual(cursors(), before, 'the preview moved a rotation');
     assert.equal(before.rr_cursor, 0, 'a hand-over moved the rota new leads are dealt from');
     assert.equal(one('SELECT fire_count FROM assignment_rules WHERE id = ?', [rule]).fire_count, 0, 'a hand-over counted as the rule routing a new lead');
   });
