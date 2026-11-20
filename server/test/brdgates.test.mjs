@@ -14,6 +14,8 @@
  *            and a case with more than 50 messages
  *   A5d  P1  a Caller's and a Dealer's call disposition and its effects
  *            (the hand-over to a Sales RM is asked as B26: there is none)
+ *   A5e  P2  a partner's activation: eight steps, a separate Admin
+ *            approval, and portal sign-in
  */
 
 import { strict as assert } from 'node:assert';
@@ -441,6 +443,105 @@ try {
           run('DELETE FROM tickets WHERE id = ?', [t.id]);
         });
       }
+    }
+  }
+
+  /* ================================================================ A5e
+   * P2. A Partner RM brings a prospect through the eight onboarding steps;
+   * elevation can be asked for only when all eight are done, and only an
+   * Admin of the partner's own business is asked, and may grant it. The grant
+   * issues the partner code and a one-time portal password, with which the
+   * partner signs in. A step the onboarding does not have is refused, and
+   * leaves nothing on the partner's record. */
+  {
+    const PRM2 = await probe('partner-rm', 'partner_rm');
+    const BNZ_ADMIN = await probe('admin-p2', 'admin');
+    const BGL_ADMIN = await probeAdmin('gate-admin-bigul', { role: 'admin', sales_org: 'BIGUL' });
+    probes.push(BGL_ADMIN);
+    const email = `gate-partner-${stamp}@example.com`;
+    const created = await as(PRM2)('POST', '/partners', {
+      name: `${MARK} partner`, email, mobile: `94${stamp}1`.slice(0, 10), partner_model: 'Remisier', sales_org: 'BONANZA',
+    });
+    const partner = created.body?.id;
+    const steps = all('SELECT code FROM partner_steps WHERE partner_id = ? ORDER BY sort_order', [partner ?? -1]).map((r) => r.code);
+    const stateOf = () => one('SELECT state_code FROM partners WHERE id = ?', [partner]).state_code;
+
+    await test('A5e a Partner RM\'s prospect starts with the eight onboarding steps', async () => {
+      assert.equal(created.status, 201, `HTTP ${created.status}: ${created.body?.error}`);
+      assert.equal(steps.length, 8, `the onboarding has ${steps.length} steps`);
+      assert.equal(stateOf(), 'PROSPECT');
+    });
+
+    await test('A5e elevation cannot be asked for, or granted, before all eight are done', async () => {
+      const asked = await as(PRM2)('POST', `/partners/${partner}/request-elevation`);
+      assert.equal(asked.status, 400, `asked with steps open (HTTP ${asked.status})`);
+      assert.equal(asked.body.pending, 8);
+      const granted = await as(BNZ_ADMIN)('POST', `/partners/${partner}/elevate`, {});
+      assert.equal(granted.status, 400, `granted with steps open (HTTP ${granted.status})`);
+    });
+
+    await test('A5e a step the onboarding does not have is refused, and leaves nothing on the record', async () => {
+      const res = await as(PRM2)('POST', `/partners/${partner}/steps/NOT_A_STEP`);
+      assert.equal(res.status, 400, `an unknown step was accepted (HTTP ${res.status})`);
+      assert.equal(one("SELECT COUNT(*) n FROM activities WHERE partner_id = ? AND subject LIKE '%NOT_A_STEP%'", [partner]).n, 0,
+        'the partner\'s record says a step that does not exist was completed');
+    });
+
+    await test('A5e the eight steps move the partner on, each on the record', async () => {
+      for (const code of steps) {
+        const res = await as(PRM2)('POST', `/partners/${partner}/steps/${code}`);
+        assert.equal(res.status, 200, `step ${code}: HTTP ${res.status}: ${res.body?.error}`);
+        if (code === steps[0]) assert.equal(stateOf(), 'QUALIFYING', 'the first step did not start qualifying');
+      }
+      assert.equal(stateOf(), 'ONBOARDING', `after the agreement the partner is ${stateOf()}`);
+      assert.equal(one("SELECT COUNT(*) n FROM partner_steps WHERE partner_id = ? AND status != 'done'", [partner]).n, 0, 'a step is still open');
+      assert.equal(one("SELECT COUNT(*) n FROM audit_log WHERE action = 'partner_step' AND entity_id = ?", [partner]).n, 8, 'not every step is audited');
+    });
+
+    await test('A5e the Partner RM asks; only the Admins of the partner\'s own business are told', async () => {
+      const res = await as(PRM2)('POST', `/partners/${partner}/request-elevation`);
+      assert.equal(res.status, 200, `HTTP ${res.status}: ${res.body?.error}`);
+      const toldOf = (u) => one('SELECT id FROM notifications WHERE user_id = ? AND link = ?', [u.id, `/partners/${partner}`]);
+      assert.ok(toldOf(BNZ_ADMIN), 'the Bonanza Admin was not told');
+      assert.equal(toldOf(BGL_ADMIN), undefined, 'a Bigul Admin was told about a Bonanza partner');
+    });
+
+    let login;
+    await test('A5e a separate Admin grants it: the Partner RM cannot, the Admin can, and a one-time password is issued', async () => {
+      assert.equal((await as(PRM2)('POST', `/partners/${partner}/elevate`, {})).status, 403, 'a Partner RM elevated their own prospect');
+      const res = await as(BNZ_ADMIN)('POST', `/partners/${partner}/elevate`, {});
+      assert.equal(res.status, 200, `HTTP ${res.status}: ${res.body?.error}`);
+      assert.match(String(res.body.partner_code), /^BNZ-P/, `the code is ${res.body.partner_code}`);
+      assert.equal(stateOf(), 'ACTIVE');
+      login = res.body.portal_login;
+      assert.ok(login?.password && login.one_time, 'no one-time portal password');
+    });
+
+    await test('A5e the partner signs in to the portal with it', async () => {
+      const res = await fetch(`${BASE}/api/auth/partner-login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: login?.password }),
+      });
+      const body = await res.json().catch(() => null);
+      assert.equal(res.status, 200, `the sign-in answered ${res.status}: ${body?.error}`);
+      const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${body.token}` };
+      // OPS-15: a one-time password opens only the screen that replaces it.
+      const locked = await fetch(`${BASE}/api/portal/dashboard`, { headers });
+      assert.equal(locked.status, 403, `the portal opened on a one-time password (HTTP ${locked.status})`);
+      const chosen = await fetch(`${BASE}/api/auth/partner-password`, {
+        method: 'POST', headers, body: JSON.stringify({ current_password: login.password, new_password: `Own-${stamp}-pw` }),
+      });
+      assert.equal(chosen.status, 200, `choosing a password answered ${chosen.status}`);
+      const dash = await fetch(`${BASE}/api/portal/dashboard`, { headers });
+      assert.equal(dash.status, 200, `the portal answered ${dash.status}`);
+      run('DELETE FROM sessions WHERE partner_id = ?', [partner]);
+    });
+
+    if (partner) {
+      run('DELETE FROM notifications WHERE link = ?', [`/partners/${partner}`]);
+      run("DELETE FROM audit_log WHERE entity = 'partner' AND entity_id = ?", [partner]);
+      run("DELETE FROM field_history WHERE entity = 'partner' AND record_id = ?", [partner]);
+      run('DELETE FROM activities WHERE partner_id = ?', [partner]);
+      run('DELETE FROM partners WHERE id = ?', [partner]);
     }
   }
 } finally {
