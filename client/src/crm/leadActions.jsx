@@ -116,6 +116,7 @@ export function useLeadActions({ session, reload, onError, onNotice }) {
       case 'card': return setModal({ kind: 'card', lead });
       case 'stage': return setModal({ kind: 'stage', lead });
       case 'owner': return setModal({ kind: 'owner', lead });
+      case 'handover': return setModal({ kind: 'handover', lead });
       /* Asks which product first. A KYC journey belongs to a product -- the
          step list for a demat account is not the one for a PMS mandate -- so
          starting one from a menu that knows only the lead has to ask.

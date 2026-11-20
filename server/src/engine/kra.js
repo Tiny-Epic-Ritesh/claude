@@ -34,7 +34,8 @@ export const SHIPPED_KRA = {
   caller: [
     ['calls_made', 'Calls made', 'calls_logged', 'count', 1200, 35, 'higher', 'Dials logged in the month.'],
     ['connect_rate', 'Connect rate', 'connect_rate', 'percent', 35, 25, 'higher', 'Connected calls as a share of dials.'],
-    ['qualified', 'Leads qualified', 'leads_qualified', 'count', 40, 30, 'higher', 'Moved to Qualified after a conversation.'],
+    /* B26 (ruled 20 Nov): what a Caller qualifies, they hand to a Sales RM. */
+    ['qualified', 'Leads qualified', 'leads_qualified', 'count', 40, 30, 'higher', 'Leads you handed to a Sales RM in the period.'],
     ['followups_kept', 'Follow-ups kept', 'followups_kept', 'percent', 90, 10, 'higher', 'Callbacks honoured on the day promised.'],
   ],
   sales_rm: [
@@ -317,11 +318,21 @@ export function actualFor(source, user, range) {
       return Math.round((conn / total) * 100);
     }
 
-    case 'leads_qualified':
+    /* B26 (ruled 20 Nov 2026): the hand-overs to a Sales RM they made in the
+       period, in their businesses -- theirs and anyone's reporting to them, as
+       B21 ruled for Customer Care. It counted their leads standing at
+       Qualified: a stage a Caller could not set, and a lead they handed on
+       left the count the moment it was no longer theirs. */
+    case 'leads_qualified': {
+      const r = inRange('h.created_at', range);
+      const people = creditedTo(user);
+      const orgs = orgsFor(user);
       return num(
-        `SELECT COUNT(*) n FROM leads l WHERE l.deleted_at IS NULL AND ${lScope.sql}
-           AND l.stage = 'Qualified' AND ${created.sql}`,
-        [...lScope.params, ...created.params]);
+        `SELECT COUNT(*) n FROM lead_handovers h
+          WHERE h.from_user_id IN (${people.map(() => '?').join(',')})
+            AND h.sales_org IN (${orgs.map(() => '?').join(',') || "''"}) AND ${r.sql}`,
+        [...people, ...orgs, ...r.params]);
+    }
 
     case 'accounts_opened': {
       if (!cScope) return null;

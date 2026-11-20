@@ -365,7 +365,9 @@ const COCKPITS = {
         metric('Marked Exploring', leads.reduce((s, l) => s + l.exploring_count, 0), null, null, '/leads?card_state=EXPLORING'),
       ],
       worklist: { type: 'leads', title: 'Call queue', rows: queue, columns: ['name', 'mobile', 'stage', 'age_band', 'callback_at', 'source'] },
-      actions: ['Call', 'WhatsApp', 'SMS', 'Mark callback', 'Not reachable', 'Mark Exploring', 'Flag for Sales RM', 'Push to autodialler'],
+      /* B26 (ruled 20 Nov): "Flag for Sales RM" opened the lead list and
+         stopped there. It is the hand-over now, named as the Dealer's is. */
+      actions: ['Call', 'WhatsApp', 'SMS', 'Mark callback', 'Not reachable', 'Mark Exploring', 'Hand to Sales RM', 'Push to autodialler'],
     };
   },
 
@@ -808,8 +810,8 @@ const ACTION = {
   'Create task': { icon: 'add_task', kind: 'go', to: '/tasks' },
   'Create ticket': { icon: 'support_agent', kind: 'pick', to: '/tickets', hint: 'Raise against a lead', needs: 'ticket.create' },
   'Add note': { icon: 'edit_note', kind: 'pick', to: '/leads', hint: 'Choose the lead', needs: 'lead.contact' },
-  'Flag for Sales RM': { icon: 'flag', kind: 'pick', to: '/leads', hint: 'Choose the lead', needs: 'lead.contact' },
-  'Hand to Sales RM': { icon: 'forward', kind: 'pick', to: '/leads', hint: 'Choose the lead', needs: 'lead.contact' },
+  /* B26: on the lead, Actions → Hand to a Sales RM. */
+  'Hand to Sales RM': { icon: 'forward', kind: 'pick', to: '/leads', hint: 'Choose the lead, then Actions → Hand to a Sales RM', needs: 'lead.handover' },
   'Request Product RM': { icon: 'support_agent', kind: 'pick', to: '/leads', hint: 'Choose the lead', needs: 'card.request.productrm' },
   'Reassign lead': { icon: 'person_pin', kind: 'pick', to: '/leads', hint: 'Choose the lead', needs: 'lead.reassign' },
   'Approve stage change': { icon: 'approval', kind: 'go', to: '/approvals', needs: 'lead.stage.change' },
