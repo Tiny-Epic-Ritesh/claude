@@ -42,7 +42,7 @@ import { tracked, SOURCE } from './history.js';
 import { routeToRole } from './assignment.js';
 import { columnRefusal } from './metadata.js';
 import { assertValid } from './validation.js';
-import { cancelReminders, scheduleReminders } from './followups.js';
+import { moveOpenTasks } from './ownertasks.js';
 import { dmyTime } from './daterange.js';
 import { STATE_LABEL } from './nextaction.js';
 
@@ -233,21 +233,9 @@ export function handOver(lead, user, { toUserId = null, auto = false, note = '',
       ]);
     }
 
-    /* Their open tasks go with the lead, and their reminders with them, as a
-       task given to somebody else anywhere does (OPS-48). */
-    const tasks = tasksOf(lead.id, user.id);
-    if (tasks.length) {
-      const ids = tasks.map((t) => t.id);
-      tracked('task', ids, { actorId: user.id, source }, () => run(
-        `UPDATE tasks SET assignee_id = ? WHERE id IN (${ids.map(() => '?').join(',')})`,
-        [to.id, ...ids],
-      ));
-      for (const t of tasks) {
-        if (!one('SELECT 1 v FROM reminders WHERE task_id = ?', [t.id])) continue;
-        cancelReminders(t.id, 'handed over');
-        scheduleReminders({ taskId: t.id, leadId: lead.id, userId: to.id, dueAt: t.due_at, detail: `${t.title} (handed over)` });
-      }
-    }
+    /* Their open tasks go with the lead, reminders and all -- as every change
+       of owner now does (B27, engine/ownertasks.js). */
+    const tasks = moveOpenTasks(lead.id, user.id, to.id, { actorId: user.id, source, why: 'handed over' });
 
     const products = all(
       `SELECT pt.name, pc.state FROM product_cards pc JOIN product_types pt ON pt.id = pc.product_type_id

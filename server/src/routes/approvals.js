@@ -16,6 +16,7 @@ import { stepsOutstanding, activatePartner, applyClosure, closureRefusal } from 
 import { applyJourneySteps, journeyRefusal } from '../engine/journeyconfig.js';
 import { setDefaults as setOwd, isLevel } from '../engine/owd.js';
 import { supervisorsOf } from '../engine/salesrmhandover.js';
+import { moveOpenTasks, openTasks } from '../engine/ownertasks.js';
 import {
   APPROVAL_SCOPES, BULK_THRESHOLD, request, decide, withdraw, byId,
   queueFor, history, lockedBy, approversFor, inReach, orgOf,
@@ -145,6 +146,7 @@ const APPLY = {
     if (!to) throw new Error('That owner is no longer active');
 
     let moved = 0;
+    let tasksMoved = 0;
     for (const id of ids) {
       const lead = one('SELECT id, owner_id, sales_org FROM leads WHERE id = ? AND deleted_at IS NULL', [id]);
       if (!lead || lead.sales_org !== to.sales_org) continue;
@@ -158,10 +160,12 @@ const APPLY = {
       // moved, and by whose decision, stays answerable.
       if (r.changes) {
         audit(decidedBy?.id ?? null, 'lead.reassign', 'lead', id, { from: lead.owner_id, to: owner, via_approval: req.id });
+        // B27 (ruled 20 Nov): the previous owner's open tasks on it go with it.
+        tasksMoved += moveOpenTasks(id, lead.owner_id, owner, { actorId: decidedBy?.id ?? null, source: SOURCE.approval }).length;
       }
       moved += r.changes;
     }
-    return { moved, requested: ids.length, skipped: ids.length - moved };
+    return { moved, requested: ids.length, skipped: ids.length - moved, tasks_moved: tasksMoved };
   },
 
   /* P3-21. Checked again now, not only when it was asked: a request can sit
@@ -195,6 +199,9 @@ const APPLY = {
     audit(decidedBy?.id ?? null, 'lead.reassign', 'lead', lead.id, {
       from: lead.owner_id, to: to.id, via_approval: req.id,
     });
+    // B27 (ruled 20 Nov): the previous owner's open tasks on it go with it.
+    const tasksMoved = moveOpenTasks(lead.id, lead.owner_id, to.id, { actorId: decidedBy?.id ?? null, source: SOURCE.approval });
+    const withTasks = tasksMoved.length ? ` ${openTasks(tasksMoved.length)} on it went with it.` : '';
 
     const owner = one('SELECT id, name FROM users WHERE id = ?', [lead.owner_id]);
     if (owner && Number(decidedBy?.id) === Number(owner.id)) {
@@ -202,14 +209,15 @@ const APPLY = {
          Ritesh, 11 September. */
       for (const sup of supervisorsOf(owner.id)) {
         if (sup === Number(to.id) || sup === Number(owner.id)) continue;
-        notify(sup, `Lead handed over: ${lead.name}`, `${owner.name} handed ${lead.name} to ${to.name}.`, `/leads/${lead.id}`);
+        notify(sup, `Lead handed over: ${lead.name}`, `${owner.name} handed ${lead.name} to ${to.name}.${withTasks}`, `/leads/${lead.id}`);
       }
     } else if (owner) {
       /* Somebody else moved it. The person who had it should not find out by
          noticing it has gone. */
-      notify(owner.id, `Lead transferred: ${lead.name}`, `${lead.name} was transferred to ${to.name}.`, '/approvals');
+      notify(owner.id, `Lead transferred: ${lead.name}`, `${lead.name} was transferred to ${to.name}.${
+        tasksMoved.length ? ` Your ${openTasks(tasksMoved.length)} on it went with it.` : ''}`, '/approvals');
     }
-    return { lead_id: lead.id, owner_id: to.id };
+    return { lead_id: lead.id, owner_id: to.id, tasks_moved: tasksMoved.length };
   },
 };
 

@@ -530,9 +530,12 @@ function OwnerModal({ lead, onClose, onDone, onNotice }) {
     e.preventDefault();
     setBusy(true); setError(null);
     try {
-      await api.patch(`/leads/${lead.id}`, { owner_id: ownerId });
+      const res = await api.patch(`/leads/${lead.id}`, { owner_id: ownerId });
       const who = (meta?.users ?? []).find((u) => String(u.id) === String(ownerId));
-      onNotice?.(`${lead.name} reassigned${who ? ` to ${who.name}` : ''}.`);
+      // B27: the previous owner's open tasks on it went with it.
+      const moved = res?.tasks_moved?.length ?? 0;
+      onNotice?.(`${lead.name} reassigned${who ? ` to ${who.name}` : ''}.${moved
+        ? ` The previous owner's ${moved === 1 ? 'open task' : `${moved} open tasks`} on it went with it.` : ''}`);
       onDone();
     } catch (err) { setError(err.message); setBusy(false); }
   }
@@ -714,7 +717,7 @@ function DeleteModal({ lead, onClose, onDone, onNotice }) {
  * why. A bulk action that says "done" while silently dropping a third of the
  * selection is worse than one that fails.
  */
-function BulkRunner({ ids, title, subtitle, children, onClose, onDone, onNotice, run, verb }) {
+function BulkRunner({ ids, title, subtitle, children, onClose, onDone, onNotice, run, verb, tally = null }) {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(null);
   const [result, setResult] = useState(null);
@@ -726,9 +729,11 @@ function BulkRunner({ ids, title, subtitle, children, onClose, onDone, onNotice,
 
     const failures = [];
     let done = 0;
+    let counted = 0;
     for (const id of ids) {
       try {
-        await run(id);
+        const out = await run(id);
+        if (tally) counted += tally.count(out);
       } catch (err) {
         failures.push({ id, reason: err.message });
       }
@@ -738,7 +743,7 @@ function BulkRunner({ ids, title, subtitle, children, onClose, onDone, onNotice,
 
     setBusy(false);
     if (!failures.length) {
-      onNotice?.(`${verb} ${ids.length} lead${ids.length === 1 ? '' : 's'}.`);
+      onNotice?.(`${verb} ${ids.length} lead${ids.length === 1 ? '' : 's'}.${tally && counted ? ` ${tally.say(counted)}` : ''}`);
       onDone();
       return;
     }
@@ -797,6 +802,11 @@ function BulkOwnerModal({ ids, onClose, onDone, onNotice }) {
       ids={ids} onClose={onClose} onDone={onDone} onNotice={onNotice}
       title="Reassign owner" subtitle={`${ids.length} leads selected`} verb="Reassigned"
       run={(id) => api.patch(`/leads/${id}`, { owner_id: ownerId })}
+      /* B27: the previous owners' open tasks go with their leads. */
+      tally={{
+        count: (res) => res?.tasks_moved?.length ?? 0,
+        say: (n) => `${n} open task${n === 1 ? '' : 's'} of the previous owners went with them.`,
+      }}
     >
       <label className="span-2">
         <span>New owner</span>

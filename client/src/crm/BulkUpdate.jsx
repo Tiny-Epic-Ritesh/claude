@@ -102,6 +102,8 @@ export default function BulkUpdate({ selected, total, query, onClose, onDone }) 
           {chosen?.label ?? done.field} set to <strong>{done.owner ?? String(done.value)}</strong>.
           {done.unchanged > 0 && ' Leads already holding that value were left alone, so their history is unchanged.'}
           {done.skipped > 0 && ` ${done.skipped} lead${done.skipped === 1 ? ' was' : 's were'} skipped — a different business from the new owner.`}
+          {/* B27: the previous owners' open tasks go with their leads. */}
+          {done.tasks_moved > 0 && ` ${done.tasks_moved} open task${done.tasks_moved === 1 ? '' : 's'} of the previous owners went with ${done.changed === 1 ? 'it' : 'them'}.`}
         </p>
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button className="btn-primary" onClick={onClose}>Close</button>

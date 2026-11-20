@@ -30,6 +30,7 @@ import { loadInBook } from '../engine/bookscope.js';
 import { taskFor } from '../engine/taskaccess.js';
 import { tracked, sourceOf, historyAsSeenBy } from '../engine/history.js';
 import { handoverPreview, handOver } from '../engine/salesrmhandover.js';
+import { moveOpenTasks } from '../engine/ownertasks.js';
 import { moveCard } from '../engine/cardmoves.js';
 import { withCorrections, mayCorrect, addCorrection } from '../engine/corrections.js';
 import { cancelReminders, scheduleReminders } from '../engine/followups.js';
@@ -775,6 +776,7 @@ router.post('/leads/bulk/field', requirePermission('lead.edit'), (req, res) => {
   let changed = 0;
   let unchanged = 0;
   let skipped = 0;
+  let tasksMoved = 0;
   for (const t of targets) {
     if (reassigning && t.sales_org !== owner.sales_org) { skipped += 1; continue; }
     /* A row already holding the value is left alone. Writing it anyway would
@@ -784,6 +786,8 @@ router.post('/leads/bulk/field', requirePermission('lead.edit'), (req, res) => {
     tracked('lead', t.id, { actorId: req.user.id, source: sourceOf(req) },
       () => run(`UPDATE leads SET ${field} = ?${leavesQueue ? ', owner_queue_id = NULL' : ''} WHERE id = ?`, [written, t.id]));
     audit(req.user.id, 'lead.bulk.field', 'lead', t.id, { field, from: t.current, to: written, mode });
+    // B27: the previous owner's open tasks on it go with it.
+    if (reassigning) tasksMoved += moveOpenTasks(t.id, t.current, owner.id, { actorId: req.user.id, source: sourceOf(req) }).length;
     changed += 1;
   }
 
@@ -797,6 +801,7 @@ router.post('/leads/bulk/field', requirePermission('lead.edit'), (req, res) => {
     changed,
     unchanged,
     skipped,
+    ...(reassigning ? { tasks_moved: tasksMoved } : {}),
     total,
   });
 });
@@ -1200,13 +1205,20 @@ router.patch('/leads/:id', (req, res) => {
 
   run(`UPDATE leads SET ${sets.join(', ')}, updated_at = datetime('now') WHERE id = ?`, [...params, req.params.id]);
   audit(req.user.id, 'lead_updated', 'lead', Number(req.params.id), body);
+  /* B27 (ruled 20 Nov): a new owner takes the previous owner's open tasks on
+     the lead, reminders and all. Given to nobody, nothing moves. */
+  const newOwner = body.owner_id != null && body.owner_id !== '' ? Number(body.owner_id) : null;
+  const tasksMoved = newOwner ? moveOpenTasks(lead.id, lead.owner_id, newOwner, { actorId: req.user.id, source: sourceOf(req) }) : [];
 
   if (body.stage && body.stage !== lead.stage) {
     run('INSERT INTO activities (lead_id, type, direction, subject, body, user_id) VALUES (?,?,?,?,?,?)', [
       req.params.id, 'Note', 'system', 'Stage changed', `${lead.stage} → ${body.stage}`, req.user.id,
     ]);
   }
-  res.json(decorate(one('SELECT * FROM leads WHERE id = ?', [req.params.id])));
+  res.json({
+    ...decorate(one('SELECT * FROM leads WHERE id = ?', [req.params.id])),
+    ...(tasksMoved.length ? { tasks_moved: tasksMoved.map(({ id, title }) => ({ id, title })) } : {}),
+  });
 });
 
 /* B26 (ruled 20 Nov 2026): a Caller or Dealer hands a lead they own to a
