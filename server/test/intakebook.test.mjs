@@ -28,6 +28,7 @@
 import { strict as assert } from 'node:assert';
 import { all, one, run } from '../src/db.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
+import { tokenKey } from '../src/security.js';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
 
@@ -225,7 +226,7 @@ const walk = async (token, firstStep) => {
        submit. Bonanza records the custodian outcome, and that is what
        completes the journey and creates the lead this file is about. */
     if (body.journey?.steps?.find((s) => s.code === step)?.waits) {
-      const journey = one('SELECT id FROM kyc_journeys WHERE resume_token = ?', [token]);
+      const journey = one('SELECT id FROM kyc_journeys WHERE resume_key = ?', [tokenKey(token)]);
       const { status: vs, body: vb } = await verify(journey.id);
       assert.equal(vs, 200, `recording verification returned HTTP ${vs}: ${JSON.stringify(vb)}`);
       return true;
@@ -234,7 +235,7 @@ const walk = async (token, firstStep) => {
   throw new Error('the journey never completed');
 };
 
-const journeyByToken = (token) => one('SELECT * FROM kyc_journeys WHERE resume_token = ?', [token]);
+const journeyByToken = (token) => one('SELECT * FROM kyc_journeys WHERE resume_key = ?', [tokenKey(token)]);
 const leadById = (id) => one('SELECT * FROM leads WHERE id = ?', [id]);
 
 /* --------------------------------------------------------- the referral */

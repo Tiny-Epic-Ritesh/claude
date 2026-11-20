@@ -11,6 +11,7 @@
 import { strict as assert } from 'node:assert';
 import { all, one, run } from '../src/db.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
+import { decryptField } from '../src/security.js';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
 /* Superadmin, because these routes sit behind admin.system like every other
@@ -114,9 +115,10 @@ await test('editing without a new secret keeps the old one', async () => {
   assert.equal(res.status, 200, JSON.stringify(res.body));
   assert.deepEqual(res.body.fields, ['name']);
   assert.equal(res.body.has_secret, true, 'an edit that said nothing about the secret cleared it');
-  assert.equal(
-    one('SELECT secret FROM webhook_endpoint WHERE id = ?', [created.id]).secret, 'top-secret',
-  );
+  /* OPS-81: kept encrypted with the master key, as vendor credentials are. */
+  const stored = one('SELECT secret FROM webhook_endpoint WHERE id = ?', [created.id]).secret;
+  assert.notEqual(stored, 'top-secret', 'the secret is stored as typed');
+  assert.equal(decryptField(stored), 'top-secret');
 });
 
 await test('pausing stops deliveries without deleting the record of them', async () => {

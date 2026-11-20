@@ -22,6 +22,7 @@ import { all, one, run } from '../src/db.js';
 import { issue } from '../src/engine/apikeys.js';
 import { roleCapabilities } from '../src/engine/access.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
+import { tokenKey } from '../src/security.js';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -177,7 +178,7 @@ try {
 
     const token = `ks-${RUN}-${Math.random().toString(36).slice(2)}`;
     run(`INSERT INTO sessions (token, user_id, kind, expires_at, last_seen_at)
-         VALUES (?, ?, 'crm', datetime('now', '+1 hours'), datetime('now'))`, [token, PLATFORM.id]);
+         VALUES (?, ?, 'crm', datetime('now', '+1 hours'), datetime('now'))`, [tokenKey(token), PLATFORM.id]);
     assert.equal((await call('GET', '/auth/me', { Authorization: `Bearer ${token}` })).status, 401,
       'a session for an integration account was honoured');
   });

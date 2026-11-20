@@ -24,6 +24,7 @@ import { assignLead } from '../engine/assignment.js';
 import { request as requestApproval, BULK_THRESHOLD } from '../engine/approvals.js';
 import { metricsFor } from '../engine/metrics.js';
 import { kycStatusSql, kycStatusFor } from '../engine/kycstatus.js';
+import { withResumeToken } from '../engine/kyc.js';
 import { nextAction, nextStepForLead, MOVE_NEEDS, STATE_LABEL } from '../engine/nextaction.js';
 import { dmyTime, typedToStored } from '../engine/daterange.js';
 import { loadInBook } from '../engine/bookscope.js';
@@ -888,7 +889,8 @@ router.get('/leads/:id', (req, res) => {
     notes: withCorrections('note', all('SELECT n.*, u.name AS user_name, u.role AS user_role FROM notes n LEFT JOIN users u ON u.id = n.user_id WHERE n.lead_id = ? ORDER BY n.pinned DESC, n.created_at DESC', [id])),
     tickets: all('SELECT * FROM tickets WHERE lead_id = ? ORDER BY created_at DESC', [id]),
     // QA-06: each journey carries the applicant's mobile and email.
-    journeys: maskRecords(all(`SELECT j.*, pt.name AS product_name FROM kyc_journeys j JOIN product_types pt ON pt.id = j.product_type_id WHERE j.lead_id = ? ORDER BY j.created_at DESC`, [id]), masking),
+    // OPS-80: each journey's resume link readable, its look-up key left out.
+    journeys: maskRecords(all(`SELECT j.*, pt.name AS product_name FROM kyc_journeys j JOIN product_types pt ON pt.id = j.product_type_id WHERE j.lead_id = ? ORDER BY j.created_at DESC`, [id]).map(withResumeToken), masking),
   });
 });
 
@@ -1816,11 +1818,11 @@ router.get('/cards/:id/detail', (req, res) => {
     [card.id],
   );
 
-  const journey = one(
+  const journey = withResumeToken(one(
     `SELECT id, status, resume_token, current_step FROM kyc_journeys
       WHERE card_id = ? ORDER BY id DESC LIMIT 1`,
     [card.id],
-  );
+  ));   // OPS-80: the resume link kept encrypted, shown readable
 
   /* Contactability, per channel, on the card itself -- so the quick actions
      below can be offered honestly rather than failing after the click. */

@@ -33,7 +33,7 @@ import {
 } from '../auth.js';
 import { historyAsSeenBy } from '../engine/history.js';
 import { taskFor } from '../engine/taskaccess.js';
-import { hashPassword, validate, newSessionToken, STRATEGY_LABEL } from '../security.js';
+import { hashPassword, validate, newSessionToken, tokenKey, encryptField, STRATEGY_LABEL } from '../security.js';
 import { assertValid, requiredFields, setRequired } from '../engine/validation.js';
 import {
   invalidate, explainAccess, dataScope, CAPABILITY_CATALOGUE, effectiveCapabilities, roleCapabilities,
@@ -1807,8 +1807,9 @@ router.post('/users/:id/reset-link', requirePermission('admin.users'), (req, res
 
   const token = newSessionToken();
   run('DELETE FROM password_reset WHERE user_id = ?', [user.id]);
+  // OPS-80: kept as its hash; the link itself is shown once, here.
   run(`INSERT INTO password_reset (token, user_id, expires_at, created_by)
-       VALUES (?,?,datetime('now', '+1 hour'),?)`, [token, user.id, req.user.id]);
+       VALUES (?,?,datetime('now', '+1 hour'),?)`, [tokenKey(token), user.id, req.user.id]);
 
   audit(req.user.id, 'password_reset_link_issued', 'user', user.id, { email: user.email });
 
@@ -3565,7 +3566,7 @@ router.post('/webhook-endpoints', requirePermission('admin.system'), (req, res) 
     [
       req.body.name.trim(),
       req.body.url.trim(),
-      req.body.secret?.trim() || null,
+      encryptField(req.body.secret?.trim() || null),   // OPS-81: kept encrypted
       JSON.stringify(req.body.fields ?? []),
       req.body.active === false ? 0 : 1,
       org,
@@ -3606,7 +3607,7 @@ router.patch('/webhook-endpoints/:id', requirePermission('admin.system'), (req, 
       JSON.stringify(merged.fields),
       req.body.active === undefined ? existing.active : (req.body.active ? 1 : 0),
       /* An empty string clears nothing; only a new secret replaces one. */
-      req.body.secret?.trim() || null,
+      encryptField(req.body.secret?.trim() || null),   // OPS-81: kept encrypted
       existing.id,
     ],
   );

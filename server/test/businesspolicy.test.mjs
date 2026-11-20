@@ -13,7 +13,7 @@
 import { strict as assert } from 'node:assert';
 import 'dotenv/config';
 import * as db from '../src/db.js';
-import { hashPasswordSync } from '../src/security.js';
+import { hashPasswordSync, tokenKey } from '../src/security.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
 
 const { all, one, run } = db;
@@ -227,7 +227,7 @@ try {
     assert.equal(started.status, 201, `answered ${started.status}: ${started.body?.error}`);
     const resumed = await dkyc('GET', `/resume/${started.body.resume_token}`);
     assert.equal(resumed.body.business?.code, 'BIGUL');
-    run('DELETE FROM kyc_journeys WHERE resume_token = ?', [started.body.resume_token]);
+    run('DELETE FROM kyc_journeys WHERE resume_key = ?', [tokenKey(started.body.resume_token)]);
   });
 
   /* ============================================================== copy */

@@ -19,7 +19,7 @@
 import { strict as assert } from 'node:assert';
 import 'dotenv/config';
 import * as db from '../src/db.js';
-import { hashPasswordSync } from '../src/security.js';
+import { hashPasswordSync, tokenKey } from '../src/security.js';
 import { copilotSnapshot, partnerInsightContext } from '../src/ai/index.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
 
@@ -214,7 +214,7 @@ try {
     ).lastInsertRowid);
     // Written the way the old route wrote it: the default, hashed, and no stamp.
     run('UPDATE partners SET portal_password = ?, portal_password_set_at = NULL WHERE id = ?', [hashPasswordSync(`partner${id}`), id]);
-    run("INSERT INTO sessions (token, partner_id, kind, expires_at) VALUES (?, ?, 'partner', datetime('now', '+1 hour'))", [`pa-${RUN}-legacy`, id]);
+    run("INSERT INTO sessions (token, partner_id, kind, expires_at) VALUES (?, ?, 'partner', datetime('now', '+1 hour'))", [tokenKey(`pa-${RUN}-legacy`), id]);
 
     const keep = Number(run(
       `INSERT INTO partners (sales_org, name, partner_model, state_code, email, portal_password)

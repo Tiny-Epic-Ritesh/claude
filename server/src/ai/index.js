@@ -68,7 +68,10 @@ export function nextActionContext(leadId) {
     [leadId],
   ).map((j) => {
     const health = kycHealth(null).find((h) => h.id === j.id);
-    return { ...j, current_step_label: health?.current_step_label ?? j.current_step, progress_pct: health?.progress_pct ?? 0, seconds_on_step: health?.seconds_on_step ?? 0 };
+    /* OPS-80: an applicant's resume link is a bearer credential, and has no
+       business in what the AI is given -- encrypted or not. */
+    const { resume_token: _token, resume_key: _key, ...rest } = j;
+    return { ...rest, current_step_label: health?.current_step_label ?? j.current_step, progress_pct: health?.progress_pct ?? 0, seconds_on_step: health?.seconds_on_step ?? 0 };
   });
 
   return {
@@ -205,12 +208,35 @@ export function partnerInsightContext(partnerId) {
  * inferred — the failure mode of NER-based scrubbing does not apply.
  */
 
-const route = (capability, payload, context, fn) =>
-  withResidency(capability, { payload, context, call: fn, servedBy: provider.name, live: isLive });
+/**
+ * Who answers a call routed to `where` -- OPS-84 (A6, ruled 20 Nov 2026).
+ *
+ * The residency policy named a route for every call and nothing obeyed it:
+ * each capability called whichever provider was loaded, so with a frontier
+ * key set a call transcript went abroad unredacted while the Residency screen
+ * reported it as staying in India -- and `in_india_only` and `offline` reached
+ * the frontier too. Ruled: enforce the policy. Only a call routed to the
+ * frontier reaches the frontier provider. One routed to India is answered by
+ * the built-in offline drafter until an in-India model is set up -- there is
+ * none yet, and nothing raw leaves meanwhile -- and one routed offline is
+ * answered offline.
+ */
+export const servedBy = (where) => (where === 'frontier' ? provider : mock);
+
+const route = (capability, payload, context, fn) => {
+  const answers = servedBy(routeFor(capability).provider);
+  return withResidency(capability, {
+    payload,
+    context,
+    call: (p, where) => fn(p, servedBy(where)),
+    servedBy: answers.name,
+    live: answers.live === true,
+  });
+};
 
 export async function disposition(ctx) {
   // PII_RAW: a transcript cannot be reliably de-identified, so it stays in country.
-  const { result } = await route('disposition', ctx, {}, (p) => provider.disposition(p));
+  const { result } = await route('disposition', ctx, {}, (p, via) => via.disposition(p));
   return result;
 }
 
@@ -222,18 +248,18 @@ export async function ticketSummary(ticket, replies) {
     'ticketSummary',
     { ticket, replies },
     { lead, partner },
-    (p) => provider.ticketSummary(p.ticket, p.replies),
+    (p, via) => via.ticketSummary(p.ticket, p.replies),
   );
   return result;
 }
 
 export async function nextAction(ctx) {
-  const { result } = await route('nextAction', ctx, { lead: ctx.lead }, (p) => provider.nextAction(p));
+  const { result } = await route('nextAction', ctx, { lead: ctx.lead }, (p, via) => via.nextAction(p));
   return result;
 }
 
 export async function kycCoach(j) {
-  const { result } = await route('kycCoach', j, {}, (p) => provider.kycCoach(p));
+  const { result } = await route('kycCoach', j, {}, (p, via) => via.kycCoach(p));
   return result;
 }
 
@@ -247,25 +273,31 @@ export async function copilot(input) {
     'copilot',
     input,
     { leads: snap.leads ?? [], partners: snap.partners ?? [], owner: { name: snap.user_name } },
-    (p) => provider.copilot(p),
+    (p, via) => via.copilot(p),
   );
   return result;
 }
 
 export async function partnerInsight(p) {
-  const { result } = await route('partnerInsight', p, { partner: p }, (x) => provider.partnerInsight(x));
+  const { result } = await route('partnerInsight', p, { partner: p }, (x, via) => via.partnerInsight(x));
   return result;
 }
 
 /** Exposed to the Admin UI and to auditors. */
-export const residency = () => ({
-  ...residencyReport(),
-  active_provider: provider.name,
-  frontier_live: isLive,
-  effective_note: isLive
-    ? 'A live frontier provider is configured. De-identified payloads are sent to it.'
-    : 'No frontier provider is configured, so every call is served locally by the offline provider. '
-      + 'De-identification still runs, so the policy is exercised and auditable before you go live.',
-});
+export const residency = () => {
+  const report = residencyReport();
+  return {
+    ...report,
+    /* OPS-84: what actually answers each capability, beside where the policy
+       routes it -- the two had come apart, and the screen showed only one. */
+    capabilities: report.capabilities.map((c) => ({ ...c, served_by: servedBy(c.routed_to).name })),
+    active_provider: provider.name,
+    frontier_live: isLive,
+    effective_note: isLive
+      ? 'A live frontier provider is configured. De-identified payloads are sent to it; anything routed to India is answered by the offline drafter until an in-India model is set up, and nothing raw leaves the country.'
+      : 'No frontier provider is configured, so every call is served locally by the offline provider. '
+        + 'De-identification still runs, so the policy is exercised and auditable before you go live.',
+  };
+};
 
 export { MODE as residencyMode, routeFor };

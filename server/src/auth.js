@@ -21,9 +21,13 @@ import {
   seedAccessModel, roleCapabilities, effectiveCapabilities, dataScope, isApiOnly,
 } from './engine/access.js';
 import {
-  hashPassword, verifyPassword, newSessionToken,
+  hashPassword, verifyPassword, newSessionToken, tokenKey,
   SESSION_TTL_HOURS, SESSION_IDLE_MINUTES,
 } from './security.js';
+
+/* The states a partner may use the portal in: sign-in admits only these, and
+   since OPS-82 so does every request after it. */
+export const PORTAL_STATES = ['ACTIVE', 'ONBOARDING'];
 
 /* ------------------------------------------------------- permission matrix */
 
@@ -342,10 +346,11 @@ export async function login(email, password) {
     }
   }
 
+  /* OPS-80: kept as its hash; the token itself goes only to the person. */
   const token = newSessionToken();
   run(
     "INSERT INTO sessions (token, user_id, kind, expires_at, last_seen_at) VALUES (?,?,?,datetime('now', ?),datetime('now'))",
-    [token, user.id, 'crm', `+${SESSION_TTL_HOURS} hours`],
+    [tokenKey(token), user.id, 'crm', `+${SESSION_TTL_HOURS} hours`],
   );
 
   /* P3-02. On the user, not derived from the session that was just made:
@@ -383,18 +388,18 @@ export async function partnerLogin(email, password) {
       console.warn('[auth] could not upgrade a stored portal password:', err.message);
     }
   }
-  if (!['ACTIVE', 'ONBOARDING'].includes(partner.state_code)) return { blocked: partner.state_code };
+  if (!PORTAL_STATES.includes(partner.state_code)) return { blocked: partner.state_code };
 
   const token = newSessionToken();
   run(
     "INSERT INTO sessions (token, partner_id, kind, expires_at, last_seen_at) VALUES (?,?,?,datetime('now', ?),datetime('now'))",
-    [token, partner.id, 'partner', `+${SESSION_TTL_HOURS} hours`],
+    [tokenKey(token), partner.id, 'partner', `+${SESSION_TTL_HOURS} hours`],
   );
   audit(null, 'partner_login', 'partner', partner.id, { email });
   return { token, partner: publicPartner(partner) };
 }
 
-export const logout = (token) => run('DELETE FROM sessions WHERE token = ?', [token]);
+export const logout = (token) => run('DELETE FROM sessions WHERE token = ?', [tokenKey(token)]);
 
 export const publicUser = (u) => ({
   id: u.id, name: u.name, email: u.email, role: u.role,
@@ -456,7 +461,9 @@ export function attachSession(req, _res, next) {
     return next();
   }
 
-  const session = one('SELECT * FROM sessions WHERE token = ?', [token]);
+  // OPS-80: sessions are kept as the hash of their token, and found by it.
+  const key = tokenKey(token);
+  const session = one('SELECT * FROM sessions WHERE token = ?', [key]);
   if (!session) return next();
 
   // Absolute expiry and idle timeout are both enforced here, on every request.
@@ -465,10 +472,10 @@ export function attachSession(req, _res, next) {
     && (Date.now() - new Date(`${session.last_seen_at.replace(' ', 'T')}Z`).getTime()) > SESSION_IDLE_MINUTES * 60_000;
 
   if (expired || idleCutoff) {
-    run('DELETE FROM sessions WHERE token = ?', [token]);
+    run('DELETE FROM sessions WHERE token = ?', [key]);
     return next();
   }
-  run("UPDATE sessions SET last_seen_at = datetime('now') WHERE token = ?", [token]);
+  run("UPDATE sessions SET last_seen_at = datetime('now') WHERE token = ?", [key]);
 
   if (session.kind === 'crm') {
     const user = one('SELECT * FROM users WHERE id = ? AND active = 1', [session.user_id]);
@@ -490,10 +497,13 @@ export function attachSession(req, _res, next) {
       user[CAPS] = req.caps;
     }
   } else {
+    /* OPS-82: only a partner sign-in would admit. Every route that suspends or
+       ends a partner also ends their sessions; this holds if one ever forgets. */
     const partner = one('SELECT * FROM partners WHERE id = ?', [session.partner_id]);
-    if (partner) req.partner = partner;
+    if (partner && PORTAL_STATES.includes(partner.state_code)) req.partner = partner;
   }
   req.token = token;
+  req.sessionKey = key;
   next();
 }
 

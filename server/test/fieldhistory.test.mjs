@@ -36,6 +36,7 @@ import { TEST_KINDS } from '../src/engine/testrecords.js';
 import { activatePartner } from '../src/routes/partners-support.js';
 import { maskedFieldsFor } from '../src/engine/masking.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
+import { tokenKey } from '../src/security.js';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', 'src');
@@ -291,13 +292,13 @@ try {
     const partner = make('partners', { name: 'History partner', sales_org: 'BONANZA', state_code: 'ACTIVE' });
     const ticket = make('tickets', { subject: 'History probe', sales_org: 'BONANZA', status: 'Resolved', partner_id: partner });
     const token = `history-partner-${stamp}`;
-    run("INSERT INTO sessions (token, partner_id, kind, expires_at, last_seen_at) VALUES (?,?,'partner',datetime('now','+1 hours'),datetime('now'))", [token, partner]);
+    run("INSERT INTO sessions (token, partner_id, kind, expires_at, last_seen_at) VALUES (?,?,'partner',datetime('now','+1 hours'),datetime('now'))", [tokenKey(token), partner]);
     try {
       const out = await call({ headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } },
         'POST', `/api/portal/tickets/${ticket}/replies`, { body: 'Still not working' });
       assert.equal(out.status, 201, `reply: HTTP ${out.status} ${JSON.stringify(out.body)}`);
       expectRow('case', ticket, 'status', { to: 'Open', actor: null, source: 'portal' });
-    } finally { run('DELETE FROM sessions WHERE token = ?', [token]); }
+    } finally { run('DELETE FROM sessions WHERE token = ?', [tokenKey(token)]); }
   });
 
   /* -------------------------------------------------------- accounts */
@@ -354,7 +355,7 @@ try {
 
     const partner = make('partners', { name: 'History partner', sales_org: 'BONANZA', state_code: 'ACTIVE' });
     const token = `history-referral-${stamp}`;
-    run("INSERT INTO sessions (token, partner_id, kind, expires_at, last_seen_at) VALUES (?,?,'partner',datetime('now','+1 hours'),datetime('now'))", [token, partner]);
+    run("INSERT INTO sessions (token, partner_id, kind, expires_at, last_seen_at) VALUES (?,?,'partner',datetime('now','+1 hours'),datetime('now'))", [tokenKey(token), partner]);
     try {
       const referred = await call({ headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } },
         'POST', '/api/portal/referrals', { name: 'History referral', mobile: mobile(), product_type_id: PRODUCT.id });
@@ -363,7 +364,7 @@ try {
       made.push(['leads', newLead]);
       const newCard = one('SELECT id FROM product_cards WHERE lead_id = ? AND product_type_id = ?', [newLead, PRODUCT.id]).id;
       expectRow('product_interest', newCard, 'state', { to: 'EXPLORING', actor: null, source: 'portal' });
-    } finally { run('DELETE FROM sessions WHERE token = ?', [token]); }
+    } finally { run('DELETE FROM sessions WHERE token = ?', [tokenKey(token)]); }
   });
 
   /* ----------------------------------------------------------- tasks */

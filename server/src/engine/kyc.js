@@ -14,7 +14,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { all, one, run, notify, audit, daysSince } from '../db.js';
-import { encryptField, decryptField } from '../security.js';
+import { encryptField, decryptField, tokenKey } from '../security.js';
 import { tracked, SOURCE } from './history.js';
 
 /**
@@ -521,11 +521,13 @@ export function createJourney({
   )?.id ?? null;
 
   const result = run(
-    `INSERT INTO kyc_journeys (lead_id, card_id, product_type_id, applicant_mobile, applicant_email, resume_token, status, current_step, form_data, started_at, journey_version_id)
-     VALUES (?,?,?,?,?,?,?,?,?,datetime('now'),?)`,
+    `INSERT INTO kyc_journeys (lead_id, card_id, product_type_id, applicant_mobile, applicant_email, resume_token, resume_key, status, current_step, form_data, started_at, journey_version_id)
+     VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'),?)`,
     /* QA-34. The mobile the journey was started with is the form's from the
-       start, so the mobile step shows it to confirm rather than asking again. */
-    [leadId, cardId, productTypeId, mobile, email, token, 'In Progress', steps[0].code, writeForm(mobile ? { mobile } : {}), pin],
+       start, so the mobile step shows it to confirm rather than asking again.
+       OPS-80: found by the hash of its token; the token itself kept encrypted,
+       so staff can open the link again for the applicant (OPS-67). */
+    [leadId, cardId, productTypeId, mobile, email, encryptField(token), tokenKey(token), 'In Progress', steps[0].code, writeForm(mobile ? { mobile } : {}), pin],
   );
   const journeyId = Number(result.lastInsertRowid);
 
@@ -547,11 +549,26 @@ export function createJourney({
   return getJourney(journeyId);
 }
 
+/**
+ * A journey's resume token as the applicant was given it (OPS-80): kept
+ * encrypted, and found by its hash (resume_key). A row read with `SELECT *`
+ * carries both; nothing outside this file should need either.
+ */
+export const resumeTokenOf = (row) => (row?.resume_token ? decryptField(row.resume_token) : null);
+
+/** The same row with its resume token readable and its key left out. */
+export function withResumeToken(row) {
+  if (!row) return row;
+  const { resume_key: _key, ...rest } = row;
+  return { ...rest, resume_token: resumeTokenOf(row) };
+}
+
 export function getJourney(id, { byToken = false } = {}) {
-  const journey = byToken
-    ? one('SELECT * FROM kyc_journeys WHERE resume_token = ?', [id])
+  const found = byToken
+    ? one('SELECT * FROM kyc_journeys WHERE resume_key = ?', [tokenKey(id)])
     : one('SELECT * FROM kyc_journeys WHERE id = ?', [id]);
-  if (!journey) return null;
+  if (!found) return null;
+  const journey = withResumeToken(found);
 
   const form = readForm(journey);
   // Read against the version this applicant started on, not whatever the

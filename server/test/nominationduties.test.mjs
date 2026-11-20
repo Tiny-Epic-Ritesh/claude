@@ -25,6 +25,7 @@ import { sweepNominationNudges, halfYear } from '../src/engine/nominations.js';
 import { setPolicy } from '../src/engine/policies.js';
 import { issue, revoke } from '../src/engine/apikeys.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
+import { tokenKey } from '../src/security.js';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
 const CLIENT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'client', 'src');
@@ -104,7 +105,7 @@ try {
   await test('a nomination made in the application is acknowledged by SMS and email, and a change is acknowledged again', async () => {
     const started = await dkyc('/start', { product_type_id: product.id });
     token = started.body.resume_token;
-    journeyId = one('SELECT id FROM kyc_journeys WHERE resume_token = ?', [token]).id;
+    journeyId = one('SELECT id FROM kyc_journeys WHERE resume_key = ?', [tokenKey(token)]).id;
     run("UPDATE kyc_journeys SET current_step = 'NOMINEE', applicant_mobile = ?, applicant_email = ? WHERE id = ?",
       [`96${DIGITS}11`, `applicant-${RUN}@example.test`, journeyId]);
     const res = await dkyc(`/resume/${token}/step`, {

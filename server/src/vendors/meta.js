@@ -58,7 +58,17 @@ export const GRAPH = 'https://graph.facebook.com/v21.0';
 export function verifyWebhook(req) {
   // Matches the shared guard's contract: a reason travels with the refusal so
   // the audit row says which check failed, not merely that one did.
-  if (!live()) return { ok: true, reason: null };
+  /* OPS-83 (A6, 20 Nov 2026). Not connected, a delivery was accepted unsigned
+     -- and fetchLead's simulator made a lead from whatever id it named, so
+     anyone could fill the CRM with leads and messages. That is the simulator's
+     job in development. In production an unconnected Meta refuses, as
+     QuickCall does until its secret is set, and as security.js refuses the
+     development key and the lowered password cost. */
+  if (!live()) {
+    return process.env.NODE_ENV === 'production'
+      ? { ok: false, reason: 'Meta is not connected, so its deliveries are refused until it is' }
+      : { ok: true, reason: null };
+  }
   if (!cfg.appSecret) return { ok: false, reason: 'Meta app secret is not configured' };
 
   const header = req.get('X-Hub-Signature-256');

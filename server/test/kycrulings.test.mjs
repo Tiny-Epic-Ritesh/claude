@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import 'dotenv/config';
 import { one, run } from '../src/db.js';
 import { getJourney } from '../src/engine/kyc.js';
+import { tokenKey } from '../src/security.js';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -92,7 +93,7 @@ const start = async (mobile) => {
   tokens.push(res.body.resume_token);
   return res.body.resume_token;
 };
-const current = (token) => one('SELECT current_step FROM kyc_journeys WHERE resume_token = ?', [token]).current_step;
+const current = (token) => one('SELECT current_step FROM kyc_journeys WHERE resume_key = ?', [tokenKey(token)]).current_step;
 const submit = (token, step_code, payload) => post(`/resume/${token}/step`, { step_code, payload });
 /** Walk valid answers until the named step is the current one. */
 const walkTo = async (token, target) => {
@@ -184,7 +185,7 @@ try {
     assert.equal(ok.status, 200, `refused: ${ok.body?.error}`);
   });
 } finally {
-  for (const t of tokens) run('DELETE FROM kyc_journeys WHERE resume_token = ?', [t]);
+  for (const t of tokens) run('DELETE FROM kyc_journeys WHERE resume_key = ?', [tokenKey(t)]);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

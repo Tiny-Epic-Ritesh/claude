@@ -14,6 +14,7 @@ import { readFileSync } from 'node:fs';
 import { all, one, run, audit } from '../src/db.js';
 import { mayGhost, start, stop, GHOST_MINUTES } from '../src/engine/ghost.js';
 import { withContext } from '../src/engine/reqcontext.js';
+import { tokenKey } from '../src/security.js';
 
 /* Source read from disk, so line endings are whatever git checked out --
    CRLF on Windows. Every pattern below is written with \n, so normalise once
@@ -76,7 +77,7 @@ test('a session is capped, and carries both identities', () => {
     assert.equal(started.acting_as.id, rm.id);
     assert.equal(started.on_behalf_of.id, admin.id);
 
-    const row = one('SELECT * FROM sessions WHERE token = ?', [started.token]);
+    const row = one('SELECT * FROM sessions WHERE token = ?', [tokenKey(started.token)]);
     assert.equal(row.user_id, rm.id, 'the session is not the impersonated user');
     assert.equal(row.ghost_of, admin.id, 'the session does not record who is really acting');
 
@@ -94,18 +95,18 @@ test('leaving ends the ghost session and only the ghost session', () => {
   const ownToken = 'not-a-ghost-token-probe';
   run(`INSERT INTO sessions (token, kind, user_id, created_at, last_seen_at, expires_at)
        VALUES (?, 'crm', ?, datetime('now'), datetime('now'), datetime('now', '+1 hour'))`,
-    [ownToken, admin.id]);
+    [tokenKey(ownToken), admin.id]);
 
   try {
     assert.equal(stop(started.token), true, 'the ghost session did not end');
-    assert(!one('SELECT token FROM sessions WHERE token = ?', [started.token]), 'the ghost session survived');
+    assert(!one('SELECT token FROM sessions WHERE token = ?', [tokenKey(started.token)]), 'the ghost session survived');
 
     // An ordinary session must not be endable through this door.
     assert.equal(stop(ownToken), false, 'a non-ghost session was ended by the ghost exit');
-    assert(one('SELECT token FROM sessions WHERE token = ?', [ownToken]),
+    assert(one('SELECT token FROM sessions WHERE token = ?', [tokenKey(ownToken)]),
       "the administrator's own session was destroyed by leaving a ghost session");
   } finally {
-    run('DELETE FROM sessions WHERE token = ?', [ownToken]);
+    run('DELETE FROM sessions WHERE token = ?', [tokenKey(ownToken)]);
   }
 });
 

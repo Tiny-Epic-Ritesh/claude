@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 import 'dotenv/config';
 import * as db from '../src/db.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
+import { tokenKey } from '../src/security.js';
 
 const { all, one, run } = db;
 /* Loaded so that each check below fails on its own, not the whole file, when
@@ -201,7 +202,7 @@ try {
     const partner = make('partners', { name: 'CSAT probe partner', sales_org: 'BIGUL', state_code: 'ACTIVE' });
     const ticket = make('tickets', { ref: `BGL-P${stamp}`, subject: 'CSAT probe', description: 'Commission statement query; answered with the breakdown.', sales_org: 'BIGUL', status: 'Open', partner_id: partner, assignee_id: RESOLVER.id });
     const token = `csat-partner-${stamp}`;
-    run("INSERT INTO sessions (token, partner_id, kind, expires_at, last_seen_at) VALUES (?,?,'partner',datetime('now','+1 hours'),datetime('now'))", [token, partner]);
+    run("INSERT INTO sessions (token, partner_id, kind, expires_at, last_seen_at) VALUES (?,?,'partner',datetime('now','+1 hours'),datetime('now'))", [tokenKey(token), partner]);
     const PARTNER = { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } };
     try {
       await resolve(ticket);
@@ -214,7 +215,7 @@ try {
       assert.equal(scoreOn(ticket), 5);
       const again = await call(PARTNER, 'POST', `/api/portal/tickets/${ticket}/csat`, { score: 1 });
       assert.equal(again.status, 409, `rated twice: HTTP ${again.status}`);
-    } finally { run('DELETE FROM sessions WHERE token = ?', [token]); }
+    } finally { run('DELETE FROM sessions WHERE token = ?', [tokenKey(token)]); }
   });
 
   await test('a score staff entered before the rule is kept as history, and not counted', () => {

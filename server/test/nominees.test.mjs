@@ -22,7 +22,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import 'dotenv/config';
 import { one, run } from '../src/db.js';
-import { encryptField } from '../src/security.js';
+import { encryptField, tokenKey } from '../src/security.js';
 import { getJourney, stepByCode, validateNominees, createJourney } from '../src/engine/kyc.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
 
@@ -161,7 +161,7 @@ const refused = (list, pattern, applicantPan) => {
   };
   const started = await post('/start', { product_type_id: product.id });
   const token = started.body.resume_token;
-  const toNominee = () => run("UPDATE kyc_journeys SET current_step = 'NOMINEE' WHERE resume_token = ?", [token]);
+  const toNominee = () => run("UPDATE kyc_journeys SET current_step = 'NOMINEE' WHERE resume_key = ?", [tokenKey(token)]);
   const submit = (payload) => post(`/resume/${token}/step`, { step_code: 'NOMINEE', payload });
 
   try {
@@ -197,7 +197,7 @@ const refused = (list, pattern, applicantPan) => {
       assert.equal(getJourney(token, { byToken: true }).form.nominees, null, 'the earlier nominees survived an opt-out');
     });
   } finally {
-    run('DELETE FROM kyc_journeys WHERE resume_token = ?', [token]);
+    run('DELETE FROM kyc_journeys WHERE resume_key = ?', [tokenKey(token)]);
   }
 
   /* ============================================================== the CRM */

@@ -11,7 +11,7 @@
    imports are hoisted — so without this the script encrypts under the
    development key while the server decrypts under the real one. */
 import 'dotenv/config';
-import { db, run, one, all } from './db.js';
+import { db, run, one, all, protectStoredTokens } from './db.js';
 import { MASTER_STEPS } from './engine/kyc.js';
 import { ONBOARDING_STEPS, LMS_MODULES } from './routes/partners.js';
 import { seedDispositions, applyEffects } from './engine/dispositions.js';
@@ -1695,6 +1695,10 @@ if (bigulAdmin) {
     );
   }
 }
+
+/* OPS-80, OPS-81: the seeded KYC resume links and webhook secrets kept as the
+   server keeps them -- hashed or encrypted -- before anybody can read them. */
+protectStoredTokens();
 
 /* Everything above becomes visible here, in one step. Until this line another
    process still reads the previous dataset rather than a half-built one. */

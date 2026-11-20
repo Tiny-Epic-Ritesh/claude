@@ -23,6 +23,7 @@ import 'dotenv/config';
 import { one, run } from '../src/db.js';
 import { snapshot } from '../scripts/qa02-duplicate-tasks.mjs';
 import { probeAdmin } from './helpers/probeadmin.mjs';
+import { tokenKey } from '../src/security.js';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
 const SERVER = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -141,7 +142,7 @@ try {
 } finally {
   run('UPDATE sales_orgs SET support_phone = ?, support_email = ?, support_hours = ? WHERE code = ?',
     [original.support_phone, original.support_email, original.support_hours, 'BIGUL']);
-  for (const t of tokens) run('DELETE FROM kyc_journeys WHERE resume_token = ?', [t]);
+  for (const t of tokens) run('DELETE FROM kyc_journeys WHERE resume_key = ?', [tokenKey(t)]);
   for (const id of leadIds) { run('DELETE FROM tasks WHERE lead_id = ?', [id]); run('DELETE FROM leads WHERE id = ?', [id]); }
   SUPER.cleanup();
 }

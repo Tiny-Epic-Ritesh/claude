@@ -7,7 +7,7 @@
 
 import { DatabaseSync } from 'node:sqlite';
 import { actingActor } from './engine/reqcontext.js';
-import { hashPasswordSync, verifyPasswordSync } from './security.js';
+import { hashPasswordSync, verifyPasswordSync, tokenKey, encryptField, decryptField } from './security.js';
 import { mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1844,6 +1844,10 @@ const COLUMNS = [
      rota that new leads are dealt from (rr_cursor). Here for databases that
      already have the table; inline in its CREATE for ones that do not yet. */
   ['teams', 'handover_cursor', 'INTEGER NOT NULL DEFAULT 0'],
+  /* OPS-80 (A6, ruled 20 Nov 2026): a KYC resume link is looked up by the
+     SHA-256 of its token, kept here; resume_token itself is kept encrypted,
+     because staff open the link again for an applicant (OPS-67). */
+  ['kyc_journeys', 'resume_key', 'TEXT'],
   /* P3-21. A lead transfer is asked of one named person -- the lead's owner,
      or somebody who can reassign it -- rather than broadcast to every holder
      of a capability. Here for databases that already have the table; inline
@@ -2094,6 +2098,40 @@ CREATE TABLE IF NOT EXISTS lead_handovers (
 CREATE INDEX IF NOT EXISTS idx_lead_handovers_from ON lead_handovers(from_user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_lead_handovers_lead ON lead_handovers(lead_id);
 `);
+
+/**
+ * OPS-80 and OPS-81 (A6, ruled 20 Nov 2026): no live credential stored as it
+ * was issued.
+ *
+ * Sign-in sessions and password reset links are kept as the SHA-256 of their
+ * token (security.js tokenKey); a KYC resume link as that hash, to find it by,
+ * and encrypted, to show again; a webhook's signing secret encrypted with the
+ * master key, as vendor credentials are, since it has to be read to sign. This
+ * pass does it to rows from before, in place, so nobody is signed out and no
+ * link or webhook breaks. Run on every boot and by the seed; a no-op once done.
+ */
+export function protectStoredTokens() {
+  let changed = 0;
+  for (const table of ['sessions', 'password_reset']) {
+    const rows = db.prepare(`SELECT rowid AS rid, token FROM ${table} WHERE token NOT LIKE 'sha256$%'`).all();
+    const write = db.prepare(`UPDATE ${table} SET token = ? WHERE rowid = ?`);
+    for (const r of rows) { write.run(tokenKey(r.token), r.rid); changed += 1; }
+  }
+  const journeys = db.prepare('SELECT id, resume_token FROM kyc_journeys WHERE resume_token IS NOT NULL AND resume_key IS NULL').all();
+  const writeJourney = db.prepare('UPDATE kyc_journeys SET resume_token = ?, resume_key = ? WHERE id = ?');
+  for (const j of journeys) {
+    const raw = decryptField(j.resume_token);
+    writeJourney.run(String(j.resume_token).startsWith('v1:') ? j.resume_token : encryptField(raw), tokenKey(raw), j.id);
+    changed += 1;
+  }
+  const hooks = db.prepare("SELECT id, secret FROM webhook_endpoint WHERE secret IS NOT NULL AND secret != '' AND secret NOT LIKE 'v1:%'").all();
+  const writeHook = db.prepare('UPDATE webhook_endpoint SET secret = ? WHERE id = ?');
+  for (const h of hooks) { writeHook.run(encryptField(h.secret), h.id); changed += 1; }
+  return changed;
+}
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_kyc_resume_key ON kyc_journeys(resume_key)');
+const tokensProtected = protectStoredTokens();
+if (tokensProtected) console.log(`[db] ${tokensProtected} stored token(s) or secret(s) hashed or encrypted in place (OPS-80, OPS-81)`);
 
 /**
  * Breaches flagged before the log existed, copied into it. Run on every boot;

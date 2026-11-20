@@ -131,7 +131,7 @@ internal.post('/journeys', requirePermission('kyc.manage'), (req, res) => {
       error: `A KYC application for ${product.name} is already open`,
       fix: 'Send the applicant the link to it, or take it over from the KYC console.',
       journey_id: open.id,
-      applicant_url: `/dkyc/resume/${open.resume_token}`,
+      applicant_url: `/dkyc/resume/${kyc.resumeTokenOf(open)}`,   // OPS-80: kept encrypted
     });
   }
 
