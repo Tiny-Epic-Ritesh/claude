@@ -12,7 +12,7 @@ import { loadInBook } from '../engine/bookscope.js';
 import { assertValid } from '../engine/validation.js';
 import { tracked, sourceOf } from '../engine/history.js';
 import { withCorrections, mayCorrect, addCorrection } from '../engine/corrections.js';
-import { applySla, sweepSla, closeResolved, deadlinesFor, repriceSla, handleStatusChange, slaRemaining, businessMinutesBetween, DEFAULT_SLA, breachedSql } from '../engine/sla.js';
+import { applySla, sweepSla, closeResolved, deadlinesFor, repriceSla, handleStatusChange, slaRemaining, businessMinutesBetween, DEFAULT_SLA, breachedSql, startRound, roundPreview, roundWords, breachesOf, roundStart } from '../engine/sla.js';
 import { openCase, escalationTarget } from '../engine/cases.js';
 import * as csat from '../engine/csat.js';
 import { reportsOf } from '../engine/sharing.js';
@@ -272,6 +272,8 @@ router.get('/:id', (req, res) => {
     merged: all('SELECT id, ref, subject FROM tickets WHERE merged_into = ?', [req.params.id]),
     // A15: the customer's score that stands, a question still waiting, and what came before.
     csat_detail: csat.csatFor(ticket.id),
+    // B25: every breach on its record, the earlier rounds' included.
+    sla_breaches: breachesOf(ticket.id),
   });
 });
 
@@ -500,12 +502,19 @@ router.patch('/:id', async (req, res) => {
     () => run(`UPDATE tickets SET ${sets.join(', ')}, updated_at = datetime('now') WHERE id = ?`, [...params, req.params.id]));
 
   audit(req.user.id, 'ticket_updated', 'ticket', Number(req.params.id), req.body);
+  /* B25, ruled 20 Nov: a reopened case starts a new round, with fresh
+     deadlines counted from now. It kept its first round's, and a case
+     resolved on time was flagged as breached a minute after it reopened. */
+  const round = reopening ? startRound(ticket.id) : null;
   if (reopening) {
     /* On the case itself, where the next person to open it will look. */
     run('INSERT INTO ticket_replies (ticket_id, body, author_type, user_id, internal) VALUES (?,?,?,?,1)', [
-      ticket.id, `Reopened by ${req.user.name} (was ${ticket.status}): ${reason}`, 'system', req.user.id,
+      ticket.id, `Reopened by ${req.user.name} (was ${ticket.status}): ${reason}\n${roundWords(round).join(' ')}`, 'system', req.user.id,
     ]);
-    audit(req.user.id, 'ticket_reopened', 'ticket', ticket.id, { from: ticket.status, to: status, reason });
+    audit(req.user.id, 'ticket_reopened', 'ticket', ticket.id, {
+      from: ticket.status, to: status, reason,
+      round: round.round, response_due: round.response_due, resolution_due: round.resolution_due,
+    });
   }
 
   /* CSAT goes out when the case is done (BRD §7.10), once, in the case's own
@@ -526,7 +535,10 @@ router.patch('/:id', async (req, res) => {
   }
 
   await refreshSummary(Number(req.params.id));
-  res.json(decorate(one('SELECT * FROM tickets WHERE id = ?', [req.params.id])));
+  res.json({
+    ...decorate(one('SELECT * FROM tickets WHERE id = ?', [req.params.id])),
+    ...(round ? { reopened: { ...round, said: roundWords(round) } } : {}),
+  });
 });
 
 /* ------------------------------------------- what an action would do */
@@ -575,7 +587,9 @@ function finishEffects(ticket, to) {
 
 /* What a change of priority does, given the deadlines it would bring. */
 function priorityEffects(ticket, next) {
-  const out = [{ tone: 'info', text: `Its deadlines are redone under ${next.priority}, counted from when it was opened on ${dmyTime(ticket.created_at)}: a first response by ${dmyTime(next.response_due)} and a resolution by ${dmyTime(next.resolution_due)}.` }];
+  /* B25: a reopened case's deadlines count from its reopening. */
+  const since = (ticket.sla_round ?? 1) > 1 ? `when it was reopened on ${dmyTime(roundStart(ticket))}` : `when it was opened on ${dmyTime(ticket.created_at)}`;
+  const out = [{ tone: 'info', text: `Its deadlines are redone under ${next.priority}, counted from ${since}: a first response by ${dmyTime(next.response_due)} and a resolution by ${dmyTime(next.resolution_due)}.` }];
   if (ticket.breached) {
     out.push({ tone: 'info', text: `It has already breached its SLA${ticket.breached_at ? ` (${dmyTime(ticket.breached_at)})` : ''}. A new priority does not undo that.` });
   } else if (next.past_due && ticket.status !== 'Waiting on Client') {
@@ -583,6 +597,21 @@ function priorityEffects(ticket, next) {
   }
   return out;
 }
+
+/**
+ * Before Reopen (B25, ruled 20 Nov): the fresh deadlines the case would get if
+ * it reopened now, and the breaches that stay on its record. Read-only.
+ */
+router.get('/:id/reopen-preview', (req, res) => {
+  const found = visibleCase(req);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const ticket = found.row;
+  if (!DONE.includes(ticket.status)) {
+    return res.status(409).json({ error: `${ticket.ref} is ${ticket.status.toLowerCase()}, not resolved or closed. There is nothing to reopen.` });
+  }
+  const next = roundPreview(ticket);
+  return res.json({ ...next, said: roundWords(next, { preview: true }) });
+});
 
 /**
  * Before Escalate (Part 4, item 1): who it goes to, every level above, the

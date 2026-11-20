@@ -1833,6 +1833,12 @@ const COLUMNS = [
   /* A15 (B20, B21): who resolved the case, stamped when it is done -- the
      person its customer's score is credited to, whoever holds it later. */
   ['tickets', 'resolved_by', 'INTEGER'],
+  /* B25 (ruled 20 Nov 2026): a reopened case starts a new round, with fresh
+     deadlines counted from the reopening. The round it is in, and when that
+     round's clock started -- NULL until it is first reopened, meaning "from
+     when it was raised". */
+  ['tickets', 'sla_round', 'INTEGER NOT NULL DEFAULT 1'],
+  ['tickets', 'sla_started_at', 'TEXT'],
   /* P3-21. A lead transfer is asked of one named person -- the lead's owner,
      or somebody who can reassign it -- rather than broadcast to every holder
      of a capability. Here for databases that already have the table; inline
@@ -2007,6 +2013,62 @@ UPDATE tickets SET csat = NULL
 `);
 }
 settleLegacyCsat();
+
+/**
+ * B25 (ruled 20 Nov 2026): every SLA breach, kept.
+ *
+ * A case's `breached` and `breached_at` describe the round it is in: a reopen
+ * starts a new round with fresh deadlines, and clears them so the new round
+ * can breach, or not, on its own account. A breach in an earlier round stays
+ * on the case's record, here: the scorecard counts breaches from this table,
+ * credited to whoever held the case when it breached, and the case shows them.
+ * One row per round at most -- a round breaches once.
+ *
+ * `breached_at` is NULL only for a breach recorded before the time of a breach
+ * was kept (the flag alone), copied here as it stood.
+ */
+db.exec(`
+CREATE TABLE IF NOT EXISTS sla_breaches (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticket_id      INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  round          INTEGER NOT NULL DEFAULT 1,
+  breached_at    TEXT,
+  resolution_due TEXT,
+  priority       TEXT,
+  UNIQUE (ticket_id, round)
+);
+CREATE INDEX IF NOT EXISTS idx_sla_breaches_at ON sla_breaches(breached_at);
+
+/* Written by the database, the only place that sees every write: the sweep's,
+   a priority change's, the seed's, an import's, and any added later. A round
+   breaches once; its first breach time stands. */
+CREATE TRIGGER IF NOT EXISTS sla_breach_logged_ins AFTER INSERT ON tickets
+WHEN NEW.breached = 1
+BEGIN
+  INSERT INTO sla_breaches (ticket_id, round, breached_at, resolution_due, priority)
+  VALUES (NEW.id, NEW.sla_round, NEW.breached_at, NEW.resolution_due, NEW.priority)
+  ON CONFLICT (ticket_id, round) DO UPDATE SET breached_at = COALESCE(sla_breaches.breached_at, excluded.breached_at);
+END;
+CREATE TRIGGER IF NOT EXISTS sla_breach_logged_upd AFTER UPDATE OF breached, breached_at ON tickets
+WHEN NEW.breached = 1
+BEGIN
+  INSERT INTO sla_breaches (ticket_id, round, breached_at, resolution_due, priority)
+  VALUES (NEW.id, NEW.sla_round, NEW.breached_at, NEW.resolution_due, NEW.priority)
+  ON CONFLICT (ticket_id, round) DO UPDATE SET breached_at = COALESCE(sla_breaches.breached_at, excluded.breached_at);
+END;
+`);
+
+/**
+ * Breaches flagged before the log existed, copied into it. Run on every boot;
+ * a no-op once each is there.
+ */
+export function logEarlierBreaches() {
+  return Number(db.prepare(
+    `INSERT OR IGNORE INTO sla_breaches (ticket_id, round, breached_at, resolution_due, priority)
+     SELECT id, sla_round, breached_at, resolution_due, priority FROM tickets WHERE breached = 1`,
+  ).run().changes);
+}
+logEarlierBreaches();
 
 db.exec(`
 CREATE INDEX IF NOT EXISTS idx_activities_external ON activities(external_id);

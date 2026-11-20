@@ -214,15 +214,15 @@ export function seedIncentives() {
 const creditedTo = (user) => [user.id, ...reportsOf(user.id)];
 
 /**
- * Who held a case when it breached: its assignee at breached_at, read from
+ * Who held a case when it breached: its assignee at the breach (b), read from
  * the case's history (D9), or its assignee now when nothing has moved since.
  */
 const HELD_AT_BREACH = `CAST(COALESCE(
   (SELECT h.new_value FROM field_history h
-    WHERE h.entity = 'case' AND h.record_id = t.id AND h.field = 'assignee_id' AND h.changed_at <= t.breached_at
+    WHERE h.entity = 'case' AND h.record_id = t.id AND h.field = 'assignee_id' AND h.changed_at <= b.breached_at
     ORDER BY h.changed_at DESC, h.id DESC LIMIT 1),
   (SELECT h.old_value FROM field_history h
-    WHERE h.entity = 'case' AND h.record_id = t.id AND h.field = 'assignee_id' AND h.changed_at > t.breached_at
+    WHERE h.entity = 'case' AND h.record_id = t.id AND h.field = 'assignee_id' AND h.changed_at > b.breached_at
     ORDER BY h.changed_at ASC, h.id ASC LIMIT 1),
   t.assignee_id) AS INTEGER)`;
 
@@ -232,7 +232,8 @@ const HELD_AT_BREACH = `CAST(COALESCE(
  *
  *   resolved   cases resolved in the period by them (resolved_by, stamped
  *              since A15; before it, whoever held the case)
- *   breaches   cases that breached in the period while they held them
+ *   breaches   breaches in the period while they held the case, one per
+ *              round of a reopened case (B25)
  *   csat       the share of answers in the period that are 4 or 5, on cases
  *              they resolved, scored from CSAT_MIN_ANSWERS answers
  */
@@ -252,11 +253,15 @@ function caseFigure(source, user, range, people) {
       [...r.params, ...w.params, ...inBooks.params],
     );
   }
+  /* B25 (ruled 20 Nov): from the case's record of breaches, one per round,
+     so a reopen -- which starts a new round with fresh deadlines -- neither
+     erases a breach already counted nor stops the new round counting. */
   if (source === 'sla_breaches') {
-    const r = inRange('t.breached_at', range);
+    const r = inRange('b.breached_at', range);
     const w = who(HELD_AT_BREACH);
     return count(
-      `SELECT COUNT(*) n FROM tickets t WHERE t.breached_at IS NOT NULL AND ${r.sql} AND ${w.sql} AND ${inBooks.sql}`,
+      `SELECT COUNT(*) n FROM sla_breaches b JOIN tickets t ON t.id = b.ticket_id
+        WHERE b.breached_at IS NOT NULL AND ${r.sql} AND ${w.sql} AND ${inBooks.sql}`,
       [...r.params, ...w.params, ...inBooks.params],
     );
   }

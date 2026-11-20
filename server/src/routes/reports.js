@@ -20,7 +20,8 @@
 
 import { Router } from 'express';
 import { all, one, CARD_STATES } from '../db.js';
-import { requireUser, requirePermission, reqScope, can, orgsFor, userCan } from '../auth.js';
+import { requireUser, requirePermission, reqScope, reqTicketScope, can, orgsFor, userCan } from '../auth.js';
+import { everBreachedSql } from '../engine/sla.js';
 
 const router = Router();
 router.use(requireUser);
@@ -103,11 +104,16 @@ router.get('/overview', canReport, (req, res) => {
     params,
   );
 
+  /* OPS-79: within the cases the reader can see, as the case list shows
+     them. This counted every case in both businesses, so a Bigul supervisor's
+     report carried Bonanza's open cases and breaches. */
+  const tScope = reqTicketScope(req, 't');
   const tickets = one(
     `SELECT COUNT(*) open,
             SUM(CASE WHEN t.breached = 1 THEN 1 ELSE 0 END) breached
      FROM tickets t
-     WHERE t.status NOT IN ('Resolved','Closed')`,
+     WHERE t.status NOT IN ('Resolved','Closed') AND ${tScope.sql}`,
+    tScope.params,
   );
 
   res.json({
@@ -322,11 +328,16 @@ router.get('/kyc', canReport, (req, res) => {
 /* -------------------------------------------------------------------- SLA */
 
 /** Ticket SLA compliance (BRD OD-08), by category and by priority. */
-router.get('/sla', canReport, (_req, res) => {
+router.get('/sla', canReport, (req, res) => {
+  /* OPS-79: the cases the reader can see, as the case list shows them; it was
+     every case in both businesses. And B25: a case that breached in any round
+     counts as breached -- a reopen starts a new round, and clears the flag the
+     next round is measured by, not the breach on its record. */
+  const tScope = reqTicketScope(req, 't');
   const byCategory = all(
     `SELECT COALESCE(tc.name,'Uncategorised') category,
             COUNT(*) total,
-            SUM(CASE WHEN t.breached = 1 THEN 1 ELSE 0 END) breached,
+            SUM(CASE WHEN ${everBreachedSql('t')} THEN 1 ELSE 0 END) breached,
             SUM(CASE WHEN t.status IN ('Resolved','Closed') THEN 1 ELSE 0 END) resolved,
             -- Median would be better than mean here, but SQLite has no percentile
             -- function; the mean is stated as a mean so nobody reads it as typical.
@@ -334,14 +345,17 @@ router.get('/sla', canReport, (_req, res) => {
                  THEN (julianday(t.resolved_at) - julianday(t.created_at)) * 24 END), 1) mean_hours_to_resolve
      FROM tickets t
      LEFT JOIN ticket_categories tc ON tc.id = t.category_id
+     WHERE ${tScope.sql}
      GROUP BY tc.name ORDER BY total DESC`,
+    tScope.params,
   );
 
   const byPriority = all(
-    `SELECT COALESCE(priority,'Normal') priority,
+    `SELECT COALESCE(t.priority,'Normal') priority,
             COUNT(*) total,
-            SUM(CASE WHEN breached = 1 THEN 1 ELSE 0 END) breached
-     FROM tickets GROUP BY priority ORDER BY total DESC`,
+            SUM(CASE WHEN ${everBreachedSql('t')} THEN 1 ELSE 0 END) breached
+     FROM tickets t WHERE ${tScope.sql} GROUP BY t.priority ORDER BY total DESC`,
+    tScope.params,
   );
 
   const decorate = (rows) => rows.map((r) => ({ ...r, breach_pct: pct(r.breached, r.total) }));

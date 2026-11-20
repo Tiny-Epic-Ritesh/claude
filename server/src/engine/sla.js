@@ -8,6 +8,7 @@
 import { all, one, run, notify, audit } from '../db.js';
 import { isWorkingTime, addWorkingMinutes } from './calendar.js';
 import { recordChange } from './metadata.js';
+import { dmyTime } from './daterange.js';
 // A cycle (cases.js imports applySla from here), safe: both are used only when a sweep runs.
 import { escalationTarget } from './cases.js';
 
@@ -133,7 +134,11 @@ export function deadlinesFor(ticket, priority) {
     ['sla_policy', `${card?.product_type_id ?? 'null'}:${priority}`],
   )?.id ?? null;
   const policy = policyFor(card?.product_type_id, priority, pin);
-  const from = new Date(`${ticket.created_at.replace(' ', 'T')}Z`);
+  /* B25: from when the round began -- the reopening, once there has been one.
+     Counted from the raising, a reopened case given a new priority would be
+     handed deadlines its first round had already used up. */
+  const counted = roundStart(ticket);
+  const from = new Date(`${counted.replace(' ', 'T')}Z`);
   // Business minutes already spent waiting on the client, as the resume adds them.
   const waited = Math.round((ticket.sla_paused_ms ?? 0) / 60_000);
   const resolution = addBusinessMinutes(from, policy.resolution_mins + waited);
@@ -144,7 +149,88 @@ export function deadlinesFor(ticket, priority) {
     resolution_due: toSql(resolution),
     resolution_mins: policy.resolution_mins,
     past_due: resolution < new Date(),
+    round: ticket.sla_round ?? 1,
+    counted_from: counted,
   };
+}
+
+/** When the case's current round began: its reopening, or else its raising. */
+export const roundStart = (ticket) => ticket.sla_started_at ?? ticket.created_at;
+
+/**
+ * A reopened case starts a new round -- B25, ruled by Ritesh on 20 Nov 2026.
+ *
+ * It kept the deadlines of its first round. So a case resolved on time and
+ * reopened after its old deadline was flagged as breached at the next sweep, a
+ * minute later: its agent and their manager were alerted, and the scorecard
+ * counted the agent a breach on a case they had resolved in time. Now it gets
+ * fresh deadlines under its priority's policy in force now, counted from the
+ * moment it reopened, as a newly raised case would. The time it waited on the
+ * client in the earlier round no longer moves them. A breach in an earlier
+ * round stays on its record (sla_breaches); the new round has not breached.
+ *
+ * Every way a case reopens calls this: an agent's Reopen, and a partner's
+ * reply on the portal. Reopened straight to Waiting on Client, the clock is
+ * already paused from now (handleStatusChange) and stays paused.
+ */
+export function startRound(ticketId, now = new Date()) {
+  const ticket = one('SELECT * FROM tickets WHERE id = ?', [ticketId]);
+  if (!ticket) return null;
+  const started = toSql(now);
+  const next = deadlinesFor({ ...ticket, sla_started_at: started, sla_paused_ms: 0 }, ticket.priority);
+  run(
+    `UPDATE tickets SET sla_round = ?, sla_started_at = ?, sla_paused_ms = 0, response_due = ?, resolution_due = ?,
+            sla_version_id = ?, breached = 0, breached_at = NULL
+      WHERE id = ?`,
+    [next.round + 1, started, next.response_due, next.resolution_due, next.pin, ticketId],
+  );
+  return {
+    round: next.round + 1,
+    started_at: started,
+    priority: ticket.priority,
+    response_due: next.response_due,
+    resolution_due: next.resolution_due,
+    earlier_breaches: breachesOf(ticketId),
+  };
+}
+
+/** What reopening a case now would do to its deadlines. Reads only. */
+export function roundPreview(ticket, now = new Date()) {
+  const next = deadlinesFor({ ...ticket, sla_started_at: toSql(now), sla_paused_ms: 0 }, ticket.priority);
+  return {
+    round: next.round + 1,
+    priority: ticket.priority,
+    response_due: next.response_due,
+    resolution_due: next.resolution_due,
+    earlier_breaches: breachesOf(ticket.id),
+  };
+}
+
+/** Every breach on the case's record, a round at a time. */
+export const breachesOf = (ticketId) => all(
+  'SELECT round, breached_at, resolution_due, priority FROM sla_breaches WHERE ticket_id = ? ORDER BY round',
+  [ticketId],
+);
+
+/** A case that breached in any round -- for counts of cases that ever breached. */
+export const everBreachedSql = (a = 't') => `EXISTS (SELECT 1 FROM sla_breaches b WHERE b.ticket_id = ${a}.id)`;
+
+/**
+ * What a new round's deadlines are, said the same way wherever a case
+ * reopens: on the case, in the Reopen dialog, and to whoever reopened it.
+ */
+export function roundWords(r, { preview = false } = {}) {
+  const lines = [preview
+    ? `It gets new deadlines under ${r.priority}, counted from when it is reopened. Reopened now, a first response is due by ${dmyTime(r.response_due)} and a resolution by ${dmyTime(r.resolution_due)}.`
+    : `New deadlines under ${r.priority}, counted from the reopening: a first response by ${dmyTime(r.response_due)} and a resolution by ${dmyTime(r.resolution_due)}.`];
+  const earlier = (r.earlier_breaches ?? []).filter((b) => b.round < r.round);
+  if (earlier.length) {
+    const rounds = earlier.map((b) => `round ${b.round}${b.breached_at ? ` (${dmyTime(b.breached_at)})` : ''}`).join(' and ');
+    lines.push(earlier.length === 1
+      ? `Its breach in ${rounds} stays on its record.`
+      : `Its breaches in ${rounds} stay on its record.`);
+  }
+  return lines;
 }
 
 /** Write deadlinesFor() to the case, and flag it at once if it is already past. */
@@ -204,6 +290,8 @@ function flagBreach(t, now = new Date()) {
   const due = t.resolution_due ? new Date(`${t.resolution_due.replace(' ', 'T')}Z`) : null;
   if (!due || now <= due || t.breached) return false;
 
+  /* B25: the database also writes this breach to the case's record for good
+     (sla_breaches). A reopen clears the flag for its new round, not that. */
   run('UPDATE tickets SET breached = 1, breached_at = datetime(\'now\'), updated_at = datetime(\'now\') WHERE id = ?', [t.id]);
 
   /* Escalation (BRD §7.10): the agent, and the next level up -- the agent's
@@ -218,7 +306,7 @@ function flagBreach(t, now = new Date()) {
     notify(up.user.id, `Team SLA breach — ${t.ref}`, `${t.assignee_name || 'Unassigned'}: ${t.subject}`, `/tickets/${t.id}`);
   }
   audit(null, 'sla_breach', 'ticket', t.id, {
-    ref: t.ref, priority: t.priority, told: [t.assignee_id, up.user?.id].filter(Boolean),
+    ref: t.ref, priority: t.priority, round: t.sla_round ?? 1, told: [t.assignee_id, up.user?.id].filter(Boolean),
     ...(up.user ? {} : { nobody_above: up.refusal }),
   });
   return true;
