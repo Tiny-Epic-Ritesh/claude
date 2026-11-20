@@ -1,0 +1,293 @@
+/**
+ * A6: the BRD's pilot gates, with evidence (Round 4 report §1 and §6 step 9).
+ *
+ * The write-up for each gate is docs/feedback/A6-PILOT-GATES.md: what the BRD
+ * asks, how the CRM does it, where, what this file proves, and what has to be
+ * shown on the pilot's own infrastructure. Each section here is one gate.
+ *
+ *   G1  credential hashing          passwords, API secrets, and every bearer
+ *                                   token and signing secret at rest (OPS-80,
+ *                                   OPS-81)
+ *   G2  session expiry, revocation  absolute and idle expiry, sign-out, and
+ *                                   what ends a session early (OPS-82)
+ *
+ * Production behaviour is checked in a child process with production's
+ * environment, not in this one: the suite runs with the password cost lowered
+ * (scripts/cheap-hashing.mjs), which production refuses to start with.
+ */
+
+import { strict as assert } from 'node:assert';
+import { execFileSync } from 'node:child_process';
+import { createHmac } from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import 'dotenv/config';
+import { all, one, run, protectStoredTokens } from '../src/db.js';
+import { tokenKey, decryptField, encryptField, hashPassword } from '../src/security.js';
+import { issue as issueKey, revoke as revokeKey } from '../src/engine/apikeys.js';
+import { sweepWebhooks } from '../src/engine/webhookdelivery.js';
+import { applyClosure } from '../src/routes/partners-support.js';
+import { probeAdmin } from './helpers/probeadmin.mjs';
+
+const BASE = process.env.TEST_BASE || 'http://localhost:4100';
+const SERVER = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+let passed = 0;
+let failed = 0;
+const test = async (name, fn) => {
+  try { await fn(); passed += 1; console.log(`  ok   ${name}`); }
+  catch (err) { failed += 1; console.log(`  FAIL ${name}\n       ${String(err.message).split('\n')[0]}`); }
+};
+const call = async (headers, method, url, body) => {
+  const res = await fetch(`${BASE}/api${url}`, {
+    method, headers: { 'Content-Type': 'application/json', ...headers }, body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  return { status: res.status, body: await res.json().catch(() => null) };
+};
+const bearer = (token) => ({ Authorization: `Bearer ${token}` });
+/** The applicant's public KYC API: no CRM session. */
+const pub = async (method, url, body) => {
+  const res = await fetch(`${BASE}/dkyc-api${url}`, {
+    method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  return { status: res.status, body: await res.json().catch(() => null) };
+};
+const me = async (token) => (await call(bearer(token), 'GET', '/auth/me')).status;
+
+/** Run a snippet in a fresh process with the environment given, and nothing of ours. */
+function fresh(code, env) {
+  const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !['CRM_SCRYPT_N', 'NODE_ENV', 'CRM_MASTER_KEY', 'SESSION_TTL_HOURS', 'SESSION_IDLE_MINUTES'].includes(k)));
+  try {
+    return { ok: true, out: execFileSync(process.execPath, ['--input-type=module', '-e', code], { cwd: SERVER, env: { ...clean, ...env }, encoding: 'utf8', stdio: 'pipe' }) };
+  } catch (err) {
+    return { ok: false, out: `${err.stdout ?? ''}${err.stderr ?? ''}` };
+  }
+}
+
+const stamp = String(Date.now()).slice(-7);
+const MARK = `Pilot gate ${stamp}`;
+const probes = [];
+const cleanups = [];
+const probe = async (slug, role, org = 'BONANZA') => {
+  const p = await probeAdmin(`gate-${slug}`, { role, sales_org: org });
+  probes.push(p);
+  return p;
+};
+
+console.log('\nA6: the pilot gates');
+
+try {
+  /* ================================================================== G1
+   * Credential hashing. Passwords with scrypt at the OWASP floor; API secrets
+   * as SHA-256; and since OPS-80 and OPS-81, no bearer token or signing secret
+   * kept as it was issued. */
+  console.log('\nG1 credential hashing');
+
+  await test('G1 every stored staff and partner password is an scrypt hash, and none is anything else', () => {
+    const plain = one("SELECT COUNT(*) n FROM users WHERE password NOT LIKE 'scrypt$%'").n;
+    assert.equal(plain, 0, `${plain} staff password(s) are not scrypt hashes`);
+    const portal = one("SELECT COUNT(*) n FROM partners WHERE portal_password IS NOT NULL AND portal_password NOT LIKE 'scrypt$%'").n;
+    assert.equal(portal, 0, `${portal} partner portal password(s) are not scrypt hashes`);
+  });
+
+  await test('G1 a password is hashed at the OWASP floor where the cost is not lowered: scrypt N=2^17, r=8, p=1', () => {
+    const r = fresh("import('./src/security.js').then(async (m) => { const h = await m.hashPassword('x'); console.log(JSON.stringify({ policy: m.scryptPolicy(), hash: h.split('$').slice(0, 4) })); })", {});
+    assert.ok(r.ok, r.out);
+    const { policy, hash } = JSON.parse(r.out.trim().split('\n').pop());
+    assert.deepEqual([policy.N, policy.r, policy.p, policy.keylen], [131072, 8, 1, 64]);
+    assert.deepEqual(hash, ['scrypt', '131072', '8', '1'], `a new hash: ${hash}`);
+  });
+
+  await test('G1 production refuses to start with the password cost lowered, or without its own master key', () => {
+    const cheap = fresh("import('./src/security.js')", { NODE_ENV: 'production', CRM_SCRYPT_N: '1024', CRM_MASTER_KEY: 'a'.repeat(64) });
+    assert.ok(!cheap.ok && /CRM_SCRYPT_N must not be set in production/.test(cheap.out), `with a lowered cost: ${cheap.out.slice(0, 200)}`);
+    const devKey = fresh("import('./src/security.js').then((m) => m.encryptField('x'))", { NODE_ENV: 'production' });
+    assert.ok(!devKey.ok && /CRM_MASTER_KEY must be set in production/.test(devKey.out), `with the development key: ${devKey.out.slice(0, 200)}`);
+  });
+
+  await test('G1 an API secret is kept as its SHA-256, never as issued', async () => {
+    const owner = await probe('api-owner', 'admin');
+    const key = issueKey({ label: `${MARK} key`, userId: owner.id, scopes: ['lead.view.all'] });
+    cleanups.push(() => run('DELETE FROM api_credential WHERE key_id = ?', [key.key_id]));
+    const row = one('SELECT * FROM api_credential WHERE key_id = ?', [key.key_id]);
+    assert.ok(!Object.values(row).some((v) => String(v).includes(key.secret)), 'the secret is stored somewhere in its row');
+    assert.match(row.secret_hash, /^[0-9a-f]{64}$/);
+    revokeKey(row.id);
+  });
+
+  await test('G1 OPS-80 a sign-in session is kept as the hash of its token; the token works, the stored value does not', async () => {
+    const who = await probe('session', 'sales_rm');
+    const stored = all('SELECT token FROM sessions WHERE user_id = ?', [who.id]).map((r) => r.token);
+    assert.ok(stored.length, 'no session row for a signed-in user');
+    assert.ok(stored.every((t) => t.startsWith('sha256$') && t !== who.token), `stored as: ${stored[0]?.slice(0, 20)}`);
+    assert.ok(stored.includes(tokenKey(who.token)), 'the stored value is not the hash of the token');
+    assert.equal(await me(who.token), 200, 'the token itself no longer signs in');
+    assert.equal(await me(stored[0]), 401, 'the stored value signs in: reading the table is enough to take over the session');
+  });
+
+  await test('G1 OPS-80 a password reset link is kept as its hash, and only the link itself opens it', async () => {
+    const admin = await probe('reset-admin', 'admin');
+    const target = await probe('reset-target', 'sales_rm');
+    const issued = await call(admin.headers, 'POST', `/setup/users/${target.id}/reset-link`);
+    assert.equal(issued.status, 200, `the link answered ${issued.status}: ${issued.body?.error}`);
+    const token = issued.body.link.split('/reset/')[1];
+    const row = one('SELECT token FROM password_reset WHERE user_id = ?', [target.id]);
+    assert.equal(row.token, tokenKey(token), `stored as ${row.token.slice(0, 20)}`);
+    assert.equal((await call({}, 'GET', `/auth/reset/${encodeURIComponent(token)}`)).status, 200, 'the link does not open');
+    assert.equal((await call({}, 'GET', `/auth/reset/${encodeURIComponent(row.token)}`)).status, 404, 'the stored value opens the link');
+    cleanups.push(() => run('DELETE FROM password_reset WHERE user_id = ?', [target.id]));
+  });
+
+  await test('G1 OPS-80 a KYC resume link is found by its hash and kept encrypted; staff can still open it for the applicant', async () => {
+    const product = one("SELECT id FROM product_types WHERE code = 'EQD' AND sales_org = 'BONANZA'").id;
+    const started = await pub('POST', '/start', { product_type_id: product, mobile: `90${stamp}9`.slice(0, 10) });
+    assert.equal(started.status, 201, `the start answered ${started.status}: ${started.body?.error}`);
+    const token = started.body.resume_token;
+    const row = one('SELECT id, resume_token, resume_key FROM kyc_journeys WHERE resume_key = ?', [tokenKey(token)]);
+    assert.ok(row, 'the journey is not found by the hash of its token');
+    cleanups.push(() => run('DELETE FROM kyc_journeys WHERE id = ?', [row.id]));
+    assert.ok(row.resume_token.startsWith('v1:') && !row.resume_token.includes(token), 'the token is stored as issued');
+    assert.equal(decryptField(row.resume_token), token);
+    assert.equal((await pub('GET', `/resume/${token}`)).status, 200, 'the applicant\'s link does not open');
+    assert.equal((await pub('GET', `/resume/${encodeURIComponent(row.resume_key)}`)).status, 404, 'the stored key opens the journey');
+    const care = await probe('kyc-staff', 'admin');
+    const staff = await call(care.headers, 'GET', `/kyc/journeys/${row.id}`);
+    assert.equal(staff.body?.resume_token, token, 'staff can no longer open the applicant\'s link (OPS-67)');
+  });
+
+  await test('G1 OPS-81 a webhook signing secret is kept encrypted, and deliveries are still signed with it', async () => {
+    const sa = await probe('hooks', 'superadmin');
+    const secret = `${MARK} signing secret`;
+    const made = await call(sa.headers, 'POST', '/setup/webhook-endpoints', { name: `${MARK} hook`, url: 'https://hooks.example.in/crm', secret });
+    assert.ok([200, 201].includes(made.status), `the endpoint answered ${made.status}: ${made.body?.error}`);
+    const endpoint = one('SELECT * FROM webhook_endpoint WHERE name = ?', [`${MARK} hook`]);
+    cleanups.push(() => run('DELETE FROM webhook_endpoint WHERE id = ?', [endpoint.id]));
+    assert.ok(endpoint.secret.startsWith('v1:') && !endpoint.secret.includes(secret), 'the secret is stored as typed');
+    const payload = JSON.stringify({ event: 'lead.created', id: 1 });
+    run("INSERT INTO webhook_delivery (endpoint_id, payload, status) VALUES (?, ?, 'queued')", [endpoint.id, payload]);
+    // Only this endpoint's delivery goes through the stub: the others are paused for the sweep.
+    const others = all('SELECT id FROM webhook_endpoint WHERE active = 1 AND id != ?', [endpoint.id]).map((r) => r.id);
+    const pause = (on) => others.length && run(`UPDATE webhook_endpoint SET active = ? WHERE id IN (${others.map(() => '?').join(',')})`, [on, ...others]);
+    let seen = null;
+    pause(0);
+    try {
+      await sweepWebhooks({ fetchImpl: async (url, opts) => { if (url === 'https://hooks.example.in/crm') seen = opts; return { ok: true, status: 200 }; } });
+    } finally { pause(1); }
+    const expected = createHmac('sha256', secret).update(payload).digest('hex');
+    assert.equal(seen?.headers?.['X-Bonanza-Signature'], `sha256=${expected}`, 'the delivery is not signed with the real secret');
+  });
+
+  await test('G1 OPS-80/81 rows from before are protected in place on start, and nobody is signed out', async () => {
+    const who = await probe('legacy', 'sales_rm');
+    const raw = `legacy-${stamp}-${Math.random().toString(36).slice(2)}`;
+    run("INSERT INTO sessions (token, user_id, kind, expires_at, last_seen_at) VALUES (?, ?, 'crm', datetime('now', '+1 hour'), datetime('now'))", [raw, who.id]);
+    const hook = Number(run("INSERT INTO webhook_endpoint (name, url, secret) VALUES (?, 'https://hooks.example.in/old', 'old-plain-secret')", [`${MARK} old hook`]).lastInsertRowid);
+    cleanups.push(() => run('DELETE FROM webhook_endpoint WHERE id = ?', [hook]));
+    protectStoredTokens();
+    assert.equal(one('SELECT COUNT(*) n FROM sessions WHERE token = ?', [raw]).n, 0, 'a session is still stored as issued');
+    assert.equal(await me(raw), 200, 'the session protected in place no longer works');
+    assert.equal(decryptField(one('SELECT secret FROM webhook_endpoint WHERE id = ?', [hook]).secret), 'old-plain-secret');
+    assert.equal(protectStoredTokens(), 0, 'a second pass changed something');
+  });
+
+  /* ================================================================== G2
+   * Sessions expire, absolutely and when idle, and end when they should. */
+  console.log('\nG2 session expiry and revocation');
+
+  await test('G2 a session lasts 12 hours at most and 120 idle minutes, unless configured otherwise', () => {
+    const r = fresh("import('./src/security.js').then((m) => console.log(JSON.stringify([m.SESSION_TTL_HOURS, m.SESSION_IDLE_MINUTES])))", {});
+    assert.ok(r.ok, r.out);
+    assert.deepEqual(JSON.parse(r.out.trim().split('\n').pop()), [12, 120]);
+  });
+
+  await test('G2 a session past its absolute expiry is refused, and removed', async () => {
+    const who = await probe('expired', 'sales_rm');
+    run("UPDATE sessions SET expires_at = datetime('now', '-1 minute') WHERE token = ?", [tokenKey(who.token)]);
+    assert.equal(await me(who.token), 401, 'an expired session still works');
+    assert.equal(one('SELECT COUNT(*) n FROM sessions WHERE token = ?', [tokenKey(who.token)]).n, 0, 'the expired session was left behind');
+  });
+
+  await test('G2 a session idle past its limit is refused, though its absolute expiry is hours away', async () => {
+    const who = await probe('idle', 'sales_rm');
+    run("UPDATE sessions SET last_seen_at = datetime('now', '-121 minutes') WHERE token = ?", [tokenKey(who.token)]);
+    assert.equal(await me(who.token), 401, 'an idle session still works');
+  });
+
+  await test('G2 signing out ends the session', async () => {
+    const who = await probe('signout', 'sales_rm');
+    assert.equal((await call(bearer(who.token), 'POST', '/auth/logout')).status, 200);
+    assert.equal(await me(who.token), 401, 'the session survived signing out');
+  });
+
+  await test('G2 an Admin setting a new password ends every one of that person\'s sessions', async () => {
+    const admin = await probe('pw-admin', 'admin');
+    const who = await probe('pw-target', 'sales_rm');
+    const res = await call(admin.headers, 'PATCH', `/setup/users/${who.id}`, { password: `New-${stamp}-password` });
+    assert.equal(res.status, 200, `the change answered ${res.status}: ${res.body?.error}`);
+    assert.equal(await me(who.token), 401, 'a session survived the password change');
+  });
+
+  await test('G2 a password reset by link ends every session too', async () => {
+    const admin = await probe('link-admin', 'admin');
+    const who = await probe('link-target', 'sales_rm');
+    const token = (await call(admin.headers, 'POST', `/setup/users/${who.id}/reset-link`)).body.link.split('/reset/')[1];
+    cleanups.push(() => run('DELETE FROM password_reset WHERE user_id = ?', [who.id]));
+    assert.equal((await call({}, 'POST', `/auth/reset/${encodeURIComponent(token)}`, { password: `Reset-${stamp}-password` })).status, 200);
+    assert.equal(await me(who.token), 401, 'a session survived the reset');
+    assert.equal((await call({}, 'POST', `/auth/reset/${encodeURIComponent(token)}`, { password: `Again-${stamp}-password` })).status, 400, 'the link worked twice');
+  });
+
+  await test('G2 a deactivated person is refused at once, and their sessions removed', async () => {
+    const admin = await probe('deact-admin', 'admin');
+    const who = await probe('deact-target', 'sales_rm');
+    const res = await call(admin.headers, 'POST', `/setup/users/${who.id}/active`, { active: false });
+    assert.equal(res.status, 200, `the change answered ${res.status}: ${res.body?.error}`);
+    assert.equal(await me(who.token), 401, 'a deactivated person still works');
+    assert.equal(one('SELECT COUNT(*) n FROM sessions WHERE user_id = ?', [who.id]).n, 0, 'their sessions were left behind');
+  });
+
+  await test('G2 a change of role applies on the very next request, without signing in again', async () => {
+    const who = await probe('role', 'sales_rm');
+    assert.equal((await call(who.headers, 'GET', '/admin/users')).status, 403);
+    run("UPDATE users SET role = 'admin' WHERE id = ?", [who.id]);
+    assert.notEqual((await call(who.headers, 'GET', '/admin/users')).status, 403, 'the new role did not apply');
+    run("UPDATE users SET role = 'sales_rm' WHERE id = ?", [who.id]);
+    assert.equal((await call(who.headers, 'GET', '/admin/users')).status, 403, 'the old role lingered');
+  });
+
+  /* Partners: suspension ends the sessions, and OPS-82 refuses one that slips through. */
+  const partner = Number(run(
+    "INSERT INTO partners (name, sales_org, state_code, portal_password) VALUES (?, 'BONANZA', 'ACTIVE', ?)",
+    [`${MARK} partner`, await hashPassword(`portal-${stamp}`)],
+  ).lastInsertRowid);
+  cleanups.push(() => { run('DELETE FROM sessions WHERE partner_id = ?', [partner]); run('DELETE FROM activities WHERE partner_id = ?', [partner]); run('DELETE FROM partners WHERE id = ?', [partner]); });
+  const partnerSession = () => {
+    const token = `gate-partner-${stamp}-${Math.random().toString(36).slice(2)}`;
+    run("INSERT INTO sessions (token, partner_id, kind, expires_at, last_seen_at) VALUES (?, ?, 'partner', datetime('now', '+1 hour'), datetime('now'))", [tokenKey(token), partner]);
+    return token;
+  };
+  const portal = async (token) => (await call(bearer(token), 'GET', '/portal/dashboard')).status;
+
+  await test('G2 OPS-82 a partner whose state no longer allows the portal is refused on the next request, however it changed', async () => {
+    const token = partnerSession();
+    assert.equal(await portal(token), 200, 'an active partner\'s session does not work');
+    run("UPDATE partners SET state_code = 'SUSPENDED' WHERE id = ?", [partner]);   // as a route that forgot to end the session would
+    assert.equal(await portal(token), 401, 'a suspended partner\'s surviving session still works');
+    run("UPDATE partners SET state_code = 'ACTIVE' WHERE id = ?", [partner]);
+  });
+
+  await test('G2 suspending a partner ends their sessions and withdraws the portal', async () => {
+    const token = partnerSession();
+    const actor = await probe('closure', 'admin');
+    applyClosure(one('SELECT * FROM partners WHERE id = ?', [partner]), 'SUSPENDED', `${MARK}: complaints`, actor.id);
+    assert.equal(one('SELECT COUNT(*) n FROM sessions WHERE partner_id = ?', [partner]).n, 0, 'a session survived the suspension');
+    assert.equal(await portal(token), 401);
+    assert.equal(one('SELECT portal_password FROM partners WHERE id = ?', [partner]).portal_password, null, 'the portal password survived');
+  });
+} finally {
+  for (const fn of cleanups.reverse()) { try { fn(); } catch { /* best effort */ } }
+  for (const p of [...probes].reverse()) p.cleanup();
+}
+
+console.log(`\n${passed} passed, ${failed} failed`);
+if (failed) process.exit(1);

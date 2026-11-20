@@ -22,6 +22,7 @@
  */
 
 import { createHmac } from 'node:crypto';
+import { decryptField } from '../security.js';
 import { all, run } from '../db.js';
 
 /** How many times a delivery is tried before it is left alone. */
@@ -56,7 +57,8 @@ export async function sweepWebhooks({ limit = 50, fetchImpl = fetch } = {}) {
     const attempt = d.attempts + 1;
     const body = d.payload ?? '{}';
     const headers = { 'Content-Type': 'application/json' };
-    if (d.secret) headers['X-Bonanza-Signature'] = `sha256=${sign(d.secret, body)}`;
+    // OPS-81: the secret is kept encrypted, as vendor credentials are.
+    if (d.secret) headers['X-Bonanza-Signature'] = `sha256=${sign(decryptField(d.secret), body)}`;
 
     try {
       const res = await fetchImpl(d.url, {

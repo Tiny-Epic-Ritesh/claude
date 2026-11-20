@@ -48,6 +48,7 @@ import { SEED_ROLES, effectiveCapabilities, isApiOnly } from '../src/engine/acce
 import { maskedFieldsFor } from '../src/engine/masking.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
 import { MOUNTS, ROUTES } from './helpers/routemap.mjs';
+import { tokenKey } from '../src/security.js';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
 
@@ -267,12 +268,12 @@ for (const org of BOOKS) {
   const ticket = insert('tickets', { subject: `Matrix partner case ${org}`, sales_org: org, partner_id: id });
   const commission = insert('commissions', { partner_id: id, lead_id: lead, period: '2026-11', gross: 100, payout: 10 });
   const token = `matrix-partner-${org.toLowerCase()}-${stamp}`;
-  run("INSERT INTO sessions (token, partner_id, kind, expires_at, last_seen_at) VALUES (?,?,'partner',datetime('now','+1 hours'),datetime('now'))", [token, id]);
+  run("INSERT INTO sessions (token, partner_id, kind, expires_at, last_seen_at) VALUES (?,?,'partner',datetime('now','+1 hours'),datetime('now'))", [tokenKey(token), id]);
   own.sessions.push(token);
   partners.push({ org, id, lead, ticket, commission, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } });
 }
 const dropPartners = () => {
-  for (const token of own.sessions) run('DELETE FROM sessions WHERE token = ?', [token]);
+  for (const token of own.sessions) run('DELETE FROM sessions WHERE token = ?', [tokenKey(token)]);
   for (const table of ['commissions', 'tickets', 'leads', 'partners']) {
     if (own[table].length) run(`DELETE FROM ${table} WHERE id IN (${own[table].map(() => '?').join(',')})`, own[table]);
   }

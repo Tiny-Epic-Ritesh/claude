@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 import 'dotenv/config';
 import { all, one, run } from '../src/db.js';
 import { applyJourneySteps } from '../src/engine/journeyconfig.js';
-import { hashPasswordSync } from '../src/security.js';
+import { hashPasswordSync, tokenKey } from '../src/security.js';
 import { createJourney, journeyStepsFor } from '../src/engine/kyc.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
 
@@ -99,7 +99,7 @@ try {
 
   await test('suspending goes through the closure approval, keeps the reason, and withdraws portal access', async () => {
     const p = makePartner('ACTIVE', { portal: true });
-    run("INSERT INTO sessions (token, partner_id, expires_at) VALUES (?, ?, datetime('now', '+1 day'))", [`lc5-${RUN}-session`, p]);
+    run("INSERT INTO sessions (token, partner_id, expires_at) VALUES (?, ?, datetime('now', '+1 day'))", [tokenKey(`lc5-${RUN}-session`), p]);
     const asked = await askClosure(PRM, p, 'SUSPENDED', 'Complaints from three clients this month');
     assert.equal(asked.status, 201, `the request answered ${asked.status}: ${asked.body?.error}`);
     assert.equal(partner(p).state_code, 'ACTIVE', 'the request suspended the partner by itself');

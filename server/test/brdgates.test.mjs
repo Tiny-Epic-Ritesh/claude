@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import 'dotenv/config';
 import { all, one, run } from '../src/db.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
+import { tokenKey } from '../src/security.js';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
 const CLIENT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'client', 'src');
@@ -326,7 +327,7 @@ try {
     // The partner side: a case of the partner's own, resolved through the CRM.
     const partner = Number(run("INSERT INTO partners (name, sales_org, state_code) VALUES (?, 'BONANZA', 'ACTIVE')", [`${MARK} partner`]).lastInsertRowid);
     const token = `gate-partner-${stamp}`;
-    run("INSERT INTO sessions (token, partner_id, kind, expires_at, last_seen_at) VALUES (?,?,'partner',datetime('now','+1 hours'),datetime('now'))", [token, partner]);
+    run("INSERT INTO sessions (token, partner_id, kind, expires_at, last_seen_at) VALUES (?,?,'partner',datetime('now','+1 hours'),datetime('now'))", [tokenKey(token), partner]);
     const PARTNER = { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } };
     const partnerCase = caseOf({ assignee_id: CARE.id, resolution_due: one("SELECT datetime('now', '+2 days') t").t, partner_id: partner });
 
@@ -366,7 +367,7 @@ try {
       assert.match(screen, /the whole conversation/, 'the screen offers no way to read past the latest 50');
     });
 
-    run('DELETE FROM sessions WHERE token = ?', [token]);
+    run('DELETE FROM sessions WHERE token = ?', [tokenKey(token)]);
     for (const id of tickets) {
       run('DELETE FROM notifications WHERE link = ?', [`/tickets/${id}`]);
       run("DELETE FROM field_history WHERE entity = 'case' AND record_id = ?", [id]);

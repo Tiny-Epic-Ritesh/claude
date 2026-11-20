@@ -32,7 +32,7 @@
  */
 
 import { one, run } from '../db.js';
-import { newSessionToken } from '../security.js';
+import { newSessionToken, tokenKey } from '../security.js';
 import { isApiOnly, effectiveCapabilities } from './access.js';
 import { grantGap } from '../auth.js';
 
@@ -90,7 +90,7 @@ export function start(actor, target) {
   run(
     `INSERT INTO sessions (token, kind, user_id, ghost_of, created_at, last_seen_at, expires_at)
      VALUES (?, 'crm', ?, ?, datetime('now'), datetime('now'), datetime('now', ?))`,
-    [token, target.id, actor.id, `+${GHOST_MINUTES} minutes`],
+    [tokenKey(token), target.id, actor.id, `+${GHOST_MINUTES} minutes`],   // OPS-80: its hash
   );
 
   return {
@@ -103,8 +103,8 @@ export function start(actor, target) {
 
 /** End one. Only ever the ghost session — never the administrator's own. */
 export function stop(token) {
-  const session = one('SELECT * FROM sessions WHERE token = ?', [token]);
+  const session = one('SELECT * FROM sessions WHERE token = ?', [tokenKey(token)]);
   if (!session || !session.ghost_of) return false;
-  run('DELETE FROM sessions WHERE token = ?', [token]);
+  run('DELETE FROM sessions WHERE token = ?', [tokenKey(token)]);
   return true;
 }

@@ -9,7 +9,7 @@ import { existsSync } from 'node:fs';
 import { attachSession, login, partnerLogin, logout, publicUser, publicPartner } from './auth.js';
 import { rateLimiter, usingDevKey, usingReducedCost, scryptPolicy } from './security.js';
 import { ROLE_LABELS, one, run, audit } from './db.js';
-import { hashPassword, verifyPassword } from './security.js';
+import { hashPassword, verifyPassword, tokenKey } from './security.js';
 
 import crm from './routes/crm.js';
 import tickets from './routes/tickets.js';
@@ -193,7 +193,7 @@ app.post('/api/auth/reset/:token', async (req, res) => {
   const row = one(
     `SELECT * FROM password_reset
      WHERE token = ? AND used_at IS NULL AND expires_at > datetime('now')`,
-    [req.params.token],
+    [tokenKey(req.params.token)],   // OPS-80: kept as its hash
   );
   if (!row) {
     return res.status(400).json({ error: 'That link is no longer valid. Ask for a new one.' });
@@ -225,7 +225,7 @@ app.get('/api/auth/reset/:token', (req, res) => {
     `SELECT p.token, u.name, u.email FROM password_reset p
      JOIN users u ON u.id = p.user_id
      WHERE p.token = ? AND p.used_at IS NULL AND p.expires_at > datetime('now') AND u.active = 1`,
-    [req.params.token],
+    [tokenKey(req.params.token)],
   );
   if (!row) return res.status(404).json({ error: 'That link is no longer valid. Ask for a new one.' });
   return res.json({ ok: true, name: row.name, email: row.email });
@@ -277,7 +277,7 @@ app.post('/api/auth/partner-password', partnerPasswordLimiter, async (req, res) 
       WHERE id = ?`,
     [await hashPassword(chosen), req.partner.id],
   );
-  run('DELETE FROM sessions WHERE partner_id = ? AND token != ?', [req.partner.id, req.token]);
+  run('DELETE FROM sessions WHERE partner_id = ? AND token != ?', [req.partner.id, req.sessionKey]);
   audit(null, 'partner_password_changed', 'partner', req.partner.id, {});
   return res.json({ ok: true });
 });

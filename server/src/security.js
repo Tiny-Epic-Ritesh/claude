@@ -34,7 +34,7 @@
 
 import {
   randomBytes, scrypt, scryptSync, timingSafeEqual, createCipheriv,
-  createDecipheriv, createHmac, randomUUID, randomInt,
+  createDecipheriv, createHmac, createHash, randomUUID, randomInt,
 } from 'node:crypto';
 import { promisify } from 'node:util';
 
@@ -443,6 +443,25 @@ export const SESSION_TTL_HOURS = Number(process.env.SESSION_TTL_HOURS || 12);
 export const SESSION_IDLE_MINUTES = Number(process.env.SESSION_IDLE_MINUTES || 120);
 
 export const newSessionToken = () => `${randomUUID()}.${randomBytes(24).toString('base64url')}`;
+
+/**
+ * How a bearer token is kept -- OPS-80 (A6, ruled 20 Nov 2026).
+ *
+ * Sign-in sessions, password reset links and KYC resume links were stored
+ * exactly as issued, so anyone who could read the database, or a backup of it,
+ * could use a live one. They are kept as a SHA-256 now, as API secrets already
+ * were (engine/apikeys.js), and looked up by it. A plain hash, not scrypt:
+ * each token is 192 bits or more of randomness, so there is nothing to guess,
+ * and a lookup on every request has to be cheap. The prefix says what the value
+ * is, as `scrypt$` does for a password, so the start-up pass that hashes the
+ * old rows in place (db.js) runs once.
+ *
+ * A KYC resume link is also kept encrypted, beside its key, because staff open
+ * it again for an applicant (OPS-67); a sign-in session or a reset link is
+ * never shown twice, so it is kept as the hash alone.
+ */
+export const TOKEN_PREFIX = 'sha256$';
+export const tokenKey = (token) => `${TOKEN_PREFIX}${createHash('sha256').update(String(token)).digest('hex')}`;
 
 /* --------------------------------------------------------- rate limiting */
 

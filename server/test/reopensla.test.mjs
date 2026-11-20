@@ -25,6 +25,7 @@ import 'dotenv/config';
 import { all, one, run } from '../src/db.js';
 import { policyFor, addBusinessMinutes } from '../src/engine/sla.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
+import { tokenKey } from '../src/security.js';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
 
@@ -236,7 +237,7 @@ try {
   /* ---------------------------------------------- a partner's reply */
   partner = Number(run("INSERT INTO partners (name, sales_org, state_code) VALUES (?, 'BONANZA', 'ACTIVE')", [`${MARK} partner`]).lastInsertRowid);
   token = `reopen-partner-${stamp}`;
-  run("INSERT INTO sessions (token, partner_id, kind, expires_at, last_seen_at) VALUES (?,?,'partner',datetime('now','+1 hours'),datetime('now'))", [token, partner]);
+  run("INSERT INTO sessions (token, partner_id, kind, expires_at, last_seen_at) VALUES (?,?,'partner',datetime('now','+1 hours'),datetime('now'))", [tokenKey(token), partner]);
   const PARTNER = { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } };
   const theirs = caseOf({ assignee_id: CARE.id, resolved_at: at('-2 days'), resolved_by: CARE.id, partner_id: partner });
 
@@ -284,7 +285,7 @@ try {
     assert.deepEqual(own, { sla: before.sla + 1, open: before.open + 1 }, `a Bonanza case is not counted: ${JSON.stringify(own)}`);
   });
 } finally {
-  if (token) run('DELETE FROM sessions WHERE token = ?', [token]);
+  if (token) run('DELETE FROM sessions WHERE token = ?', [tokenKey(token)]);
   for (const id of tickets) {
     run('DELETE FROM notifications WHERE link = ?', [`/tickets/${id}`]);
     run("DELETE FROM field_history WHERE entity = 'case' AND record_id = ?", [id]);

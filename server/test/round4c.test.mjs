@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import 'dotenv/config';
 import { one, run } from '../src/db.js';
 import { getJourney } from '../src/engine/kyc.js';
+import { tokenKey } from '../src/security.js';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -49,7 +50,7 @@ assert(product, 'no KYC-bearing Bonanza product');
 const started = await post('/start', { product_type_id: product.id, mobile: MOBILE });
 assert.equal(started.status, 201, `the journey did not start: ${started.status}`);
 const TOKEN = started.body.resume_token;
-const current = () => one('SELECT current_step FROM kyc_journeys WHERE resume_token = ?', [TOKEN]);
+const current = () => one('SELECT current_step FROM kyc_journeys WHERE resume_key = ?', [tokenKey(TOKEN)]);
 // The form is encrypted at rest; the engine reads it back.
 const form = () => getJourney(TOKEN, { byToken: true })?.form ?? {};
 const submit = (step_code, payload) => post(`/resume/${TOKEN}/step`, { step_code, payload });
@@ -140,7 +141,7 @@ try {
     assert(/pattern=\{field\.pattern\}/.test(portal), 'the pattern is not passed to the input');
   });
 } finally {
-  run('DELETE FROM kyc_journeys WHERE resume_token = ?', [TOKEN]);
+  run('DELETE FROM kyc_journeys WHERE resume_key = ?', [tokenKey(TOKEN)]);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

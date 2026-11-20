@@ -68,7 +68,10 @@ export function nextActionContext(leadId) {
     [leadId],
   ).map((j) => {
     const health = kycHealth(null).find((h) => h.id === j.id);
-    return { ...j, current_step_label: health?.current_step_label ?? j.current_step, progress_pct: health?.progress_pct ?? 0, seconds_on_step: health?.seconds_on_step ?? 0 };
+    /* OPS-80: an applicant's resume link is a bearer credential, and has no
+       business in what the AI is given -- encrypted or not. */
+    const { resume_token: _token, resume_key: _key, ...rest } = j;
+    return { ...rest, current_step_label: health?.current_step_label ?? j.current_step, progress_pct: health?.progress_pct ?? 0, seconds_on_step: health?.seconds_on_step ?? 0 };
   });
 
   return {

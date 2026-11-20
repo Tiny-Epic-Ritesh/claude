@@ -19,6 +19,7 @@ import { strict as assert } from 'node:assert';
 import { all, one, run } from '../src/db.js';
 import { CAPABILITY_CATALOGUE } from '../src/engine/access.js';
 import { probeAdmin } from './helpers/probeadmin.mjs';
+import { tokenKey } from '../src/security.js';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:4100';
 
@@ -814,7 +815,7 @@ await test('presence says who is about, and says nothing about somebody who neve
      falls back to away whatever the rule says. */
   run(
     "INSERT INTO sessions (token, user_id, kind, expires_at, last_seen_at) VALUES (?, ?, 'crm', datetime('now', '+1 day'), datetime('now', '-2 hours'))",
-    [`probe-msg-stale-${SUP}`, SUP],
+    [tokenKey(`probe-msg-stale-${SUP}`), SUP],
   );
   const later = (await call(A, 'GET', `/messages/conversations/${room.body.id}/messages`)).body.conversation.members
     .find((m) => m.id === SUP);
