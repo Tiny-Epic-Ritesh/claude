@@ -12,7 +12,7 @@
 
 import { useState } from 'react';
 import { api, money, appUrl } from '../api.js';
-import { useApi, Modal, Spinner, ErrorBanner, Loading, Icon } from '../components/ui.jsx';
+import { useApi, Modal, Spinner, ErrorBanner, Loading, Icon, announce } from '../components/ui.jsx';
 import ActivityComposer from './ActivityComposer.jsx';
 import EmailComposer from './EmailComposer.jsx';
 import { ProductRmFlow } from './ProductRmRequest.jsx';
@@ -52,6 +52,7 @@ export default function ActionModal({ state, session, onClose, onDone, onNotice 
     case 'kyc': return <KycModal {...common} />;
     case 'stage': return <StageModal {...common} />;
     case 'owner': return <OwnerModal {...common} />;
+    case 'handover': return <HandoverModal {...common} />;
     case 'delete': return <DeleteModal {...common} />;
     default: return null;
   }
@@ -557,6 +558,99 @@ function OwnerModal({ lead, onClose, onDone, onNotice }) {
           </button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+/* ---------------------------------------------------------- hand-over */
+
+/**
+ * B26 (ruled 20 Nov 2026): a Caller or Dealer hands their lead to a Sales RM.
+ *
+ * Says first who it can go to, who the routing rules would choose, and all it
+ * sets off -- the stage, the Sales RM's task, the tasks that go with it, the
+ * supervisor told, the scorecard -- and asks what the Sales RM needs to know.
+ * The lead leaves the Caller's list, so the page they came from goes back to
+ * the list (onDone).
+ */
+function HandoverModal({ lead, onClose, onDone }) {
+  const [plan, { loading, error: planError }] = useApi(`/leads/${lead.id}/handover`);
+  const [choice, setChoice] = useState(null);   // 'auto', or a Sales RM's id
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const picked = choice ?? (plan?.routed ? 'auto' : String(plan?.sales_rms?.[0]?.id ?? ''));
+  const named = picked !== 'auto';
+
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      const res = await api.post(`/leads/${lead.id}/handover`, {
+        ...(named ? { to_user_id: Number(picked) } : { auto: true }),
+        needs_to_know: note,
+      });
+      announce(`${lead.name} handed to ${res.to.name}`, res.effects);
+      onDone({ handedOver: true, name: lead.name, to: res.to.name });
+    } catch (err) { setError(err.message); setBusy(false); }
+  }
+
+  return (
+    <Modal title="Hand to a Sales RM" subtitle={lead.name} onClose={onClose}>
+      {loading && !plan ? <Loading /> : planError ? (
+        <div className="stack" style={{ gap: 12 }}>
+          <ErrorBanner error={planError} />
+          <div className="modal-actions"><button type="button" className="btn btn-ghost" onClick={onClose}>Close</button></div>
+        </div>
+      ) : plan && (
+        <form onSubmit={submit} className="form-grid handover-form">
+          {error && <div className="span-2"><ErrorBanner error={error} /></div>}
+          <div className="span-2 stack" style={{ gap: 8 }} role="radiogroup" aria-label="Who it goes to">
+            <label className={`pick-row ${!named ? 'is-chosen' : ''}`}>
+              <input type="radio" name="handover-to" checked={!named} disabled={!plan.routed} onChange={() => setChoice('auto')} />
+              <span>
+                <strong>Let the routing rules choose</strong>
+                <div className="tiny muted">
+                  {plan.routed ? `${plan.routed.said} That is who it would be now.` : `No Sales RM works in ${plan.business}.`}
+                </div>
+              </span>
+            </label>
+            <label className={`pick-row ${named ? 'is-chosen' : ''}`}>
+              <input type="radio" name="handover-to" checked={named} disabled={!plan.sales_rms.length}
+                onChange={() => setChoice(String(plan.sales_rms[0]?.id ?? ''))} />
+              <span>
+                <strong>Choose a Sales RM</strong>
+                <div className="tiny muted">Anyone who is a Sales RM in {plan.business}.</div>
+              </span>
+            </label>
+            {named && (
+              <select aria-label="Sales RM" value={picked} onChange={(e) => setChoice(e.target.value)}>
+                {plan.sales_rms.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name} · {r.open_leads} open {r.open_leads === 1 ? 'lead' : 'leads'}</option>
+                ))}
+              </select>
+            )}
+          </div>
+          <label className="span-2">
+            <span>What the Sales RM needs to know</span>
+            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={4} maxLength={2000} required
+              placeholder="Wants a SIP of 5,000 a month in a large-cap fund; free after 6 pm; already has a demat with another broker" />
+          </label>
+          <div className="span-2">
+            <div className="tiny muted" style={{ fontWeight: 640, textTransform: 'uppercase', letterSpacing: '.05em' }}>What happens</div>
+            <ul className="small handover-will" style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+              {plan.will.map((line) => <li key={line}>{line}</li>)}
+            </ul>
+          </div>
+          <div className="modal-actions span-2">
+            <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+            <button type="submit" className="btn btn-primary" disabled={busy || !note.trim() || !picked}>
+              {busy ? <Spinner /> : 'Hand over'}
+            </button>
+          </div>
+        </form>
+      )}
     </Modal>
   );
 }

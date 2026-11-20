@@ -1839,6 +1839,11 @@ const COLUMNS = [
      when it was raised". */
   ['tickets', 'sla_round', 'INTEGER NOT NULL DEFAULT 1'],
   ['tickets', 'sla_started_at', 'TEXT'],
+  /* B26 (ruled 20 Nov 2026): a hand-over to a Sales RM picks from a routed
+     team's Sales RMs on a rotation of its own, so hand-overs do not move the
+     rota that new leads are dealt from (rr_cursor). Here for databases that
+     already have the table; inline in its CREATE for ones that do not yet. */
+  ['teams', 'handover_cursor', 'INTEGER NOT NULL DEFAULT 0'],
   /* P3-21. A lead transfer is asked of one named person -- the lead's owner,
      or somebody who can reassign it -- rather than broadcast to every holder
      of a capability. Here for databases that already have the table; inline
@@ -2056,6 +2061,38 @@ BEGIN
   VALUES (NEW.id, NEW.sla_round, NEW.breached_at, NEW.resolution_due, NEW.priority)
   ON CONFLICT (ticket_id, round) DO UPDATE SET breached_at = COALESCE(sla_breaches.breached_at, excluded.breached_at);
 END;
+`);
+
+/**
+ * B26 (ruled 20 Nov 2026): a Caller or Dealer hands a lead they own to a
+ * Sales RM.
+ *
+ * One row per hand-over: who handed it, to whom, chosen by name or by the
+ * routing rules (and which rule), and what the Sales RM needs to know. The
+ * lead's owner and stage changes are in its field history like any other; this
+ * is what the history cannot say -- the note, how the Sales RM was chosen, and
+ * the work that moved with it. The Caller's "Leads qualified" counts these: who
+ * did the work. Goes with the lead if the lead is ever purged.
+ */
+db.exec(`
+CREATE TABLE IF NOT EXISTS lead_handovers (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  lead_id       INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  sales_org     TEXT NOT NULL,
+  from_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  from_role     TEXT,
+  to_user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  how           TEXT NOT NULL,              -- chosen | routed
+  routed_by     TEXT,                       -- for routed: the rule, or the fallback
+  needs_to_know TEXT NOT NULL,
+  stage_from    TEXT,
+  stage_to      TEXT,
+  tasks_moved   INTEGER NOT NULL DEFAULT 0,
+  task_id       INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_lead_handovers_from ON lead_handovers(from_user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_lead_handovers_lead ON lead_handovers(lead_id);
 `);
 
 /**
@@ -2533,6 +2570,9 @@ CREATE TABLE IF NOT EXISTS teams (
   manager_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
   -- Where round-robin got to last time, so rotation survives a restart.
   rr_cursor   INTEGER NOT NULL DEFAULT 0,
+  -- B26: where a hand-over to a Sales RM got to; inline for a new database,
+  -- in COLUMNS for one that already has the table.
+  handover_cursor INTEGER NOT NULL DEFAULT 0,
   active      INTEGER NOT NULL DEFAULT 1,
   sales_org   TEXT NOT NULL DEFAULT 'BONANZA',
   -- A branch hangs under another branch, to any depth. Null is a root, which

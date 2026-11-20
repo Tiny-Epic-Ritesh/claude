@@ -64,6 +64,8 @@ export const LEAD_ACTIONS = [
 
   // Ownership and routing
   { key: 'owner', label: 'Change owner', icon: 'person_pin', needs: 'lead.reassign', group: 'route' },
+  /* B26 (ruled 20 Nov): a Caller's or Dealer's own lead, to a Sales RM. */
+  { key: 'handover', label: 'Hand to a Sales RM', icon: 'forward', needs: 'lead.handover', group: 'route' },
   { key: 'dialler', label: 'Push to autodialler', icon: 'dialpad', needs: 'lead.contact', channel: 'call', intent: 'service', group: 'route' },
 
   // Record management

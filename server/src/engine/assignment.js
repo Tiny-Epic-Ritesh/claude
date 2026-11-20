@@ -259,6 +259,88 @@ export function routeLead(lead) {
 }
 
 /**
+ * B26 (ruled 20 Nov 2026): the Sales RM a Caller's or Dealer's hand-over goes
+ * to when they let the routing rules choose.
+ *
+ * The rules route new leads to teams that mix roles -- the Digital Desk is two
+ * Callers and a Sales RM -- so run as they are they could hand a lead straight
+ * back to a Caller. Ruled: the same rules, in the same order, on the lead as it
+ * is now (territory, partner-sourced, source and so on); from the team a rule
+ * picks, only its members of `role` in the lead's business, in the team's own
+ * order -- round robin, least loaded or named. A rule naming a person names
+ * them only if they hold the role. No matching team with one, and it is the
+ * least-loaded holder of the role in the business.
+ *
+ * The rotation is the team's handover_cursor, not rr_cursor: a hand-over does
+ * not move the rota new leads are dealt from. Nor does it count as a rule
+ * firing (fire_count counts the leads a rule routed). `dryRun` says who it
+ * would be without moving any rotation, for the dialog that asks first.
+ *
+ * Returns { user_id, rule_id, rule_name, fallback }: user_id null when the
+ * business has nobody in the role; fallback true when no rule's team did.
+ */
+export function routeToRole(lead, role, { dryRun = false } = {}) {
+  const org = lead.sales_org;
+  const facts = routingFacts(lead);
+  const holds = (u) => u && u.role === role && u.active === 1 && orgsFor(u).includes(org);
+
+  const fromTeam = (teamId) => {
+    const team = one('SELECT * FROM teams WHERE id = ? AND active = 1', [teamId]);
+    if (!team) return null;
+    const members = all(
+      `SELECT tm.user_id, tm.weight, u.role, u.active, u.sales_org, u.org_access
+       FROM team_members tm JOIN users u ON u.id = tm.user_id
+       WHERE tm.team_id = ? AND tm.accepting = 1 AND u.active = 1
+       ORDER BY tm.sort_order, tm.user_id`,
+      [team.id],
+    ).filter(holds);
+    if (!members.length) return null;
+    if (team.strategy === 'named') return members[0].user_id;
+
+    const turn = (list) => {
+      const cursor = team.handover_cursor % list.length;
+      if (!dryRun) run('UPDATE teams SET handover_cursor = ? WHERE id = ?', [(cursor + 1) % list.length, team.id]);
+      return list[cursor];
+    };
+    if (team.strategy === 'least_loaded') {
+      const counted = members.map((m) => ({
+        ...m,
+        open: one(
+          "SELECT COUNT(*) n FROM leads WHERE owner_id = ? AND deleted_at IS NULL AND stage NOT IN ('Won', 'Lost')",
+          [m.user_id],
+        ).n,
+      }));
+      const min = Math.min(...counted.map((c) => c.open));
+      const tied = counted.filter((c) => c.open === min);
+      return tied.length === 1 ? tied[0].user_id : turn(tied).user_id;
+    }
+    // Round robin, weighted, as the team deals new leads.
+    return turn(members.flatMap((m) => Array.from({ length: Math.max(1, m.weight) }, () => m.user_id)));
+  };
+
+  const rules = all('SELECT * FROM assignment_rules WHERE enabled = 1 AND sales_org = ? ORDER BY priority, id', [org]);
+  for (const rule of rules) {
+    if (!evaluate(parseConditions(rule.conditions), facts)) continue;
+    let userId = null;
+    if (rule.strategy === 'named' && rule.user_id) {
+      const named = one('SELECT id, role, active, sales_org, org_access FROM users WHERE id = ?', [rule.user_id]);
+      if (holds(named)) userId = named.id;
+    } else if (rule.strategy === 'territory' || rule.strategy === 'product') {
+      let map = {};
+      try { map = JSON.parse(rule.routing_map || '{}'); } catch { map = {}; }
+      const key = rule.strategy === 'territory' ? (facts.city ?? facts.state) : facts.product_interest;
+      const teamId = map[key] ?? map[String(key).toLowerCase()] ?? null;
+      if (teamId) userId = fromTeam(teamId);
+    } else if (rule.team_id) {
+      userId = fromTeam(rule.team_id);
+    }
+    if (!userId && rule.fallback_team_id) userId = fromTeam(rule.fallback_team_id);
+    if (userId) return { user_id: userId, rule_id: rule.id, rule_name: rule.name, fallback: false };
+  }
+  return { user_id: leastLoadedForRole(role, org), rule_id: null, rule_name: null, fallback: true };
+}
+
+/**
  * Route and assign, inline. Called at lead creation.
  *
  * An unrouted lead is left owned by whoever created it rather than left

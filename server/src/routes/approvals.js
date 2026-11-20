@@ -15,6 +15,7 @@ import { requireUser, requirePermission, mayUseOrg } from '../auth.js';
 import { stepsOutstanding, activatePartner, applyClosure, closureRefusal } from './partners-support.js';
 import { applyJourneySteps, journeyRefusal } from '../engine/journeyconfig.js';
 import { setDefaults as setOwd, isLevel } from '../engine/owd.js';
+import { supervisorsOf } from '../engine/salesrmhandover.js';
 import {
   APPROVAL_SCOPES, BULK_THRESHOLD, request, decide, withdraw, byId,
   queueFor, history, lockedBy, approversFor, inReach, orgOf,
@@ -23,18 +24,8 @@ import {
 const router = Router();
 router.use(requireUser);
 
-/**
- * Everyone who supervises this person: their manager on the org chart, and the
- * manager of any active sales group they sit on. Either may be the person who
- * needs to know, and N-7a is the reminder that they are often not the same.
- */
-const supervisorsOf = (userId) => all(
-  `SELECT manager_id AS id FROM users WHERE id = ? AND manager_id IS NOT NULL
-   UNION
-   SELECT t.manager_id FROM teams t JOIN team_members tm ON tm.team_id = t.id
-    WHERE tm.user_id = ? AND t.active = 1 AND t.manager_id IS NOT NULL`,
-  [userId, userId],
-).map((r) => Number(r.id));
+/* Everyone who supervises a person: engine/salesrmhandover.js, where a
+   Caller's hand-over to a Sales RM tells them too (B26). */
 
 /**
  * What each approval does once granted.

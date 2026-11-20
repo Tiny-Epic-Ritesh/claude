@@ -115,6 +115,8 @@ const RECORD = {
   'DELETE /api/leads/:id': {kind: 'lead'},
   'PATCH /api/leads/:id': {kind: 'lead'},
   'POST /api/leads/:id/call': {kind: 'lead'},
+  // B26: only a Caller or Dealer holds lead.handover.
+  'POST /api/leads/:id/handover': {kind: 'lead', as: 'caller', body: {'auto': true, 'needs_to_know': 'Probe'}},
   'POST /api/leads/:id/log-call': {kind: 'lead'},
   'POST /api/leads/:id/message': {kind: 'lead'},
   'POST /api/leads/:id/restore': {kind: 'lead'},
@@ -269,6 +271,7 @@ const BNZ_RM = await probeAdmin('bsw-bnz-rm', { role: 'sales_rm', sales_org: 'BO
 const OTHER = {
   admin: await probeAdmin('bsw-bgl-admin', { role: 'admin', sales_org: 'BIGUL' }),
   partner_rm: await probeAdmin('bsw-bgl-prm', { role: 'partner_rm', sales_org: 'BIGUL' }),
+  caller: await probeAdmin('bsw-bgl-caller', { role: 'caller', sales_org: 'BIGUL' }),
 };
 const call = async (who, method, url, body) => {
   const res = await fetch(`${BASE}/api${url}`, {
@@ -402,7 +405,7 @@ try {
   for (const [table, id] of made.reverse()) run(`DELETE FROM ${table} WHERE id = ?`, [id]);
   run('DELETE FROM tasks WHERE lead_id = ?', [LEAD]);
   run('DELETE FROM leads WHERE id = ?', [LEAD]);
-  for (const p of [BNZ, BNZ_RM, OTHER.admin, OTHER.partner_rm]) p.cleanup();
+  for (const p of [BNZ, BNZ_RM, OTHER.admin, OTHER.partner_rm, OTHER.caller]) p.cleanup();
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

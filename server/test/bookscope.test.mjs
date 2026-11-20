@@ -67,6 +67,9 @@ const RECORD = {
   '/api/tickets/:id/resolution-check': 'ticket',
   '/api/tickets/:id/change-preview': 'ticket',
   '/api/tickets/:id/reopen-preview': 'ticket',
+  // B26: what a hand-over to a Sales RM would do, read before doing it. Only a
+  // Caller or Dealer holds lead.handover, so a Bigul Caller probes it.
+  '/api/leads/:id/handover': { kind: 'lead', as: 'caller' },
   '/api/lists/:id': 'list',
   '/api/partners/:id': 'partner',
   '/api/partners/:id/insight': 'partner',
@@ -258,6 +261,9 @@ const bonanzaId = {
 /* ---------------------------------------------------------------- tests */
 
 const BIGUL_ADMIN = await probeAdmin('bookscope-bigul-admin', { role: 'admin', sales_org: 'BIGUL' });
+/* A route only a role an Admin is not names that role (`as`), as
+   bookscopewrites does: its probe is that role in the other business. */
+const BIGUL = { admin: BIGUL_ADMIN, caller: await probeAdmin('bookscope-bigul-caller', { role: 'caller', sales_org: 'BIGUL' }) };
 
 /* A Bonanza flow to probe the automations reads with; the seed has none. */
 const FLOW = Number(run(
@@ -300,10 +306,11 @@ await test('every record route refuses the other book', async () => {
      lacking a permission -- so a refusal proved the route was closed, never
      that the boundary closed it. A Bigul Admin holds what the routes ask, and
      a refusal that names a missing permission (`required`) does not count. */
-  const bigul = BIGUL_ADMIN.token;
   const problems = [];
 
-  for (const [pattern, kind] of Object.entries(RECORD)) {
+  for (const [pattern, entry] of Object.entries(RECORD)) {
+    const { kind, as = 'admin' } = typeof entry === 'string' ? { kind: entry } : entry;
+    const bigul = BIGUL[as].token;
     const id = bonanzaId[kind]?.();
     if (id == null) { problems.push(`${pattern}: no BONANZA ${kind} in the seed to probe with`); continue; }
 
@@ -633,6 +640,7 @@ await test('the duplicates screen lists no record from the other book', async ()
 
 run('DELETE FROM automation WHERE id = ?', [FLOW]);
 BIGUL_ADMIN.cleanup();
+BIGUL.caller.cleanup();
 
 console.log(`\n${passed} passed, ${failed} failed`);
 

@@ -45,6 +45,7 @@ export const CAPABILITY_CATALOGUE = [
   ['lead.edit', 'Edit leads', 'Leads', null, 0],
   ['lead.stage.change', 'Change lead stage', 'Leads', null, 0],
   ['lead.reassign', 'Reassign leads', 'Leads', 'Move a lead to a different owner', 0],
+  ['lead.handover', 'Hand a lead to a Sales RM', 'Leads', 'Their own lead, with a note for the Sales RM. It moves at once, at Qualified at least, and their supervisor is told', 0],
   ['lead.delete', 'Delete leads', 'Leads', 'Soft delete, recoverable from the recycle bin', 1],
   ['lead.contact', 'Contact leads', 'Leads', 'Call, message and log activities', 0],
 

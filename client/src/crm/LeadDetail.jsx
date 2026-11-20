@@ -307,6 +307,11 @@ export default function LeadDetail({ session }) {
             navigate('/leads', { state: { notice: `${result.name} moved to the recycle bin.` } });
             return;
           }
+          /* B26: handed to a Sales RM, it is theirs now and off this list. */
+          if (result?.handedOver) {
+            navigate('/leads', { state: { notice: `${result.name} handed to ${result.to}.` } });
+            return;
+          }
           reload();
         }}
         onNotice={setNotice}

@@ -64,6 +64,9 @@ export const PERMISSIONS = {
   'lead.edit':            ['superadmin', 'admin', 'sales_rm', 'sales_supervisor', 'dealer'],
   'lead.stage.change':    ['superadmin', 'admin', 'sales_supervisor'],
   'lead.reassign':        ['superadmin', 'admin', 'sales_supervisor'],
+  /* B26 (ruled 20 Nov 2026): a Caller or Dealer hands a lead they own to a
+     Sales RM. Not a reassignment: their own lead only, to a Sales RM only. */
+  'lead.handover':        ['caller', 'dealer'],
   'lead.delete':          ['superadmin', 'admin'],
   'lead.contact':         ['superadmin', 'admin', 'caller', 'dealer', 'sales_rm', 'sales_supervisor', 'customer_care'],
 

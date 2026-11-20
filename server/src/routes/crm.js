@@ -29,6 +29,7 @@ import { dmyTime, typedToStored } from '../engine/daterange.js';
 import { loadInBook } from '../engine/bookscope.js';
 import { taskFor } from '../engine/taskaccess.js';
 import { tracked, sourceOf, historyAsSeenBy } from '../engine/history.js';
+import { handoverPreview, handOver } from '../engine/salesrmhandover.js';
 import { moveCard } from '../engine/cardmoves.js';
 import { withCorrections, mayCorrect, addCorrection } from '../engine/corrections.js';
 import { cancelReminders, scheduleReminders } from '../engine/followups.js';
@@ -1206,6 +1207,35 @@ router.patch('/leads/:id', (req, res) => {
     ]);
   }
   res.json(decorate(one('SELECT * FROM leads WHERE id = ?', [req.params.id])));
+});
+
+/* B26 (ruled 20 Nov 2026): a Caller or Dealer hands a lead they own to a
+   Sales RM -- what it would do, read first, then the hand-over. Loaded in the
+   reader's book; who may, to whom, and everything it sets off are in
+   engine/salesrmhandover.js. */
+router.get('/leads/:id/handover', requirePermission('lead.handover'), (req, res) => {
+  const found = loadInBook(req, 'lead', req.params.id);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const out = handoverPreview(found.row, req.user);
+  if (out.error) return res.status(out.status).json({ error: out.error });
+  return res.json(out);
+});
+
+router.post('/leads/:id/handover', requirePermission('lead.handover'), (req, res) => {
+  const found = loadInBook(req, 'lead', req.params.id);
+  if (found.error) return res.status(found.status).json({ error: found.error });
+  const out = handOver(found.row, req.user, {
+    toUserId: req.body?.to_user_id ?? null,
+    auto: req.body?.auto === true,
+    note: req.body?.needs_to_know,
+    source: sourceOf(req),
+  });
+  if (out.error) {
+    return res.status(out.status).json({
+      error: out.error, ...(out.field ? { field: out.field } : {}), ...(out.failed ? { failed: out.failed } : {}),
+    });
+  }
+  return res.json(out);
 });
 
 router.delete('/leads/:id', requirePermission('lead.delete'), (req, res) => {
